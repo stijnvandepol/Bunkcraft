@@ -212,8 +212,32 @@ export class AudioEngine {
         this.voice('square', 1100 * p, 800 * p, 0.06, v * 0.2, 0.09);
         break;
       case 'zombie':
-        this.voice('sawtooth', 95 * p, 70 * p, 0.8, v * 0.5);
-        this.noiseBurst(300, 1, 0.6, v * 0.25);
+        if (event === 'hurt') {
+          this.voice('sawtooth', 130 * p, 85 * p, 0.28, v * 0.5);
+          this.noiseBurst(400, 1, 0.2, v * 0.25);
+        } else if (event === 'death') {
+          this.voice('sawtooth', 110 * p, 45 * p, 1.1, v * 0.55);
+          this.noiseBurst(250, 1, 0.9, v * 0.3);
+        } else {
+          // Idle groan: a slow wobbling growl.
+          this.voice('sawtooth', 95 * p, 70 * p, 0.8, v * 0.5);
+          this.voice('sawtooth', 100 * p, 62 * p, 0.7, v * 0.25, 0.1);
+          this.noiseBurst(300, 1, 0.6, v * 0.25);
+        }
+        break;
+      case 'skeleton': {
+        // Rattling bones: a few dry clicks, more of them and louder on death.
+        const clicks = event === 'death' ? 7 : event === 'hurt' ? 3 : 2;
+        for (let i = 0; i < clicks; i++) {
+          this.noiseBurst((1700 + Math.random() * 1800) * p, 3, 0.04 + Math.random() * 0.03, v * 0.55, 'bandpass', i * (0.045 + Math.random() * 0.03));
+        }
+        this.voice('triangle', 700 * p, 400 * p, 0.08, v * 0.15);
+        break;
+      }
+      case 'spider':
+        // Hiss: bright filtered noise, short and sharp when hurt.
+        this.noiseBurst(5500 * p, 0.7, event === 'idle' ? 0.45 : 0.3, v * 0.45, 'highpass');
+        if (event !== 'idle') this.voice('square', 1100 * p, 600 * p, 0.1, v * 0.15);
         break;
       case 'creeper':
         if (event === 'fuse') this.noiseBurst(3500, 0.6, 1.4, volume * 0.6, 'highpass');
