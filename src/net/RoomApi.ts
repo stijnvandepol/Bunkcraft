@@ -1,3 +1,4 @@
+import { type GameType, parseGameType } from '../modes/GameTypes';
 import { formatCode } from './protocol';
 
 export interface RoomInfo {
@@ -6,6 +7,17 @@ export interface RoomInfo {
   gameMode: string;
   players: number;
   maxPlayers: number;
+  /** Absent on servers from before the arcade game types: those are always Minecraft games. */
+  gameType?: GameType;
+  scoreLimit?: number;
+  timeLimitSec?: number;
+}
+
+/** Match settings sent when creating an arcade game (ignored for Minecraft games). */
+export interface RoomOptions {
+  gameType: GameType;
+  scoreLimit: number;
+  timeLimitSec: number;
 }
 
 export interface ServerInfo {
@@ -36,17 +48,23 @@ export async function serverInfo(): Promise<ServerInfo | null> {
   }
 }
 
-export async function createRoom(name: string, gameMode: string, seed: string): Promise<string> {
+export async function createRoom(name: string, gameMode: string, seed: string, options?: RoomOptions): Promise<string> {
   const { code } = await request<{ code: string }>('/api/rooms', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ name, gameMode, seed }),
+    body: JSON.stringify({
+      name, gameMode, seed,
+      gameType: options?.gameType ?? 'minecraft',
+      scoreLimit: options?.scoreLimit ?? 0,
+      timeLimitSec: options?.timeLimitSec ?? 0,
+    }),
   });
   return code;
 }
 
-export function lookupRoom(code: string): Promise<RoomInfo> {
-  return request<RoomInfo>(`/api/rooms/${encodeURIComponent(code)}`);
+export async function lookupRoom(code: string): Promise<RoomInfo> {
+  const info = await request<RoomInfo>(`/api/rooms/${encodeURIComponent(code)}`);
+  return { ...info, gameType: parseGameType(info.gameType) };
 }
 
 /** Link that opens the game and goes straight to joining this room. */
@@ -59,14 +77,15 @@ export function inviteText(code: string): string {
 }
 
 /** Games this browser joined or created, most recent first (for one-click rejoining). */
-export interface RecentGame { code: string; name: string }
+export interface RecentGame { code: string; name: string; gameType?: GameType }
 
 const RECENT_KEY = 'bunkcraft.games';
 
 export function recentGames(): RecentGame[] {
   try {
     const list = JSON.parse(localStorage.getItem(RECENT_KEY) ?? '[]') as RecentGame[];
-    return Array.isArray(list) ? list.filter((g) => typeof g?.code === 'string' && typeof g?.name === 'string').slice(0, 5) : [];
+    return Array.isArray(list) ? list.filter((g) => typeof g?.code === 'string' && typeof g?.name === 'string')
+      .map((g) => ({ ...g, gameType: parseGameType(g.gameType) })).slice(0, 5) : [];
   } catch {
     return [];
   }

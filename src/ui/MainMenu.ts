@@ -1,7 +1,8 @@
 import { GAME_MODES, GAME_MODE_HINTS, GAME_MODE_NAMES, type GameMode } from '../player/GameMode';
 import type { WorldMeta } from '../save/SaveSystem';
 import { NAME_PATTERN, formatCode, normalizeCode } from '../net/protocol';
-import { createRoom, forgetGame, lookupRoom, recentGames, serverInfo } from '../net/RoomApi';
+import { type RoomInfo, createRoom, forgetGame, lookupRoom, recentGames, serverInfo } from '../net/RoomApi';
+import { GAME_TYPES, type GameType, gameTypeDef } from '../modes/GameTypes';
 import { button, h, menuScreen, screen } from './dom';
 import type { ScreenStack } from './Screens';
 
@@ -20,6 +21,27 @@ export interface MenuActions {
 
 export const VERSION = 'BunkCraft 1.0';
 
+/** Short tag for lists: "TDM", "FFA"; nothing for the Minecraft sandbox. */
+const GAME_TYPE_TAGS: Record<GameType, string> = { minecraft: '', tdm: 'TDM', ffa: 'FFA' };
+
+/** Score limit choices (kills) and time limit choices (seconds) for the arcade game types. */
+const SCORE_LIMITS = [10, 20, 30, 50];
+const TIME_LIMITS = [300, 600, 900];
+
+/** "Team Deathmatch · first to 30 · 10 min · 3/12 players", shown before joining. */
+export function describeRoom(info: RoomInfo): string {
+  const def = gameTypeDef(info.gameType ?? 'minecraft');
+  const parts = [def.name];
+  if (def.arcade) {
+    if (info.scoreLimit) parts.push(`first to ${info.scoreLimit}`);
+    if (info.timeLimitSec) parts.push(`${Math.round(info.timeLimitSec / 60)} min`);
+  } else if (info.gameMode) {
+    parts.push(info.gameMode[0].toUpperCase() + info.gameMode.slice(1));
+  }
+  parts.push(`${info.players}/${info.maxPlayers} players`);
+  return parts.join(' · ');
+}
+
 function load(key: string, fallback: string): string {
   try { return localStorage.getItem(key) ?? fallback; } catch { return fallback; }
 }
@@ -33,7 +55,10 @@ const SPLASHES = [
   'Web Workers inside!', 'Procedurally generated!', 'Pixel perfect!', 'Ambient occlusion!',
   '100% blocks!', 'Seeded!', 'Punch a tree!', 'Biome tinted!', 'Also try the original!',
   'Now with shadows!', 'Bunk approved!', 'WebGL2!',
+  'Headshot!', 'Team Deathmatch!',
 ];
+
+const COLUMN = 'display: flex; flex-direction: column; align-items: center; gap: calc(var(--s) * 4);';
 
 /** Title screen, world selection and world creation, laid out like Minecraft 1.21. */
 export class MainMenu {
@@ -76,6 +101,7 @@ export class MainMenu {
     const name = h('input', { class: 'mc-input', value: load('bunkcraft.name', ''), maxLength: 16, placeholder: 'Your name (3–16 letters)' });
     const code = h('input', { class: 'mc-input', value: prefillCode, maxLength: 80, placeholder: 'Game code or invite link' });
     const error = h('div', { class: 'error' });
+    const roomInfo = h('div', { class: 'hint' });
     const validName = (): string | null => {
       const n = name.value.trim();
       if (!NAME_PATTERN.test(n)) {
@@ -96,7 +122,7 @@ export class MainMenu {
         return;
       }
       try {
-        await lookupRoom(c);
+        roomInfo.textContent = describeRoom(await lookupRoom(c));
       } catch (e) {
         error.textContent = e instanceof Error ? e.message : String(e);
         forgetGame(c);
@@ -106,14 +132,30 @@ export class MainMenu {
     };
     const join = () => void joinCode(code.value);
     for (const i of [name, code]) i.addEventListener('keydown', (e) => { if (e.key === 'Enter') join(); });
+    // Show what kind of game a valid code or link points to before joining it.
+    let lookupTimer = 0;
+    const previewCode = () => {
+      window.clearTimeout(lookupTimer);
+      roomInfo.textContent = '';
+      const c = normalizeCode(code.value);
+      if (!c) return;
+      lookupTimer = window.setTimeout(() => {
+        lookupRoom(c).then((r) => { if (normalizeCode(code.value) === c) roomInfo.textContent = describeRoom(r); }, () => undefined);
+      }, 250);
+    };
+    code.addEventListener('input', previewCode);
 
-    const recent = recentGames().map((g) => button(`${g.name}  (${formatCode(g.code)})`, () => void joinCode(g.code), { cls: 'w150' }));
+    const recent = recentGames().map((g) => {
+      const tag = GAME_TYPE_TAGS[g.gameType ?? 'minecraft'];
+      return button(`${tag ? `[${tag}] ` : ''}${g.name}  (${formatCode(g.code)})`, () => void joinCode(g.code), { cls: 'w150' });
+    });
     const column = 'display: flex; flex-direction: column; align-items: center; gap: calc(var(--s) * 4);';
     const body = h('div', { style: column },
       h('div', { class: 'field-label', text: 'Player Name' }), name,
       info.rooms ? button('Create Game', () => { const n = validName(); if (n) this.showCreateGame(n); }, { cls: 'w150' }) : null,
       info.rooms ? h('div', { class: 'field-label', text: 'Join a Friend' }) : null,
       info.rooms ? code : null,
+      info.rooms ? roomInfo : null,
       info.rooms ? button('Join Game', join, { cls: 'w150' }) : null,
       recent.length ? h('div', { class: 'field-label', text: 'Recent Games' }) : null,
       ...recent,
@@ -125,27 +167,75 @@ export class MainMenu {
     this.stack.push(menuScreen('Play Multiplayer', [body], footer, { list: true }));
     window.setTimeout(() => (name.value ? (prefillCode ? code : name) : name).focus(), 0);
     if (prefillCode && name.value) error.textContent = '';
+    if (prefillCode) previewCode();
   }
 
-  /** Name, mode and seed for a new game; the server answers with its share code. */
+  /** Name, game type and settings for a new game; the server answers with its share code. */
   private showCreateGame(playerName: string): void {
     const name = h('input', { class: 'mc-input', value: `${playerName}'s Game`.slice(0, 32), maxLength: 32 });
     const seed = h('input', { class: 'mc-input', placeholder: 'Leave blank for a random seed', maxLength: 32 });
     const error = h('div', { class: 'error' });
+    let type: GameType = 'minecraft';
     let mode: GameMode = 'survival';
+    let scoreLimit = gameTypeDef('tdm').scoreLimit;
+    let timeLimit = gameTypeDef('tdm').timeLimitSec;
+
+    const typeHint = h('div', { class: 'hint' });
+    const typeButton = h('button', { class: 'mc-btn' });
     const modeHint = h('div', { class: 'hint', text: GAME_MODE_HINTS[mode] });
     const modeButton = button(`Game Mode: ${GAME_MODE_NAMES[mode]}`, () => {
       mode = GAME_MODES[(GAME_MODES.indexOf(mode) + 1) % GAME_MODES.length];
       modeButton.textContent = `Game Mode: ${GAME_MODE_NAMES[mode]}`;
       modeHint.textContent = GAME_MODE_HINTS[mode];
     });
+    const scoreButton = h('button', { class: 'mc-btn' });
+    const timeButton = h('button', { class: 'mc-btn' });
+    const renderLimits = () => {
+      scoreButton.textContent = `Score Limit: ${scoreLimit} kills`;
+      timeButton.textContent = `Time Limit: ${timeLimit / 60} min`;
+    };
+    scoreButton.addEventListener('click', () => {
+      scoreLimit = SCORE_LIMITS[(SCORE_LIMITS.indexOf(scoreLimit) + 1) % SCORE_LIMITS.length];
+      renderLimits();
+    });
+    timeButton.addEventListener('click', () => {
+      timeLimit = TIME_LIMITS[(TIME_LIMITS.indexOf(timeLimit) + 1) % TIME_LIMITS.length];
+      renderLimits();
+    });
+    const sandboxFields = h('div', { style: COLUMN },
+      modeButton, modeHint,
+      h('div', { class: 'field-label', text: 'Seed for the World Generator' }), seed,
+    );
+    const arcadeFields = h('div', { style: COLUMN }, scoreButton, timeButton);
+    const renderType = () => {
+      const def = gameTypeDef(type);
+      typeButton.textContent = `Game Type: ${def.name}`;
+      typeHint.textContent = def.description;
+      sandboxFields.classList.toggle('hidden', def.arcade);
+      arcadeFields.classList.toggle('hidden', !def.arcade);
+      if (def.arcade) {
+        // Offer the type's own defaults when switching to it, snapped to the available choices.
+        scoreLimit = SCORE_LIMITS.includes(def.scoreLimit) ? def.scoreLimit : SCORE_LIMITS[0];
+        timeLimit = TIME_LIMITS.includes(def.timeLimitSec) ? def.timeLimitSec : TIME_LIMITS[1];
+        renderLimits();
+      }
+    };
+    typeButton.addEventListener('click', () => {
+      type = GAME_TYPES[(GAME_TYPES.findIndex((g) => g.id === type) + 1) % GAME_TYPES.length].id;
+      renderType();
+    });
+    renderType();
+
     let busy = false;
     const create = async () => {
       if (busy) return;
       busy = true;
       error.textContent = '';
       try {
-        const code = await createRoom(name.value.trim() || 'BunkCraft Game', mode, seed.value.trim());
+        const arcade = gameTypeDef(type).arcade;
+        const code = await createRoom(name.value.trim() || 'BunkCraft Game', mode, arcade ? '' : seed.value.trim(), {
+          gameType: type, scoreLimit: arcade ? scoreLimit : 0, timeLimitSec: arcade ? timeLimit : 0,
+        });
         this.actions.joinServer(playerName, '', code);
       } catch (e) {
         error.textContent = e instanceof Error ? e.message : String(e);
@@ -153,12 +243,11 @@ export class MainMenu {
       }
     };
     for (const i of [name, seed]) i.addEventListener('keydown', (e) => { if (e.key === 'Enter') void create(); });
-    const column = 'display: flex; flex-direction: column; align-items: center; gap: calc(var(--s) * 4);';
     this.stack.push(menuScreen('Create Game', [
-      h('div', { style: column },
+      h('div', { style: COLUMN },
         h('div', { class: 'field-label', text: 'Game Name' }), name,
-        modeButton, modeHint,
-        h('div', { class: 'field-label', text: 'Seed for the World Generator' }), seed,
+        typeButton, typeHint,
+        sandboxFields, arcadeFields,
         h('div', { class: 'hint', text: 'You get a code and a link to share. Friends can join any time while the game exists.' }),
         error,
       ),

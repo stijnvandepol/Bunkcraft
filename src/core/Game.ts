@@ -618,7 +618,7 @@ export class Game {
     };
     this.roomCode = room ?? null;
     if (room) {
-      rememberGame({ code: room, name: welcome.worldName });
+      rememberGame({ code: room, name: welcome.worldName, gameType: welcome.gameType });
       // Invite links stay out of the address bar once you are in the game.
       if (new URLSearchParams(location.search).has('join')) history.replaceState(null, '', location.pathname);
     }
