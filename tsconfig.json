@@ -23,6 +23,8 @@
   },
   "include": [
     "src",
-    "server"
+    "server",
+    "tests",
+    "vitest.config.ts"
   ]
 }

@@ -50,14 +50,14 @@ wat al is doorgevoerd.
 
 ## 3. Testen en tooling
 
-- **Vitest** voor de DOM-vrije modules:
-  - terrein-determinisme (golden hashes);
-  - mesher (1 kubus = 6 quads, een vloer = 1 quad);
-  - collision en raycast;
-  - PlayerStats-regels;
-  - inventory en recepten;
-  - SaveSystem met `fake-indexeddb`.
-- **CI** met GitHub Actions: typecheck, lint (Biome), tests en build op elke PR.
+- **Vitest** voor de DOM-vrije modules (`npm test`, tests in `tests/`):
+  - terrein-determinisme (golden hashes): **Gedaan**;
+  - mesher (1 kubus = 6 quads, een vloer van 15×15 = 1 quad; 16×16 = 4 quads door de merge-limiet van 15): **Gedaan**;
+  - collision en raycast: **Gedaan**;
+  - PlayerStats-regels: **Gedaan**;
+  - inventory, recepten en mining-regels: **Gedaan**;
+  - SaveSystem met `fake-indexeddb`: nog open.
+- **CI** met GitHub Actions: typecheck, tests en build op elke push en PR: **Gedaan** (`.github/workflows/ci.yml`). Lint (Biome) nog open.
 - **Bundel:** three.js in een aparte vendor-chunk, zodat die over deploys heen gecachet wordt.
 
 ## 4. Gameplay en motivatie (op volgorde van plezier per moeite)
