@@ -1349,7 +1349,7 @@ export class Game {
     attack: (mob, damage) => {
       const p = this.player;
       const yaw = Math.atan2(p.x - mob.x, p.z - mob.z);
-      if (this.stats.damage(damage, 'mob', this.mode, mob.type.name, yaw)) {
+      if (this.stats.hurt(damage, { kind: 'mob', attacker: mob.type.name, yaw }, this.mode).hurt) {
         // Knockback away from the attacker.
         const d = Math.hypot(p.x - mob.x, p.z - mob.z) || 1;
         p.vx += ((p.x - mob.x) / d) * 8;
@@ -1370,7 +1370,7 @@ export class Game {
     arrowHit: (arrow, damage) => {
       const p = this.player;
       const yaw = Math.atan2(-arrow.vx, -arrow.vz);
-      if (this.stats.damage(damage, 'arrow', this.mode, arrow.shooter ? arrow.shooter.type.name : '', yaw)) {
+      if (this.stats.hurt(damage, { kind: 'arrow', attacker: arrow.shooter ? arrow.shooter.type.name : undefined, yaw }, this.mode).hurt) {
         // Knockback along the arrow's direction.
         const h = Math.hypot(arrow.vx, arrow.vz) || 1;
         p.vx += (arrow.vx / h) * 3;
@@ -1432,7 +1432,7 @@ export class Game {
     if (d < reach) {
       const impact = 1 - d / reach;
       const dmg = Math.floor(((impact * impact + impact) / 2) * 7 * reach + 1);
-      this.stats.damage(dmg, 'explosion', this.mode, by, Math.atan2(p.x - x, p.z - z));
+      this.stats.hurt(dmg, { kind: 'explosion', attacker: by || undefined, yaw: Math.atan2(p.x - x, p.z - z) }, this.mode);
       const len = d || 1;
       p.vx += ((p.x - x) / len) * impact * 14;
       p.vz += ((p.z - z) / len) * impact * 14;
@@ -1443,7 +1443,7 @@ export class Game {
   /** Damage from a server mob or arrow: same hurt camera, knockback and rules as a local hit. */
   private hurtByServer(cause: 'mob' | 'arrow', amount: number, by: string, yaw: number): void {
     const p = this.player;
-    if (!this.stats.damage(amount, cause, this.mode, by, yaw)) return;
+    if (!this.stats.hurt(amount, { kind: cause, attacker: by || undefined, yaw }, this.mode).hurt) return;
     // yaw points from the attacker to the player (mob) or along the arrow's flight (arrow).
     const sin = Math.sin(yaw), cos = Math.cos(yaw);
     if (cause === 'mob') {
@@ -1470,9 +1470,9 @@ export class Game {
     }
     // Fall damage on landing (distance − 3), not in creative or water.
     if (p.landedFall > 0) {
-      const dmg = Math.ceil(p.landedFall - 3);
+      const dmg = Math.ceil(p.landedFall - 3 - stats.effects.jumpBoost());
       if (dmg > 0 && !p.inWater) {
-        if (this.stats.damage(dmg, 'fall', this.mode)) this.cam.hurtSide = 1;
+        if (stats.hurt(dmg, { kind: 'fall' }, this.mode).hurt) this.cam.hurtSide = 1;
       }
       p.landedFall = 0;
     }

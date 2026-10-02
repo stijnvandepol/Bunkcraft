@@ -7,6 +7,7 @@ import { facingFromYaw } from '../world/BlockStates';
 import { type GameMode, hasSurvivalRules } from '../player/GameMode';
 import { PHYSICS } from '../player/Physics';
 import type { Player } from '../player/Player';
+import { FOOD_EFFECTS } from '../player/Effects';
 import type { PlayerStats } from '../player/PlayerStats';
 import type { HandRenderer } from '../rendering/HandRenderer';
 import type { Hotbar } from '../ui/Hotbar';
@@ -155,7 +156,9 @@ export class Interaction {
       if (Math.floor((this.eatTime - dt) / 0.2) !== Math.floor(this.eatTime / 0.2)) this.d.audio.playEat();
       if (this.eatTime >= EAT_TIME) {
         this.d.stats.eat(food.hunger, food.saturation);
-        if (food.poison) this.d.stats.poison = Math.max(this.d.stats.poison, food.poison);
+        const fx = this.d.stats.effects;
+        if (food.poison) fx.add('poison', 0, food.poison, this.d.stats);
+        for (const e of FOOD_EFFECTS[getItemDef(held.id)?.name ?? ''] ?? []) fx.add(e.id, e.amp, e.ticks, this.d.stats);
         this.d.inventory.consumeSlot(this.d.hotbar.selected);
         if (food.returns) this.d.inventory.add({ id: itemId(food.returns), count: 1 });
         this.d.audio.playBurp();
