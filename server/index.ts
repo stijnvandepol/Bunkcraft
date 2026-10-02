@@ -8,7 +8,8 @@
  *
  * Environment: PORT (3000), DATA_DIR (./data), TRUST_PROXY (0|1, behind Caddy/nginx),
  * MAIN_WORLD (on|off), WORLD_NAME, SEED, GAMEMODE, MOTD, MAX_PLAYERS (main world, 20);
- * ROOMS (on|off), MAX_ROOMS (200), ROOM_MAX_PLAYERS (8), ROOM_EXPIRE_DAYS (60).
+ * ROOMS (on|off), MAX_ROOMS (200), ROOM_MAX_PLAYERS (8), ROOM_EXPIRE_DAYS (60),
+ * ROOM_CREATE_LIMIT (games one visitor may create per hour, 6).
  */
 import { createReadStream, existsSync, statSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -63,7 +64,7 @@ const rooms = ROOMS_ENABLED
   : null;
 
 // Per client address: creating rooms and looking up codes (stops code guessing).
-const createLimit = new RateLimiter(6, 3_600_000);
+const createLimit = new RateLimiter(Number(env.ROOM_CREATE_LIMIT ?? 6), 3_600_000);
 const lookupLimit = new RateLimiter(40, 60_000);
 setInterval(() => { createLimit.prune(); lookupLimit.prune(); }, 600_000).unref();
 

@@ -70,6 +70,7 @@ limieten per bezoeker werken in plaats van per proxy.
 | `ROOMS` | `on` | Spelers kunnen zelf games aanmaken (`off` = alleen de hoofdwereld) |
 | `MAX_ROOMS` | `200` | Maximum aantal games op de server |
 | `ROOM_MAX_PLAYERS` | `8` | Spelers per game |
+| `ROOM_CREATE_LIMIT` | `6` | Games die één bezoeker per uur mag aanmaken |
 | `ROOM_EXPIRE_DAYS` | `60` | Games zonder bezoek worden na zoveel dagen verwijderd (`0` = nooit) |
 
 Voorbeeld: `SEED=bunk GAMEMODE=creative WORLD_NAME="Bouwserver" npm start`
@@ -122,13 +123,26 @@ HTTPS en WebSockets automatisch.
   een tijdelijk bestand, zodat een crash nooit een half geschreven wereld achterlaat.
 - **Commando's in de chat:** `/help`, `/list`, `/seed`, `/spawn`, `/time set day|noon|night|midnight`.
 
-## Bekende beperkingen (v1)
+## Mobs, items en TNT op de server
 
-- **Geen mobs of TNT:** multiplayer-werelden zijn vredig en explosies worden nog niet gesynchroniseerd. Gedeelde mobs moeten door de server gesimuleerd worden; dat staat op de roadmap.
-- **Drops zijn lokaal:** dropped items zie je alleen zelf.
+De server draait dezelfde mob-AI als singleplayer (varken, koe, schaap, kip, zombie, creeper, skeleton, spin),
+met terrein uit de seed plus de edits van de spelers, geladen rond de spelers. Elke mob volgt de dichtstbijzijnde
+speler; 's nachts spawnen vijanden rond iedereen. Spelers sturen alleen verzoeken (aanvallen, schieten, TNT
+aansteken, item pakken of droppen), de server controleert bereik, wat je vasthoudt en de snelheid, en
+stuurt 10 keer per seconde de entiteiten om je heen terug. Schade komt als bericht naar de speler; explosies
+sturen de verwijderde blokken mee. Een lege game geeft zijn geheugen vrij.
+
+Kosten: ongeveer 0,03 ms CPU per tick in rust en ~0,3 ms terwijl chunks genereren, plus een paar MB per
+geladen game.
+
+## Bekende beperkingen
+
+- **Geen PvP en geen schade tussen spelers:** pijlen en explosies raken wel mobs en de speler die in de buurt is.
 - **Inventory en health worden door de client opgegeven:** valsspelen met de inventory is mogelijk. Plaats de server daarom niet publiek zonder vertrouwde spelers, of voeg wachtwoorden en whitelisting toe (roadmap).
+- **Items:** blokdrops, Q en doodsdrops gaan via de server en zijn voor iedereen zichtbaar; wie het eerst bij een item komt, krijgt het.
 - **Geen accounts:** spelersnamen zijn niet beveiligd. Wie dezelfde naam gebruikt in dezelfde game, neemt die speler over. Een game is alleen toegankelijk met de code (zes tekens uit 31, met een limiet op het aantal pogingen per bezoeker), dus deel hem alleen met vrienden.
 - **Aanmaken is beperkt:** zes games per uur per bezoeker en `MAX_ROOMS` in totaal, zodat een publieke server niet volloopt.
+- **Advancements** staan uit in multiplayer.
 
 ## Ontwikkelen
 

@@ -126,7 +126,9 @@ export class Mob extends Entity {
     const distT = Math.hypot(dxT, dzT, target.y - this.y);
     let speed = 0;
 
-    const hunting = t.hostile && target.attackable && distT < (t.ranged ? 16 : 24) && !(t.neutralInLight && this.calm && !this.provoked);
+    // Follow range like Minecraft's: zombies and spiders notice players from 32 blocks, creepers and skeletons from 16.
+    const follow = t.ranged || t.kind === 'creeper' ? 16 : 32;
+    const hunting = t.hostile && target.attackable && distT < follow && !(t.neutralInLight && this.calm && !this.provoked);
     if (!hunting) this.aimTicks = 0;
     if (hunting) {
       // Chase the player.

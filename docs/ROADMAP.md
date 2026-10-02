@@ -107,8 +107,8 @@ spelers, chat, tijd en per speler opgeslagen data. Zie `docs/SERVER.md`.
 
 Volgende stappen:
 
-1. **Mobs op de server simuleren.** `EntityManager` en `Mob` zijn DOM-vrij. De server heeft daarvoor terreingeneratie per chunk nodig (TerrainGenerator draait al server-side) en een lichtschatting.
-2. **Gedeelde item-drops** en eventueel PvP.
+1. **Mobs op de server simuleren: Gedaan** (zie `docs/SERVER.md`). Mob-AI, items, pijlen en TNT draaien op de server met een eigen `ServerWorld`.
+2. **Gedeelde item-drops: Gedaan.** PvP staat nog open.
 3. **Server-authoritative inventory** (anti-cheat): breken en craften door de server laten bevestigen.
 4. **Wachtwoord, whitelist en ops**, en accounts of tokens per naam.
 5. **Binair protocol** voor snapshots, als er veel spelers zijn.
