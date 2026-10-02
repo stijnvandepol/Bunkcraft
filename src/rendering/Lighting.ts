@@ -1,4 +1,4 @@
-import { LIGHT_EMIT, LIGHT_FILTER, OPAQUE } from '../world/BlockRegistry';
+import { LIGHT_EMIT, LIGHT_FILTER, LIGHT_STOP, OPAQUE } from '../world/BlockRegistry';
 import { CHUNK_HEIGHT as WORLD_HEIGHT } from '../world/constants';
 
 /**
@@ -43,6 +43,7 @@ export class LightEngine {
         const b = blocks[i];
         if (b !== 0 && highest < 0) highest = y;
         if (OPAQUE[b]) break;
+        if (LIGHT_STOP[b]) { sky[i] = l; break; }
         l -= LIGHT_FILTER[b];
         if (l <= 0) break;
         sky[i] = l;
@@ -95,7 +96,7 @@ export class LightEngine {
       const i = q[head];
       head = (head + 1) & QUEUE_MASK;
       const l = light[i];
-      if (l <= 1) continue;
+      if (l <= 1 || LIGHT_STOP[blocks[i]]) continue;
       const x = i % REGION;
       const z = ((i / REGION) | 0) % REGION;
       const y = (i / REGION_AREA) | 0;

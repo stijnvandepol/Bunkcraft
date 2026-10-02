@@ -8,7 +8,9 @@ import type { Player } from '../player/Player';
 import type { PlayerStats } from '../player/PlayerStats';
 import type { HandRenderer } from '../rendering/HandRenderer';
 import type { Hotbar } from '../ui/Hotbar';
-import { BLOCK, SHAPE, SHAPE_CROSS, SHAPE_LIQUID, SHAPE_MODEL, SHAPE_NONE, SOLID, getBlockDef } from '../world/BlockRegistry';
+import { BLOCK, PARTIAL, SHAPE, SHAPE_CROSS, SHAPE_MODEL, SOLID, getBlockDef } from '../world/BlockRegistry';
+import { collisionBoxes } from '../world/BlockShapes';
+import { resolvePlacement } from '../world/Placement';
 import { type RayHit, createRayHit, raycast } from '../world/Raycast';
 import type { World } from '../world/World';
 import type { AudioEngine } from './Audio';
@@ -67,6 +69,8 @@ export class Interaction {
   constructor(private readonly d: InteractionDeps) {}
 
   private readonly getBlock = (x: number, y: number, z: number): number => this.d.world.getBlock(x, y, z);
+  private readonly getMeta = (x: number, y: number, z: number): number => this.d.world.getMeta(x, y, z);
+  private readonly shapeBoxes = new Float64Array(24);
 
   reset(): void {
     this.breakProgress = 0;
@@ -88,7 +92,7 @@ export class Interaction {
     const highlight = renderer.highlight;
     const pos = camera.position;
     camera.getWorldDirection(this.dir);
-    const hit = raycast(this.getBlock, pos.x, pos.y, pos.z, this.dir.x, this.dir.y, this.dir.z, PHYSICS.REACH, this.ray);
+    const hit = raycast(this.getBlock, pos.x, pos.y, pos.z, this.dir.x, this.dir.y, this.dir.z, PHYSICS.REACH, this.ray, this.getMeta);
     const mobHit = active && mode !== 'spectator'
       ? this.d.entities.raycastMob(pos.x, pos.y, pos.z, this.dir.x, this.dir.y, this.dir.z, Math.min(3, hit.hit ? hit.distance + 0.01 : 3))
       : null;
@@ -104,7 +108,7 @@ export class Interaction {
       this.breakProgress = 0;
       if (input.leftClicked) this.attack(mobHit.mob, mode);
     } else if (hit.hit) {
-      highlight.show(hit.x, hit.y, hit.z);
+      this.showHit(hit);
       this.updateBreaking(dt, input, mode, hit);
     } else {
       highlight.hide();
@@ -156,6 +160,24 @@ export class Interaction {
       if (slot >= 0) this.d.hotbar.select(slot);
       else this.d.hotbar.setSlot(this.d.hotbar.selected, hit.id);
     }
+  }
+
+  /** Outline the block, or the box around a slab, stair or door where it really is. */
+  private showHit(hit: RayHit): void {
+    const highlight = this.d.renderer.highlight;
+    if (!PARTIAL[hit.id]) {
+      highlight.show(hit.x, hit.y, hit.z);
+      return;
+    }
+    const b = this.shapeBoxes;
+    const n = collisionBoxes(hit.id, this.getMeta(hit.x, hit.y, hit.z), this.getBlock, this.getMeta, hit.x, hit.y, hit.z, b);
+    let x0 = 1, y0 = 1, z0 = 1, x1 = 0, y1 = 0, z1 = 0;
+    for (let k = 0; k < n; k++) {
+      const o = k * 6;
+      x0 = Math.min(x0, b[o]); y0 = Math.min(y0, b[o + 1]); z0 = Math.min(z0, b[o + 2]);
+      x1 = Math.max(x1, b[o + 3]); y1 = Math.max(y1, b[o + 4]); z1 = Math.max(z1, b[o + 5]);
+    }
+    highlight.show(hit.x, hit.y, hit.z, x0, y0, z0, x1, y1, z1);
   }
 
   private attack(mob: import('../entities/Mob').Mob, mode: GameMode): void {
@@ -225,12 +247,13 @@ export class Interaction {
 
     const light = world.getLight(hit.x, hit.y + 1, hit.z);
     const above = world.getBlock(hit.x, hit.y + 1, hit.z);
+    const brokenMeta = world.getMeta(hit.x, hit.y, hit.z);
     const broken = world.breakBlock(hit.x, hit.y, hit.z);
     if (broken) {
       renderer.particles.spawnBreak(hit.x, hit.y, hit.z, broken, light, world.tintAt(hit.x, hit.z, broken));
       audio.play('break', def.sound);
       if (survival) {
-        const drop = blockDrop(broken, held);
+        const drop = blockDrop(broken, held, brokenMeta);
         if (drop) entities.dropItem(drop, hit.x + 0.5, hit.y + 0.3, hit.z + 0.5);
         // A plant or torch on top breaks with its support and drops too.
         if (above !== world.getBlock(hit.x, hit.y + 1, hit.z)) {
@@ -255,18 +278,21 @@ export class Interaction {
       return;
     }
     if (!id || !isBlockItem(id)) return;
-    let x = hit.x + hit.nx, y = hit.y + hit.ny, z = hit.z + hit.nz;
-    // Placing onto grass/flowers replaces them, like in Minecraft.
-    if (SHAPE[hit.id] === SHAPE_CROSS) { x = hit.x; y = hit.y; z = hit.z; }
-    const existing = world.getBlock(x, y, z);
-    const replaceable = SHAPE[existing] === SHAPE_NONE || SHAPE[existing] === SHAPE_LIQUID || SHAPE[existing] === SHAPE_CROSS;
-    if (!replaceable || existing === BLOCK.UNLOADED) return;
+    // Where the click landed inside the block decides the half of a slab or stair.
+    const cam = this.d.camera.position;
+    const fracY = Math.min(1, Math.max(0, cam.y + this.dir.y * hit.distance - hit.y));
+    const placed = resolvePlacement({
+      id, hitX: hit.x, hitY: hit.y, hitZ: hit.z, nx: hit.nx, ny: hit.ny, nz: hit.nz, fracY, yaw: player.yaw,
+      getBlock: this.getBlock, getMeta: this.getMeta,
+    });
+    if (!placed) return;
+    const { x, y, z } = placed;
     if (SOLID[id] && player.intersectsBlock(x, y, z)) return;
     if (SOLID[id] && this.d.entities.mobs.some((m) => !m.dead && m.x + m.width / 2 > x && m.x - m.width / 2 < x + 1
       && m.y + m.height > y && m.y < y + 1 && m.z + m.width / 2 > z && m.z - m.width / 2 < z + 1)) return;
     // Plants and torches need a solid block underneath.
     if ((SHAPE[id] === SHAPE_CROSS || SHAPE[id] === SHAPE_MODEL) && !SOLID[world.getBlock(x, y - 1, z)]) return;
-    if (!world.setBlock(x, y, z, id)) return;
+    if (!world.setBlock(x, y, z, id, placed.meta)) return;
     const def = getBlockDef(id)!;
     audio.play('place', def.sound);
     hand.swingHand();

@@ -148,6 +148,7 @@ export class Game {
   private readonly move: MoveInput = { forward: 0, strafe: 0, jump: false, jumpPressed: false, sprint: false, descend: false };
   /** Bound once: avoids allocating a closure per frame for physics. */
   private readonly getBlock = (x: number, y: number, z: number): number => this.world ? this.world.getBlock(x, y, z) : BLOCK.UNLOADED;
+  private readonly getMeta = (x: number, y: number, z: number): number => this.world ? this.world.getMeta(x, y, z) : 0;
   private underwater = false;
   private readonly frustum = new THREE.Frustum();
   private readonly projView = new THREE.Matrix4();
@@ -520,7 +521,7 @@ export class Game {
       const x = Math.floor(this.player.x), z = Math.floor(this.player.z);
       this.player.setPosition(this.player.x, world.surfaceY(x, z) + 1, this.player.z);
     }
-    this.player.unstick((x, y, z) => world.getBlock(x, y, z));
+    this.player.unstick((x, y, z) => world.getBlock(x, y, z), (x, y, z) => world.getMeta(x, y, z));
     if (this.meta && !this.meta.spawn) this.meta.spawn = { x: this.player.x, y: this.player.y, z: this.player.z };
     this.player.fallDistance = 0;
     this.player.landedFall = 0;
@@ -1300,7 +1301,7 @@ export class Game {
         p.airAccel = arcade.airAccel;
       }
       while (this.accumulator >= PHYSICS.STEP) {
-        p.step(move, this.getBlock);
+        p.step(move, this.getBlock, this.getMeta);
         move.jumpPressed = false;
         this.accumulator -= PHYSICS.STEP;
         if (++this.stepCount % STEPS_PER_TICK === 0) this.gameTick();

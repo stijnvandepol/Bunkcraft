@@ -1,4 +1,5 @@
-import { BLOCK, getBlockDef } from '../world/BlockRegistry';
+import { BLOCK, PARTIAL_MATERIALS, SLAB_FIRST, STAIRS_FIRST, getBlockDef } from '../world/BlockRegistry';
+import { SLAB_DOUBLE } from '../world/BlockStates';
 
 /**
  * Items. Ids below 256 are blocks (same id as the block); ids from 256 up are
@@ -222,6 +223,12 @@ const MINING: Record<number, Mining> = {
   [B.TNT]: { hardness: 0 },
 };
 
+// Slabs mine like their full block but are harder (2.0, Minecraft); stairs keep the hardness of the full block.
+PARTIAL_MATERIALS.forEach((m, i) => {
+  MINING[SLAB_FIRST + i] = { ...MINING[m.base], hardness: 2 };
+  MINING[STAIRS_FIRST + i] = { ...MINING[m.base] };
+});
+
 /**
  * Survival break time in seconds (Minecraft formula): damage per tick is
  * speed / hardness / (canHarvest ? 30 : 100); ×5 slower in the air or under water.
@@ -245,9 +252,10 @@ export function canHarvest(blockId: number, held: number): boolean {
   return !!tool && tool.kind === m.tool && tool.tier >= m.minTier;
 }
 
-/** What a block drops when mined in survival (0 = nothing). */
-export function blockDrop(blockId: number, held: number): ItemStack | null {
+/** What a block drops when mined in survival (0 = nothing). `meta` is the block state it had (a double slab drops two). */
+export function blockDrop(blockId: number, held: number, meta = 0): ItemStack | null {
   if (!canHarvest(blockId, held)) return null;
+  if (blockId >= SLAB_FIRST && blockId < STAIRS_FIRST) return { id: blockId, count: meta === SLAB_DOUBLE ? 2 : 1 };
   switch (blockId) {
     case B.GRASS: case B.SNOWY_GRASS: return { id: B.DIRT, count: 1 };
     case B.STONE: return { id: B.COBBLESTONE, count: 1 };

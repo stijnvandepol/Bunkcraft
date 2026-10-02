@@ -49,9 +49,11 @@ export class BlockHighlight {
     this.group.visible = false;
   }
 
-  show(x: number, y: number, z: number): void {
+  /** Outlines the block, or just the box (0..1 inside the block) a slab, stair or door fills. */
+  show(x: number, y: number, z: number, x0 = 0, y0 = 0, z0 = 0, x1 = 1, y1 = 1, z1 = 1): void {
     this.group.visible = true;
-    this.group.position.set(x + 0.5, y + 0.5, z + 0.5);
+    this.group.position.set(x + (x0 + x1) / 2, y + (y0 + y1) / 2, z + (z0 + z1) / 2);
+    this.group.scale.set(x1 - x0, y1 - y0, z1 - z0);
   }
 
   hide(): void {

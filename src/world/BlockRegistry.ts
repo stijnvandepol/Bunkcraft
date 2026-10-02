@@ -8,7 +8,11 @@ import { TINT_BIRCH, TINT_FOLIAGE, TINT_GRASS, TINT_NONE, TINT_SPRUCE } from './
  * Face order used everywhere: 0 +X, 1 -X, 2 +Y (top), 3 -Y (bottom), 4 +Z, 5 -Z.
  */
 
-export type RenderShape = 'none' | 'cube' | 'cross' | 'liquid' | 'model';
+/**
+ * "slab" and "stairs" are unions of octants (see BlockStates), "door" a thin box; all three depend on the
+ * block's state byte and are collectively the "partial" blocks (not a full cube, but they collide).
+ */
+export type RenderShape = 'none' | 'cube' | 'cross' | 'liquid' | 'model' | 'slab' | 'stairs' | 'door';
 export type BlockSound = 'stone' | 'wood' | 'grass' | 'gravel' | 'sand' | 'glass' | 'wool' | 'snow';
 
 export interface BlockTextures {
@@ -33,6 +37,11 @@ export interface BlockDef {
   cullSelf?: boolean;
   /** Extra light attenuation when light passes through (leaves, water). */
   lightFilter?: number;
+  /**
+   * The cell receives light but passes none on (slabs and stairs: lit from outside, a roof of them still
+   * darkens what is below). Without it a partial block would have no light of its own to be seen by.
+   */
+  lightStop?: boolean;
   /** Emitted block light 0..15. */
   light?: number;
   /** Seconds to break; -1 = unbreakable. */
@@ -104,6 +113,24 @@ export const BLOCK = {
   CRAFTING_TABLE: 45,
   FURNACE: 46,
   TNT: 47,
+  STONE_SLAB: 48,
+  COBBLESTONE_SLAB: 49,
+  MOSSY_COBBLESTONE_SLAB: 50,
+  STONE_BRICK_SLAB: 51,
+  BRICK_SLAB: 52,
+  SANDSTONE_SLAB: 53,
+  OAK_SLAB: 54,
+  BIRCH_SLAB: 55,
+  SPRUCE_SLAB: 56,
+  STONE_STAIRS: 57,
+  COBBLESTONE_STAIRS: 58,
+  MOSSY_COBBLESTONE_STAIRS: 59,
+  STONE_BRICK_STAIRS: 60,
+  BRICK_STAIRS: 61,
+  SANDSTONE_STAIRS: 62,
+  OAK_STAIRS: 63,
+  BIRCH_STAIRS: 64,
+  SPRUCE_STAIRS: 65,
   /** Sentinel returned for blocks in chunks that are not loaded (treated as solid). */
   UNLOADED: 255,
 } as const;
@@ -128,6 +155,24 @@ function plant(id: number, name: string, displayName: string, texture: string): 
     sound: 'grass', sway: true, inInventory: true, textures: { all: texture },
   };
 }
+
+/**
+ * Slab and stairs families: the full block they are made of, Minecraft's names. Slab id = SLAB_FIRST + index,
+ * stairs id = STAIRS_FIRST + index.
+ */
+export const SLAB_FIRST = 48;
+export const STAIRS_FIRST = 57;
+export const PARTIAL_MATERIALS = [
+  { base: B.STONE, name: 'stone', display: 'Stone' },
+  { base: B.COBBLESTONE, name: 'cobblestone', display: 'Cobblestone' },
+  { base: B.MOSSY_COBBLESTONE, name: 'mossy_cobblestone', display: 'Mossy Cobblestone' },
+  { base: B.STONE_BRICKS, name: 'stone_brick', display: 'Stone Brick' },
+  { base: B.BRICKS, name: 'brick', display: 'Brick' },
+  { base: B.SANDSTONE, name: 'sandstone', display: 'Sandstone' },
+  { base: B.OAK_PLANKS, name: 'oak', display: 'Oak' },
+  { base: B.BIRCH_PLANKS, name: 'birch', display: 'Birch' },
+  { base: B.SPRUCE_PLANKS, name: 'spruce', display: 'Spruce' },
+] as const;
 
 export const BLOCK_DEFS: BlockDef[] = [
   { id: B.AIR, name: 'air', displayName: 'Air', shape: 'none', solid: false, transparent: true, hardness: 0, sound: 'stone', textures: {} },
@@ -190,6 +235,18 @@ export const BLOCK_DEFS: BlockDef[] = [
   cube(B.TNT, 'tnt', 'TNT', { top: 'tnt_top', bottom: 'tnt_bottom', side: 'tnt_side' }, 0, 'grass'),
 ];
 
+// Slabs and stairs reuse the textures and sounds of the block they are made of.
+PARTIAL_MATERIALS.forEach((m, i) => {
+  const base = BLOCK_DEFS.find((d) => d.id === m.base)!;
+  const partial = (id: number, name: string, displayName: string, shape: RenderShape, hardness: number, metaMask: number): BlockDef => ({
+    id, name, displayName, shape, solid: true, transparent: true, hardness, sound: base.sound, inInventory: true,
+    textures: base.textures, lightStop: true, metaMask,
+  });
+  BLOCK_DEFS.push(partial(SLAB_FIRST + i, `${m.name}_slab`, `${m.display} Slab`, 'slab', 2, 3));
+  BLOCK_DEFS.push(partial(STAIRS_FIRST + i, `${m.name}_stairs`, `${m.display} Stairs`, 'stairs', base.hardness, 7));
+});
+BLOCK_DEFS.sort((a, b) => a.id - b.id);
+
 /** Extra texture layers that are not tied to a block face (crack overlay stages). */
 export const DESTROY_STAGES = 10;
 const EXTRA_TEXTURES = Array.from({ length: DESTROY_STAGES }, (_, i) => `destroy_${i}`);
@@ -220,14 +277,21 @@ export const SHAPE_CUBE = 1;
 export const SHAPE_CROSS = 2;
 export const SHAPE_LIQUID = 3;
 export const SHAPE_MODEL = 4;
+export const SHAPE_SLAB = 5;
+export const SHAPE_STAIRS = 6;
+export const SHAPE_DOOR = 7;
 
 export const SHAPE = new Uint8Array(256);
 export const SOLID = new Uint8Array(256);
+/** Blocks whose geometry depends on their state byte: slabs, stairs and doors (see BlockShapes). */
+export const PARTIAL = new Uint8Array(256);
 /** Fully opaque cube: blocks light, hides neighbour faces, casts AO. */
 export const OPAQUE = new Uint8Array(256);
 export const CULL_SELF = new Uint8Array(256);
 export const LIGHT_FILTER = new Uint8Array(256);
 export const LIGHT_EMIT = new Uint8Array(256);
+/** Cells that receive light but do not pass it on (see BlockDef.lightStop). */
+export const LIGHT_STOP = new Uint8Array(256);
 export const SWAY = new Uint8Array(256);
 /** Biome tint type per block (TINT_* in BiomeColors). */
 export const TINT = new Uint8Array(256);
@@ -242,12 +306,15 @@ for (const def of BLOCK_DEFS) {
   const id = def.id;
   blockById[id] = def;
   SHAPE[id] = def.shape === 'cube' ? SHAPE_CUBE : def.shape === 'cross' ? SHAPE_CROSS : def.shape === 'liquid' ? SHAPE_LIQUID
-    : def.shape === 'model' ? SHAPE_MODEL : SHAPE_NONE;
+    : def.shape === 'model' ? SHAPE_MODEL : def.shape === 'slab' ? SHAPE_SLAB : def.shape === 'stairs' ? SHAPE_STAIRS
+    : def.shape === 'door' ? SHAPE_DOOR : SHAPE_NONE;
+  PARTIAL[id] = SHAPE[id] >= SHAPE_SLAB ? 1 : 0;
   SOLID[id] = def.solid ? 1 : 0;
   OPAQUE[id] = def.shape === 'cube' && !def.transparent ? 1 : 0;
   CULL_SELF[id] = def.cullSelf ? 1 : 0;
   LIGHT_FILTER[id] = def.lightFilter ?? 0;
   LIGHT_EMIT[id] = def.light ?? 0;
+  LIGHT_STOP[id] = def.lightStop ? 1 : 0;
   SWAY[id] = def.sway ? 1 : 0;
   META_MASK[id] = def.metaMask ?? 0;
   TINT[id] = def.tint ?? TINT_NONE;

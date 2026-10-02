@@ -1,6 +1,11 @@
 import {
-  CULL_SELF, FACE_LAYER, MODELS, OPAQUE, SHAPE_MODEL, TINT, SHAPE, SHAPE_CROSS, SHAPE_CUBE, SHAPE_LIQUID, SWAY,
+  CULL_SELF, FACE_LAYER, MODELS, OPAQUE, PARTIAL, SHAPE_DOOR, SHAPE_MODEL, SHAPE_SLAB, SHAPE_STAIRS, TINT, SHAPE, SHAPE_CROSS, SHAPE_CUBE,
+  SHAPE_LIQUID, SWAY,
 } from '../world/BlockRegistry';
+import { doorBox } from '../world/BlockShapes';
+import {
+  DOOR_UPPER_BIT, FACE_OCTANTS, OCT_ALL, STAIR_META_MASK, slabOctants, stairOctants, stairShape,
+} from '../world/BlockStates';
 import { CHUNK_HEIGHT, CHUNK_SIZE, CHUNK_VOLUME } from '../world/constants';
 import { BLOCK } from '../world/BlockRegistry';
 import { TINT_BIRCH, TINT_FOLIAGE, TINT_GRASS, TINT_SPRUCE, tintColor } from '../world/BiomeColors';
@@ -323,6 +328,8 @@ export class ChunkMesher {
           const q = i + nOff;
           const nb = region[q];
           if (OPAQUE[nb]) continue;
+          // A slab or stair that covers the whole touching face hides it, like an opaque block would.
+          if (PARTIAL[nb] && (this.octantsAt(q) & FACE_OCTANTS[f ^ 1]) === FACE_OCTANTS[f ^ 1]) continue;
           if (nb === id && (CULL_SELF[id] || (!fancyLeaves && SWAY[id]))) continue;
           const liquid = shape === SHAPE_LIQUID;
           if (liquid && nb === id) continue;
@@ -429,6 +436,165 @@ export class ChunkMesher {
     geo.quad(l0 + l2 < l1 + l3);
   }
 
+  // ---- Slabs, stairs and doors: geometry that depends on the block state ----
+
+  /** Stair meta (0-7) of the block at region index j, or −1 when it is not a stairs block. */
+  private stairAt(j: number): number {
+    return SHAPE[this.region[j]] === SHAPE_STAIRS ? this.metaRegion[j] & STAIR_META_MASK : -1;
+  }
+
+  /**
+   * Octants (see BlockStates) a block fills, for hiding faces: opaque blocks fill all of them, slabs and
+   * stairs their own, everything else (air, glass, plants) none.
+   */
+  private octantsAt(i: number): number {
+    const id = this.region[i];
+    if (OPAQUE[id]) return OCT_ALL;
+    const shape = SHAPE[id];
+    if (shape === SHAPE_SLAB) return slabOctants(this.metaRegion[i]);
+    if (shape === SHAPE_STAIRS) {
+      const meta = this.metaRegion[i] & STAIR_META_MASK;
+      return stairOctants(meta, stairShape(meta, this.stairAt(i - SZ), this.stairAt(i + SZ), this.stairAt(i - SX), this.stairAt(i + SX)));
+    }
+    return 0;
+  }
+
+  // Per-corner ambient occlusion and light for the face that looks into cell q (filled by cornerSample).
+  private readonly pAO = [0, 0, 0, 0];
+  private readonly pSky = [0, 0, 0, 0];
+  private readonly pBlk = [0, 0, 0, 0];
+  private readonly rectCoord = [0, 0, 0];
+  private readonly rectAO = [0, 0, 0, 0];
+  private readonly octCoord = [0, 0, 0];
+  private readonly doorScratch = [0, 0, 0, 0, 0, 0];
+
+  /** The same corner sampling the cube faces use (see meshFace), kept as floats so partial faces can interpolate it. */
+  private cornerSample(f: number, q: number): void {
+    const face = FACES[f];
+    const uOff = face.uSign * STRIDE[face.uAxis];
+    const vOff = face.vSign * STRIDE[face.vAxis];
+    const region = this.region, sky = this.lighting.sky, blk = this.lighting.block;
+    for (let k = 0; k < 4; k++) {
+      const du = CU[k] ? uOff : -uOff;
+      const dv = CV[k] ? vOff : -vOff;
+      const s1 = q + du, s2 = q + dv, cc = q + du + dv;
+      const o1 = OPAQUE[region[s1]], o2 = OPAQUE[region[s2]];
+      const oc = o1 && o2 ? 1 : OPAQUE[region[cc]];
+      let ls = sky[q], lb = blk[q], cnt = 1;
+      if (!o1) { ls += sky[s1]; lb += blk[s1]; cnt++; }
+      if (!o2) { ls += sky[s2]; lb += blk[s2]; cnt++; }
+      if (!oc) { ls += sky[cc]; lb += blk[cc]; cnt++; }
+      this.pAO[k] = o1 && o2 ? 0 : 3 - (o1 + o2 + oc);
+      this.pSky[k] = ls / cnt;
+      this.pBlk[k] = lb / cnt;
+    }
+  }
+
+  /**
+   * One rectangle of a partial block's face. (ua, ub) and (va, vb) are the extent along the face's U and V
+   * axes in 1/16 block (absolute coordinates), `plane` the position along the normal. Texture coordinates
+   * follow the block, so a half-height slab shows the matching half of the texture. Light comes from
+   * `cornerSample` (call it first) and is interpolated to each corner.
+   */
+  private emitRect(geo: GeometryBuilder, f: number, plane: number, ua: number, ub: number, va: number, vb: number, layer: number, x: number, y: number, z: number, mirrorU = false): void {
+    const face = FACES[f];
+    const coord = this.rectCoord, ao4 = this.rectAO;
+    for (let k = 0; k < 4; k++) {
+      const cu = CU[k], cv = CV[k];
+      const cuv = face.uSign > 0 ? ua + cu * (ub - ua) : ub - cu * (ub - ua);
+      const cvv = face.vSign > 0 ? va + cv * (vb - va) : vb - cv * (vb - va);
+      coord[face.nAxis] = plane;
+      coord[face.uAxis] = cuv;
+      coord[face.vAxis] = cvv;
+      let tu = face.uSign > 0 ? cuv : 16 - cuv;
+      const tv = face.vSign > 0 ? cvv : 16 - cvv;
+      // Bilinear weights of the four sampled corners.
+      const fu = tu / 16, fv = tv / 16;
+      const w0 = (1 - fu) * (1 - fv), w1 = fu * (1 - fv), w2 = fu * fv, w3 = (1 - fu) * fv;
+      const ao = Math.round(w0 * this.pAO[0] + w1 * this.pAO[1] + w2 * this.pAO[2] + w3 * this.pAO[3]);
+      const sk = Math.round((w0 * this.pSky[0] + w1 * this.pSky[1] + w2 * this.pSky[2] + w3 * this.pSky[3]) * 17);
+      const bk = Math.round((w0 * this.pBlk[0] + w1 * this.pBlk[1] + w2 * this.pBlk[2] + w3 * this.pBlk[3]) * 17);
+      ao4[k] = ao * 16 + sk / 16;
+      if (mirrorU) tu = 16 - tu;
+      geo.vertex(x * 16 + coord[0], y * 16 + coord[1], z * 16 + coord[2], tu / 16, tv / 16, layer, f | (ao << 3), sk, bk);
+    }
+    geo.quad(ao4[0] + ao4[2] < ao4[1] + ao4[3]);
+  }
+
+  /** Slab or stairs: every visible octant face, merged into 16×16, 16×8 or 8×8 rectangles. */
+  private emitOctants(id: number, x: number, y: number, z: number, i: number): void {
+    const mask = this.octantsAt(i);
+    const geo = this.opaque;
+    geo.currentTint = 0xffffff;
+    const hc = this.octCoord;
+    for (let f = 0; f < 6; f++) {
+      const face = FACES[f];
+      const a = face.nAxis, s = face.nSign;
+      const nOff = s * STRIDE[a];
+      const layer = FACE_LAYER[id * 6 + f];
+      let nmask = -1;
+      for (let h = 0; h < 2; h++) {
+        // Octants of layer h along the normal whose face is not hidden by a neighbouring octant.
+        let vis = 0;
+        for (let b = 0; b < 4; b++) {
+          const hu = b & 1, hv = b >> 1;
+          hc[a] = h; hc[face.uAxis] = hu; hc[face.vAxis] = hv;
+          if (!(mask & (1 << (hc[0] | (hc[2] << 1) | (hc[1] << 2))))) continue;
+          const nh = h + s;
+          let covered: boolean;
+          if (nh >= 0 && nh <= 1) {
+            hc[a] = nh;
+            covered = (mask & (1 << (hc[0] | (hc[2] << 1) | (hc[1] << 2)))) !== 0;
+          } else {
+            if (nmask < 0) nmask = this.octantsAt(i + nOff);
+            hc[a] = s > 0 ? 0 : 1;
+            covered = (nmask & (1 << (hc[0] | (hc[2] << 1) | (hc[1] << 2)))) !== 0;
+          }
+          if (!covered) vis |= 1 << b;
+        }
+        if (!vis) continue;
+        const plane = (h + (s > 0 ? 1 : 0)) * 8;
+        // Faces on the block boundary are lit from the neighbouring cell, inner ones from this cell.
+        this.cornerSample(f, plane === 0 || plane === 16 ? i + nOff : i);
+        if (vis === 15) {
+          this.emitRect(geo, f, plane, 0, 16, 0, 16, layer, x, y, z);
+          continue;
+        }
+        for (let hv = 0; hv < 2; hv++) {
+          const row = (vis >> (hv * 2)) & 3;
+          if (row === 3) this.emitRect(geo, f, plane, 0, 16, hv * 8, hv * 8 + 8, layer, x, y, z);
+          else if (row === 1) this.emitRect(geo, f, plane, 0, 8, hv * 8, hv * 8 + 8, layer, x, y, z);
+          else if (row === 2) this.emitRect(geo, f, plane, 8, 16, hv * 8, hv * 8 + 8, layer, x, y, z);
+        }
+      }
+    }
+  }
+
+  /** A door half: one thin box, textured with the lower or upper half of the door texture. */
+  private emitDoor(id: number, x: number, y: number, z: number, i: number): void {
+    const meta = this.metaRegion[i];
+    const box = this.doorScratch;
+    doorBox(meta, box);
+    // The lower half uses the "side" texture slot and the upper half the "top" slot (see the door's BlockDef).
+    const layer = FACE_LAYER[id * 6 + ((meta & DOOR_UPPER_BIT) ? 2 : 0)];
+    const geo = this.cutout;
+    geo.currentTint = 0xffffff;
+    const region = this.region;
+    for (let f = 0; f < 6; f++) {
+      const face = FACES[f];
+      const a = face.nAxis;
+      const plane = Math.round((face.nSign > 0 ? box[3 + a] : box[a]) * 16);
+      const boundary = plane === 0 || plane === 16;
+      const nOff = face.nSign * STRIDE[a];
+      if (boundary && OPAQUE[region[i + nOff]]) continue;
+      this.cornerSample(f, boundary ? i + nOff : i);
+      const ua = Math.round(box[face.uAxis] * 16), ub = Math.round(box[3 + face.uAxis] * 16);
+      const va = Math.round(box[face.vAxis] * 16), vb = Math.round(box[3 + face.vAxis] * 16);
+      // The two big faces mirror with the hinge so the handle is always on the side away from it.
+      this.emitRect(geo, f, plane, ua, ub, va, vb, layer, x, y, z, a !== 1 && (meta & 8) !== 0 && ub - ua > 8);
+    }
+  }
+
   private meshCrosses(): void {
     const region = this.region;
     const sky = this.lighting.sky, blk = this.lighting.block;
@@ -438,7 +604,13 @@ export class ChunkMesher {
         let i = (y + 1) * SY + (z + 16) * SZ + 16;
         for (let x = 0; x < CHUNK_SIZE; x++, i++) {
           const id = region[i];
-          if (SHAPE[id] === SHAPE_MODEL) {
+          const shape = SHAPE[id];
+          if (shape >= SHAPE_SLAB) {
+            if (shape === SHAPE_DOOR) this.emitDoor(id, x, y, z, i);
+            else this.emitOctants(id, x, y, z, i);
+            continue;
+          }
+          if (shape === SHAPE_MODEL) {
             this.emitModel(id, x, y, z, i);
             continue;
           }

@@ -7,7 +7,8 @@ import {
 import { ARENA_FLOOR_Y, ARENA_SPAWNS } from '../src/modes/arena';
 import { type GameType, gameTypeDef } from '../src/modes/GameTypes';
 import { GAME_MODES, type GameMode } from '../src/player/GameMode';
-import { BLOCK, META_MASK, getBlockDef } from '../src/world/BlockRegistry';
+import { BLOCK, getBlockDef } from '../src/world/BlockRegistry';
+import { isValidMeta } from '../src/world/BlockShapes';
 import { packState, stateId, stateMeta } from '../src/world/BlockStates';
 import { SEA_LEVEL } from '../src/world/constants';
 import { hashString } from '../src/world/Noise';
@@ -444,7 +445,7 @@ export class GameServer {
     if (!s.edits.take()) return reject();
     if (y < 1 || y > 127) return reject();
     if (id !== 0 && (!getBlockDef(id) || id === BLOCK.BEDROCK || id === BLOCK.UNLOADED)) return reject();
-    if (meta < 0 || meta > 255 || (meta & ~META_MASK[id]) !== 0) return reject();
+    if (!isValidMeta(id, meta)) return reject();
     // Reach: distance from the player's eyes to the block centre.
     const d = Math.hypot(x + 0.5 - s.x, y + 0.5 - (s.y + 1.62), z + 0.5 - s.z);
     if (!s.hasPos || d > REACH) return reject();

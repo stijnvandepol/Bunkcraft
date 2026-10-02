@@ -15,6 +15,11 @@ interface LightSource {
  * blocks (shared with the player), gravity, water buoyancy and 1-block auto-jump.
  */
 export abstract class Entity {
+  /**
+   * Block states for collision (slabs, stairs, doors). Set by the EntityManager of the world whose entities
+   * are about to tick, so the physics code needs no extra parameter; null = every partial block counts as a full one.
+   */
+  static metaGetter: BlockGetter | null = null;
   x = 0; y = 0; z = 0;
   prevX = 0; prevY = 0; prevZ = 0;
   vx = 0; vy = 0; vz = 0;
@@ -115,17 +120,17 @@ export abstract class Entity {
 
     const box = this.updateBox();
     const wantY = this.vy * dt;
-    const dy = clipAxis(box, 1, wantY, getBlock);
+    const dy = clipAxis(box, 1, wantY, getBlock, Entity.metaGetter ?? undefined);
     this.y += dy;
     const landed = wantY < 0 && dy > wantY + 1e-6;
     if (dy !== wantY) this.vy = 0;
     this.updateBox();
     const wantX = this.vx * dt;
-    const dx = clipAxis(this.box, 0, wantX, getBlock);
+    const dx = clipAxis(this.box, 0, wantX, getBlock, Entity.metaGetter ?? undefined);
     this.x += dx;
     this.updateBox();
     const wantZ = this.vz * dt;
-    const dz = clipAxis(this.box, 2, wantZ, getBlock);
+    const dz = clipAxis(this.box, 2, wantZ, getBlock, Entity.metaGetter ?? undefined);
     this.z += dz;
     this.horizontalCollision = dx !== wantX || dz !== wantZ;
 

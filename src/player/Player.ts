@@ -2,6 +2,9 @@ import { BLOCK } from '../world/BlockRegistry';
 import { type AABB, type BlockGetter, boxIntersectsSolid, clipAxis } from './Collision';
 import { PHYSICS, approach } from './Physics';
 
+/** Ledges up to this high are walked up without jumping (Minecraft's step height). */
+const STEP_HEIGHT = 0.6;
+
 export interface MoveInput {
   forward: number; // -1..1
   strafe: number; // -1..1 (right positive)
@@ -80,7 +83,8 @@ export class Player {
     return b.maxX > x && b.minX < x + 1 && b.maxY > y && b.minY < y + 1 && b.maxZ > z && b.minZ < z + 1;
   }
 
-  step(input: MoveInput, getBlock: BlockGetter): void {
+  /** @param getMeta block states, so slabs, stairs and doors collide with their real shape (full blocks without). */
+  step(input: MoveInput, getBlock: BlockGetter, getMeta?: BlockGetter): void {
     const dt = PHYSICS.STEP;
     this.time += dt;
     this.prevX = this.x; this.prevY = this.y; this.prevZ = this.z;
@@ -149,7 +153,7 @@ export class Player {
     // Collide per axis: Y first, then X and Z.
     const box = this.updateBox();
     const wantY = this.vy * dt;
-    const dy = clipAxis(box, 1, wantY, getBlock);
+    const dy = clipAxis(box, 1, wantY, getBlock, getMeta);
     this.y += dy;
     const wasOnGround = this.onGround;
     this.onGround = wantY < 0 && dy > wantY + 1e-6;
@@ -159,14 +163,23 @@ export class Player {
     }
 
     this.updateBox();
+    const startX = this.x, startZ = this.z;
     const wantX = this.vx * dt;
-    const dx = clipAxis(this.box, 0, wantX, getBlock);
+    let dx = clipAxis(this.box, 0, wantX, getBlock, getMeta);
     this.x += dx;
     this.updateBox();
     const wantZ = this.vz * dt;
-    const dz = clipAxis(this.box, 2, wantZ, getBlock);
+    let dz = clipAxis(this.box, 2, wantZ, getBlock, getMeta);
     this.z += dz;
     this.horizontalCollision = dx !== wantX || dz !== wantZ;
+    if (this.horizontalCollision && (wasOnGround || this.onGround) && !this.inWater && !this.flying
+      && this.stepUp(startX, startZ, wantX, wantZ, dx, dz, getBlock, getMeta)) {
+      // Climbed a slab or stair: the distance covered is the stepped one.
+      dx = this.x - startX;
+      dz = this.z - startZ;
+      this.horizontalCollision = false;
+      this.onGround = true;
+    }
     if (dx !== wantX) this.vx = 0;
     if (dz !== wantZ) this.vz = 0;
 
@@ -185,9 +198,38 @@ export class Player {
     }
   }
 
+  /**
+   * Minecraft's step height: when walking into a ledge of at most 0.6 blocks (slab, stair), tries the same
+   * move from 0.6 higher and drops back down. Keeps the result when it gets further than the flat move.
+   */
+  private stepUp(
+    startX: number, startZ: number, wantX: number, wantZ: number, dx: number, dz: number, getBlock: BlockGetter, getMeta?: BlockGetter,
+  ): boolean {
+    const hw = PHYSICS.WIDTH / 2;
+    const b = this.box;
+    b.minX = startX - hw; b.maxX = startX + hw;
+    b.minZ = startZ - hw; b.maxZ = startZ + hw;
+    b.minY = this.y; b.maxY = this.y + PHYSICS.HEIGHT;
+    const up = clipAxis(b, 1, STEP_HEIGHT, getBlock, getMeta);
+    if (up <= 0) { this.updateBox(); return false; }
+    b.minY += up; b.maxY += up;
+    const sdx = clipAxis(b, 0, wantX, getBlock, getMeta);
+    b.minX += sdx; b.maxX += sdx;
+    const sdz = clipAxis(b, 2, wantZ, getBlock, getMeta);
+    b.minZ += sdz; b.maxZ += sdz;
+    const down = clipAxis(b, 1, -up, getBlock, getMeta);
+    // Only a step if we land on something and got further than before.
+    if (down <= -up + 1e-6 || sdx * sdx + sdz * sdz <= dx * dx + dz * dz + 1e-9) { this.updateBox(); return false; }
+    this.x = startX + sdx;
+    this.z = startZ + sdz;
+    this.y += up + down;
+    this.updateBox();
+    return true;
+  }
+
   /** Pushes the player up if they end up inside a block (e.g. spawn in a tree). */
-  unstick(getBlock: BlockGetter): void {
-    for (let i = 0; i < 64 && boxIntersectsSolid(this.updateBox(), getBlock); i++) this.y += 1;
+  unstick(getBlock: BlockGetter, getMeta?: BlockGetter): void {
+    for (let i = 0; i < 64 && boxIntersectsSolid(this.updateBox(), getBlock, getMeta); i++) this.y += 1;
     this.prevY = this.y;
   }
 }
