@@ -63,10 +63,11 @@ wat al is doorgevoerd.
 ## 4. Gameplay en motivatie (op volgorde van plezier per moeite)
 
 1. **Elke drop een nut geven (S):**
-   - goud-ingot en gouden tools;
-   - TNT (buskruit + zand);
-   - bed (wol + planken: spawnpunt en nacht overslaan);
-   - vuursteen, pijl en boog (veer + stok + vuursteen uit grind).
+   - goud-ingot en gouden tools: **Gedaan** (goudeerts smelten; snelheid 12, duurzaamheid 32, oogstniveau hout);
+   - TNT (5 buskruit + 4 zand), Flint and Steel (ijzer + vuursteen): **Gedaan** (lont 80 ticks, kracht 4, kettingreactie met korte lont, onder water geen blokschade). In multiplayer blijft TNT inert tot de server explosies synchroniseert;
+   - vuursteen: **Gedaan** (grind, 10%);
+   - bed (wol + planken: spawnpunt en nacht overslaan): wacht op block states (een bed is 2 blokken met een richting);
+   - pijl en boog: wacht op spin (draad) en skeleton.
 2. **~15 advancements (S–M):** "Getting Wood", "Stone Age", "Acquire Hardware", "Diamonds!", met toast-meldingen. Ze dienen ook als tutorial.
 3. **Kisten met loot (M):** nodig voor alle structuren.
 4. **Block states (L):** een `meta`-array per chunk. Dit ontgrendelt stromend water en lava, obsidiaan, slabs, trappen, deuren, ladders, muurfakkels, gewassen en een oven met een richting.

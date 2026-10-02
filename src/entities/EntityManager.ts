@@ -7,6 +7,7 @@ import type { World } from '../world/World';
 import { ItemEntity } from './ItemEntity';
 import { Mob, type MobEvents, type MobTarget } from './Mob';
 import { HOSTILE_KINDS, MOB_TYPES, type MobKind, PASSIVE_KINDS } from './MobTypes';
+import { PrimedTnt, TNT_FUSE } from './PrimedTnt';
 
 const MAX_PASSIVE = 24;
 const MAX_HOSTILE = 16;
@@ -25,6 +26,7 @@ export interface PickupHandler {
 export class EntityManager {
   readonly mobs: Mob[] = [];
   readonly items: ItemEntity[] = [];
+  readonly tnt: PrimedTnt[] = [];
   private readonly spawnedChunks = new Set<number>();
   private tickCount = 0;
   hostileSpawning = true;
@@ -38,6 +40,7 @@ export class EntityManager {
   clear(): void {
     this.mobs.length = 0;
     this.items.length = 0;
+    this.tnt.length = 0;
     this.spawnedChunks.clear();
   }
 
@@ -65,6 +68,14 @@ export class EntityManager {
       e.vy = 3 + Math.random() * 2;
     }
     this.items.push(e);
+  }
+
+  /** Lights TNT at a block position (the block itself must already be removed). */
+  primeTnt(x: number, y: number, z: number, fuse = TNT_FUSE): PrimedTnt {
+    const t = new PrimedTnt(fuse);
+    t.setPosition(x + 0.5, y, z + 0.5);
+    this.tnt.push(t);
+    return t;
   }
 
   /** Seeded passive group for a freshly loaded chunk (grass surface, daylight). */
@@ -162,6 +173,11 @@ export class EntityManager {
       }
     }
 
+    for (let i = 0; i < this.tnt.length; i++) {
+      const t = this.tnt[i];
+      if (!t.removed && t.tick(getBlock)) events.tntExplode(t);
+    }
+
     for (const it of this.items) {
       if (it.removed) continue;
       it.tick(getBlock);
@@ -203,6 +219,7 @@ export class EntityManager {
   private compact(): void {
     for (let i = this.mobs.length - 1; i >= 0; i--) if (this.mobs[i].removed) this.mobs.splice(i, 1);
     for (let i = this.items.length - 1; i >= 0; i--) if (this.items[i].removed) this.items.splice(i, 1);
+    for (let i = this.tnt.length - 1; i >= 0; i--) if (this.tnt[i].removed) this.tnt.splice(i, 1);
   }
 
   /** Nearest living mob hit by a ray, with distance. */

@@ -91,6 +91,9 @@ const PIXEL_PERFECTION: PackLayout = {
     furnace_front: 'default_furnace_front',
     furnace_top: 'default_furnace_top',
     furnace_side: 'default_furnace_side',
+    tnt_top: 'tnt_top',
+    tnt_side: 'tnt_side',
+    tnt_bottom: 'tnt_bottom',
   },
 };
 
@@ -158,6 +161,9 @@ export const MINECRAFT_LAYOUT: PackLayout = {
     furnace_front: 'furnace_front',
     furnace_top: 'furnace_top',
     furnace_side: 'furnace_side',
+    tnt_top: 'tnt_top',
+    tnt_side: 'tnt_side',
+    tnt_bottom: 'tnt_bottom',
     ...Object.fromEntries(Array.from({ length: 10 }, (_, i) => [`destroy_${i}`, `destroy_stage_${i}`])),
   },
   masks: { grass_side: 'grass_block_side_overlay' },

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { EntityManager } from '../entities/EntityManager';
 import type { PlayerInventory } from '../items/Inventory';
-import { blockDrop, breakSeconds, getItemDef, isBlockItem } from '../items/ItemRegistry';
+import { ITEM, blockDrop, breakSeconds, getItemDef, isBlockItem } from '../items/ItemRegistry';
 import { type GameMode, hasSurvivalRules } from '../player/GameMode';
 import { PHYSICS } from '../player/Physics';
 import type { Player } from '../player/Player';
@@ -28,6 +28,8 @@ export interface InteractionDeps {
   hand: HandRenderer;
   audio: AudioEngine;
   camera: THREE.PerspectiveCamera;
+  /** Lights the TNT block at a position; false when not allowed (multiplayer). */
+  igniteTnt(x: number, y: number, z: number): boolean;
 }
 
 /**
@@ -209,6 +211,10 @@ export class Interaction {
     const { world, player, hotbar, inventory, audio, renderer, hand } = this.d;
     const hit = this.ray;
     const id = hotbar.selectedBlock;
+    if (id === ITEM.FLINT_AND_STEEL) {
+      this.useFlintAndSteel(mode);
+      return;
+    }
     if (!id || !isBlockItem(id)) return;
     let x = hit.x + hit.nx, y = hit.y + hit.ny, z = hit.z + hit.nz;
     // Placing onto grass/flowers replaces them, like in Minecraft.
@@ -228,5 +234,15 @@ export class Interaction {
     renderer.particles.spawnFace(x - hit.nx, y - hit.ny, z - hit.nz, hit.nx, hit.ny, hit.nz, id, world.getLight(x, y, z), 3, world.tintAt(x, z, id));
     if (hasSurvivalRules(mode)) inventory.consumeSlot(hotbar.selected);
     this.breakProgress = 0;
+  }
+
+  /** Flint and steel lights TNT (fire blocks don't exist yet, so other blocks are unaffected). */
+  private useFlintAndSteel(mode: GameMode): void {
+    const { hotbar, inventory, audio, hand } = this.d;
+    const hit = this.ray;
+    hand.swingHand();
+    if (hit.id !== BLOCK.TNT || !this.d.igniteTnt(hit.x, hit.y, hit.z)) return;
+    audio.playIgnite(1);
+    if (hasSurvivalRules(mode)) inventory.damageTool(hotbar.selected);
   }
 }

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { EntityManager } from '../entities/EntityManager';
 import { ItemRenderer } from '../entities/ItemRenderer';
+import { TntRenderer } from '../entities/TntRenderer';
 import type { Mob, MobEvents } from '../entities/Mob';
 import { MobRenderer } from '../entities/MobRenderer';
 import { NetClient } from '../net/NetClient';
@@ -84,6 +85,7 @@ export class Game {
   private readonly hand: HandRenderer;
   private readonly mobRenderer: MobRenderer;
   private readonly itemRenderer: ItemRenderer;
+  private readonly tntRenderer: TntRenderer;
   private readonly debug = new DebugOverlay();
   private readonly remote = new RemotePlayers();
   private readonly chat = new Chat();
@@ -154,8 +156,9 @@ export class Game {
     this.hand = new HandRenderer(this.renderer.uniforms, this.icons);
     this.mobRenderer = new MobRenderer(this.renderer.uniforms);
     this.itemRenderer = new ItemRenderer(this.renderer.uniforms, this.icons);
-    this.renderer.scene.add(this.mobRenderer.group, this.itemRenderer.mesh);
-    this.renderer.shadowExcluded.push(this.mobRenderer.group, this.itemRenderer.mesh);
+    this.tntRenderer = new TntRenderer(this.renderer.uniforms);
+    this.renderer.scene.add(this.mobRenderer.group, this.itemRenderer.mesh, this.tntRenderer.mesh);
+    this.renderer.shadowExcluded.push(this.mobRenderer.group, this.itemRenderer.mesh, this.tntRenderer.mesh);
     this.renderer.afterMain = (three) => {
       if (this.state === 'playing' || this.state === 'inventory' || this.state === 'paused' || this.state === 'chat') this.hand.render(three);
     };
@@ -357,6 +360,13 @@ export class Game {
     this.interaction = new Interaction({
       world, player: this.player, stats: this.stats, inventory: this.playerInventory, hotbar: this.hotbar,
       entities, renderer: this.renderer, hand: this.hand, audio: this.audio, camera: this.cam.camera,
+      igniteTnt: (x, y, z) => {
+        // Explosions are not synchronised yet: TNT stays inert on multiplayer servers.
+        if (this.net) return false;
+        if (!world.setBlock(x, y, z, BLOCK.AIR)) return false;
+        entities.primeTnt(x, y, z);
+        return true;
+      },
     });
     return world;
   }
@@ -788,6 +798,7 @@ export class Game {
     for (const m of this.remote.mobs) list.push(m);
     this.mobRenderer.update(list, alpha, world);
     this.itemRenderer.update(e.items, alpha, this.time, world);
+    this.tntRenderer.update(e.tnt, alpha, world);
   }
 
   private updateMenu(dt: number): void {
@@ -841,18 +852,28 @@ export class Game {
       }
     },
     explode: (mob) => this.explode(mob, mob.x, mob.y + 0.5, mob.z, 3),
+    tntExplode: (t) => this.explode(null, t.x, t.y + 0.49, t.z, 4, t.inWater),
     sound: (mob, kind) => {
       const d = Math.hypot(mob.x - this.player.x, mob.y - this.player.y, mob.z - this.player.z);
       this.audio.playMob(mob.type.kind, kind, Math.max(0, 1 - d / 16));
     },
   };
 
-  /** Creeper explosion: blocks, drops, damage with distance falloff, knockback, effects. */
-  private explode(source: Mob | null, x: number, y: number, z: number, power: number): void {
+  /**
+   * Creeper or TNT explosion: blocks, drops, damage with distance falloff, knockback, effects.
+   * Under water (like Minecraft) it hurts entities but leaves the blocks intact.
+   */
+  private explode(source: Mob | null, x: number, y: number, z: number, power: number, inWater = false): void {
     const world = this.world!, entities = this.entities!;
-    const destroyed = world.explode(x, y, z, power * 1.3);
-    // Drop roughly 1/power of the destroyed blocks, like Minecraft.
-    for (const id of destroyed) {
+    const positions: number[] = [];
+    const destroyed = inWater ? [] : world.explode(x, y, z, power * 1.3, positions);
+    // Drop roughly 1/power of the destroyed blocks, like Minecraft; caught TNT lights with a short fuse.
+    for (let i = 0; i < destroyed.length; i++) {
+      const id = destroyed[i];
+      if (id === BLOCK.TNT) {
+        entities.primeTnt(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2], 10 + Math.floor(Math.random() * 20));
+        continue;
+      }
       if (Math.random() < 1 / power && getBlockDef(id)?.inInventory) {
         const drop = blockDrop(id, ITEM.DIAMOND_PICKAXE);
         if (drop) entities.dropItem(drop,

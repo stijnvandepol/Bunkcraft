@@ -11,6 +11,7 @@ const TIER_COLORS = [
   ['#5f5f5f', '#7e7e7e', '#9d9d9d'], // stone
   ['#9e9e9e', '#cfcfcf', '#f2f2f2'], // iron
   ['#1f9c96', '#3fd1c9', '#a6f5f0'], // diamond
+  ['#c09a1c', '#f0d43c', '#fff6a8'], // gold
 ];
 const HANDLE = ['#3e2a15', '#5c4024', '#7a5631'];
 
@@ -120,6 +121,19 @@ export function paintItemSprite(key: string): HTMLCanvasElement {
       break;
     case 'ingot':
       for (let y = 6; y < 11; y++) for (let x = 2 + (10 - y); x < 14 - (y - 6); x++) px(x, y, y === 6 ? '#ffffff' : pick(['#d8d8d8', '#c4c4c4', '#e6e6e6']));
+      break;
+    case 'gold_ingot':
+      for (let y = 6; y < 11; y++) for (let x = 2 + (10 - y); x < 14 - (y - 6); x++) px(x, y, y === 6 ? '#fffbd0' : pick(['#f0d43c', '#e2bd22', '#f8e46a']));
+      break;
+    case 'flint':
+      blob(px, 8, 8, 4, 5.5, (x, y) => (x + y < 13 ? pick(['#5a5a5a', '#6a6a6a']) : pick(['#2e2e2e', '#3c3c3c', '#262626'])));
+      line(px, [[6, 4], [7, 4], [5, 5]], '#8a8a8a');
+      break;
+    case 'flint_and_steel':
+      // Steel striker (top left) and a flint (bottom right), as in Minecraft.
+      line(px, [[3, 3], [4, 3], [5, 3], [6, 3], [2, 4], [2, 5], [2, 6], [3, 7], [7, 4], [7, 5], [6, 6], [5, 7], [4, 7]], '#c4c4c4');
+      line(px, [[3, 4], [4, 4], [5, 4], [6, 4], [3, 5], [3, 6], [6, 5], [5, 6], [4, 6]], '#8a8a8a');
+      blob(px, 10.5, 10.5, 3.2, 3.2, (x, y) => (x + y < 20 ? '#6a6a6a' : pick(['#2e2e2e', '#3c3c3c'])));
       break;
     case 'stick':
       for (let i = 0; i < 10; i++) { px(4 + i, 12 - i, '#6e4e2c'); px(5 + i, 12 - i, '#4a3219'); }

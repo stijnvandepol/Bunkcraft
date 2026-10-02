@@ -102,9 +102,10 @@ export class World {
 
   /**
    * Explosion: clears a noisy sphere of blocks in one batch and remeshes each touched
-   * chunk once (instead of 9 remeshes per block). Returns the ids that were destroyed.
+   * chunk once (instead of 9 remeshes per block). Returns the ids that were destroyed;
+   * `positions` (optional) receives x, y, z of each destroyed block in the same order.
    */
-  explode(cx: number, cy: number, cz: number, radius: number): number[] {
+  explode(cx: number, cy: number, cz: number, radius: number, positions?: number[]): number[] {
     const destroyed: number[] = [];
     const cleared: number[] = [];
     const touched = new Set<Chunk>();
@@ -129,6 +130,7 @@ export class World {
           this.dirtyEditChunks.add(c.key);
           touched.add(c);
           destroyed.push(id);
+          positions?.push(x, y, z);
         }
       }
     }

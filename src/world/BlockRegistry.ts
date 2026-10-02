@@ -101,6 +101,7 @@ export const BLOCK = {
   LAVA: 44,
   CRAFTING_TABLE: 45,
   FURNACE: 46,
+  TNT: 47,
   /** Sentinel returned for blocks in chunks that are not loaded (treated as solid). */
   UNLOADED: 255,
 } as const;
@@ -184,6 +185,7 @@ export const BLOCK_DEFS: BlockDef[] = [
   },
   cube(B.CRAFTING_TABLE, 'crafting_table', 'Crafting Table', { top: 'crafting_table_top', bottom: 'oak_planks', side: 'crafting_table_side' }, 0.8, 'wood'),
   cube(B.FURNACE, 'furnace', 'Furnace', { top: 'furnace_top', bottom: 'furnace_top', side: 'furnace_side', front: 'furnace_front' }, 1.2, 'stone'),
+  cube(B.TNT, 'tnt', 'TNT', { top: 'tnt_top', bottom: 'tnt_bottom', side: 'tnt_side' }, 0, 'grass'),
 ];
 
 /** Extra texture layers that are not tied to a block face (crack overlay stages). */

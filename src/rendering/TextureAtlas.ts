@@ -486,7 +486,34 @@ function paintFurnace(img: Img, r: Rand, front: boolean): void {
   for (let x = 4; x < 12; x++) img.set(x, 3, rim);
 }
 
+/** TNT: red paper sides with a white label band, fuse on top, plain bottom. */
+function paintTnt(img: Img, r: Rand, part: 'top' | 'side' | 'bottom'): void {
+  const red = P('#c8301e', '#d63a26', '#b82a1a'), paper = P('#e8e2d4', '#d9d2c2');
+  if (part !== 'side') {
+    noisy(img, r, P('#b5341f', '#c43c24', '#a62e1c'), 0.4, 3);
+    if (part === 'top') {
+      for (let y = 6; y < 10; y++) for (let x = 6; x < 10; x++) img.set(x, y, hex('#2a2a2a'));
+      img.set(7, 7, hex('#6a6a6a')); img.set(8, 8, hex('#6a6a6a'));
+    }
+    return;
+  }
+  for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) {
+    const band = y >= 5 && y <= 10;
+    img.set(x, y, band ? pick(paper, r()) : shade(pick(red, r()), x % 4 === 0 ? 0.82 : 1));
+  }
+  // "TNT" lettering on the label.
+  const ink = hex('#1e1e1e');
+  const T = [[0, 0], [1, 0], [2, 0], [1, 1], [1, 2], [1, 3]];
+  const N = [[0, 0], [0, 1], [0, 2], [0, 3], [1, 1], [2, 2], [3, 0], [3, 1], [3, 2], [3, 3]];
+  for (const [x, y] of T) img.set(2 + x, 6 + y, ink);
+  for (const [x, y] of N) img.set(6 + x, 6 + y, ink);
+  for (const [x, y] of T) img.set(11 + x, 6 + y, ink);
+}
+
 const PAINTERS: Record<string, (img: Img, r: Rand) => void> = {
+  tnt_top: (i, r) => paintTnt(i, r, 'top'),
+  tnt_side: (i, r) => paintTnt(i, r, 'side'),
+  tnt_bottom: (i, r) => paintTnt(i, r, 'bottom'),
   torch: paintTorch,
   crafting_table_top: paintCraftingTop,
   crafting_table_side: paintCraftingSide,

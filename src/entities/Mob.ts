@@ -2,6 +2,7 @@ import type { BlockGetter } from '../player/Collision';
 import { OPAQUE, SOLID } from '../world/BlockRegistry';
 import { Entity } from './Entity';
 import type { MobType } from './MobTypes';
+import type { PrimedTnt } from './PrimedTnt';
 
 export interface MobTarget {
   x: number;
@@ -15,6 +16,8 @@ export interface MobEvents {
   /** Melee hit on the player. */
   attack(mob: Mob, damage: number): void;
   explode(mob: Mob): void;
+  /** Lit TNT whose fuse ran out. */
+  tntExplode(tnt: PrimedTnt): void;
   sound(mob: Mob, kind: 'idle' | 'hurt' | 'death' | 'fuse'): void;
 }
 

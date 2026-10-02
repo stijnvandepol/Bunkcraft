@@ -16,6 +16,9 @@ export const ITEM = {
   DIAMOND: 264,
   IRON_INGOT: 265,
   STICK: 266,
+  GOLD_INGOT: 267,
+  FLINT: 268,
+  FLINT_AND_STEEL: 269,
   WOODEN_PICKAXE: 270,
   STONE_PICKAXE: 271,
   IRON_PICKAXE: 272,
@@ -36,13 +39,17 @@ export const ITEM = {
   STEAK: 291,
   COOKED_MUTTON: 292,
   COOKED_CHICKEN: 293,
+  GOLDEN_PICKAXE: 294,
+  GOLDEN_AXE: 295,
+  GOLDEN_SHOVEL: 296,
+  GOLDEN_SWORD: 297,
 } as const;
 
 export type ToolKind = 'pickaxe' | 'axe' | 'shovel' | 'sword';
 
 export interface ToolInfo {
   kind: ToolKind;
-  /** 0 wood, 1 stone, 2 iron, 3 diamond */
+  /** Harvest level: 0 wood/gold, 1 stone, 2 iron, 3 diamond */
   tier: number;
   speed: number;
   durability: number;
@@ -56,6 +63,8 @@ export interface ItemDef {
   maxStack: number;
   food?: { hunger: number; saturation: number };
   tool?: ToolInfo;
+  /** Uses before breaking, for non-tool items that wear out (flint and steel). */
+  durability?: number;
   /** Sprite painter key for non-block items (see ItemIcons). */
   sprite?: string;
 }
@@ -97,6 +106,9 @@ add({ id: ITEM.COAL, name: 'coal', displayName: 'Coal', maxStack: 64, sprite: 'c
 add({ id: ITEM.DIAMOND, name: 'diamond', displayName: 'Diamond', maxStack: 64, sprite: 'diamond' });
 add({ id: ITEM.IRON_INGOT, name: 'iron_ingot', displayName: 'Iron Ingot', maxStack: 64, sprite: 'ingot' });
 add({ id: ITEM.STICK, name: 'stick', displayName: 'Stick', maxStack: 64, sprite: 'stick' });
+add({ id: ITEM.GOLD_INGOT, name: 'gold_ingot', displayName: 'Gold Ingot', maxStack: 64, sprite: 'gold_ingot' });
+add({ id: ITEM.FLINT, name: 'flint', displayName: 'Flint', maxStack: 64, sprite: 'flint' });
+add({ id: ITEM.FLINT_AND_STEEL, name: 'flint_and_steel', displayName: 'Flint and Steel', maxStack: 1, durability: 64, sprite: 'flint_and_steel' });
 
 const TOOL_BASE: Record<ToolKind, { id: number; damage: number }> = {
   pickaxe: { id: ITEM.WOODEN_PICKAXE, damage: 2 },
@@ -115,6 +127,15 @@ for (const [kind, base] of Object.entries(TOOL_BASE) as [ToolKind, { id: number;
       tool: { kind, tier, speed: t.speed, durability: t.durability, damage: base.damage + t.damage },
     });
   });
+  // Golden tools: fastest, but wood harvest level and very low durability (Minecraft values).
+  add({
+    id: ITEM.GOLDEN_PICKAXE + Object.keys(TOOL_BASE).indexOf(kind),
+    name: `golden_${kind}`,
+    displayName: `Golden ${kind[0].toUpperCase()}${kind.slice(1)}`,
+    maxStack: 1,
+    sprite: `${kind}_4`,
+    tool: { kind, tier: 0, speed: 12, durability: 32, damage: base.damage },
+  });
 }
 
 export function getItemDef(id: number): ItemDef | undefined {
@@ -124,6 +145,12 @@ export function getItemDef(id: number): ItemDef | undefined {
     return b ? { id, name: b.name, displayName: b.displayName, maxStack: 64 } : undefined;
   }
   return items.get(id);
+}
+
+/** Uses before the item breaks (tools, flint and steel); 0 = does not wear out. */
+export function maxDurability(id: number): number {
+  const def = getItemDef(id);
+  return def?.tool?.durability ?? def?.durability ?? 0;
 }
 
 export function itemName(id: number): string {
@@ -181,6 +208,7 @@ const MINING: Record<number, Mining> = {
   [B.BLUE_WOOL]: { hardness: 0.8 },
   [B.YELLOW_WOOL]: { hardness: 0.8 },
   [B.GREEN_WOOL]: { hardness: 0.8 },
+  [B.TNT]: { hardness: 0 },
 };
 
 /**
@@ -214,6 +242,8 @@ export function blockDrop(blockId: number, held: number): ItemStack | null {
     case B.STONE: return { id: B.COBBLESTONE, count: 1 };
     case B.COAL_ORE: return { id: ITEM.COAL, count: 1 };
     case B.DIAMOND_ORE: return { id: ITEM.DIAMOND, count: 1 };
+    // Gravel drops flint 10% of the time (no Fortune).
+    case B.GRAVEL: return { id: Math.random() < 0.1 ? ITEM.FLINT : B.GRAVEL, count: 1 };
     case B.GLASS: case B.TALL_GRASS: case B.DEAD_BUSH: case B.WATER: case B.LAVA: case B.BEDROCK:
       return null;
     case B.OAK_LEAVES: case B.BIRCH_LEAVES: case B.SPRUCE_LEAVES:

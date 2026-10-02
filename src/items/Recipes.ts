@@ -37,10 +37,13 @@ export const RECIPES: Recipe[] = [
   { result: { id: B.STONE_BRICKS, count: 4 }, ingredients: [one(B.STONE, 4)], station: 'table' },
   { result: { id: B.SANDSTONE, count: 1 }, ingredients: [one(B.SAND, 4)], station: 'hand' },
   { result: { id: B.BOOKSHELF, count: 1 }, ingredients: [any(PLANKS, 6)], station: 'table' },
+  { result: { id: B.TNT, count: 1 }, ingredients: [one(ITEM.GUNPOWDER, 5), one(B.SAND, 4)], station: 'table' },
+  { result: { id: ITEM.FLINT_AND_STEEL, count: 1 }, ingredients: [one(ITEM.IRON_INGOT), one(ITEM.FLINT)], station: 'hand' },
   // Smelting.
   { result: { id: B.GLASS, count: 1 }, ingredients: [one(B.SAND), any(FUEL, 1)], station: 'furnace' },
   { result: { id: B.STONE, count: 1 }, ingredients: [one(B.COBBLESTONE), any(FUEL, 1)], station: 'furnace' },
   { result: { id: ITEM.IRON_INGOT, count: 1 }, ingredients: [one(B.IRON_ORE), any(FUEL, 1)], station: 'furnace' },
+  { result: { id: ITEM.GOLD_INGOT, count: 1 }, ingredients: [one(B.GOLD_ORE), any(FUEL, 1)], station: 'furnace' },
   { result: { id: ITEM.COAL, count: 1 }, ingredients: [one(B.OAK_LOG), any(FUEL, 1)], station: 'furnace' },
   { result: { id: ITEM.COOKED_PORKCHOP, count: 1 }, ingredients: [one(ITEM.PORKCHOP), any(FUEL, 1)], station: 'furnace' },
   { result: { id: ITEM.STEAK, count: 1 }, ingredients: [one(ITEM.BEEF), any(FUEL, 1)], station: 'furnace' },
@@ -60,6 +63,11 @@ for (const [base, heads, sticks] of TOOLS) {
       ingredients: [{ ids: mat.ids, count: heads }, one(ITEM.STICK, sticks)],
       station: 'table',
     });
+  });
+  RECIPES.push({
+    result: { id: ITEM.GOLDEN_PICKAXE + TOOLS.findIndex((t) => t[0] === base), count: 1 },
+    ingredients: [one(ITEM.GOLD_INGOT, heads), one(ITEM.STICK, sticks)],
+    station: 'table',
   });
 }
 

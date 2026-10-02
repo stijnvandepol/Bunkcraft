@@ -1,5 +1,5 @@
 import { HOTBAR_SLOTS, INVENTORY_SLOTS, PlayerInventory } from '../items/Inventory';
-import { type ItemStack, getItemDef, itemName } from '../items/ItemRegistry';
+import { type ItemStack, itemName, maxDurability } from '../items/ItemRegistry';
 import { RECIPES, type Recipe, type Station, canCraft, craft } from '../items/Recipes';
 import type { BlockIcons } from './BlockIcons';
 import { h } from './dom';
@@ -104,9 +104,9 @@ export class SurvivalInventory {
     const el = h('div', { class: `inv-slot ${extraClass}` },
       stack.id ? h('img', { src: this.icons.get(stack.id), draggable: false, alt: '' }) : null,
       stack.count > 1 ? h('span', { class: 'slot-count', text: String(stack.count) }) : null);
-    const tool = getItemDef(stack.id)?.tool;
-    if (tool && stack.damage) {
-      const wear = 1 - stack.damage / tool.durability;
+    const max = maxDurability(stack.id);
+    if (max && stack.damage) {
+      const wear = 1 - stack.damage / max;
       el.append(h('div', { class: 'slot-durability' }, h('i', { style: `width:${Math.round(wear * 100)}%;background:hsl(${Math.round(wear * 120)},100%,50%)` })));
     }
     return el;

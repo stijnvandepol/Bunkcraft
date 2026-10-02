@@ -60,7 +60,8 @@ const COMMON_VERTEX = /* glsl */ `
   }
 `;
 
-const COMMON_FRAGMENT = /* glsl */ `
+/** Light curve and fog shared by every world-lit shader (chunks, water, block entities). */
+export const COMMON_FRAGMENT = /* glsl */ `
   precision highp sampler2DArray;
   uniform sampler2DArray uAtlas;
   uniform float uDaylight;

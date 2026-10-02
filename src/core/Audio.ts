@@ -234,6 +234,12 @@ export class AudioEngine {
     this.voice('sine', 70, 30, 1.0, Math.min(1, volume) * 0.8);
   }
 
+  /** Flint and steel strike, then the TNT fuse hiss. */
+  playIgnite(volume: number): void {
+    this.noiseBurst(2600, 1.2, 0.08, Math.min(1, volume) * 0.5);
+    this.noiseBurst(3500, 0.6, 1.4, Math.min(1, volume) * 0.5, 'highpass', 0.05);
+  }
+
   playPop(): void {
     this.voice('sine', 900 + Math.random() * 400, 1800, 0.08, 0.25);
   }

@@ -1,5 +1,5 @@
 import { HOTBAR_SLOTS, type PlayerInventory } from '../items/Inventory';
-import { type ItemStack, getItemDef } from '../items/ItemRegistry';
+import { type ItemStack, getItemDef, maxDurability } from '../items/ItemRegistry';
 import type { BlockIcons } from './BlockIcons';
 import { h } from './dom';
 
@@ -72,10 +72,10 @@ export class Hotbar {
       this.iconEls[i].src = s.id ? this.icons.get(s.id) : '';
       this.iconEls[i].style.visibility = s.id ? 'visible' : 'hidden';
       this.countEls[i].textContent = this.showCounts && s.count > 1 ? String(s.count) : '';
-      const tool = getItemDef(s.id)?.tool;
-      const wear = tool && s.damage ? 1 - s.damage / tool.durability : 1;
-      this.duraEls[i].classList.toggle('hidden', !tool || wear >= 1 || !this.showCounts);
-      if (tool) {
+      const max = maxDurability(s.id);
+      const wear = max && s.damage ? 1 - s.damage / max : 1;
+      this.duraEls[i].classList.toggle('hidden', !max || wear >= 1 || !this.showCounts);
+      if (max) {
         const bar = this.duraEls[i].firstElementChild as HTMLElement;
         bar.style.width = `${Math.round(wear * 100)}%`;
         bar.style.background = `hsl(${Math.round(wear * 120)}, 100%, 50%)`;

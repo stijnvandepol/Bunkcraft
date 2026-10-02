@@ -1,4 +1,4 @@
-import { type ItemStack, getItemDef } from './ItemRegistry';
+import { type ItemStack, getItemDef, maxDurability } from './ItemRegistry';
 
 export const HOTBAR_SLOTS = 9;
 export const INVENTORY_SLOTS = 36; // 0–8 hotbar, 9–35 main inventory
@@ -86,10 +86,10 @@ export class PlayerInventory {
   /** Damages the tool in a slot; returns true when it broke. */
   damageTool(i: number): boolean {
     const s = this.slots[i];
-    const tool = getItemDef(s.id)?.tool;
-    if (!tool) return false;
+    const max = maxDurability(s.id);
+    if (!max) return false;
     s.damage = (s.damage ?? 0) + 1;
-    const broke = s.damage >= tool.durability;
+    const broke = s.damage >= max;
     if (broke) this.slots[i] = { id: 0, count: 0 };
     this.onChange?.();
     return broke;
