@@ -8,9 +8,10 @@ import { KEY_A, type TestServer, cleanup, createRoom, joinGame, startTestServer 
 const inv = (...stacks: number[][]): number[][] => [...stacks, ...Array.from({ length: 36 - stacks.length }, () => [0, 0, 0])];
 
 describe('parseInventory', () => {
-  it('accepts well-formed inventories and ignores extra columns', () => {
+  it('accepts well-formed inventories, integer data columns, and rejects garbage columns', () => {
     expect(parseInventory(inv([BLOCK.STONE, 64, 0])).error).toBeUndefined();
-    expect(parseInventory([[BLOCK.STONE, 64, 0, { some: 'data' }]] as unknown as number[][]).error).toBeUndefined();
+    expect(parseInventory([[BLOCK.STONE, 64, 0, 0, 3]]).error).toBeUndefined(); // key index, value
+    expect(parseInventory([[BLOCK.STONE, 64, 0, { some: 'data' }]] as unknown as number[][]).error).toMatch(/item data/);
     expect(parseInventory([]).error).toBeUndefined();
   });
 
@@ -20,7 +21,8 @@ describe('parseInventory', () => {
     expect(parseInventory(inv([BLOCK.STONE, 0, 0])).error).toMatch(/stack size/);
     expect(parseInventory(inv([BLOCK.STONE, -3, 0])).error).toMatch(/stack size/);
     expect(parseInventory(inv([BLOCK.STONE, 1.5, 0])).error).toBeDefined();
-    expect(parseInventory([...inv(), [BLOCK.STONE, 1, 0]]).error).toMatch(/too many/);
+    // 36 inventory slots + 4 worn armor slots is the most there can be.
+    expect(parseInventory(Array.from({ length: 41 }, () => [0, 0, 0])).error).toMatch(/too many/);
     expect(parseInventory(inv([ITEM.WOODEN_PICKAXE, 2, 0])).error).toMatch(/stack size/); // tools do not stack
     expect(parseInventory(inv([ITEM.WOODEN_PICKAXE, 1, 100000])).error).toMatch(/damage/);
     expect(parseInventory('lots').error).toBeDefined();
