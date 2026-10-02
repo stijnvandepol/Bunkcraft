@@ -38,7 +38,7 @@ wat al is doorgevoerd.
 | Allocaties per frame (`rayHit`-arrays, closures, template-strings, iterators) | S |
 | Lege mob-meshes nog steeds in de render-loop; `getLight` per mob per frame | S |
 | Gedeelde GLSL voor licht en mist (5 kopieën lopen nu uiteen; entities missen de onderwater-mist) | S |
-| Worker-crash: jobs blijven "in flight" en het streamen stopt | S/M: worker vervangen, job opnieuw inplannen |
+| Worker-crash: jobs blijven "in flight" en het streamen stopt | **Gedaan:** worker vervangen, job opnieuw ingepland (max. 3 pogingen, daarna laat `ChunkManager` de chunk opnieuw proberen); Vitest met nep-worker |
 | `Game.ts` (~1000 regels) opsplitsen: GameStateMachine, WorldSession, SimulationLoop, Combat, DebugInfo | M |
 | Save-formaatversie en migraties, nodig vóór block states | S |
 | Instellingen valideren (min/max/enum) uit `localStorage` | S |

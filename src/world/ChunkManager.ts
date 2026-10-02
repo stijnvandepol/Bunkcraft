@@ -159,6 +159,11 @@ export class ChunkManager {
       chunk.version++;
       this.onGenerated?.(chunk);
       this.scanNeeded = true;
+    }, [], false, () => {
+      // The worker crashed repeatedly on this job: let the next scan try again.
+      this.genInFlight--;
+      chunk.state = CHUNK_EMPTY;
+      this.scanNeeded = true;
     });
   }
 
@@ -193,7 +198,11 @@ export class ChunkManager {
       if (urgent) this.uploadMesh(chunk, version, result); // edits skip the upload queue
       else this.results.push({ chunk, version, result });
       this.scanNeeded = true;
-    }, [], urgent);
+    }, [], urgent, () => {
+      this.meshInFlight--;
+      chunk.meshing = false;
+      this.scanNeeded = true;
+    });
   }
 
   private applyResults(budgetBytes: number): void {
