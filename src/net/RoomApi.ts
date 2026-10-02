@@ -47,7 +47,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 /** What the server this page came from supports; null when there is no game server (static hosting). */
 export async function serverInfo(): Promise<ServerInfo | null> {
   try {
-    return await request<ServerInfo>('/api/server');
+    const info = await request<ServerInfo>('/api/server');
+    // Static hosts may answer every path with a page: only a real BunkCraft server reports its features.
+    return typeof info.rooms === 'boolean' && typeof info.main === 'boolean' ? info : null;
   } catch {
     return null;
   }

@@ -33,3 +33,6 @@
   .splash { animation: none !important; }
   .progress-fill { transition: none !important; }
 }
+
+/* Select World has a third button row (Export / Import / Backup All). */
+.worlds-screen .screen-footer.tall { flex-basis: calc(var(--s, 2px) * 80); }
