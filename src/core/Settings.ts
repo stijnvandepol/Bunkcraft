@@ -17,6 +17,11 @@ export interface Settings {
   sensitivity: number;
   soundVolume: number;
   musicVolume: number;
+  /** Ambience (wind, rain, caves, birds) and interface sounds, 0..100. */
+  ambientVolume: number;
+  uiVolume: number;
+  /** Positional audio: simple stereo pan or HRTF (best on headphones). */
+  spatialAudio: 'stereo' | 'hrtf';
   viewBobbing: boolean;
   /** 0 = Auto (largest whole scale that fits 320×240 GUI pixels), otherwise 1–4. */
   guiScale: number;
@@ -42,6 +47,9 @@ export const DEFAULT_SETTINGS: Settings = {
   sensitivity: 100,
   soundVolume: 80,
   musicVolume: 50,
+  ambientVolume: 80,
+  uiVolume: 80,
+  spatialAudio: 'stereo',
   viewBobbing: true,
   guiScale: 0,
   brightness: 50,
@@ -104,6 +112,8 @@ const NUMBER_RANGES = {
   sensitivity: [10, 200],
   soundVolume: [0, 100],
   musicVolume: [0, 100],
+  ambientVolume: [0, 100],
+  uiVolume: [0, 100],
   masterVolume: [0, 100],
   brightness: [0, 100],
   guiScale: [0, 4],
@@ -114,6 +124,7 @@ const ENUM_VALUES = {
   shadows: ['off', 'low', 'high', 'ultra'],
   particles: ['all', 'decreased', 'minimal'],
   clouds: ['fancy', 'off'],
+  spatialAudio: ['stereo', 'hrtf'],
 } as const satisfies Partial<Record<keyof Settings, readonly string[]>>;
 
 const BOOLEAN_KEYS = ['dynamicResolution', 'viewBobbing', 'invertMouse'] as const;

@@ -1,199 +1,446 @@
-import type { BlockSound } from '../world/BlockRegistry';
+import { Ambience, type ListenerState } from './audio/ambience';
+import { STEP_VOLUME, landingKind, landingVolume, splashVolume, type MoveMode } from './audio/cadence';
+import { AudioEnvironment, createEnvironment } from './audio/environment';
+import { buildMix, makeNoiseBuffers, type Mix } from './audio/mixer';
+import { MusicDirector } from './audio/music';
+import type { MusicMode } from './audio/musicTheory';
+import { SOUND_PROFILES, pickVariant, profileFor, type BlockSound, type BlockSoundKind } from './audio/profiles';
+import { MAX_HEAR_DISTANCE, distanceCutoff, distanceGain, occlusionCutoff, occlusionGain, panFor } from './audio/spatial';
+import { Synth, type UiSoundName } from './audio/synth';
+import { Priority, VoiceLimiter } from './audio/voiceLimiter';
 
-interface SoundProfile {
-  type: BiquadFilterType;
-  freq: number;
-  q: number;
-  gain: number;
-  thump?: number;
-  tink?: boolean;
-}
+export type { BlockSound } from './audio/profiles';
+export { SOUND_PROFILES } from './audio/profiles';
+export type { MusicMode } from './audio/musicTheory';
+export type { UiSoundName } from './audio/synth';
 
-const PROFILES: Record<BlockSound, SoundProfile> = {
-  stone: { type: 'bandpass', freq: 1100, q: 0.9, gain: 0.9, thump: 110 },
-  wood: { type: 'bandpass', freq: 520, q: 2.2, gain: 1.0, thump: 170 },
-  grass: { type: 'bandpass', freq: 2600, q: 0.6, gain: 0.7 },
-  gravel: { type: 'bandpass', freq: 1400, q: 0.7, gain: 0.85 },
-  sand: { type: 'highpass', freq: 2200, q: 0.4, gain: 0.55 },
-  glass: { type: 'highpass', freq: 3200, q: 0.6, gain: 0.6, tink: true },
-  wool: { type: 'lowpass', freq: 700, q: 0.5, gain: 0.8 },
-  snow: { type: 'bandpass', freq: 1900, q: 0.5, gain: 0.6 },
-};
+export interface Vec3 { x: number; y: number; z: number }
 
-// Pentatonic scale over two octaves for the ambient music.
-const SCALE = [196.0, 220.0, 261.63, 293.66, 329.63, 392.0, 440.0, 523.25, 587.33, 659.25];
+/** Called for every sound (also when audio is muted or locked): name like `block.break.stone`, position NaN when not positional. */
+export type SoundListener = (name: string, x: number, y: number, z: number, volume: number) => void;
+
+export type ArmorMaterial = 'leather' | 'chain' | 'iron' | 'gold' | 'diamond';
+
+/** Counts solid blocks on the line between two points (for occlusion); installed by the game. */
+export type OcclusionProbe = (x0: number, y0: number, z0: number, x1: number, y1: number, z1: number) => number;
+
+/** Most simultaneous oscillator/noise voices; beyond it the least important voice is dropped. */
+const MAX_VOICES = 64;
+/** Occlusion raycasts per frame (each is at most ~32 block reads). */
+const PROBES_PER_FRAME = 6;
 
 /**
- * Fully procedural audio (no audio assets): filtered noise bursts for block sounds
- * and a sparse generative "piano" with a synthetic reverb for music.
+ * Fully procedural audio (no audio assets). The engine owns the Web Audio graph; the sound design lives in
+ * `./audio/*`: block profiles (`SOUND_PROFILES`), synth voices, ambience, generative music, spatial math.
+ * Mob and weapon sounds below are plain `voice()` / `noiseBurst()` recipes: add yours in `playMob` / `playGun`.
+ *
+ * Every public play method also reports its sound to the listeners ({@link addSoundListener}) so subtitles
+ * can show it, even when the sound itself is muted.
  */
 export class AudioEngine {
-  private ctx: AudioContext | null = null;
-  private sfx!: GainNode;
-  private music!: GainNode;
-  private reverb!: ConvolverNode;
-  private noise!: AudioBuffer;
-  private nextPhrase = 4;
-  private time = 0;
+  private ctx: BaseAudioContext | null = null;
+  private offline = false;
+  private mix!: Mix;
+  private synth!: Synth;
+  private ambience!: Ambience;
+  private music!: MusicDirector;
+  private limiter = new VoiceLimiter(MAX_VOICES);
+
   private soundVolume = 0.8;
   private musicVolume = 0.5;
+  private ambientVolume = 0.8;
+  private uiVolume = 0.8;
+  private userSuspended = false;
+  private gestureInstalled = false;
 
-  /** Must be called from a user gesture (browser autoplay policy). */
+  /** Surroundings of the listener; the game fills it a few times per second (see WorldAudioProbe). */
+  readonly env: AudioEnvironment = createEnvironment();
+  private readonly listener: ListenerState = { x: 0, y: 0, z: 0, yaw: 0 };
+  private hrtf = false;
+  private probe: OcclusionProbe | null = null;
+  private probeBudget = PROBES_PER_FRAME;
+  private armor: ArmorMaterial | null = null;
+  private readonly lastVariant = new Map<string, number>();
+  private readonly listeners = new Set<SoundListener>();
+  /** Single-listener convenience hook; see also {@link addSoundListener}. */
+  onSound: SoundListener | null = null;
+  private weatherRain = 0;
+  private weatherThunder = false;
+  private weatherAuto = true;
+  private pendingMode: MusicMode = 'menu';
+  private pendingIntensity = 0;
+  private pendingLightning: ((distance: number) => void) | null = null;
+
+  // ---------------------------------------------------------------- lifecycle
+
+  /** Must be called from a user gesture (browser autoplay policy). Safe to call repeatedly. */
   unlock(): void {
+    if (this.offline) return;
     if (this.ctx) {
-      if (this.ctx.state === 'suspended') void this.ctx.resume();
+      this.resumeIfNeeded();
       return;
     }
+    const Ctor: typeof AudioContext | undefined = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!Ctor) return;
+    let ctx: AudioContext;
     try {
-      this.ctx = new AudioContext();
+      ctx = new Ctor({ latencyHint: 'interactive' });
     } catch {
       return;
     }
-    const ctx = this.ctx;
-    this.sfx = ctx.createGain();
-    this.music = ctx.createGain();
-    this.sfx.connect(ctx.destination);
-    this.reverb = ctx.createConvolver();
-    this.reverb.buffer = this.impulse(3.2, 2.6);
-    const wet = ctx.createGain();
-    wet.gain.value = 0.55;
-    this.music.connect(this.reverb).connect(wet).connect(ctx.destination);
-    this.music.connect(ctx.destination);
-    this.noise = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
-    const d = this.noise.getChannelData(0);
-    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    this.attach(ctx);
+    // iOS Safari only unlocks after something is actually started inside the gesture.
+    try {
+      const src = ctx.createBufferSource();
+      src.buffer = ctx.createBuffer(1, 1, ctx.sampleRate);
+      src.connect(ctx.destination);
+      src.start(0);
+    } catch { /* not fatal */ }
+    this.resumeIfNeeded();
+    ctx.addEventListener('statechange', () => {
+      // iOS reports 'interrupted' after a call or a lock screen: resume on the next gesture.
+      if (ctx.state !== 'running' && !this.userSuspended) this.installGestureUnlock();
+    });
+  }
+
+  /**
+   * Browsers (Safari/iOS in particular) only allow audio to start from certain gestures, and may suspend
+   * the context again later. Listens for touch/pointer/key/click and (re)starts audio. Idempotent.
+   */
+  installGestureUnlock(target: Window = window): void {
+    if (this.gestureInstalled) return;
+    this.gestureInstalled = true;
+    const handler = () => {
+      if (this.userSuspended) return;
+      this.unlock();
+    };
+    for (const ev of ['touchstart', 'touchend', 'pointerdown', 'keydown', 'click']) target.addEventListener(ev, handler, { passive: true });
+  }
+
+  private resumeIfNeeded(): void {
+    const ctx = this.ctx as AudioContext | null;
+    if (ctx && !this.userSuspended && ctx.state !== 'running' && ctx.state !== 'closed') void ctx.resume().catch(() => undefined);
+  }
+
+  /**
+   * Build the graph on any BaseAudioContext. `unlock` does this with a real context; tests and the offline
+   * renderer pass an OfflineAudioContext (`offline = true` lets sounds play without a running clock).
+   */
+  attach(ctx: BaseAudioContext, offline = false): void {
+    if (this.ctx) return;
+    this.ctx = ctx;
+    this.offline = offline;
+    this.mix = buildMix(ctx);
+    const { white, pink, brown } = makeNoiseBuffers(ctx);
+    this.synth = new Synth(ctx, this.mix.sfx, white, this.limiter);
+    this.ambience = new Ambience(ctx, this.synth, this.mix.ambient, pink, brown, this.listener, (n, x, y, z, v) => this.emit(n, x, y, z, v));
+    this.ambience.setWeather(this.weatherRain, this.weatherThunder, this.weatherAuto);
+    this.ambience.onLightning = this.pendingLightning;
+    this.music = new MusicDirector(ctx, this.mix.music, white);
+    this.music.setMode(this.pendingMode);
+    this.music.setIntensity(this.pendingIntensity);
     this.applyVolumes();
+    if (this.hrtf) this.updateListenerNode();
   }
 
   /** Pause all audio while the tab is hidden (scheduled music would keep playing). */
   setSuspended(suspended: boolean): void {
-    if (!this.ctx) return;
-    if (suspended && this.ctx.state === 'running') void this.ctx.suspend();
-    else if (!suspended && this.ctx.state === 'suspended') void this.ctx.resume();
+    this.userSuspended = suspended;
+    const ctx = this.ctx as AudioContext | null;
+    if (!ctx || this.offline) return;
+    if (suspended && ctx.state === 'running') void ctx.suspend().catch(() => undefined);
+    else if (!suspended && ctx.state !== 'running') void ctx.resume().catch(() => undefined);
   }
 
-  setVolumes(sound: number, music: number): void {
+  /** Category volumes 0..100 (the game multiplies master in). `ambient` and `ui` default to `sound`. */
+  setVolumes(sound: number, music: number, ambient = sound, ui = sound): void {
     this.soundVolume = sound / 100;
     this.musicVolume = music / 100;
+    this.ambientVolume = ambient / 100;
+    this.uiVolume = ui / 100;
     this.applyVolumes();
   }
 
   private applyVolumes(): void {
     if (!this.ctx) return;
-    this.sfx.gain.value = this.soundVolume * 0.5;
-    this.music.gain.value = this.musicVolume * 0.16;
+    this.mix.sfx.gain.value = this.soundVolume * 0.5;
+    this.mix.ambient.gain.value = this.ambientVolume * 0.6;
+    this.mix.ui.gain.value = this.uiVolume * 0.5;
+    this.mix.music.gain.value = this.musicVolume * 0.16;
   }
 
-  private impulse(seconds: number, decay: number): AudioBuffer {
-    const ctx = this.ctx!;
-    const len = Math.floor(ctx.sampleRate * seconds);
-    const buf = ctx.createBuffer(2, len, ctx.sampleRate);
-    for (let c = 0; c < 2; c++) {
-      const d = buf.getChannelData(c);
-      for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay);
-    }
-    return buf;
-  }
-
-  play(kind: 'break' | 'place' | 'step' | 'hit', sound: BlockSound): void {
+  private get running(): boolean {
     const ctx = this.ctx;
-    if (!ctx || this.soundVolume <= 0 || ctx.state !== 'running') return;
-    const p = PROFILES[sound];
-    const now = ctx.currentTime;
-    const dur = kind === 'break' ? 0.22 : kind === 'place' ? 0.12 : kind === 'step' ? 0.09 : 0.06;
-    const vol = (kind === 'step' ? 0.35 : kind === 'hit' ? 0.3 : 0.9) * p.gain;
+    return !!ctx && (this.offline || ctx.state === 'running');
+  }
 
-    const src = ctx.createBufferSource();
-    src.buffer = this.noise;
-    src.playbackRate.value = 0.75 + Math.random() * 0.5;
-    const filter = ctx.createBiquadFilter();
-    filter.type = p.type;
-    filter.frequency.value = p.freq * (kind === 'step' ? 0.8 : 1) * (0.9 + Math.random() * 0.2);
-    filter.Q.value = p.q;
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(0, now);
-    g.gain.linearRampToValueAtTime(vol, now + 0.006);
-    g.gain.exponentialRampToValueAtTime(0.001, now + dur);
-    src.connect(filter).connect(g).connect(this.sfx);
-    src.start(now, Math.random() * 0.5);
-    src.stop(now + dur + 0.02);
+  private get ready(): BaseAudioContext | null {
+    return this.running && this.soundVolume > 0 ? this.ctx : null;
+  }
 
-    if (p.thump && kind !== 'hit') {
-      const o = ctx.createOscillator();
-      o.frequency.setValueAtTime(p.thump * (0.9 + Math.random() * 0.2), now);
-      o.frequency.exponentialRampToValueAtTime(p.thump * 0.5, now + dur);
-      const og = ctx.createGain();
-      og.gain.setValueAtTime(vol * 0.5, now);
-      og.gain.exponentialRampToValueAtTime(0.001, now + dur * 0.8);
-      o.connect(og).connect(this.sfx);
-      o.start(now);
-      o.stop(now + dur);
+  // ---------------------------------------------------------------- events for subtitles
+
+  /** Subscribe to every sound (name, position or NaN, loudness 0..1). Returns the unsubscribe function. */
+  addSoundListener(fn: SoundListener): () => void {
+    this.listeners.add(fn);
+    return () => { this.listeners.delete(fn); };
+  }
+
+  private emit(name: string, x: number, y: number, z: number, volume: number): void {
+    this.onSound?.(name, x, y, z, volume);
+    for (const l of this.listeners) l(name, x, y, z, volume);
+  }
+
+  private emitAt(name: string, at: Vec3 | undefined, volume: number): void {
+    if (at) this.emit(name, at.x, at.y, at.z, volume);
+    else this.emit(name, NaN, NaN, NaN, volume);
+  }
+
+  // ---------------------------------------------------------------- listener, spatial
+
+  /** Listener (camera) position and yaw; call once per frame. Allocation-free. */
+  setListener(x: number, y: number, z: number, yaw: number): void {
+    const l = this.listener;
+    l.x = x; l.y = y; l.z = z; l.yaw = yaw;
+    if (this.hrtf) this.updateListenerNode();
+  }
+
+  /** `hrtf` uses a PannerNode with head-related transfer functions (headphones); `stereo` a simple stereo pan. */
+  setSpatialMode(mode: 'stereo' | 'hrtf'): void {
+    this.hrtf = mode === 'hrtf';
+    if (this.hrtf) this.updateListenerNode();
+  }
+
+  /** Occlusion by blocks: `probe` returns the solid blocks between two points. Pass null to disable. */
+  setOcclusionProbe(probe: OcclusionProbe | null): void {
+    this.probe = probe;
+  }
+
+  private updateListenerNode(): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const l = ctx.listener;
+    const s = this.listener;
+    if (l.positionX) {
+      l.positionX.value = s.x; l.positionY.value = s.y; l.positionZ.value = s.z;
+      l.forwardX.value = -Math.sin(s.yaw); l.forwardY.value = 0; l.forwardZ.value = -Math.cos(s.yaw);
+      l.upX.value = 0; l.upY.value = 1; l.upZ.value = 0;
     }
-    if (p.tink && kind === 'break') {
-      for (let i = 0; i < 4; i++) {
-        const o = ctx.createOscillator();
-        o.type = 'triangle';
-        const t = now + i * 0.035 + Math.random() * 0.02;
-        o.frequency.value = 2200 + Math.random() * 2200;
-        const og = ctx.createGain();
-        og.gain.setValueAtTime(0.25, t);
-        og.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
-        o.connect(og).connect(this.sfx);
-        o.start(t);
-        o.stop(t + 0.16);
+  }
+
+  /**
+   * Chain for a positional sound: distance gain, occlusion, air absorption (low-pass), pan. Returns the node
+   * voices connect to, or null when the sound is out of earshot.
+   */
+  private spatialOut(at: Vec3, maxDist: number): AudioNode | null {
+    const ctx = this.ctx!;
+    const l = this.listener;
+    const dx = at.x - l.x, dy = at.y - l.y, dz = at.z - l.z;
+    const d = Math.hypot(dx, dy, dz);
+    let gain = distanceGain(d, maxDist);
+    if (gain < 0.01) return null;
+    let cut = distanceCutoff(d);
+    if (this.probe && d > 2 && this.probeBudget > 0) {
+      this.probeBudget--;
+      const solid = this.probe(l.x, l.y, l.z, at.x, at.y + 0.5, at.z);
+      if (solid > 0) {
+        gain *= occlusionGain(solid);
+        cut *= occlusionCutoff(solid);
       }
     }
+    this.synth.level = gain; // applied per voice by the synth: no gain node in the chain
+    let entry: AudioNode | null = null;
+    let head: AudioNode | null = null;
+    if (cut < 9000) {
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = Math.max(300, cut);
+      entry = head = lp;
+    }
+    let pan: AudioNode;
+    if (this.hrtf) {
+      const p = ctx.createPanner();
+      p.panningModel = 'HRTF';
+      p.distanceModel = 'linear';
+      p.rolloffFactor = 0; // distance is handled above
+      if (p.positionX) { p.positionX.value = at.x; p.positionY.value = at.y; p.positionZ.value = at.z; }
+      pan = p;
+    } else {
+      const p = ctx.createStereoPanner();
+      p.pan.value = panFor(dx, dz, l.yaw);
+      pan = p;
+    }
+    if (head) head.connect(pan);
+    else entry = pan;
+    pan.connect(this.mix.sfx);
+    return entry;
   }
 
-  private get ready(): AudioContext | null {
-    const ctx = this.ctx;
-    return ctx && this.soundVolume > 0 && ctx.state === 'running' ? ctx : null;
+  /** Run `fn` with voices routed to the sfx bus (optionally positional) at a given priority. */
+  private placed(at: Vec3 | undefined, maxDist: number, priority: number, fn: () => void): void {
+    if (!this.ready) return;
+    const s = this.synth;
+    const prev = s.priority;
+    if (!this.limiter.canAccept(this.ctx!.currentTime, priority, 0.3)) {
+      this.limiter.dropped++;
+      return;
+    }
+    if (at) {
+      const out = this.spatialOut(at, maxDist);
+      if (!out) return;
+      s.out = out;
+    } else {
+      s.out = this.mix.sfx;
+      s.level = 1;
+    }
+    s.priority = priority;
+    fn();
+    s.out = this.mix.sfx;
+    s.priority = prev;
+    s.level = 1;
   }
 
-  /** Oscillator voice with a pitch glide and an attack/decay envelope. */
+  private pitchFor(sound: string): number {
+    const [lo, hi] = profileFor(sound).pitch;
+    const last = this.lastVariant.get(sound) ?? -1;
+    const v = pickVariant(4, last, Math.random());
+    this.lastVariant.set(sound, v);
+    return lo + (hi - lo) * ((v + Math.random() * 0.8) / 4);
+  }
+
+  // ---------------------------------------------------------------- block, movement
+
+  /** Block sound; `at` makes it positional (other players' edits), without it it is the player's own. */
+  play(kind: BlockSoundKind, sound: BlockSound | string, at?: Vec3, volume = 1): void {
+    this.emitAt(`block.${kind}.${sound}`, at, volume * (kind === 'hit' || kind === 'step' ? 0.4 : 1));
+    this.placed(at, MAX_HEAR_DISTANCE, at ? Priority.Normal : Priority.Player, () => this.synth.block(kind, sound, volume, this.pitchFor(sound)));
+  }
+
+  /** The player's footstep on a surface; `foot` alternates 0/1 for a slight pitch change. */
+  playStep(surface: BlockSound | string, mode: MoveMode = 'walk', foot = 0): void {
+    this.emit(`player.step.${surface}`, NaN, NaN, NaN, 0.3 * STEP_VOLUME[mode]);
+    this.placed(undefined, 0, Priority.Player, () => {
+      this.synth.block('step', surface, STEP_VOLUME[mode], this.pitchFor(surface) * (foot ? 1.04 : 0.97));
+      if (this.armor) this.synth.clink(this.armor, STEP_VOLUME[mode]);
+    });
+  }
+
+  /** Landing after a fall of `fallDistance` blocks (nothing below 0.9). */
+  playLand(surface: BlockSound | string, fallDistance: number): void {
+    const v = landingVolume(fallDistance);
+    if (v === null) return;
+    this.emit('player.land', NaN, NaN, NaN, v);
+    this.placed(undefined, 0, Priority.Player, () => this.synth.landing(surface, v, landingKind(fallDistance)));
+  }
+
+  playJump(surface: BlockSound | string): void {
+    this.emit('player.jump', NaN, NaN, NaN, 0.2);
+    this.placed(undefined, 0, Priority.Player, () => {
+      this.synth.block('step', surface, 0.6, this.pitchFor(surface) * 1.05);
+      this.synth.whoosh(0.8);
+    });
+  }
+
+  /** Entering water at `speed` blocks/s downwards. */
+  playSplash(speed: number): void {
+    const v = splashVolume(speed);
+    if (v === null) return;
+    this.emit('player.splash', NaN, NaN, NaN, v);
+    this.placed(undefined, 0, Priority.Player, () => this.synth.splash(v));
+  }
+
+  playSwim(): void {
+    this.emit('player.swim', NaN, NaN, NaN, 0.2);
+    this.placed(undefined, 0, Priority.Player, () => this.synth.swim());
+  }
+
+  /** Armour material worn by the player (null = none): every step clinks. Hook for the future armour system. */
+  setArmor(material: ArmorMaterial | null): void {
+    this.armor = material;
+  }
+
+  /** Armour clink on its own (equip, hit). */
+  playArmorClink(material: ArmorMaterial = this.armor ?? 'iron'): void {
+    this.emit('player.armor', NaN, NaN, NaN, 0.2);
+    this.placed(undefined, 0, Priority.Player, () => this.synth.clink(material));
+  }
+
+  // ---------------------------------------------------------------- UI
+
+  /** One entry point for interface sounds (see `src/ui/uiSound.ts`). */
+  playUi(name: UiSoundName): void {
+    this.emit(`ui.${name}`, NaN, NaN, NaN, 0.2);
+    if (!this.running || this.uiVolume <= 0) return;
+    const s = this.synth;
+    const prev = s.priority;
+    s.out = this.mix.ui;
+    s.priority = Priority.Ui;
+    s.ui(name);
+    s.out = this.mix.sfx;
+    s.priority = prev;
+  }
+
+  // ---------------------------------------------------------------- music, weather
+
+  setMusicMode(mode: MusicMode): void {
+    this.pendingMode = mode;
+    this.music?.setMode(mode);
+  }
+
+  /** Arcade pulse strength 0..1 (1 while the match is `live`). */
+  setMusicIntensity(v: number): void {
+    this.pendingIntensity = v;
+    this.music?.setIntensity(v);
+  }
+
+  /** Rain 0..1 and whether there is a thunderstorm (random distant thunder unless `autoThunder` is false). */
+  setWeather(rain: number, thunder: boolean, autoThunder = true): void {
+    this.weatherRain = rain;
+    this.weatherThunder = thunder;
+    this.weatherAuto = autoThunder;
+    this.ambience?.setWeather(rain, thunder, autoThunder);
+  }
+
+  /** One thunderclap `distance` blocks away (arrives later the further it is). */
+  playThunder(distance: number): void {
+    if (!this.running || this.ambientVolume <= 0) {
+      this.emit('weather.thunder', NaN, NaN, NaN, 0.5);
+      return;
+    }
+    this.ambience.playThunder(distance);
+  }
+
+  /** Called when the internal storm timer fires a lightning strike: sync the flash with the sound. */
+  setLightningHandler(fn: ((distance: number) => void) | null): void {
+    this.pendingLightning = fn;
+    if (this.ambience) this.ambience.onLightning = fn;
+  }
+
+  // Fire crackle near the listener is driven by `env.fireDist` (set by the world probe); nothing to call.
+
+  // ---------------------------------------------------------------- recipes (voice / noise)
+
   private voice(type: OscillatorType, f0: number, f1: number, dur: number, vol: number, delay = 0): void {
-    const ctx = this.ready;
-    if (!ctx) return;
-    const t = ctx.currentTime + delay;
-    const o = ctx.createOscillator();
-    o.type = type;
-    o.frequency.setValueAtTime(f0, t);
-    o.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t + dur);
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(0, t);
-    g.gain.linearRampToValueAtTime(vol, t + Math.min(0.03, dur / 4));
-    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-    const lp = ctx.createBiquadFilter();
-    lp.type = 'lowpass';
-    lp.frequency.value = 2400;
-    o.connect(lp).connect(g).connect(this.sfx);
-    o.start(t);
-    o.stop(t + dur + 0.05);
+    if (!this.ready) return;
+    this.synth.tone(type, f0, f1, dur, vol, delay);
   }
 
-  /** Filtered noise burst (hiss, explosion, crunch). */
   private noiseBurst(freq: number, q: number, dur: number, vol: number, type: BiquadFilterType = 'bandpass', delay = 0): void {
-    const ctx = this.ready;
-    if (!ctx) return;
-    const t = ctx.currentTime + delay;
-    const src = ctx.createBufferSource();
-    src.buffer = this.noise;
-    src.loop = dur > 0.9;
-    const f = ctx.createBiquadFilter();
-    f.type = type;
-    f.frequency.value = freq;
-    f.Q.value = q;
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(vol, t);
-    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-    src.connect(f).connect(g).connect(this.sfx);
-    src.start(t, Math.random() * 0.4);
-    src.stop(t + dur + 0.05);
+    if (!this.ready) return;
+    this.synth.noiseBurst(freq, q, dur, vol, type, delay);
   }
 
-  /** Mob sounds, synthesised per kind; `volume` already includes distance falloff. */
-  playMob(kind: string, event: 'idle' | 'hurt' | 'death' | 'fuse', volume: number): void {
-    if (volume <= 0.02) return;
+  /**
+   * Mob sounds, synthesised per kind. Pass `at` (the mob or message position) for positional sound; without
+   * it `volume` already includes the distance falloff.
+   */
+  playMob(kind: string, event: 'idle' | 'hurt' | 'death' | 'fuse', volume: number, at?: Vec3): void {
+    this.emitAt(`mob.${kind}.${event}`, at, volume);
+    if (!at && volume <= 0.02) return;
+    this.placed(at, 28, Priority.Normal, () => this.mobRecipe(kind, event, at ? 1 : volume));
+  }
+
+  private mobRecipe(kind: string, event: 'idle' | 'hurt' | 'death' | 'fuse', volume: number): void {
     const v = volume * (event === 'idle' ? 0.5 : 0.7);
     const p = 0.9 + Math.random() * 0.2;
     switch (kind) {
@@ -223,89 +470,139 @@ export class AudioEngine {
     if (event === 'hurt' || event === 'death') this.voice('triangle', 500 * p, 250 * p, 0.12, v * 0.3);
   }
 
-  playHurt(): void {
-    this.voice('square', 220, 120, 0.12, 0.35);
-    this.noiseBurst(600, 1, 0.1, 0.3);
+  /** Footstep of a mob on `surface`, quiet and pitched by body type. */
+  playMobStep(kind: string, surface: BlockSound | string, at: Vec3): void {
+    const body = MOB_STEP[kind] ?? MOB_STEP.default;
+    this.emitAt(`mob.${kind}.step`, at, body.vol);
+    this.placed(at, 18, Priority.Ambient, () => {
+      this.synth.block('step', surface, body.vol, this.pitchFor(surface) * body.pitch);
+      if (kind === 'spider') this.noiseBurst(3200, 1, 0.03, 0.05, 'highpass');
+      if (kind === 'skeleton') this.voice('triangle', 1400, 900, 0.03, 0.04);
+    });
   }
 
-  playExplosion(volume: number): void {
-    this.noiseBurst(120, 0.5, 1.6, Math.min(1, volume) * 1.2, 'lowpass');
-    this.noiseBurst(900, 0.7, 0.5, Math.min(1, volume) * 0.6);
-    this.voice('sine', 70, 30, 1.0, Math.min(1, volume) * 0.8);
+  playHurt(): void {
+    this.emit('player.hurt', NaN, NaN, NaN, 0.5);
+    this.placed(undefined, 0, Priority.Player, () => {
+      this.voice('square', 220, 120, 0.12, 0.35);
+      this.noiseBurst(600, 1, 0.1, 0.3);
+    });
+  }
+
+  playExplosion(volume: number, at?: Vec3): void {
+    const v = Math.min(1, volume);
+    this.emitAt('explosion', at, v);
+    this.placed(at, 90, Priority.Player, () => {
+      const p = 0.92 + Math.random() * 0.16;
+      this.noiseBurst(120 * p, 0.5, 1.7, v * 1.1, 'lowpass');
+      this.noiseBurst(900 * p, 0.7, 0.5, v * 0.6);
+      this.noiseBurst(2400, 0.5, 0.18, v * 0.4, 'highpass');
+      this.voice('sine', 70 * p, 28, 1.1, v * 0.8);
+      // Debris rattling down a moment later.
+      if (this.ready) this.synth.noiseBurst(1300, 0.6, 0.6, v * 0.3, 'bandpass', 0.18, { grains: 6 });
+      this.noiseBurst(200, 0.6, 1.1, v * 0.4, 'lowpass', 0.25);
+    });
   }
 
   /** Bow release: a short twang. */
   playBow(power: number): void {
-    this.voice('triangle', 520 + power * 200, 180, 0.18, 0.35);
-    this.noiseBurst(1800, 0.9, 0.12, 0.25);
+    this.emit('weapon.bow', NaN, NaN, NaN, power);
+    this.placed(undefined, 0, Priority.Player, () => {
+      this.voice('triangle', 520 + power * 200, 180, 0.18, 0.35);
+      this.noiseBurst(1800, 0.9, 0.12, 0.25);
+    });
   }
 
   /** Arrow thunk into a block or mob. */
-  playArrowHit(volume: number): void {
-    if (volume <= 0) return;
-    this.noiseBurst(700, 1.4, 0.07, Math.min(1, volume) * 0.45);
+  playArrowHit(volume: number, at?: Vec3): void {
+    this.emitAt('weapon.arrow_hit', at, volume);
+    if (!at && volume <= 0) return;
+    this.placed(at, 32, Priority.Normal, () => this.noiseBurst(700, 1.4, 0.07, Math.min(1, at ? 1 : volume) * 0.45));
   }
 
   /** Flint and steel strike, then the TNT fuse hiss. */
   playIgnite(volume: number): void {
-    this.noiseBurst(2600, 1.2, 0.08, Math.min(1, volume) * 0.5);
-    this.noiseBurst(3500, 0.6, 1.4, Math.min(1, volume) * 0.5, 'highpass', 0.05);
+    this.emit('block.ignite', NaN, NaN, NaN, volume);
+    this.placed(undefined, 0, Priority.Player, () => {
+      this.noiseBurst(2600, 1.2, 0.08, Math.min(1, volume) * 0.5);
+      this.noiseBurst(3500, 0.6, 1.4, Math.min(1, volume) * 0.5, 'highpass', 0.05);
+    });
   }
 
   /** Advancement toast: a short rising chime. */
   playAdvancement(): void {
-    this.voice('sine', 659, 659, 0.3, 0.22);
-    this.voice('sine', 880, 880, 0.3, 0.22, 0.12);
-    this.voice('sine', 1319, 1319, 0.5, 0.2, 0.24);
+    this.playUi('advancement');
   }
 
   /** A door swinging open (creak) or shut (thud); `volume` 0..1. */
   playDoor(open: boolean, volume = 1): void {
-    if (!this.ready) return;
-    if (open) {
-      this.voice('triangle', 150, 210, 0.1, 0.1 * volume);
-      this.noiseBurst(520, 1.2, 0.12, 0.28 * volume);
-    } else {
-      this.noiseBurst(230, 1, 0.1, 0.55 * volume, 'lowpass');
-      this.voice('sine', 95, 60, 0.1, 0.3 * volume);
-    }
+    this.emit(open ? 'block.door.open' : 'block.door.close', NaN, NaN, NaN, volume);
+    this.placed(undefined, 0, Priority.Player, () => {
+      if (open) {
+        this.voice('triangle', 150, 210, 0.1, 0.1 * volume);
+        this.noiseBurst(520, 1.2, 0.12, 0.28 * volume);
+      } else {
+        this.noiseBurst(230, 1, 0.1, 0.55 * volume, 'lowpass');
+        this.voice('sine', 95, 60, 0.1, 0.3 * volume);
+      }
+    });
   }
 
   /** Lava meeting water: a short hiss. */
   playFizz(volume: number): void {
+    this.emit('block.fizz', NaN, NaN, NaN, volume);
     if (volume <= 0.02) return;
-    this.noiseBurst(4200, 0.5, 0.5, 0.35 * volume, 'highpass');
-    this.noiseBurst(1200, 0.8, 0.25, 0.2 * volume);
+    this.placed(undefined, 0, Priority.Normal, () => {
+      this.noiseBurst(4200, 0.5, 0.5, 0.35 * volume, 'highpass');
+      this.noiseBurst(1200, 0.8, 0.25, 0.2 * volume);
+    });
   }
 
   /** A bucket filled from or emptied into a liquid. */
   playBucket(lava: boolean): void {
-    this.noiseBurst(lava ? 500 : 1400, 0.7, 0.3, 0.4, 'bandpass');
-    this.voice('sine', lava ? 140 : 260, lava ? 90 : 150, 0.2, 0.15);
+    this.emit(lava ? 'item.bucket.lava' : 'item.bucket.water', NaN, NaN, NaN, 0.4);
+    this.placed(undefined, 0, Priority.Player, () => {
+      this.noiseBurst(lava ? 500 : 1400, 0.7, 0.3, 0.4, 'bandpass');
+      this.voice('sine', lava ? 140 : 260, lava ? 90 : 150, 0.2, 0.15);
+    });
   }
 
   playPop(): void {
-    this.voice('sine', 900 + Math.random() * 400, 1800, 0.08, 0.25);
+    this.emit('item.pickup', NaN, NaN, NaN, 0.25);
+    this.placed(undefined, 0, Priority.Player, () => this.voice('sine', 900 + Math.random() * 400, 1800, 0.08, 0.25));
   }
 
   playEat(): void {
-    this.noiseBurst(1600, 0.8, 0.09, 0.4);
+    this.emit('player.eat', NaN, NaN, NaN, 0.4);
+    this.placed(undefined, 0, Priority.Player, () => this.noiseBurst(1600, 0.8, 0.09, 0.4));
   }
 
   playBurp(): void {
-    this.voice('sawtooth', 110, 80, 0.3, 0.3);
+    this.emit('player.burp', NaN, NaN, NaN, 0.3);
+    this.placed(undefined, 0, Priority.Player, () => this.voice('sawtooth', 110, 80, 0.3, 0.3));
   }
 
   // ---------------------------------------------------------------- arcade weapons
 
   /**
    * Gunshot per weapon; `volume` 0..1 already includes the distance falloff for other players'
-   * shots (see {@link gunVolume}). Each weapon gets its own mix of crack, body and thump.
+   * shots (see {@link gunVolume}); pass `at` instead to place the shot in the stereo field.
+   * Each weapon gets its own mix of crack, body and thump.
    */
-  playGun(weapon: string, volume: number): void {
+  playGun(weapon: string, volume: number, at?: Vec3): void {
+    this.emitAt(`weapon.${weapon}`, at, volume);
     if (volume <= 0.02) return;
-    const v = Math.min(1, volume);
+    const own = volume >= 0.99 && !at;
+    this.placed(at, 60, own ? Priority.Player : Priority.Normal, () => this.gunRecipe(weapon, Math.min(1, volume)));
+  }
+
+  private gunRecipe(weapon: string, v: number): void {
     const p = 0.95 + Math.random() * 0.1;
+    // Far shots: only the crack (one voice); the body and thump are inaudible at that range anyway.
+    if (this.synth.level < 0.5 && weapon !== 'sniper' && weapon !== 'shotgun') {
+      this.noiseBurst(weapon === 'pistol' ? 2400 : 2800 * p, 0.8, 0.06, v * 0.6);
+      return;
+    }
     switch (weapon) {
       case 'rifle':
         this.noiseBurst(2200 * p, 0.7, 0.09, v * 0.7);
@@ -314,7 +611,7 @@ export class AudioEngine {
         break;
       case 'smg':
         this.noiseBurst(3000 * p, 0.8, 0.05, v * 0.55);
-        this.voice('square', 260 * p, 110, 0.05, v * 0.25);
+        if (this.synth.level >= 0.75) this.voice('square', 260 * p, 110, 0.05, v * 0.25);
         this.voice('sine', 170, 70, 0.06, v * 0.4);
         break;
       case 'shotgun':
@@ -347,87 +644,104 @@ export class AudioEngine {
 
   /** Reload: magazine out, magazine in, bolt (or pump for the shotgun) as three clicks. */
   playReload(reloadSec: number): void {
-    const click = (f: number, delay: number, vol: number) => {
-      this.voice('square', f, f * 0.45, 0.025, vol, delay);
-      this.noiseBurst(f * 1.5, 1.5, 0.03, vol * 0.8, 'bandpass', delay);
-    };
-    click(1100, 0.05, 0.22);
-    click(800, Math.max(0.1, reloadSec * 0.55), 0.26);
-    click(1400, Math.max(0.2, reloadSec - 0.15), 0.22);
+    this.emit('weapon.reload', NaN, NaN, NaN, 0.25);
+    this.placed(undefined, 0, Priority.Player, () => {
+      const click = (f: number, delay: number, vol: number) => {
+        this.voice('square', f, f * 0.45, 0.025, vol, delay);
+        this.noiseBurst(f * 1.5, 1.5, 0.03, vol * 0.8, 'bandpass', delay);
+      };
+      click(1100, 0.05, 0.22);
+      click(800, Math.max(0.1, reloadSec * 0.55), 0.26);
+      click(1400, Math.max(0.2, reloadSec - 0.15), 0.22);
+    });
   }
 
   /** Trigger on an empty magazine. */
   playEmpty(): void {
-    this.voice('square', 900, 400, 0.03, 0.2);
+    this.emit('weapon.empty', NaN, NaN, NaN, 0.2);
+    this.placed(undefined, 0, Priority.Player, () => this.voice('square', 900, 400, 0.03, 0.2));
   }
 
   /** White tick when your bullet hits a player; higher and doubled for a headshot. */
   playHitMarker(head: boolean): void {
-    this.voice('sine', head ? 2400 : 1700, head ? 2400 : 1700, 0.05, 0.35);
-    if (head) this.voice('sine', 3200, 3200, 0.06, 0.28, 0.045);
+    this.emit('weapon.hitmarker', NaN, NaN, NaN, 0.35);
+    this.placed(undefined, 0, Priority.Player, () => {
+      this.voice('sine', head ? 2400 : 1700, head ? 2400 : 1700, 0.05, 0.35);
+      if (head) this.voice('sine', 3200, 3200, 0.06, 0.28, 0.045);
+    });
   }
 
   /** Kill confirmation: a bright two-note ding. */
   playKillDing(): void {
-    this.voice('sine', 1318, 1318, 0.28, 0.32);
-    this.voice('sine', 1760, 1760, 0.32, 0.3, 0.08);
-    this.voice('triangle', 2637, 2637, 0.2, 0.12, 0.08);
+    this.emit('weapon.kill', NaN, NaN, NaN, 0.35);
+    this.placed(undefined, 0, Priority.Player, () => {
+      this.voice('sine', 1318, 1318, 0.28, 0.32);
+      this.voice('sine', 1760, 1760, 0.32, 0.3, 0.08);
+      this.voice('triangle', 2637, 2637, 0.2, 0.12, 0.08);
+    });
   }
 
   /** Little whoosh when you respawn. */
   playSpawn(): void {
-    this.voice('sine', 300, 900, 0.25, 0.18);
+    this.emit('player.spawn', NaN, NaN, NaN, 0.2);
+    this.placed(undefined, 0, Priority.Player, () => this.voice('sine', 300, 900, 0.25, 0.18));
   }
 
   /** Bullet hitting a block somewhere (own or other players' shots). */
-  playBulletImpact(volume: number): void {
+  playBulletImpact(volume: number, at?: Vec3): void {
+    this.emitAt('weapon.impact', at, volume);
     if (volume <= 0.03) return;
-    this.noiseBurst(1600 + Math.random() * 600, 1.2, 0.05, Math.min(1, volume) * 0.3);
+    this.placed(at, 40, Priority.Ambient, () => this.noiseBurst(1600 + Math.random() * 600, 1.2, 0.05, Math.min(1, volume) * 0.3));
   }
 
-  private note(freq: number, at: number, length: number, velocity: number): void {
-    const ctx = this.ctx!;
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(0, at);
-    g.gain.linearRampToValueAtTime(velocity, at + 0.015);
-    g.gain.exponentialRampToValueAtTime(velocity * 0.35, at + 0.4);
-    g.gain.exponentialRampToValueAtTime(0.0008, at + length);
-    g.connect(this.music);
-    for (const [mult, type, amp] of [[1, 'sine', 1], [2, 'sine', 0.22], [3, 'triangle', 0.06]] as const) {
-      const o = ctx.createOscillator();
-      o.type = type;
-      o.frequency.value = freq * mult;
-      o.detune.value = (Math.random() - 0.5) * 6;
-      const og = ctx.createGain();
-      og.gain.value = amp;
-      o.connect(og).connect(g);
-      o.start(at);
-      o.stop(at + length + 0.05);
-    }
-  }
+  // ---------------------------------------------------------------- per frame
 
-  /** Schedules sparse musical phrases with long silences in between. */
+  /** Per-frame upkeep: ambience, music, mix parameters. Keep this cheap (< 0.3 ms). */
   update(dt: number): void {
+    this.probeBudget = PROBES_PER_FRAME;
     const ctx = this.ctx;
-    if (!ctx || ctx.state !== 'running') return;
-    this.time += dt;
-    if (this.time < this.nextPhrase) return;
-    this.nextPhrase = this.time + 25 + Math.random() * 45;
-    if (this.musicVolume <= 0) return;
-    let t = ctx.currentTime + 0.1;
-    let idx = 2 + Math.floor(Math.random() * 5);
-    const count = 5 + Math.floor(Math.random() * 6);
-    this.note(SCALE[idx % 3] / 2, t, 6, 0.35);
-    for (let i = 0; i < count; i++) {
-      idx = Math.max(0, Math.min(SCALE.length - 1, idx + Math.floor(Math.random() * 5) - 2));
-      this.note(SCALE[idx], t, 3.5, 0.28 + Math.random() * 0.12);
-      if (Math.random() < 0.25) this.note(SCALE[Math.max(0, idx - 2)], t, 3.5, 0.18);
-      t += 0.55 + Math.floor(Math.random() * 3) * 0.35;
-    }
+    if (!ctx || !this.running) return;
+    const env = this.env;
+    const now = ctx.currentTime;
+    this.mix.waterLP.frequency.setTargetAtTime(env.underwater ? 650 : 20000, now, env.underwater ? 0.05 : 0.12);
+    if (this.ambientVolume > 0 || this.soundVolume > 0) this.ambience.update(dt, env);
+    this.mix.caveWet.gain.setTargetAtTime(this.ambience.cave * 0.55, now, 0.5);
+    this.music.setContext(env.biome, env.dayFactor, this.ambience.cave, env.underwater);
+    this.music.update(dt, this.musicVolume > 0);
+  }
+
+  // ---------------------------------------------------------------- debug, tests
+
+  /** One-line report for the F3 overlay. */
+  debugLine(): string {
+    if (!this.ctx) return 'audio: locked';
+    const l = this.limiter;
+    return `audio: ${this.ctx.state} voices ${l.activeCount(this.ctx.currentTime)}/${l.max} drop ${l.dropped} steal ${l.stolen} loops ${this.ambience.activeLoops}`;
+  }
+
+  /** Internals for the offline renderer and tests. */
+  get internals(): { synth: Synth; ambience: Ambience; music: MusicDirector; limiter: VoiceLimiter; mix: Mix } {
+    return { synth: this.synth, ambience: this.ambience, music: this.music, limiter: this.limiter, mix: this.mix };
   }
 }
+
+/** Mob footstep character: loudness and pitch of the block step sound. */
+const MOB_STEP: Record<string, { vol: number; pitch: number }> = {
+  pig: { vol: 0.3, pitch: 1.0 },
+  cow: { vol: 0.42, pitch: 0.8 },
+  sheep: { vol: 0.28, pitch: 0.95 },
+  chicken: { vol: 0.2, pitch: 1.6 },
+  zombie: { vol: 0.45, pitch: 0.85 },
+  skeleton: { vol: 0.35, pitch: 1.15 },
+  creeper: { vol: 0.3, pitch: 1.0 },
+  spider: { vol: 0.2, pitch: 1.4 },
+  default: { vol: 0.3, pitch: 1.0 },
+};
 
 /** Volume 0..1 for another player's gunshot: full close by, fading out over 60 blocks. */
 export function gunVolume(distance: number): number {
   return Math.max(0, 1 - distance / 60) ** 1.5;
 }
+
+/** Keep the registry reachable for tools that list every sound type. */
+export const BLOCK_SOUND_TYPES = Object.keys(SOUND_PROFILES) as BlockSound[];

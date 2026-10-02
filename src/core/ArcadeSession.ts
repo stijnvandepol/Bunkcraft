@@ -18,7 +18,7 @@ import { WeaponViewmodel } from '../rendering/WeaponViewmodel';
 import { ArcadeHud, type ScoreboardContext } from '../ui/ArcadeHud';
 import { BLOCK } from '../world/BlockRegistry';
 import { type RayHit, createRayHit, raycast } from '../world/Raycast';
-import { type AudioEngine, gunVolume } from './Audio';
+import type { AudioEngine } from './Audio';
 import type { CameraController } from './Camera';
 import type { Input } from './Input';
 import { KB } from './Keybinds';
@@ -70,6 +70,8 @@ const SPECTATE_DISTANCE = 3.2;
 
 const tmpV = new THREE.Vector3();
 const tmpAim = { x: 0, y: 0, z: 0 };
+/** Position handed to the audio engine for gunshots and impacts (read synchronously). */
+const gunAt = { x: 0, y: 0, z: 0 };
 
 /**
  * Client side of an arcade match (team deathmatch, free for all): holds the match state, your
@@ -434,7 +436,8 @@ export class ArcadeSession {
     // Own shots are drawn the moment they are fired; the server's echo would double them.
     if (msg.id === this.d.selfId) return;
     const dist = Math.hypot(msg.ox - p.x, msg.oy - p.eyeY, msg.oz - p.z);
-    this.d.audio.playGun(msg.weapon, gunVolume(dist));
+    gunAt.x = msg.ox; gunAt.y = msg.oy; gunAt.z = msg.oz;
+    this.d.audio.playGun(msg.weapon, 1, gunAt);
     if (msg.weapon === 'knife') return;
     // Muzzle of the shooter: ahead of the eye, a bit to the right and down.
     let dx = msg.ex - msg.ox, dy = msg.ey - msg.oy, dz = msg.ez - msg.oz;
@@ -454,7 +457,10 @@ export class ArcadeSession {
     if (id === BLOCK.AIR || id === BLOCK.UNLOADED || id === BLOCK.WATER) return;
     impactNormal(ex, ey, ez, dx, dy, dz, tmpAim);
     this.d.particles.spawnFace(bx, by, bz, tmpAim.x, tmpAim.y, tmpAim.z, id, this.d.getLight(bx + tmpAim.x, by + tmpAim.y, bz + tmpAim.z), 3);
-    if (listenerDistance < 40) this.d.audio.playBulletImpact(1 - listenerDistance / 40);
+    if (listenerDistance < 40) {
+      gunAt.x = ex; gunAt.y = ey; gunAt.z = ez;
+      this.d.audio.playBulletImpact(1 - listenerDistance / 40, gunAt);
+    }
   }
 
   // ---------------------------------------------------------------- weapons and input
