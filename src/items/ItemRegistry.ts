@@ -1,5 +1,6 @@
 import { BLOCK, BLOCK_DEFS, CUBE_ID, PARTIAL_MATERIALS, SLAB_FIRST, STAIRS_FIRST, VARIANT_MASK, getBlockDef } from '../world/BlockRegistry';
 import { SLAB_DOUBLE } from '../world/BlockStates';
+import { efficiencyBonus, fortuneExtra, fortuneMultiplier, fortuneSaplingChance, gravelFlintChance } from './EnchantRules';
 import {
   ARMOR_BASE_DURABILITY, ARMOR_FIRST, ARMOR_MATERIALS, ARMOR_SLOT_NAMES, FOODS, FOOD_FIRST, HOE_FIRST, MATERIALS, MATERIAL_FIRST,
   SHEARS, type ItemSpec, armorItemId,
@@ -62,6 +63,8 @@ export const ITEM = {
   DIAMOND_HOE: HOE_FIRST + 3,
   GOLDEN_HOE: HOE_FIRST + 4,
   SHEARS,
+  /** Stores enchantments in its data (key = enchantment, like on a tool); made from a book at the enchanting table. */
+  ENCHANTED_BOOK: 900,
 } as const;
 
 // ---------------------------------------------------------------- item identity (see docs/CONTENT.md)
@@ -145,6 +148,8 @@ export const ITEM_DATA_KEYS: readonly string[] = [
   'sharpness', 'smite', 'bane_of_arthropods', 'knockback', 'fire_aspect', 'looting', 'efficiency', 'fortune', 'silk_touch', 'unbreaking',
   'mending', 'protection', 'fire_protection', 'blast_protection', 'projectile_protection', 'feather_falling', 'thorns', 'respiration',
   'aqua_affinity', 'depth_strider', 'power', 'punch', 'flame', 'infinity', 'repair_cost', 'custom_name',
+  // Appended later: sweeping edge, and the rest of a custom name (three characters per entry, see EnchantRules.customName).
+  'sweeping_edge', 'custom_name_1', 'custom_name_2', 'custom_name_3', 'custom_name_4', 'custom_name_5', 'custom_name_6', 'custom_name_7',
 ];
 
 /** `[keyIndex, value, ...]` for the data of a stack, undefined when it has none (or only keys that cannot be saved). */
@@ -276,6 +281,7 @@ add({ id: ITEM.ARROW, name: 'arrow', displayName: 'Arrow', maxStack: 64, sprite:
 add({ id: ITEM.BOW, name: 'bow', displayName: 'Bow', maxStack: 1, durability: 384, sprite: 'bow' });
 add({ id: ITEM.STRING, name: 'string', displayName: 'String', maxStack: 64, sprite: 'string' });
 add({ id: ITEM.SPIDER_EYE, name: 'spider_eye', displayName: 'Spider Eye', maxStack: 64, food: { hunger: 2, saturation: 3.2, poison: 100 }, sprite: 'spider_eye' });
+add({ id: ITEM.ENCHANTED_BOOK, name: 'enchanted_book', displayName: 'Enchanted Book', maxStack: 1, sprite: 'enchanted_book' });
 add({ id: ITEM.FLINT_AND_STEEL, name: 'flint_and_steel', displayName: 'Flint and Steel', maxStack: 1, durability: 64, sprite: 'flint_and_steel' });
 
 // Buckets: empty ones stack to 16, full ones are single (Minecraft).
@@ -363,6 +369,14 @@ export const ALL_ITEMS: number[] = [...items.keys()];
 
 
 // ---------------------------------------------------------------- breaking & drops
+
+/** The part of a stack's enchantments that mining looks at (see EnchantRules). */
+export interface MiningEnchants {
+  efficiency?: number;
+  fortune?: number;
+  silk_touch?: number;
+  aqua_affinity?: number;
+}
 
 /** Minecraft block hardness, the tool that mines it fastest and what it takes to get a drop. */
 interface Mining {
@@ -457,7 +471,7 @@ export function miningInfo(blockId: number, meta = 0): Readonly<Mining> | undefi
  * Survival break time in seconds (Minecraft formula): damage per tick is
  * speed / hardness / (canHarvest ? 30 : 100); ×5 slower in the air or under water.
  */
-export function breakSeconds(blockId: number, held: number, onGround: boolean, inWater: boolean, meta = 0): number {
+export function breakSeconds(blockId: number, held: number, onGround: boolean, inWater: boolean, meta = 0, ench?: MiningEnchants): number {
   const m = miningOf(blockId, meta);
   const hardness = m?.hardness ?? Math.max(0, getBlockDef(blockId)?.hardness ?? 1);
   if (hardness <= 0) return 0;
@@ -466,9 +480,12 @@ export function breakSeconds(blockId: number, held: number, onGround: boolean, i
   if (tool && m) {
     if (tool.kind === 'shears') speed = m.shears ?? 1;
     else if (m.tool === tool.kind) speed = tool.kind === 'sword' ? 15 : tool.speed;
+    // Efficiency adds level² + 1 to the speed of a tool that is fast on this block.
+    if (speed > 1 && ench?.efficiency) speed += efficiencyBonus(ench.efficiency);
   }
   if (!onGround) speed /= 5;
-  if (inWater) speed /= 5;
+  // Aqua Affinity takes the under-water penalty away.
+  if (inWater && !ench?.aqua_affinity) speed /= 5;
   const perTick = speed / hardness / (canHarvest(blockId, held, meta) ? 30 : 100);
   return Math.ceil(1 / perTick) / 20;
 }
@@ -528,17 +545,41 @@ const EARTH_TO_DIRT = new Set([B.GRASS, B.SNOWY_GRASS, CUBE_ID.podzol, CUBE_ID.m
 const NO_DROP = new Set([B.GLASS, B.WATER, B.LAVA, B.BEDROCK, B.STAINED_GLASS, CUBE_ID.ice]);
 const WITH_SHEARS_ONLY = new Set([B.TALL_GRASS, CUBE_ID.fern, B.DEAD_BUSH]);
 
-/** What a block drops when mined in survival (null = nothing). `meta` is the state it had (a double slab drops two, wool keeps its colour). */
-export function blockDrop(blockId: number, held: number, meta = 0): ItemStack | null {
+/** Drops Fortune multiplies (ores), and those it adds 0..level to up to a cap (redstone, glowstone, melon). */
+const FORTUNE_MULTIPLIED = new Set<number>([B.COAL_ORE, B.IRON_ORE, B.GOLD_ORE, B.DIAMOND_ORE, CUBE_ID.copper_ore, CUBE_ID.emerald_ore, CUBE_ID.lapis_ore]);
+const FORTUNE_ADDED: Record<number, number> = { [CUBE_ID.redstone_ore]: Infinity, [B.GLOWSTONE]: 4, [CUBE_ID.melon]: 9 };
+
+/** Blocks that drop themselves when mined with Silk Touch (instead of what they normally break into). */
+let silkBlocks: Set<number> | null = null;
+function silkTouchable(blockId: number): boolean {
+  if (!silkBlocks) {
+    silkBlocks = new Set<number>([
+      ...Object.keys(ORE_DROPS).map(Number), B.STONE, CUBE_ID.deepslate, B.GRASS, B.SNOWY_GRASS, CUBE_ID.podzol, CUBE_ID.mycelium, CUBE_ID.ice,
+      CUBE_ID.packed_ice, B.GLASS, B.STAINED_GLASS, CUBE_ID.sea_lantern, CUBE_ID.cobweb, ...Object.keys(LEAVES_SAPLING).map(Number),
+    ]);
+  }
+  return silkBlocks.has(blockId);
+}
+
+/**
+ * What a block drops when mined in survival (null = nothing). `meta` is the state it had (a double slab drops two, wool keeps
+ * its colour). `ench` are the held tool's enchantments: Silk Touch drops the block itself, Fortune raises ore drops.
+ */
+export function blockDrop(blockId: number, held: number, meta = 0, ench?: MiningEnchants): ItemStack | null {
   if (!canHarvest(blockId, held, meta)) return null;
   const heldTool = getItemDef(held)?.tool?.kind;
   if (blockId >= SLAB_FIRST && blockId < STAIRS_FIRST) return { id: blockId, count: meta === SLAB_DOUBLE ? 2 : 1 };
   if (blockId === B.SLAB_X) return { id: itemFromState(blockId, meta), count: (meta & 3) === SLAB_DOUBLE ? 2 : 1 };
+  if (ench?.silk_touch && heldTool !== 'sword' && silkTouchable(blockId)) return { id: itemFromState(blockId, meta), count: 1 };
+  const fortune = ench?.fortune ?? 0;
   const ore = ORE_DROPS[blockId];
   if (ore) {
     // Snow needs a shovel (the table is shared with other drops that do not).
     if (blockId === B.SNOW && heldTool !== 'shovel') return null;
-    return { id: named(ore.item), count: rand(ore.min, ore.max) };
+    let count = rand(ore.min, ore.max);
+    if (fortune > 0 && FORTUNE_MULTIPLIED.has(blockId)) count *= fortuneMultiplier(fortune);
+    else if (fortune > 0 && FORTUNE_ADDED[blockId]) count = Math.min(FORTUNE_ADDED[blockId], count + fortuneExtra(fortune));
+    return { id: named(ore.item), count };
   }
   const legacy = LEGACY_ITEMS[blockId];
   if (legacy) return { id: legacy, count: 1 };
@@ -547,9 +588,9 @@ export function blockDrop(blockId: number, held: number, meta = 0): ItemStack | 
   const leaves = LEAVES_SAPLING[blockId];
   if (leaves) {
     if (heldTool === 'shears') return { id: blockId, count: 1 };
-    if (leaves.sapling >= 0 && Math.random() < leaves.chance) return { id: itemFromState(B.SAPLING, leaves.sapling), count: 1 };
+    if (leaves.sapling >= 0 && Math.random() < fortuneSaplingChance(leaves.chance, fortune)) return { id: itemFromState(B.SAPLING, leaves.sapling), count: 1 };
     if (Math.random() < 0.02) return { id: ITEM.STICK, count: rand(1, 2) };
-    if (leaves.apple && Math.random() < 0.005) return { id: named('apple'), count: 1 };
+    if (leaves.apple && Math.random() < fortuneSaplingChance(0.005, fortune)) return { id: named('apple'), count: 1 };
     return null;
   }
   if (WITH_SHEARS_ONLY.has(blockId)) {
@@ -560,8 +601,8 @@ export function blockDrop(blockId: number, held: number, meta = 0): ItemStack | 
   switch (blockId) {
     case B.STONE: return { id: B.COBBLESTONE, count: 1 };
     case CUBE_ID.deepslate: return { id: CUBE_ID.cobbled_deepslate, count: 1 };
-    // Gravel drops flint 10% of the time (no Fortune).
-    case B.GRAVEL: return { id: Math.random() < 0.1 ? ITEM.FLINT : B.GRAVEL, count: 1 };
+    // Gravel drops flint 10% of the time (14%, 25% and 100% with Fortune I-III).
+    case B.GRAVEL: return { id: Math.random() < gravelFlintChance(fortune) ? ITEM.FLINT : B.GRAVEL, count: 1 };
     case CUBE_ID.cobweb: return { id: ITEM.STRING, count: 1 };
     default: return { id: itemFromState(blockId, meta), count: 1 };
   }
