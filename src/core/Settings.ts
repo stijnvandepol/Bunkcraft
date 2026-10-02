@@ -1,3 +1,5 @@
+import { type KeybindMap, defaultKeybinds, sanitizeKeybinds } from './Keybinds';
+
 export type GraphicsQuality = 'fast' | 'fancy';
 export type ShadowQuality = 'off' | 'low' | 'high' | 'ultra';
 export type ParticleLevel = 'all' | 'decreased' | 'minimal';
@@ -25,6 +27,8 @@ export interface Settings {
   invertMouse: boolean;
   /** Texture pack id, or "procedural" for the built-in generated textures. */
   texturePack: string;
+  /** Action id → key code or "Mouse<n>" ('' = Not Bound); see Keybinds.ts. */
+  keybinds: KeybindMap;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -45,6 +49,7 @@ export const DEFAULT_SETTINGS: Settings = {
   masterVolume: 100,
   invertMouse: false,
   texturePack: 'pixel-perfection',
+  keybinds: defaultKeybinds(),
 };
 
 export const RENDER_DISTANCE_PRESETS: [string, number][] = [['Low', 4], ['Medium', 8], ['High', 12], ['Ultra', 16], ['Extreme', 20]];
@@ -108,6 +113,8 @@ export class SettingsStore {
     }
     this.fresh = stored === null;
     this.values = { ...DEFAULT_SETTINGS, ...stored };
+    // Stored bindings are untrusted: unknown actions are dropped, garbage falls back to the default.
+    this.values.keybinds = sanitizeKeybinds(stored?.keybinds);
   }
 
   set<K extends keyof Settings>(key: K, value: Settings[K]): void {

@@ -69,7 +69,7 @@ Overige scripts:
 | <kbd>Spatie</kbd> | Springen / omhoog zwemmen |
 | <kbd>Spatie</kbd> ×2 | Vliegen aan/uit |
 | <kbd>C</kbd> | Omlaag vliegen |
-| <kbd>Shift</kbd> | Sprinten |
+| Linker <kbd>Shift</kbd> | Sprinten |
 | Linkermuisknop (vasthouden) | Blok breken |
 | Rechtermuisknop | Blok plaatsen |
 | Middelste muisknop | Blok kiezen (pick block) |
@@ -81,6 +81,9 @@ Overige scripts:
 | <kbd>F3</kbd> | Debug- en performance-overlay |
 | <kbd>F1</kbd> | HUD verbergen |
 | <kbd>Esc</kbd> | Muis vrijgeven / pauzemenu |
+
+Alle toetsen behalve <kbd>F1</kbd>, <kbd>F3</kbd> en <kbd>Esc</kbd> zijn aan te passen via
+Options → Controls → Key Binds, ook naar muisknoppen (zoals in Minecraft).
 
 ## Features
 

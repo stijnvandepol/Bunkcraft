@@ -2,6 +2,9 @@ import {
   type GraphicsQuality, MAX_RENDER_DISTANCE, type ParticleLevel, QUALITY_PRESETS,
   type SettingsStore, type ShadowQuality, detectPreset,
 } from '../core/Settings';
+import {
+  KEYBINDS, KEYBIND_CATEGORIES, type KeybindMap, conflictingCodes, defaultKeybinds, isValidCode, keyDisplayName,
+} from '../core/Keybinds';
 import { button, cycleButton, h, menuScreen, slider } from './dom';
 
 export interface OptionsNav {
@@ -108,24 +111,102 @@ function soundScreen(store: SettingsStore, nav: OptionsNav): HTMLDivElement {
 
 function controlsScreen(store: SettingsStore, nav: OptionsNav): HTMLDivElement {
   const s = store.values;
-  const binds: [string, string][] = [
-    ['Walk Forwards', 'W'], ['Walk Backwards', 'S'], ['Strafe Left', 'A'], ['Strafe Right', 'D'],
-    ['Jump', 'Space'], ['Sprint', 'Left Shift'], ['Fly Down', 'C'], ['Toggle Flight', 'Space ×2'],
-    ['Attack/Destroy', 'Button 1'], ['Use Item/Place Block', 'Button 2'], ['Pick Block', 'Button 3'],
-    ['Open/Close Inventory', 'E'], ['Drop Item', 'Q'], ['Hotbar Slots', '1 – 9'], ['Toggle HUD', 'F1'], ['Debug Screen', 'F3'],
-    ['Pause', 'Escape'],
-  ];
   return menuScreen('Controls', [
     h('div', { class: 'grid2' },
       slider(10, 200, 1, s.sensitivity, (v) => `Sensitivity: ${v}%`, (v) => store.set('sensitivity', v)),
       cycleButton<'on' | 'off'>('Invert Mouse', ['off', 'on'], { on: 'ON', off: 'OFF' }, s.invertMouse ? 'on' : 'off', (v) => store.set('invertMouse', v === 'on')),
-      h('div', { class: 'section-label', text: 'Key Binds' }),
-      ...binds.flatMap(([action, key]) => [
-        h('div', { class: 'keybind-label', text: action }),
-        button(key, () => undefined, { cls: 'keybind' }),
-      ]),
+      button('Key Binds...', () => nav.push(keyBindsScreen(store, nav))),
     ),
   ], [button('Done', () => nav.pop())], { list: true });
+}
+
+const SWALLOWED = ['click', 'auxclick', 'contextmenu'];
+
+/**
+ * Key Binds, like Minecraft 1.21: grouped by category, "Name [key] [Reset]" per row.
+ * Clicking a key button shows "> key <"; the next key or mouse press binds it and Escape
+ * unbinds it ("Not Bound"). Keys used by more than one action are shown in red.
+ */
+function keyBindsScreen(store: SettingsStore, nav: OptionsNav): HTMLDivElement {
+  const keyButtons: HTMLButtonElement[] = [];
+  const resetButtons: HTMLButtonElement[] = [];
+  let listening = -1;
+
+  const render = () => {
+    const map = store.values.keybinds;
+    const conflicts = conflictingCodes(map);
+    KEYBINDS.forEach((k, i) => {
+      const code = map[k.id] ?? k.defaultCode;
+      const btn = keyButtons[i];
+      const label = keyDisplayName(code);
+      btn.textContent = i === listening ? `> ${label} <` : label;
+      btn.classList.toggle('listening', i === listening);
+      btn.classList.toggle('conflict', i !== listening && conflicts.has(code));
+      resetButtons[i].disabled = code === k.defaultCode;
+    });
+  };
+
+  const setKeybinds = (map: KeybindMap) => {
+    store.set('keybinds', map);
+    render();
+  };
+  const bind = (i: number, code: string) => setKeybinds({ ...store.values.keybinds, [KEYBINDS[i].id]: code });
+
+  // Listeners exist only while waiting for a press. They run in the capture phase, before
+  // the game's own window listeners, so Escape here never reaches the pause/back handling.
+  const swallow = (e: Event) => {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+  };
+  const onKey = (e: KeyboardEvent) => {
+    swallow(e);
+    if (!e.repeat) finish(e.code === 'Escape' ? '' : e.code);
+  };
+  const onMouse = (e: MouseEvent) => {
+    swallow(e);
+    // The click/contextmenu that follows this press must not trigger a button.
+    for (const t of SWALLOWED) window.addEventListener(t, swallow, true);
+    window.addEventListener('mouseup', () => window.setTimeout(() => {
+      for (const t of SWALLOWED) window.removeEventListener(t, swallow, true);
+    }, 0), { capture: true, once: true });
+    finish(`Mouse${e.button}`);
+  };
+  const stopListening = () => {
+    window.removeEventListener('keydown', onKey, true);
+    window.removeEventListener('mousedown', onMouse, true);
+  };
+  const finish = (code: string) => {
+    const i = listening;
+    listening = -1;
+    stopListening();
+    if (i >= 0 && isValidCode(code)) bind(i, code);
+    else render();
+  };
+  const listen = (i: number) => {
+    listening = i;
+    window.addEventListener('keydown', onKey, true);
+    window.addEventListener('mousedown', onMouse, true);
+    render();
+  };
+
+  const rows: HTMLElement[] = [];
+  for (const cat of KEYBIND_CATEGORIES) {
+    rows.push(h('div', { class: 'keybind-category', text: cat }));
+    // Alphabetical within a category, like Minecraft.
+    const inCat = KEYBINDS.map((k, i) => ({ k, i })).filter(({ k }) => k.category === cat)
+      .sort((a, b) => a.k.name.localeCompare(b.k.name, 'en', { numeric: true }));
+    for (const { k, i } of inCat) {
+      keyButtons[i] = button('', () => listen(i), { cls: 'keybind' });
+      resetButtons[i] = button('Reset', () => bind(i, k.defaultCode));
+      rows.push(h('div', { class: 'keybind-label', text: k.name }), keyButtons[i], resetButtons[i]);
+    }
+  }
+
+  render();
+  return menuScreen('Key Binds', [h('div', { class: 'keybinds' }, ...rows)], [
+    button('Reset Keys', () => setKeybinds(defaultKeybinds()), { cls: 'w150' }),
+    button('Done', () => nav.pop(), { cls: 'w150' }),
+  ], { list: true });
 }
 
 function creditsScreen(nav: OptionsNav): HTMLDivElement {

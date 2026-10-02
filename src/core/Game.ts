@@ -33,6 +33,7 @@ import { MainMenu, VERSION, deathScreen, pauseScreen } from '../ui/MainMenu';
 import { resourcePacksScreen } from '../ui/ResourcePacksMenu';
 import { ScreenStack } from '../ui/Screens';
 import { optionsScreen } from '../ui/SettingsMenu';
+import { KB, resolveKeybinds } from './Keybinds';
 import { SurvivalInventory } from '../ui/SurvivalInventory';
 import { WorkerPool } from '../workers/WorkerPool';
 import { BLOCK, SOLID, getBlockDef } from '../world/BlockRegistry';
@@ -308,6 +309,7 @@ export class Game {
     this.updateMenuBlur();
     this.cam.baseFov = s.fov;
     this.cam.viewBobbing = s.viewBobbing;
+    if (!key || key === 'keybinds') this.input.setBindings(resolveKeybinds(s.keybinds));
     this.audio.setVolumes((s.soundVolume * s.masterVolume) / 100, (s.musicVolume * s.masterVolume) / 100);
     applyGuiScale(s.guiScale);
     if (this.world) {
@@ -715,11 +717,13 @@ export class Game {
 
   private onKey(code: string): void {
     if (this.chat.isOpen) return;
-    if ((code === 'KeyT' || code === 'Slash') && this.net && this.state === 'playing' && this.input.locked) {
+    const input = this.input;
+    const command = code === input.bound(KB.COMMAND);
+    if ((command || code === input.bound(KB.CHAT)) && this.net && this.state === 'playing' && this.input.locked) {
       this.state = 'chat';
       this.suppressPause = this.input.locked;
       this.input.exitLock();
-      this.chat.openInput(code === 'Slash' ? '/' : '');
+      this.chat.openInput(command ? '/' : '');
       return;
     }
     if (code === 'F3') this.debug.toggle();
@@ -727,7 +731,7 @@ export class Game {
       this.hudHidden = !this.hudHidden;
       this.hud.setVisible(!this.hudHidden);
     }
-    if (code === 'KeyE') {
+    if (code === input.bound(KB.INVENTORY)) {
       if (this.state === 'playing' && this.input.locked && this.mode !== 'spectator') {
         this.state = 'inventory';
         this.suppressPause = this.input.locked;
@@ -738,7 +742,7 @@ export class Game {
         void this.resumeGame();
       }
     }
-    if (code === 'KeyQ' && this.state === 'playing' && this.input.locked && this.mode !== 'spectator') {
+    if (code === input.bound(KB.DROP) && this.state === 'playing' && this.input.locked && this.mode !== 'spectator') {
       // Drop one item from the selected slot (Q), like Minecraft.
       const s = this.hotbar.selectedStack;
       if (s.count > 0) {
@@ -950,7 +954,7 @@ export class Game {
       p.pitch -= input.mouseDY * sens * (this.settings.values.invertMouse ? -1 : 1);
       const limit = Math.PI / 2 - 0.001;
       p.pitch = Math.max(-limit, Math.min(limit, p.pitch));
-      for (let i = 0; i < 9; i++) if (input.wasPressed(`Digit${i + 1}`)) this.hotbar.select(i);
+      for (let i = 0; i < 9; i++) if (input.actionPressed(KB.HOTBAR_1 + i)) this.hotbar.select(i);
       if (input.wheel !== 0) this.hotbar.select(this.hotbar.selected + input.wheel);
     }
 
@@ -959,12 +963,12 @@ export class Game {
       this.accumulator = Math.min(this.accumulator + dt, 0.25);
       const move = this.move;
       const control = active && this.state !== 'dead';
-      move.forward = control ? (input.isDown('KeyW') ? 1 : 0) - (input.isDown('KeyS') ? 1 : 0) : 0;
-      move.strafe = control ? (input.isDown('KeyD') ? 1 : 0) - (input.isDown('KeyA') ? 1 : 0) : 0;
-      move.jump = control && input.isDown('Space');
-      move.jumpPressed = control && input.wasPressed('Space');
-      move.sprint = control && (input.isDown('ShiftLeft') || input.isDown('ShiftRight'));
-      move.descend = control && input.isDown('KeyC');
+      move.forward = control ? (input.actionDown(KB.FORWARD) ? 1 : 0) - (input.actionDown(KB.BACK) ? 1 : 0) : 0;
+      move.strafe = control ? (input.actionDown(KB.RIGHT) ? 1 : 0) - (input.actionDown(KB.LEFT) ? 1 : 0) : 0;
+      move.jump = control && input.actionDown(KB.JUMP);
+      move.jumpPressed = control && input.actionPressed(KB.JUMP);
+      move.sprint = control && input.actionDown(KB.SPRINT);
+      move.descend = control && input.actionDown(KB.SNEAK);
       while (this.accumulator >= PHYSICS.STEP) {
         p.step(move, this.getBlock);
         move.jumpPressed = false;

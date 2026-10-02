@@ -592,8 +592,19 @@ html, body {
   background: #1b1b1b;
 }
 
-.keybind-label { display: flex; align-items: center; justify-content: flex-end; color: #fff; }
-.mc-btn.keybind { cursor: default; }
+/* Key Binds: "Name [key] [Reset]" rows under centred category headers. */
+.keybinds {
+  display: grid;
+  grid-template-columns: calc(var(--s) * 166) calc(var(--s) * 75) calc(var(--s) * 50);
+  gap: calc(var(--s) * 4);
+  align-items: center;
+}
+.keybind-category { grid-column: 1 / -1; text-align: center; color: #fff; text-shadow: var(--shadow); margin-top: calc(var(--s) * 6); }
+.keybind-category:first-child { margin-top: 0; }
+.keybind-label { color: #fff; text-shadow: var(--shadow); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.keybinds > .mc-btn { width: 100%; }
+.mc-btn.keybind.listening { color: #ffff55; }
+.mc-btn.keybind.conflict { color: #ff5555; }
 
 /* ---------------------------------------------------------------- survival */
 

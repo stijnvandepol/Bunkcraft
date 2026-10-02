@@ -1,32 +1,38 @@
-/** Keys the game consumes; their browser default (scrolling, find, …) is suppressed. */
-const GAME_KEYS = new Set([
-  'KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'ShiftLeft', 'ShiftRight', 'KeyC', 'KeyE', 'KeyQ',
-  'F1', 'F3', 'Tab', 'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8', 'Digit9',
-]);
+import { KB, KEYBINDS } from './Keybinds';
+
+const MOUSE_CODES = ['Mouse0', 'Mouse1', 'Mouse2', 'Mouse3', 'Mouse4'];
+
+/** Fixed keys whose browser default (help, find, focus change) is suppressed in game. */
+const FIXED_KEYS = new Set(['F1', 'F3', 'Tab']);
 
 /**
  * Keyboard/mouse state with per-frame edge detection. Mouse movement is accumulated
  * between frames and consumed once per frame, so look input is never dropped.
+ *
+ * Keys are tracked by `KeyboardEvent.code`, mouse buttons as "Mouse<button>" (only while
+ * the pointer is locked), so every action can be bound to either (see Keybinds.ts).
  */
 export class Input {
   private readonly down = new Set<string>();
   private readonly pressed = new Set<string>();
+  /** Bound code per action, in KB order ('' = Not Bound). Replaced via setBindings. */
+  private binds: string[] = KEYBINDS.map((k) => k.defaultCode);
+  /** Every bound code: their browser defaults are suppressed while playing. */
+  private boundCodes = new Set<string>(this.binds);
   mouseDX = 0;
   mouseDY = 0;
   wheel = 0;
-  leftDown = false;
-  rightDown = false;
-  leftClicked = false;
-  rightClicked = false;
-  middleClicked = false;
   locked = false;
-  /** Fires on every keydown (used for UI shortcuts like ESC, E, F3). */
-  onKeyDown: ((code: string, e: KeyboardEvent) => void) | null = null;
+  /**
+   * Fires on every keydown, and on mouse button presses while locked (used for UI
+   * shortcuts like ESC, inventory, F3). Mouse buttons arrive as "Mouse<button>".
+   */
+  onKeyDown: ((code: string, e: KeyboardEvent | MouseEvent) => void) | null = null;
   onLockChange: ((locked: boolean) => void) | null = null;
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     window.addEventListener('keydown', (e) => {
-      if (GAME_KEYS.has(e.code) && (this.locked || e.code === 'F3' || e.code === 'F1')) e.preventDefault();
+      if (e.code === 'F1' || e.code === 'F3' || (this.locked && (this.boundCodes.has(e.code) || FIXED_KEYS.has(e.code)))) e.preventDefault();
       if (!e.repeat) {
         this.down.add(e.code);
         this.pressed.add(e.code);
@@ -36,7 +42,6 @@ export class Input {
     window.addEventListener('keyup', (e) => this.down.delete(e.code));
     window.addEventListener('blur', () => {
       this.down.clear();
-      this.leftDown = this.rightDown = false;
     });
     document.addEventListener('mousemove', (e) => {
       if (!this.locked) return;
@@ -45,13 +50,19 @@ export class Input {
     });
     canvas.addEventListener('mousedown', (e) => {
       if (!this.locked) return;
-      if (e.button === 0) { this.leftDown = true; this.leftClicked = true; }
-      if (e.button === 2) { this.rightDown = true; this.rightClicked = true; }
-      if (e.button === 1) { this.middleClicked = true; e.preventDefault(); }
+      const code = MOUSE_CODES[e.button];
+      if (!code) return;
+      // Middle-click autoscroll, side-button navigation.
+      if (e.button !== 0) e.preventDefault();
+      this.down.add(code);
+      this.pressed.add(code);
+      this.onKeyDown?.(code, e);
     });
     window.addEventListener('mouseup', (e) => {
-      if (e.button === 0) this.leftDown = false;
-      if (e.button === 2) this.rightDown = false;
+      const code = MOUSE_CODES[e.button];
+      if (!code) return;
+      if (this.locked && e.button > 2) e.preventDefault();
+      this.down.delete(code);
     });
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     window.addEventListener('wheel', (e) => {
@@ -61,11 +72,44 @@ export class Input {
       this.locked = document.pointerLockElement === this.canvas;
       if (!this.locked) {
         this.down.clear();
-        this.leftDown = this.rightDown = false;
       }
       this.onLockChange?.(this.locked);
     });
   }
+
+  /** Use new bindings (array in KB order, '' = Not Bound). Called when settings change. */
+  setBindings(codes: readonly string[]): void {
+    this.binds = codes.slice();
+    this.boundCodes = new Set(codes.filter((c) => c !== ''));
+  }
+
+  /** The code bound to an action ('' when Not Bound). */
+  bound(action: number): string {
+    return this.binds[action];
+  }
+
+  /** Is the action's binding held? */
+  actionDown(action: number): boolean {
+    const c = this.binds[action];
+    return c !== '' && this.down.has(c);
+  }
+
+  /** Was the action's binding pressed this frame? */
+  actionPressed(action: number): boolean {
+    const c = this.binds[action];
+    return c !== '' && this.pressed.has(c);
+  }
+
+  /** Attack/Destroy held (Left Button by default). */
+  get leftDown(): boolean { return this.actionDown(KB.ATTACK); }
+  /** Attack/Destroy pressed this frame. */
+  get leftClicked(): boolean { return this.actionPressed(KB.ATTACK); }
+  /** Use Item/Place Block held (Right Button by default). */
+  get rightDown(): boolean { return this.actionDown(KB.USE); }
+  /** Use Item/Place Block pressed this frame. */
+  get rightClicked(): boolean { return this.actionPressed(KB.USE); }
+  /** Pick Block pressed this frame (Middle Button by default). */
+  get middleClicked(): boolean { return this.actionPressed(KB.PICK); }
 
   isDown(code: string): boolean {
     return this.down.has(code);
@@ -98,6 +142,5 @@ export class Input {
     this.pressed.clear();
     this.mouseDX = this.mouseDY = 0;
     this.wheel = 0;
-    this.leftClicked = this.rightClicked = this.middleClicked = false;
   }
 }
