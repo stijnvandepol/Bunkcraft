@@ -1,4 +1,4 @@
-import { ARENA_BOUNDS, ARENA_SPAWNS, type Spawn } from '../src/modes/arena';
+import { type ArenaMap, DEFAULT_MAP, type Spawn, getMap } from '../src/modes/maps';
 import type { Team } from '../src/modes/GameTypes';
 import {
   DEFAULT_PRIMARY, PLAYER_MAX_HEALTH, PRIMARY_WEAPONS, REGEN_DELAY, REGEN_PER_SECOND, RESPAWN_SECONDS,
@@ -38,6 +38,11 @@ export interface MatchHost {
   random(): number;
   /** Round-trip time in ms, 0 when unknown. */
   ping(id: number): number;
+  /**
+   * A new match is about to start on `current`: returns the map to play next (the host swaps its
+   * bullet world), or null to keep the map.
+   */
+  nextMap?(current: string): string | null;
 }
 
 interface Slot {
@@ -95,8 +100,18 @@ export class Match {
   private readonly tmpDir: [number, number, number] = [0, 0, 0];
   private readonly tmpPos: [number, number, number] = [0, 0, 0];
 
+  /** The arena this match is played on. */
+  map: ArenaMap;
+
   constructor(private readonly host: MatchHost, readonly info: MatchInfo) {
     this.lastTick = host.now();
+    this.map = getMap(info.map ?? DEFAULT_MAP);
+    info.map = this.map.id;
+  }
+
+  setMap(id: string): void {
+    this.map = getMap(id);
+    this.info.map = this.map.id;
   }
 
   get teams(): boolean {
@@ -403,6 +418,8 @@ export class Match {
 
   /** Next match: scores reset, teams rebalanced, everyone respawns into a new warm-up. */
   private restart(now: number): void {
+    const next = this.host.nextMap?.(this.map.id);
+    if (next && next !== this.map.id) this.setMap(next);
     this.phase = 'warmup';
     this.warmupEnd = 0;
     this.scores.red = this.scores.blue = 0;
@@ -462,7 +479,7 @@ export class Match {
    * little randomness so the same point is not used every time.
    */
   pickSpawn(p: MatchPlayer): Spawn {
-    const list: Spawn[] = this.teams && p.team ? ARENA_SPAWNS[p.team] : ARENA_SPAWNS.ffa;
+    const list: Spawn[] = this.teams && p.team ? this.map.spawns[p.team] : this.map.spawns.ffa;
     let best = list[0], bestScore = -Infinity;
     for (const s of list) {
       let nearest = 1000;
@@ -477,8 +494,8 @@ export class Match {
   }
 
   /** Whether a position lies inside the walkable part of the arena (the wall ring is out). */
-  static inBounds(x: number, z: number): boolean {
-    return x > ARENA_BOUNDS.minX + 1 && x < ARENA_BOUNDS.maxX - 1 && z > ARENA_BOUNDS.minZ + 1 && z < ARENA_BOUNDS.maxZ - 1;
+  inBounds(x: number, z: number): boolean {
+    return this.map.inBounds(x, z);
   }
 
   // ---------------------------------------------------------------- messages out

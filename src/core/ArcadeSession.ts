@@ -43,6 +43,8 @@ export interface ArcadeDeps {
   selfId: number;
   selfName: string;
   info: MatchInfo;
+  /** The server started a match on another map than this session was built for. */
+  onMapChange?(map: string): void;
 }
 
 /** Per-frame values the game already has at hand. */
@@ -227,6 +229,10 @@ export class ArcadeSession {
       this.ended = false;
       this.hud.setMatchEnd(null);
       this.d.remote.reviveAll();
+    }
+    if (msg.info.map && msg.info.map !== (this.info.map ?? 'classic')) {
+      this.d.onMapChange?.(msg.info.map);
+      return;
     }
     this.phase = msg.phase;
     this.timeLeft = msg.timeLeft;

@@ -4,9 +4,8 @@ import { BLOCK, SHAPE, SHAPE_CROSS, SHAPE_MODEL, SOLID, TINT } from './BlockRegi
 import { CHUNK_READY, type Chunk } from './Chunk';
 import { ChunkManager, type ChunkMaterials } from './ChunkManager';
 import { CHUNK_HEIGHT, SEA_LEVEL, blockIndex, chunkKey } from './constants';
-import { ARENA_SPAWNS } from '../modes/arena';
 import { BIOME } from './TerrainGenerator';
-import { type WorldGenerator, type WorldType, createGenerator } from './WorldGenerator';
+import { type WorldGenerator, type WorldType, arenaMapOf, createGenerator, isArenaWorld } from './WorldGenerator';
 
 /** Sparse player edits per chunk: block index → block id. */
 export type EditMap = Map<number, Map<number, number>>;
@@ -240,7 +239,7 @@ export class World {
 
   /** Spiral search for dry land near the origin using the 2D height function. */
   findSpawn(): { x: number; z: number } {
-    if (this.worldType === 'arena') return ARENA_SPAWNS.ffa[0];
+    if (isArenaWorld(this.worldType)) return arenaMapOf(this.worldType).spawns.ffa[0];
     for (let r = 0; r < 2000; r += 8) {
       const steps = Math.max(1, Math.floor((r * Math.PI * 2) / 16));
       for (let s = 0; s < steps; s++) {

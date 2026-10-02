@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { WebSocket } from 'ws';
 import { afterEach, describe, expect, it } from 'vitest';
+import { type MapSetting, getMap } from '../src/modes/maps';
 import { PROTOCOL_VERSION, type ClientMessage, type ServerMessage } from '../src/net/protocol';
 import { GameServer } from '../server/GameServer';
 import { Rooms } from '../server/Rooms';
@@ -36,10 +37,10 @@ function tmp(): string {
   return d;
 }
 
-function arcade(type: 'tdm' | 'ffa' = 'tdm'): GameServer {
+function arcade(type: 'tdm' | 'ffa' = 'tdm', mapId?: MapSetting): GameServer {
   const s = new GameServer({
     dataDir: tmp(), worldName: 'Arena', seed: '7', gameMode: 'survival', motd: '', maxPlayers: 8, quiet: true,
-    gameType: type, scoreLimit: 20, timeLimitSec: 300,
+    gameType: type, scoreLimit: 20, timeLimitSec: 300, mapId,
   });
   servers.push(s);
   return s;
@@ -127,6 +128,29 @@ describe('arcade rooms', () => {
   });
 });
 
+describe('arcade maps on the server', () => {
+  it('announces the chosen map in welcome and match, and spawns inside it', () => {
+    for (const id of ['classic', 'suburb', 'quarter', 'dockyard'] as const) {
+      const ws = connect(arcade('tdm', id), 'alice');
+      const w = ws.of('welcome')[0];
+      expect(w.match?.map).toBe(id);
+      expect(w.worldType).toBe('arena');
+      expect(getMap(id).inBounds(w.spawn.x, w.spawn.z)).toBe(true);
+      expect(ws.of('match')[0].info.map).toBe(id);
+    }
+  });
+
+  it('rejects positions outside the small suburb map that would be fine on a big one', () => {
+    const server = arcade('ffa', 'suburb');
+    const a = connect(server, 'alice');
+    const spawn = a.of('spawn')[0];
+    a.say({ t: 'pos', x: spawn.x, y: spawn.y, z: spawn.z, yaw: 0, pitch: 0, flags: 4, held: 0 });
+    // x = 40 is inside the classic arena (48) but outside the suburb (32).
+    for (let i = 0; i < 6; i++) a.say({ t: 'pos', x: 40, y: 65, z: 0, yaw: 0, pitch: 0, flags: 4, held: 0 });
+    expect(a.of('teleport').length).toBeGreaterThan(0);
+  });
+});
+
 describe('rooms API', () => {
   function rooms(dir = tmp()): Rooms {
     const r = new Rooms({ dataDir: dir, maxRooms: 10, maxPlayers: 8, motd: '', idleUnloadMs: 60_000, expireDays: 0 });
@@ -142,6 +166,33 @@ describe('rooms API', () => {
     expect(r.info(code2)).toMatchObject({ gameType: 'ffa', scoreLimit: 5, timeLimitSec: 1800 });
     const code3 = r.create('Fight 3', undefined, undefined, { gameType: 'tdm' })!;
     expect(r.info(code3)).toMatchObject({ scoreLimit: 30, timeLimitSec: 600 });
+  });
+
+  it('accepts and validates the map setting, and returns it', () => {
+    const r = rooms();
+    expect(r.info(r.create('A', undefined, undefined, { gameType: 'tdm' })!)).toMatchObject({ map: 'classic' });
+    expect(r.info(r.create('B', undefined, undefined, { gameType: 'tdm', mapId: 'suburb' })!)).toMatchObject({ map: 'suburb' });
+    expect(r.info(r.create('C', undefined, undefined, { gameType: 'ffa', mapId: 'dockyard' })!)).toMatchObject({ map: 'dockyard' });
+    expect(r.info(r.create('D', undefined, undefined, { gameType: 'tdm', mapId: 'rotate' })!)).toMatchObject({ map: 'rotate' });
+    for (const bad of ['nope', 7, '../../etc', 'SUBURB']) {
+      expect(r.info(r.create('E', undefined, undefined, { gameType: 'tdm', mapId: bad })!)).toMatchObject({ map: 'classic' });
+    }
+    // Minecraft games have no map.
+    expect(r.info(r.create('F', 'creative', '1', { mapId: 'dockyard' })!)?.map).toBeUndefined();
+  });
+
+  it('persists the map in world.json and restores it after a restart', () => {
+    const dir = tmp();
+    const r1 = rooms(dir);
+    const code = r1.create('Persist', undefined, '9', { gameType: 'tdm', mapId: 'dockyard' })!;
+    r1.shutdown();
+    expect(JSON.parse(readFileSync(join(dir, code, 'world.json'), 'utf8'))).toMatchObject({ mapId: 'dockyard' });
+    const r2 = rooms(dir);
+    expect(r2.info(code)).toMatchObject({ map: 'dockyard' });
+    const ws = new FakeSocket();
+    r2.get(code)!.server.accept(ws as unknown as WebSocket);
+    ws.say({ t: 'hello', v: PROTOCOL_VERSION, name: 'carol' });
+    expect(ws.of('welcome')[0].match?.map).toBe('dockyard');
   });
 
   it('keeps minecraft the default and ignores limits for it', () => {

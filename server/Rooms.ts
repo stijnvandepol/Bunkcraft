@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomInt } from 'node:crypto';
 import { type GameType, gameTypeDef, parseGameType } from '../src/modes/GameTypes';
+import { DEFAULT_MAP, type MapSetting, parseMapSetting } from '../src/modes/maps';
 import { CODE_ALPHABET, CODE_LENGTH, normalizeCode } from '../src/net/protocol';
 import { GAME_MODES, type GameMode } from '../src/player/GameMode';
 import { GameServer, parseGameMode } from './GameServer';
@@ -27,6 +28,8 @@ export interface RoomInfo {
   gameType: GameType;
   scoreLimit: number;
   timeLimitSec: number;
+  /** Arcade games: the map setting (a map id or "rotate"). */
+  map?: MapSetting;
 }
 
 /** Match settings a client may ask for; the server clamps them. */
@@ -34,6 +37,8 @@ export interface MatchRequest {
   gameType?: unknown;
   scoreLimit?: unknown;
   timeLimitSec?: unknown;
+  /** A map id or "rotate"; anything else becomes the default map. */
+  mapId?: unknown;
 }
 
 export const SCORE_LIMIT_RANGE = { min: 5, max: 100 };
@@ -115,6 +120,7 @@ export class Rooms {
         gameType: type.id,
         scoreLimit: clampSetting(match.scoreLimit, SCORE_LIMIT_RANGE, type.scoreLimit),
         timeLimitSec: clampSetting(match.timeLimitSec, TIME_LIMIT_RANGE, type.timeLimitSec),
+        mapId: parseMapSetting(match.mapId) ?? DEFAULT_MAP,
       } : {}),
     });
     this.loaded.set(code, { server, lastActive: Date.now() });

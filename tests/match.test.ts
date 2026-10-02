@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ARENA_SPAWNS } from '../src/modes/arena';
+import { getMap } from '../src/modes/maps';
 import { WEAPONS, fireInterval, weaponDef } from '../src/modes/Weapons';
 import type { ClientMessage, MatchInfo, ServerMessage } from '../src/net/protocol';
 import { BLOCK } from '../src/world/BlockRegistry';
@@ -16,6 +17,7 @@ class StubHost implements MatchHost {
   blocks = { getBlock: (x: number, y: number, z: number) => this.blockMap.get(`${x},${y},${z}`) ?? BLOCK.AIR };
   pings = new Map<number, number>();
   moved: number[] = [];
+  nextMap?: (current: string) => string | null;
   /** 0 = no spread, tests that need randomness override it. */
   rng = () => 0;
 
@@ -443,6 +445,57 @@ describe('spawn selection', () => {
       const s = match.pickSpawn(match.players.get(1)!);
       expect(Math.hypot(s.x - enemyOnRedSpawn.x, s.z - enemyOnRedSpawn.z)).toBeGreaterThan(5);
     }
+  });
+});
+
+describe('maps in the match', () => {
+  it('spawns on the spawns of the match map and announces it', () => {
+    for (const id of ['suburb', 'dockyard']) {
+      const host = new StubHost();
+      const match = new Match(host, { type: 'tdm', scoreLimit: 30, timeLimitSec: 600, map: id });
+      const p = match.join(1, 'alice');
+      const map = getMap(id);
+      expect(map.spawns[p.team as 'red' | 'blue'].some((s) => s.x === p.x && s.z === p.z)).toBe(true);
+      expect(match.info.map).toBe(id);
+      expect(match.inBounds(0, 0)).toBe(true);
+      expect(match.inBounds(map.bounds.maxX, 0)).toBe(false);
+    }
+    expect(new Match(new StubHost(), { type: 'ffa', scoreLimit: 5, timeLimitSec: 60 }).info.map).toBe('classic');
+  });
+
+  it('keeps the map between matches unless the host rotates it', () => {
+    const { host, match, advance } = setup('ffa', 1, 600);
+    match.join(1, 'a'); match.join(2, 'b');
+    match.ready(1); match.ready(2);
+    advance(WARMUP_SECONDS + 0.2);
+    match.setPosition(1, 0.5, 65, 0.5); match.setPosition(2, 0.5, 65, 10.5);
+    advance(2.5);
+    host.clear();
+    // Kill b to end the match (score limit 1).
+    for (let i = 0; i < 40 && match.phase === 'live'; i++) { match.fire(1, aim({ x: 0.5, y: 65, z: 0.5 }, body(10.5))); advance(0.15); }
+    expect(match.phase).toBe('ended');
+    advance(ENDED_SECONDS + 0.5);
+    expect(match.info.map).toBe('classic');
+    expect(host.of('match').at(-1)?.info.map).toBe('classic');
+  });
+
+  it('switches to the map the host picks when a new match starts', () => {
+    const { host, match, advance } = setup('ffa', 1, 600);
+    host.nextMap = (current) => (current === 'classic' ? 'suburb' : 'dockyard');
+    match.join(1, 'a'); match.join(2, 'b');
+    match.ready(1); match.ready(2);
+    advance(WARMUP_SECONDS + 0.2);
+    match.setPosition(1, 0.5, 65, 0.5); match.setPosition(2, 0.5, 65, 10.5);
+    advance(2.5);
+    for (let i = 0; i < 40 && match.phase === 'live'; i++) { match.fire(1, aim({ x: 0.5, y: 65, z: 0.5 }, body(10.5))); advance(0.15); }
+    expect(match.phase).toBe('ended');
+    advance(ENDED_SECONDS + 0.5);
+    expect(match.phase).toBe('warmup');
+    expect(match.info.map).toBe('suburb');
+    expect(host.of('match').at(-1)?.info.map).toBe('suburb');
+    // The respawn after the switch uses the new map's spawns.
+    const spawn = host.of('spawn', 1).at(-1)!;
+    expect(getMap('suburb').spawns.ffa.some((s) => s.x === spawn.x && s.z === spawn.z)).toBe(true);
   });
 });
 

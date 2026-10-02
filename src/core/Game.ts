@@ -47,7 +47,8 @@ import { BLOCK, SOLID, getBlockDef } from '../world/BlockRegistry';
 import { CHUNK_VOLUME, blockIndex, chunkKey } from '../world/constants';
 import { hashString } from '../world/Noise';
 import { BIOME_NAMES } from '../world/TerrainGenerator';
-import type { WorldType } from '../world/WorldGenerator';
+import { DEFAULT_MAP, getMap, parseMapId } from '../modes/maps';
+import { type WorldType, arenaWorldType } from '../world/WorldGenerator';
 import { createRayHit, raycast } from '../world/Raycast';
 import { World } from '../world/World';
 import { type ArcadeFrame, ArcadeSession } from './ArcadeSession';
@@ -153,6 +154,10 @@ export class Game {
   private gpuName = '';
   /** Code of the hosted game we are in (null in singleplayer or on the main world). */
   private roomCode: string | null = null;
+  /** Arcade: the map of the arena world being built (a MapId; the welcome message announces it). */
+  private arenaMap: string = DEFAULT_MAP;
+  /** How this multiplayer session was joined, to reconnect when the server rotates to another map. */
+  private lastJoin: { name: string; address: string; room?: string } | null = null;
   /** Mirror of the server's mobs, items, arrows and TNT while in multiplayer. */
   private netEntities: NetEntities | null = null;
   private contextLost: HTMLDivElement | null = null;
@@ -478,7 +483,8 @@ export class Game {
   /** Common world setup for singleplayer saves and multiplayer servers. */
   private startSession(meta: WorldMeta, edits: Map<number, Map<number, number>>): void {
     this.meta = meta;
-    const world = this.createWorldInstance(meta.seed, edits, meta.worldType);
+    const worldType: WorldType | undefined = meta.worldType === 'arena' ? arenaWorldType(parseMapId(this.arenaMap) ?? DEFAULT_MAP) : meta.worldType;
+    const world = this.createWorldInstance(meta.seed, edits, worldType);
     this.cycle.time = meta.time;
     const mode = meta.gameMode ?? 'creative';
     // Inventory: saved stacks, else creative gets the default hotbar and survival starts empty.
@@ -616,6 +622,8 @@ export class Game {
       inventory: rec?.inventory, stats: rec?.stats, spawn: welcome.spawn, worldType: welcome.worldType,
     };
     this.loadingProgress = progress;
+    this.arenaMap = welcome.match?.map ?? DEFAULT_MAP;
+    this.lastJoin = { name, address, room };
     this.startSession(meta, edits);
     const world = this.world!;
     // The server simulates the mobs, items, arrows and TNT; we only mirror them.
@@ -658,6 +666,15 @@ export class Game {
     if (room) this.chat.add(`Game code: ${formatCode(room)}. Press Esc, then Invite Friends, to share it.`, true);
   }
 
+  /** Leaves and joins the same game again (new welcome, so the arena is rebuilt for the map the server now plays). */
+  private rejoinServer(): void {
+    const join = this.lastJoin;
+    if (!join || !this.net) return;
+    this.disconnect();
+    this.input.exitLock();
+    void this.joinServer(join.name, join.address, join.room);
+  }
+
   /** Switches this session to an arcade game type: no building, no survival, weapons and the arcade HUD. */
   private startArcade(welcome: WelcomeMessage, send: (msg: ClientMessage) => void, name: string): void {
     this.stopArcade();
@@ -681,6 +698,8 @@ export class Game {
       getBlock: this.getBlock,
       getLight: (x, y, z) => this.world ? this.world.getLight(x, y, z) : 0xf0,
       selfId: welcome.id, selfName: name, info,
+      // The next match is on another map: this world is wrong now, so join the game again.
+      onMapChange: () => this.rejoinServer(),
     });
     this.arcade = session;
     session.hud.onLoadoutClose = () => void this.resumeGame();
@@ -772,9 +791,10 @@ export class Game {
   /**
    * Development only (`window.game.arcadePreview('tdm' | 'ffa')`): starts a local test arena in
    * arcade mode with a fake server (bots, match, hits), to look at the arcade client without the
-   * real server. The fake server is `game.previewServer` (see ArcadePreview.ts for scripted events).
+   * real server. With a map id (`arcadePreview('tdm', 'You', 'canyon')`) it plays on the real arena
+   * of that map instead of a fake one. The fake server is `game.previewServer` (see ArcadePreview.ts for scripted events).
    */
-  async arcadePreview(type: 'tdm' | 'ffa' = 'tdm', name = 'You'): Promise<void> {
+  async arcadePreview(type: 'tdm' | 'ffa' = 'tdm', name = 'You', mapId?: string): Promise<void> {
     if (!import.meta.env.DEV) return;
     const { ArcadePreviewServer } = await import('./ArcadePreview');
     this.audio.unlock();
@@ -783,7 +803,9 @@ export class Game {
     const meta: WorldMeta = {
       id: 'arcade-preview', name: 'Arcade preview', seed: 4242, seedText: '', created: 0, lastPlayed: Date.now(),
       player: null, hotbar: [...DEFAULT_HOTBAR], selectedSlot: 0, time: 0.3, gameMode: 'creative', spawn: { x: 8, y: 100, z: 8 },
+      ...(mapId ? { worldType: 'arena' as const } : {}),
     };
+    this.arenaMap = mapId ?? DEFAULT_MAP;
     this.startSession(meta, new Map());
     const world = this.world!;
     const ray = createRayHit();
@@ -804,6 +826,17 @@ export class Game {
     this.net = null;
     this.previewServer = server;
     this.afterLoad = () => {
+      if (mapId) {
+        // The real arena: start at a team spawn of the map.
+        const spawn = getMap(mapId).spawns.red[0];
+        server.centerX = 0;
+        server.centerZ = 0;
+        server.floorY = spawn.y;
+        this.player.setPosition(spawn.x, spawn.y, spawn.z);
+        server.start(spawn);
+        this.player.yaw = spawn.yaw;
+        return;
+      }
       // A flat stone arena with a wall ring and some cover, high above the terrain.
       const cx = Math.floor(this.player.x), cz = Math.floor(this.player.z);
       let top = 0;

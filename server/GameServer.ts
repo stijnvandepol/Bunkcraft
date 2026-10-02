@@ -4,12 +4,13 @@ import type { WebSocket } from 'ws';
 import {
   type ClientMessage, NAME_PATTERN, PROTOCOL_VERSION, type PlayerRecord, type ServerMessage, type SnapshotEntry, sanitizeChat,
 } from '../src/net/protocol';
-import { ARENA_FLOOR_Y, ARENA_SPAWNS } from '../src/modes/arena';
+import { ARENA_FLOOR_Y, DEFAULT_MAP, type MapId, type MapSetting, getMap, nextMap, parseMapId, parseMapSetting } from '../src/modes/maps';
 import { type GameType, gameTypeDef } from '../src/modes/GameTypes';
 import { GAME_MODES, type GameMode } from '../src/player/GameMode';
 import { BLOCK, getBlockDef } from '../src/world/BlockRegistry';
 import { SEA_LEVEL } from '../src/world/constants';
 import { hashString } from '../src/world/Noise';
+import { arenaWorldType } from '../src/world/WorldGenerator';
 import { TerrainGenerator } from '../src/world/TerrainGenerator';
 import { Match, type MatchHost } from './Match';
 import { ServerEntities } from './ServerEntities';
@@ -37,6 +38,8 @@ interface WorldData {
   gameType?: GameType;
   scoreLimit?: number;
   timeLimitSec?: number;
+  /** Arcade: a map id, or "rotate" for the next map after every match (absent = the default map). */
+  mapId?: MapSetting;
 }
 
 /** Token bucket rate limiter (per player, per message kind). */
@@ -97,6 +100,7 @@ export interface ServerOptions {
   gameType?: GameType;
   scoreLimit?: number;
   timeLimitSec?: number;
+  mapId?: MapSetting;
 }
 
 /**
@@ -118,7 +122,9 @@ export class GameServer {
   private entitiesActive = false;
   /** Arcade games: the match and the arena as bullets see it. */
   private readonly match: Match | null = null;
-  private readonly arena: ServerWorld | null = null;
+  private arena: ServerWorld | null = null;
+  /** Arcade: the map setting of this game ("rotate" moves on to the next map after every match). */
+  private mapSetting: MapSetting = DEFAULT_MAP;
 
   constructor(private readonly opts: ServerOptions) {
     mkdirSync(opts.dataDir, { recursive: true });
@@ -126,10 +132,12 @@ export class GameServer {
     this.world = this.load();
     const def = gameTypeDef(this.world.gameType ?? 'minecraft');
     if (def.arcade) {
-      this.arena = new ServerWorld(this.world.seed, {}, 'arena');
-      this.arena.preloadArena();
+      this.mapSetting = parseMapSetting(this.world.mapId) ?? DEFAULT_MAP;
+      const first: MapId = parseMapId(this.mapSetting) ?? DEFAULT_MAP;
+      this.loadArena(first);
       this.match = new Match(this.matchHost(), {
         type: def.id, scoreLimit: this.world.scoreLimit ?? def.scoreLimit, timeLimitSec: this.world.timeLimitSec ?? def.timeLimitSec,
+        map: first,
       });
       this.entities = null;
     } else this.entities = new ServerEntities(this.world.seed, this.world.edits, this.world.gameMode, {
@@ -142,6 +150,12 @@ export class GameServer {
     this.timers.push(setInterval(() => this.save(), SAVE_INTERVAL_MS));
   }
 
+  /** The bullets' copy of the arena of a map. */
+  private loadArena(map: MapId): void {
+    this.arena = new ServerWorld(this.world.seed, {}, arenaWorldType(map));
+    this.arena.preloadArena();
+  }
+
   private load(): WorldData {
     if (existsSync(this.file)) {
       const data = JSON.parse(readFileSync(this.file, 'utf8')) as WorldData;
@@ -152,7 +166,8 @@ export class GameServer {
     const seed = !seedText ? (Math.random() * 4294967296) >>> 0
       : /^-?\d+$/.test(seedText) ? Number(BigInt.asUintN(32, BigInt(seedText))) : hashString(seedText);
     const def = gameTypeDef(this.opts.gameType ?? 'minecraft');
-    const spawn = def.arcade ? ARENA_SPAWNS.ffa[0] : this.findSpawn(seed);
+    const mapSetting = parseMapSetting(this.opts.mapId) ?? DEFAULT_MAP;
+    const spawn = def.arcade ? getMap(parseMapId(mapSetting) ?? DEFAULT_MAP).spawns.ffa[0] : this.findSpawn(seed);
     const data: WorldData = {
       name: this.opts.worldName, seed, gameMode: this.opts.gameMode, time: def.arcade ? ARENA_DAY : 0.08, spawn, edits: {}, players: {},
     };
@@ -160,6 +175,7 @@ export class GameServer {
       data.gameType = def.id;
       data.scoreLimit = this.opts.scoreLimit ?? def.scoreLimit;
       data.timeLimitSec = this.opts.timeLimitSec ?? def.timeLimitSec;
+      data.mapId = mapSetting;
     }
     this.log(`[world] created "${data.name}" (seed ${seed}, ${def.arcade ? def.id : data.gameMode}) spawn ${spawn.x} ${spawn.y} ${spawn.z}`);
     this.dirty = true;
@@ -206,10 +222,13 @@ export class GameServer {
 
   info(): {
     name: string; gameMode: GameMode; players: number; maxPlayers: number; gameType: GameType; scoreLimit: number; timeLimitSec: number;
+    /** Arcade: the map setting (a map id or "rotate"). */
+    map?: MapSetting;
   } {
     return {
       name: this.world.name, gameMode: this.world.gameMode, players: this.sessions.size, maxPlayers: this.opts.maxPlayers,
       gameType: this.match?.info.type ?? 'minecraft', scoreLimit: this.match?.info.scoreLimit ?? 0, timeLimitSec: this.match?.info.timeLimitSec ?? 0,
+      ...(this.match ? { map: this.mapSetting } : {}),
     };
   }
 
@@ -230,6 +249,12 @@ export class GameServer {
       },
       random: Math.random,
       ping: (id) => this.sessions.get(id)?.pingMs ?? 0,
+      nextMap: (current) => {
+        if (this.mapSetting !== 'rotate') return null;
+        const next = nextMap(parseMapId(current) ?? DEFAULT_MAP);
+        this.loadArena(next);
+        return next;
+      },
     };
   }
 
@@ -407,7 +432,7 @@ export class GameServer {
     }
     if (this.match) {
       // Arcade: inside the arena, on or above the floor.
-      if (!Match.inBounds(m.x, m.z) || m.y < ARENA_FLOOR_Y - 2 || m.y > ARENA_FLOOR_Y + 40) {
+      if (!this.match.inBounds(m.x, m.z) || m.y < ARENA_FLOOR_Y - 2 || m.y > ARENA_FLOOR_Y + 40) {
         if (++s.violations > 3) this.send(s, { t: 'teleport', x: s.x, y: s.y, z: s.z });
         return;
       }

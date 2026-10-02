@@ -48,6 +48,8 @@ export interface MatchInfo {
   type: GameType;
   scoreLimit: number;
   timeLimitSec: number;
+  /** Arena map of the running match (a MapId); absent on servers from before the maps = the classic map. */
+  map?: string;
 }
 
 /** Snapshot entry: [id, x, y, z, yaw, pitch, flags, heldItem]. flags: 1 sprinting, 2 flying, 4 on ground. */

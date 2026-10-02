@@ -4,17 +4,19 @@
  * the messages on both sides (hit, damaged, kill, ammo, roster, respawn, rejected block edits).
  *
  *   ROOM_CREATE_LIMIT=1000 npm run server          # in one terminal (port 3000)
- *   npx tsx scripts/arena-bots.ts [tdm|ffa] [http://localhost:3000]
+ *   npx tsx scripts/arena-bots.ts [tdm|ffa] [classic|suburb|quarter|dockyard|desert] [http://localhost:3000]
  *
  * Takes about 25 seconds (10 s warm-up, 2 s spawn protection) and exits 0 when everything passed.
  */
 import { WebSocket } from 'ws';
-import { ARENA_BOUNDS, ARENA_FLOOR_Y, arenaBlockAt, arenaVariant } from '../src/modes/arena';
+import { ARENA_FLOOR_Y, MAP_IDS, getMap, parseMapId } from '../src/modes/maps';
 import { PROTOCOL_VERSION, type ClientMessage, type ServerMessage } from '../src/net/protocol';
 import { traceBlocks } from '../server/Combat';
 
 const type = process.argv[2] === 'ffa' ? 'ffa' : 'tdm';
-const base = process.argv[3] ?? 'http://localhost:3000';
+const mapArg = process.argv[3];
+const mapId = parseMapId(mapArg) ?? 'classic';
+const base = (mapArg && !parseMapId(mapArg) ? mapArg : process.argv[4]) ?? 'http://localhost:3000';
 
 const results: [string, boolean][] = [];
 const check = (name: string, ok: boolean) => {
@@ -78,7 +80,10 @@ class Bot {
 
 /** Two floor points 10-20 blocks apart with a clear line of sight at eye height. */
 function findDuelSpots(seed: number): [[number, number], [number, number]] {
-  const v = arenaVariant(seed);
+  const map = getMap(mapId);
+  const v = map.variantFor(seed);
+  const arenaBlockAt = (_v: number, x: number, y: number, z: number) => map.blockAt(v, x, y, z);
+  const ARENA_BOUNDS = map.bounds;
   const world = { getBlock: (x: number, y: number, z: number) => arenaBlockAt(v, x, y, z) };
   const free = (x: number, z: number) =>
     arenaBlockAt(v, Math.floor(x), ARENA_FLOOR_Y, Math.floor(z)) !== 0
@@ -101,12 +106,22 @@ async function main(): Promise<void> {
   const res = await fetch(`${base}/api/rooms`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ name: 'Bot arena', gameMode: 'creative', seed: 'bots', gameType: type, scoreLimit: 5, timeLimitSec: 120 }),
+    body: JSON.stringify({ name: 'Bot arena', gameMode: 'creative', seed: 'bots', gameType: type, scoreLimit: 5, timeLimitSec: 120, mapId }),
   });
   const { code } = (await res.json()) as { code: string };
   check(`created a ${type} room (${code})`, res.status === 201 && /^[A-Z0-9]{6}$/.test(code));
-  const info = (await (await fetch(`${base}/api/rooms/${code}`)).json()) as { gameType: string; scoreLimit: number; timeLimitSec: number };
+  const info = (await (await fetch(`${base}/api/rooms/${code}`)).json()) as { gameType: string; scoreLimit: number; timeLimitSec: number; map?: string };
   check('room info has the game type and limits', info.gameType === type && info.scoreLimit === 5 && info.timeLimitSec === 120);
+  check(`room info has the map (${mapId})`, info.map === mapId);
+
+  // A bad map id falls back to the default instead of failing.
+  const bad = await fetch(`${base}/api/rooms`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name: 'Bad map', gameType: type, mapId: 'nope' }),
+  });
+  const badCode = ((await bad.json()) as { code: string }).code;
+  check('an unknown map id becomes the default map', ((await (await fetch(`${base}/api/rooms/${badCode}`)).json()) as { map?: string }).map === 'classic');
 
   const wsUrl = base.replace(/^http/, 'ws') + `/ws/${code}`;
   const alice = new Bot('alicebot'), bob = new Bot('bobbybot');
@@ -115,6 +130,8 @@ async function main(): Promise<void> {
   await sleep(300);
   const welcome = alice.of('welcome')[0];
   check('welcome is an arena of the right type', welcome.gameType === type && welcome.worldType === 'arena' && welcome.match?.type === type);
+  check(`welcome announces the map (${mapId})`, welcome.match?.map === mapId);
+  check('spawns lie inside that map', [alice, bob].every((b) => getMap(mapId).inBounds(b.x, b.z)));
   check('both bots got a spawn message', alice.of('spawn').length >= 1 && bob.of('spawn').length >= 1);
   if (type === 'tdm') check('the bots are on different teams', alice.of('spawn')[0].team !== bob.of('spawn')[0].team);
 
@@ -161,6 +178,7 @@ async function main(): Promise<void> {
 
   alice.close();
   bob.close();
+  void MAP_IDS;
 }
 
 main()

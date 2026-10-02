@@ -1,4 +1,5 @@
 import { type GameType, parseGameType } from '../modes/GameTypes';
+import { type MapSetting } from '../modes/maps';
 import { formatCode } from './protocol';
 
 export interface RoomInfo {
@@ -11,6 +12,8 @@ export interface RoomInfo {
   gameType?: GameType;
   scoreLimit?: number;
   timeLimitSec?: number;
+  /** Arcade games: a map id or "rotate"; absent on older servers. */
+  map?: string;
 }
 
 /** Match settings sent when creating an arcade game (ignored for Minecraft games). */
@@ -18,6 +21,8 @@ export interface RoomOptions {
   gameType: GameType;
   scoreLimit: number;
   timeLimitSec: number;
+  /** Arcade games: a map id or "rotate" (older servers ignore it). */
+  mapId?: MapSetting;
 }
 
 export interface ServerInfo {
@@ -57,6 +62,7 @@ export async function createRoom(name: string, gameMode: string, seed: string, o
       gameType: options?.gameType ?? 'minecraft',
       scoreLimit: options?.scoreLimit ?? 0,
       timeLimitSec: options?.timeLimitSec ?? 0,
+      ...(options?.mapId ? { mapId: options.mapId } : {}),
     }),
   });
   return code;

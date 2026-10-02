@@ -3,6 +3,7 @@ import type { WorldMeta } from '../save/SaveSystem';
 import { NAME_PATTERN, formatCode, normalizeCode } from '../net/protocol';
 import { type RoomInfo, createRoom, forgetGame, lookupRoom, recentGames, serverInfo } from '../net/RoomApi';
 import { GAME_TYPES, type GameType, gameTypeDef } from '../modes/GameTypes';
+import { DEFAULT_MAP, MAP_SETTINGS, type MapSetting, getMap, mapName } from '../modes/maps';
 import { button, h, menuScreen, screen } from './dom';
 import type { ScreenStack } from './Screens';
 
@@ -35,6 +36,7 @@ export function describeRoom(info: RoomInfo): string {
   if (def.arcade) {
     if (info.scoreLimit) parts.push(`first to ${info.scoreLimit}`);
     if (info.timeLimitSec) parts.push(`${Math.round(info.timeLimitSec / 60)} min`);
+    if (info.map) parts.push(info.map === 'rotate' ? 'Map: Rotate' : `Map: ${getMap(info.map).name}`);
   } else if (info.gameMode) {
     parts.push(info.gameMode[0].toUpperCase() + info.gameMode.slice(1));
   }
@@ -179,6 +181,7 @@ export class MainMenu {
     let mode: GameMode = 'survival';
     let scoreLimit = gameTypeDef('tdm').scoreLimit;
     let timeLimit = gameTypeDef('tdm').timeLimitSec;
+    let map: MapSetting = DEFAULT_MAP;
 
     const typeHint = h('div', { class: 'hint' });
     const typeButton = h('button', { class: 'mc-btn' });
@@ -202,11 +205,21 @@ export class MainMenu {
       timeLimit = TIME_LIMITS[(TIME_LIMITS.indexOf(timeLimit) + 1) % TIME_LIMITS.length];
       renderLimits();
     });
+    const mapHint = h('div', { class: 'hint' });
+    const renderMap = () => {
+      mapButton.textContent = `Map: ${mapName(map)}`;
+      mapHint.textContent = map === 'rotate' ? 'Every match is played on the next map.' : getMap(map).description;
+    };
+    const mapButton = button('', () => {
+      map = MAP_SETTINGS[(MAP_SETTINGS.indexOf(map) + 1) % MAP_SETTINGS.length];
+      renderMap();
+    });
+    renderMap();
     const sandboxFields = h('div', { style: COLUMN },
       modeButton, modeHint,
       h('div', { class: 'field-label', text: 'Seed for the World Generator' }), seed,
     );
-    const arcadeFields = h('div', { style: COLUMN }, scoreButton, timeButton);
+    const arcadeFields = h('div', { style: COLUMN }, mapButton, mapHint, scoreButton, timeButton);
     const renderType = () => {
       const def = gameTypeDef(type);
       typeButton.textContent = `Game Type: ${def.name}`;
@@ -234,7 +247,7 @@ export class MainMenu {
       try {
         const arcade = gameTypeDef(type).arcade;
         const code = await createRoom(name.value.trim() || 'BunkCraft Game', mode, arcade ? '' : seed.value.trim(), {
-          gameType: type, scoreLimit: arcade ? scoreLimit : 0, timeLimitSec: arcade ? timeLimit : 0,
+          gameType: type, scoreLimit: arcade ? scoreLimit : 0, timeLimitSec: arcade ? timeLimit : 0, mapId: arcade ? map : undefined,
         });
         this.actions.joinServer(playerName, '', code);
       } catch (e) {
