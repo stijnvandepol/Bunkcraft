@@ -73,6 +73,8 @@ export class ArcadeHud {
   private readonly deathDetail: HTMLDivElement;
   private readonly deathCount: HTMLDivElement;
   private readonly deathLoadout: HTMLDivElement;
+  private readonly deathWatch: HTMLDivElement;
+  private lastWatch = '';
   private readonly end: HTMLDivElement;
   private readonly endTitle: HTMLDivElement;
   private readonly endBoard: HTMLDivElement;
@@ -156,7 +158,8 @@ export class ArcadeHud {
     this.deathDetail = h('div', { class: 'arc-death-detail' });
     this.deathCount = h('div', { class: 'arc-death-count' });
     this.deathLoadout = h('div', { class: 'arc-death-loadout' });
-    this.death = h('div', { class: 'arc-death hidden' }, this.deathTitle, this.deathDetail, this.deathCount, this.deathLoadout);
+    this.deathWatch = h('div', { class: 'arc-death-watch hidden' });
+    this.death = h('div', { class: 'arc-death hidden' }, this.deathTitle, this.deathDetail, this.deathCount, this.deathWatch, this.deathLoadout);
 
     // -- match end
     this.endTitle = h('div', { class: 'arc-end-title' });
@@ -363,12 +366,26 @@ export class ArcadeHud {
   /** Shows the elimination screen; `killer` is empty when unknown. Null hides it. */
   setDeath(info: { killer: string; weapon: string; head: boolean; killerTeam: Team | '' } | null): void {
     this.death.classList.toggle('hidden', info === null);
+    if (info === null) this.setSpectating('', '');
     this.lastCount = -1;
     this.lastRespawnPending = '\0';
     if (!info) return;
     this.deathTitle.textContent = info.killer ? `You were eliminated by ${info.killer}` : 'You were eliminated';
     this.deathTitle.style.color = info.killerTeam ? TEAM_COLORS[info.killerTeam] : '#fff';
     this.deathDetail.textContent = info.killer ? `${weaponTag(info.weapon)}${info.head ? '  -  HEADSHOT' : ''}` : '';
+  }
+
+  /**
+   * Spectating after death: who the camera follows ('' = nobody, the death screen is shown in full)
+   * and what the mouse buttons do. Only writes the DOM when something changed.
+   */
+  setSpectating(name: string, hint: string): void {
+    const key = name ? `${name}|${hint}` : '';
+    if (key === this.lastWatch) return;
+    this.lastWatch = key;
+    this.death.classList.toggle('watching', name !== '');
+    this.deathWatch.classList.toggle('hidden', name === '');
+    this.deathWatch.replaceChildren(h('div', { class: 'arc-watch-name', text: `Spectating ${name}` }), h('div', { class: 'arc-death-hint', text: hint }));
   }
 
   /** Respawn countdown in whole seconds; also lists the loadout choices. */

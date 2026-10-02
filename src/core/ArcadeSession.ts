@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import {
-  ARCADE_AIR_ACCEL, ARCADE_SPEED_MULT, FireControl, KillFeed, SPAWN_PROTECTION, currentSpread, cycleSlot, impactNormal, reloadProgress, spreadPixels,
+  ARCADE_AIR_ACCEL, ARCADE_SPEED_MULT, FireControl, KillFeed, SPAWN_PROTECTION, SPECTATE_KILLER_SECONDS, currentSpread, cycleSlot, cycleTarget,
+  impactNormal, reloadProgress, spectateCandidates, spreadPixels,
 } from '../modes/ArcadeLogic';
 import { type Team, TEAM_COLORS, gameTypeDef } from '../modes/GameTypes';
 import {
@@ -64,6 +65,9 @@ export interface ArcadeFrame {
   lookY: number;
 }
 
+/** Spectator camera: distance behind the watched player's head and the lift above it. */
+const SPECTATE_DISTANCE = 3.2;
+
 const tmpV = new THREE.Vector3();
 const tmpAim = { x: 0, y: 0, z: 0 };
 
@@ -111,6 +115,12 @@ export class ArcadeSession {
 
   dead = false;
   private deadAt = 0;
+  /** Who killed us (for the first second of spectating) and whom the camera follows now (0 = nobody). */
+  private killerId = 0;
+  private watchId = 0;
+  private readonly watchPose = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0 };
+  private readonly candidates: number[] = [];
+  private nextCandidates = 0;
   private ended = false;
   private endAt = 0;
   private lastNow = 0;
@@ -274,6 +284,7 @@ export class ArcadeSession {
     p.landedFall = 0;
     this.setTeam(msg.team);
     this.dead = false;
+    this.endSpectate();
     this.hud.setDeath(null);
     this.primary = weaponDef(msg.primary) ? msg.primary : DEFAULT_PRIMARY;
     this.pendingPrimary = '';
@@ -309,20 +320,96 @@ export class ArcadeSession {
       weapon: msg.weapon, head: msg.head, born: now,
     });
     this.hud.setKillFeed(this.feed.entries, this.d.selfName);
-    if (msg.victim === this.d.selfId) this.die(this.nameOf(msg.killer), msg.weapon, msg.head, killer?.team ?? '', now);
-    else this.d.remote.markDead(msg.victim, now);
+    if (msg.victim === this.d.selfId) {
+      this.killerId = msg.killer !== this.d.selfId ? msg.killer : 0;
+      this.watchId = this.killerId;
+      this.die(this.nameOf(msg.killer), msg.weapon, msg.head, killer?.team ?? '', now);
+    } else this.d.remote.markDead(msg.victim, now);
   }
 
   private die(killer: string, weapon: string, head: boolean, team: Team | '', now: number): void {
     if (this.dead && killer === '') return;
     const first = !this.dead;
     this.dead = true;
-    if (first) this.deadAt = now;
+    if (first) {
+      this.deadAt = now;
+      this.nextCandidates = 0;
+    }
     this.health = 0;
     this.hud.setHealth(0);
     this.hud.setDeath({ killer, weapon, head, killerTeam: team });
     this.ads = 0;
     this.viewmodel.visible = false;
+  }
+
+  // ---------------------------------------------------------------- spectating after death
+
+  /** Players the camera may follow: the living teammates (tdm) or everybody else (ffa). */
+  private fillCandidates(): void {
+    spectateCandidates(this.players, this.d.selfId, this.team, this.teams, (id) => this.d.remote.isAlive(id), this.candidates);
+  }
+
+  /** Left click = next player, right click = previous (wrapping). */
+  private cycleWatch(dir: 1 | -1): void {
+    this.fillCandidates();
+    this.watchId = cycleTarget(this.candidates, this.watchId, dir) || this.watchId;
+  }
+
+  private endSpectate(): void {
+    this.watchId = 0;
+    this.killerId = 0;
+    this.d.remote.setSpectated(0);
+    this.hud.setSpectating('', '');
+  }
+
+  /** Per frame while dead: keeps a valid target, handles the cycle clicks and updates the HUD line. */
+  private updateSpectate(f: ArcadeFrame, input: Input): void {
+    const now = f.now;
+    const remote = this.d.remote;
+    // The candidate list is refreshed a few times a second (it walks the player map).
+    if (now >= this.nextCandidates) {
+      this.nextCandidates = now + 0.25;
+      this.fillCandidates();
+    }
+    if (now - this.deadAt >= SPECTATE_KILLER_SECONDS) {
+      // After the first second the killer only stays when the rules allow watching them (ffa; in tdm
+      // they are an enemy), and a target that died or left is replaced.
+      const allowed = this.watchId !== 0 && remote.isAlive(this.watchId) && (!this.teams || this.players.get(this.watchId)?.team === this.team);
+      if (!allowed) {
+        this.watchId = this.candidates.length > 0 ? this.candidates[0] : 0;
+      }
+      if (f.controls) {
+        if (input.leftClicked) this.cycleWatch(1);
+        else if (input.rightClicked) this.cycleWatch(-1);
+      }
+    } else if (this.watchId !== 0 && !remote.isAlive(this.watchId)) {
+      this.watchId = 0;
+    }
+    const watching = this.watchId !== 0 && remote.pose(this.watchId, this.watchPose);
+    remote.setSpectated(watching ? this.watchId : 0);
+    if (!watching) {
+      this.hud.setSpectating('', '');
+      return;
+    }
+    this.hud.setSpectating(this.nameOf(this.watchId), this.candidates.length > 1 ? 'Left click: next player   Right click: previous' : '');
+  }
+
+  /**
+   * While dead the camera follows the watched player from behind (a chase view, pulled in where
+   * blocks are in the way). Returns whether it took over the camera this frame.
+   */
+  applySpectateCamera(camera: THREE.PerspectiveCamera): boolean {
+    if (!this.dead || this.ended || this.watchId === 0) return false;
+    const pose = this.watchPose;
+    if (!this.d.remote.pose(this.watchId, pose)) return false;
+    const c = Math.cos(pose.pitch);
+    const fx = -Math.sin(pose.yaw) * c, fy = Math.sin(pose.pitch), fz = -Math.cos(pose.yaw) * c;
+    const hx = pose.x, hy = pose.y + 1.7, hz = pose.z;
+    const hit = raycast(this.d.getBlock, hx, hy, hz, -fx, -fy + 0.12, -fz, SPECTATE_DISTANCE, this.ray);
+    const dist = hit.hit ? Math.max(0.4, hit.distance - 0.3) : SPECTATE_DISTANCE;
+    camera.position.set(hx - fx * dist, hy - fy * dist + 0.12 * dist, hz - fz * dist);
+    camera.rotation.set(pose.pitch, pose.yaw, 0, 'YXZ');
+    return true;
   }
 
   private onMatchEnd(msg: Extract<ServerMessage, { t: 'matchend' }>, now: number): void {
@@ -582,7 +669,10 @@ export class ArcadeSession {
       hud.setScoreboard(showBoard, this.roster, this.boardContext());
     }
 
-    if (this.dead) hud.setRespawn(RESPAWN_SECONDS - (now - this.deadAt), this.primary, this.pendingPrimary);
+    if (this.dead) {
+      hud.setRespawn(RESPAWN_SECONDS - (now - this.deadAt), this.primary, this.pendingPrimary);
+      if (!this.ended) this.updateSpectate(f, input);
+    }
     if (this.ended) hud.setNextMatch(this.endAt - now);
   }
 

@@ -165,3 +165,26 @@ export function cycleSlot(slot: number, delta: number): 0 | 1 | 2 {
 export function reloadProgress(elapsed: number, reloadSec: number): number {
   return reloadSec <= 0 ? 1 : Math.min(1, Math.max(0, elapsed / reloadSec));
 }
+
+/** After dying the camera follows the killer for this long, then the player cycles through the others. */
+export const SPECTATE_KILLER_SECONDS = 1;
+
+/** Players that may be spectated: everybody else (ffa) or the teammates (tdm), alive ones only. */
+export function spectateCandidates(
+  players: Iterable<[number, { team: string }]>, selfId: number, selfTeam: string, teams: boolean, isAlive: (id: number) => boolean, out: number[],
+): number[] {
+  out.length = 0;
+  for (const [id, p] of players) {
+    if (id === selfId || (teams && p.team !== selfTeam) || !isAlive(id)) continue;
+    out.push(id);
+  }
+  return out;
+}
+
+/** The next (dir 1) or previous (dir -1) candidate, wrapping; the first/last one when `current` is not in the list; 0 when empty. */
+export function cycleTarget(candidates: readonly number[], current: number, dir: 1 | -1): number {
+  const n = candidates.length;
+  if (n === 0) return 0;
+  const i = candidates.indexOf(current);
+  return candidates[i < 0 ? (dir > 0 ? 0 : n - 1) : (i + dir + n) % n];
+}

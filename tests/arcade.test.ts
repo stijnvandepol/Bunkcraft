@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { KB, KEYBINDS, conflictingActions, defaultKeybinds } from '../src/core/Keybinds';
 import {
-  FireControl, KILL_FEED_LIFETIME, KILL_FEED_MAX, KillFeed, cycleSlot, currentSpread, damageAngle, formatClock, impactNormal, kdRatio,
-  reloadProgress, sortRoster, spreadPixels, teamKills,
+  FireControl, KILL_FEED_LIFETIME, KILL_FEED_MAX, KillFeed, SPECTATE_KILLER_SECONDS, cycleSlot, cycleTarget, currentSpread, damageAngle, formatClock, impactNormal, kdRatio,
+  reloadProgress, sortRoster, spectateCandidates, spreadPixels, teamKills,
 } from '../src/modes/ArcadeLogic';
 import { WEAPONS, fireInterval, weaponDef } from '../src/modes/Weapons';
 import type { RosterEntry } from '../src/net/protocol';
@@ -200,5 +200,46 @@ describe('arcade key binds', () => {
     const map2 = defaultKeybinds();
     map2[KEYBINDS[KB.JUMP].id] = map2[KEYBINDS[KB.RELOAD].id];
     expect(conflictingActions(map2).has(KB.JUMP)).toBe(true);
+  });
+});
+
+describe('spectating after death', () => {
+  const players = new Map<number, { team: string }>([
+    [1, { team: 'red' }], [2, { team: 'red' }], [3, { team: 'blue' }], [4, { team: 'red' }], [5, { team: 'blue' }],
+  ]);
+  const alive = (id: number) => id !== 4;
+
+  it('follows the killer for one second', () => {
+    expect(SPECTATE_KILLER_SECONDS).toBe(1);
+  });
+
+  it('team deathmatch offers the living teammates only, never yourself', () => {
+    expect(spectateCandidates(players, 1, 'red', true, alive, [])).toEqual([2]);
+    expect(spectateCandidates(players, 3, 'blue', true, alive, [])).toEqual([5]);
+  });
+
+  it('free for all offers every other living player', () => {
+    expect(spectateCandidates(players, 1, '', false, alive, [])).toEqual([2, 3, 5]);
+  });
+
+  it('reuses the output array and handles nobody being left', () => {
+    const out = [99];
+    expect(spectateCandidates(players, 1, 'red', true, () => false, out)).toBe(out);
+    expect(out).toEqual([]);
+    expect(cycleTarget(out, 0, 1)).toBe(0);
+  });
+
+  it('cycles forward and backward with wrap-around', () => {
+    const list = [2, 3, 5];
+    expect(cycleTarget(list, 2, 1)).toBe(3);
+    expect(cycleTarget(list, 5, 1)).toBe(2);
+    expect(cycleTarget(list, 2, -1)).toBe(5);
+    expect(cycleTarget(list, 3, -1)).toBe(2);
+  });
+
+  it('starts at the first or last candidate when the current target is gone', () => {
+    expect(cycleTarget([2, 3, 5], 9, 1)).toBe(2);
+    expect(cycleTarget([2, 3, 5], 9, -1)).toBe(5);
+    expect(cycleTarget([7], 7, 1)).toBe(7);
   });
 });

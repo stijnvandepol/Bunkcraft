@@ -24,6 +24,7 @@ const CORPSE_SECONDS = 1.4;
 interface State { t: number; x: number; y: number; z: number; yaw: number; pitch: number; flags: number }
 
 interface Remote {
+  id: number;
   name: string;
   mob: Mob;
   buffer: State[];
@@ -75,6 +76,8 @@ export class RemotePlayers {
   private occluder: ((x: number, y: number, z: number) => number) | null = null;
   private lastUpdate = 0;
   private readonly losRay: RayHit = createRayHit();
+  /** Arcade: the player the camera is following after our death (its tag stays hidden), 0 = none. */
+  private spectated = 0;
 
   constructor() {
     this.el = h('div', { class: 'nametags' });
@@ -101,7 +104,7 @@ export class RemotePlayers {
     weapon.visible = false;
     this.weapons.add(weapon);
     const r: Remote = {
-      name, mob, buffer: [], tag, tagX: NaN, tagY: NaN, tagShown: true, team: '', weaponId: '', weapon, deadAt: -1, hidden: false,
+      id, name, mob, buffer: [], tag, tagX: NaN, tagY: NaN, tagShown: true, team: '', weaponId: '', weapon, deadAt: -1, hidden: false,
       los: true, losAt: -1, tagAlpha: 1, tagOpacity: 1,
     };
     this.players.set(id, r);
@@ -174,6 +177,27 @@ export class RemotePlayers {
       r.hidden = false;
       if (!this.mobs.includes(r.mob)) this.mobs.push(r.mob);
     }
+  }
+
+  /** Arcade: the camera follows this player (0 = nobody): their name tag is not drawn. */
+  setSpectated(id: number): void {
+    this.spectated = id;
+  }
+
+  /** Arcade: whether the player is up and has a known position (they can be spectated). */
+  isAlive(id: number): boolean {
+    const r = this.players.get(id);
+    return !!r && r.buffer.length > 0 && r.deadAt < 0 && !r.hidden;
+  }
+
+  /** Arcade: interpolated pose of a player (eye at y + 1.62 is up to the caller); false when unknown. */
+  pose(id: number, out: { x: number; y: number; z: number; yaw: number; pitch: number }): boolean {
+    const r = this.players.get(id);
+    if (!r || r.buffer.length === 0) return false;
+    out.x = r.mob.x; out.y = r.mob.y; out.z = r.mob.z;
+    out.yaw = r.mob.yaw;
+    out.pitch = -r.mob.headPitch;
+    return true;
   }
 
   /** Arcade: where a player stands (for sounds and tracers); false when unknown. */
@@ -253,7 +277,7 @@ export class RemotePlayers {
       const d2 = dx * dx + dy * dy + dz * dz;
       const arcade = this.occluder !== null;
       const range = arcade ? ARCADE_TAG_RANGE : TAG_RANGE;
-      let visible = !r.hidden && tmp.z < 1 && Math.abs(tmp.x) < 1.2 && Math.abs(tmp.y) < 1.2 && d2 < range * range;
+      let visible = !r.hidden && r.id !== this.spectated && tmp.z < 1 && Math.abs(tmp.x) < 1.2 && Math.abs(tmp.y) < 1.2 && d2 < range * range;
       if (arcade) {
         // Throttled line of sight, then a fade towards the result.
         if (visible && now - r.losAt >= LOS_INTERVAL) {

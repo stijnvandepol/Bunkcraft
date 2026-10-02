@@ -1370,6 +1370,8 @@ export class Game {
       this.net.update(dt, p.x, p.y, p.z, p.yaw, p.pitch, flags, this.arcade ? 0 : this.hotbar.selectedBlock);
     }
     if (this.net || this.previewServer) this.remote.update(performance.now() / 1000, this.cam.camera, window.innerWidth, window.innerHeight);
+    // Arcade: after dying the camera follows another player (with fresh interpolated poses).
+    this.arcade?.applySpectateCamera(this.cam.camera);
     this.previewServer?.update(dt, p);
     this.interaction!.update(dt, active, input, this.mode);
     const light = world.getLight(Math.floor(p.x), Math.floor(p.eyeY), Math.floor(p.z));
