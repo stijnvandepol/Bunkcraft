@@ -40,7 +40,9 @@ export class ShadowRenderer {
     this.camera.far = 420;
   }
 
-  configure(size: number, extent: number): void {
+  /** @param maxSize the GPU's texture size limit: the map is clamped to it (weak and mobile GPUs). */
+  configure(size: number, extent: number, maxSize = Infinity): void {
+    size = Math.min(size, maxSize);
     if (size === this.size && this.target) return;
     this.target?.dispose();
     this.invalidate();

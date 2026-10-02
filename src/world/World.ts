@@ -33,8 +33,22 @@ export class World {
     this.chunks.onUnloaded = (key) => this.onChunkUnloaded?.(key);
   }
 
+  // chunkKey exceeds the Smi range, so every Map lookup boxes a heap number. Entities, particles and
+  // rays mostly query the same chunk repeatedly: a one-entry cache skips the Map in the common case.
+  private cacheEpoch = -1;
+  private cacheCx = 0;
+  private cacheCz = 0;
+  private cacheChunk: Chunk | undefined;
+
   private chunkAt(cx: number, cz: number): Chunk | undefined {
-    const c = this.chunks.chunks.get(chunkKey(cx, cz));
+    const mgr = this.chunks;
+    if (this.cacheEpoch !== mgr.epoch || this.cacheCx !== cx || this.cacheCz !== cz) {
+      this.cacheEpoch = mgr.epoch;
+      this.cacheCx = cx;
+      this.cacheCz = cz;
+      this.cacheChunk = mgr.chunks.get(chunkKey(cx, cz));
+    }
+    const c = this.cacheChunk;
     return c && c.state === CHUNK_READY ? c : undefined;
   }
 
@@ -82,18 +96,20 @@ export class World {
     e.set(i, id);
     this.dirtyEditChunks.add(c.key);
 
-    // Light and AO reach into neighbouring chunks: remesh all 9, the edited one first,
-    // border neighbours urgently (faces/AO change), the rest normally (light only).
+    // Faces and AO reach one block into the neighbours: only chunks the edit touches are remeshed
+    // right away. Light reaches up to 14 blocks, but ChunkManager remeshes a further neighbour only
+    // when the border light of the edited chunk actually changed (see propagateLight).
     c.version++;
     this.chunks.requestMeshUrgent(c);
     for (let dz = -1; dz <= 1; dz++) {
       for (let dx = -1; dx <= 1; dx++) {
         if (!dx && !dz) continue;
+        const touches = (dx === -1 ? lx === 0 : dx === 1 ? lx === 15 : true) && (dz === -1 ? lz === 0 : dz === 1 ? lz === 15 : true);
+        if (!touches) continue;
         const n = this.chunks.get(cx + dx, cz + dz);
         if (!n || n.state !== CHUNK_READY) continue;
         n.version++;
-        const touches = (dx === -1 ? lx === 0 : dx === 1 ? lx === 15 : true) && (dz === -1 ? lz === 0 : dz === 1 ? lz === 15 : true);
-        if (touches) this.chunks.requestMeshUrgent(n);
+        this.chunks.requestMeshUrgent(n);
       }
     }
     this.chunks.markDirty();

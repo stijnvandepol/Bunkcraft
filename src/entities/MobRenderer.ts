@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { WorldUniforms } from '../rendering/Materials';
+import { FOG_GLSL, LIGHT_GLSL, type WorldUniforms } from '../rendering/Materials';
 import type { World } from '../world/World';
 import type { Mob } from './Mob';
 import { MOB_TYPES, type MobKind, type ModelBox, type ModelPart, type PartAnim } from './MobTypes';
@@ -116,8 +116,15 @@ const tmpQuat = new THREE.Quaternion();
 export class MobRenderer {
   readonly group = new THREE.Group();
   private readonly types = new Map<MobKind, PartMesh[]>();
+  /** Flat list of all part meshes (iterating the map each frame would allocate iterators). */
+  private readonly all: PartMesh[] = [];
+
+  private frame = 0;
+  /** Mobs further than the fog end are invisible anyway: skip their posing and instances. */
+  private readonly fogFar: { value: number };
 
   constructor(uniforms: WorldUniforms) {
+    this.fogFar = uniforms.uFogFar;
     for (const type of Object.values(MOB_TYPES)) {
       const boxes = type.parts.flatMap((p) => p.boxes);
       const regions = packRegions(boxes);
@@ -139,15 +146,24 @@ export class MobRenderer {
         mesh.frustumCulled = false;
         mesh.count = 0;
         this.group.add(mesh);
-        return { part, mesh, data };
+        const pm = { part, mesh, data };
+        this.all.push(pm);
+        return pm;
       });
       this.types.set(type.kind, parts);
     }
   }
 
-  update(mobs: Mob[], alpha: number, world: World): void {
-    for (const parts of this.types.values()) for (const p of parts) p.mesh.count = 0;
-    for (const m of mobs) {
+  update(mobs: Mob[], alpha: number, world: World, cam: THREE.Vector3): void {
+    const all = this.all;
+    this.frame++;
+    const cullR = this.fogFar.value + 8;
+    const cull2 = cullR * cullR;
+    for (let i = 0; i < all.length; i++) all[i].mesh.count = 0;
+    for (let mi = 0; mi < mobs.length; mi++) {
+      const m = mobs[mi];
+      const cdx = m.x - cam.x, cdz = m.z - cam.z;
+      if (cdx * cdx + cdz * cdz > cull2) continue;
       const parts = this.types.get(m.type.kind)!;
       const index = parts[0].mesh.count;
       if (index >= MAX_PER_TYPE) continue;
@@ -170,13 +186,15 @@ export class MobRenderer {
       tmpQuat.setFromEuler(tmpEuler.set(0, yaw, death, 'YXZ'));
       tmpBase.compose(tmpPos, tmpQuat, tmpScale);
 
-      const light = world.getLight(Math.floor(x), Math.floor(y + m.height * 0.6), Math.floor(z));
+      const light = m.lightAt(world, this.frame, x, y + m.height * 0.6, z);
       const hurt = m.hurtTime > 0 || m.dead ? 1 : m.burning > 0 ? 0.5 : 0;
       const flash = fuse > 0 && Math.floor(fuse * 30 / 4) % 2 === 0 ? fuse : 0;
 
-      for (const pm of parts) {
+      for (let pi = 0; pi < parts.length; pi++) {
+        const pm = parts[pi];
         const rot = this.partRotation(pm.part, swing, amount, m, alpha);
-        const [px, py, pz] = pm.part.pivot;
+        const pivot = pm.part.pivot;
+        const px = pivot[0], py = pivot[1], pz = pivot[2];
         tmpPivot.makeTranslation(px / 16, py / 16, pz / 16);
         tmpRot.makeRotationFromEuler(rot);
         tmpM.copy(tmpBase).multiply(tmpPivot).multiply(tmpRot);
@@ -191,12 +209,13 @@ export class MobRenderer {
         pm.mesh.count = index + 1;
       }
     }
-    for (const parts of this.types.values()) {
-      for (const p of parts) {
-        if (p.mesh.count === 0) continue;
-        p.mesh.instanceMatrix.needsUpdate = true;
-        p.data.needsUpdate = true;
-      }
+    for (let i = 0; i < all.length; i++) {
+      const p = all[i];
+      // Types without any mob cost no draw call.
+      p.mesh.visible = p.mesh.count > 0;
+      if (p.mesh.count === 0) continue;
+      p.mesh.instanceMatrix.needsUpdate = true;
+      p.data.needsUpdate = true;
     }
   }
 
@@ -210,7 +229,8 @@ export class MobRenderer {
         const phase = anim === 'spiderA' ? 0 : Math.PI;
         const sweep = Math.cos(swing * 0.6662 * 2 + phase) * 0.4 * amount;
         const lift = Math.abs(Math.sin(swing * 0.6662 + phase)) * 0.4 * amount;
-        const [rx, ry, rz] = part.rest ?? [0, 0, 0];
+        const rest = part.rest;
+        const rx = rest ? rest[0] : 0, ry = rest ? rest[1] : 0, rz = rest ? rest[2] : 0;
         const side = rz > 0 ? 1 : -1;
         return tmpEuler.set(rx, ry + sweep * side, rz - lift * side, 'YXZ');
       }
@@ -256,28 +276,21 @@ function createMobMaterial(u: WorldUniforms, map: THREE.Texture): THREE.ShaderMa
       }
     `,
     fragmentShader: /* glsl */ `
+      ${LIGHT_GLSL}
+      ${FOG_GLSL}
       uniform sampler2D uMap;
-      uniform float uDaylight;
-      uniform vec3 uSkyLightColor;
-      uniform vec3 uFogColor;
-      uniform float uFogNear, uFogFar;
-      uniform float uBrightness;
       varying vec2 vUv;
       varying vec4 vData;
       varying float vShade;
       varying vec3 vWorldPos;
-      float curve(float l) { float c = l / (4.0 - 3.0 * l); return mix(c, l, 0.12 + 0.42 * uBrightness); }
       void main() {
         vec4 tex = texture2D(uMap, vUv);
         if (tex.a < 0.5) discard;
-        vec3 sky = uSkyLightColor * curve(vData.x) * uDaylight;
-        vec3 blk = vec3(1.0, 0.86, 0.66) * curve(vData.y);
-        vec3 light = max(max(sky, blk), vec3(0.03));
+        vec3 light = combineLight(vData.x, vData.y, 1.0);
         vec3 c = tex.rgb * light * vShade;
         c = mix(c, vec3(1.0, 0.15, 0.1) * max(light.r, 0.3), vData.z * 0.5);
         c = mix(c, vec3(1.0), vData.w * 0.7);
-        float f = smoothstep(uFogNear, uFogFar, length(vWorldPos.xz - cameraPosition.xz));
-        gl_FragColor = vec4(mix(c, uFogColor, f), 1.0);
+        gl_FragColor = vec4(applyFog(c, vWorldPos), 1.0);
       }
     `,
   });

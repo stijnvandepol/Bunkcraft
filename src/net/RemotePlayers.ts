@@ -14,6 +14,10 @@ interface Remote {
   mob: Mob;
   buffer: State[];
   tag: HTMLDivElement;
+  /** Last written tag position/visibility (skips style writes and string building when unchanged). */
+  tagX: number;
+  tagY: number;
+  tagShown: boolean;
 }
 
 const tmp = new THREE.Vector3();
@@ -24,6 +28,8 @@ const tmp = new THREE.Vector3();
  */
 export class RemotePlayers {
   private readonly players = new Map<number, Remote>();
+  /** Same players as a flat array: iterating the map every frame would allocate an iterator. */
+  private readonly list: Remote[] = [];
   readonly el: HTMLDivElement;
   /** Mobs to hand to the MobRenderer. */
   readonly mobs: Mob[] = [];
@@ -38,7 +44,9 @@ export class RemotePlayers {
     mob.persistent = true;
     const tag = h('div', { class: 'nametag', text: name });
     this.el.append(tag);
-    this.players.set(id, { name, mob, buffer: [], tag });
+    const r: Remote = { name, mob, buffer: [], tag, tagX: NaN, tagY: NaN, tagShown: true };
+    this.players.set(id, r);
+    this.list.push(r);
     this.mobs.push(mob);
   }
 
@@ -47,6 +55,7 @@ export class RemotePlayers {
     if (!r) return;
     r.tag.remove();
     this.players.delete(id);
+    this.list.splice(this.list.indexOf(r), 1);
     this.mobs.splice(this.mobs.indexOf(r.mob), 1);
   }
 
@@ -70,9 +79,10 @@ export class RemotePlayers {
 
   update(now: number, camera: THREE.PerspectiveCamera, width: number, height: number): void {
     const renderTime = now - INTERPOLATION_DELAY;
-    for (const r of this.players.values()) {
+    for (let pi = 0; pi < this.list.length; pi++) {
+      const r = this.list[pi];
       const b = r.buffer;
-      if (b.length === 0) { r.tag.style.display = 'none'; continue; }
+      if (b.length === 0) { this.showTag(r, false); continue; }
       // Find the two snapshots around renderTime; hold the newest if we run out.
       let a = b[0], c = b[b.length - 1];
       for (let i = 0; i < b.length - 1; i++) {
@@ -98,12 +108,22 @@ export class RemotePlayers {
 
       // Name tag above the head.
       tmp.set(m.x, m.y + 2.15, m.z).project(camera);
-      const visible = tmp.z < 1 && Math.abs(tmp.x) < 1.2 && Math.abs(tmp.y) < 1.2
-        && camera.position.distanceToSquared(new THREE.Vector3(m.x, m.y, m.z)) < 64 * 64;
-      r.tag.style.display = visible ? 'block' : 'none';
+      const dx = camera.position.x - m.x, dy = camera.position.y - m.y, dz = camera.position.z - m.z;
+      const visible = tmp.z < 1 && Math.abs(tmp.x) < 1.2 && Math.abs(tmp.y) < 1.2 && dx * dx + dy * dy + dz * dz < 64 * 64;
+      this.showTag(r, visible);
       if (visible) {
-        r.tag.style.transform = `translate(${((tmp.x + 1) / 2) * width}px, ${((1 - tmp.y) / 2) * height}px) translate(-50%, -100%)`;
+        const sx = Math.round(((tmp.x + 1) / 2) * width), sy = Math.round(((1 - tmp.y) / 2) * height);
+        if (sx !== r.tagX || sy !== r.tagY) {
+          r.tagX = sx; r.tagY = sy;
+          r.tag.style.transform = `translate(${sx}px, ${sy}px) translate(-50%, -100%)`;
+        }
       }
     }
+  }
+
+  private showTag(r: Remote, shown: boolean): void {
+    if (r.tagShown === shown) return;
+    r.tagShown = shown;
+    r.tag.style.display = shown ? 'block' : 'none';
   }
 }

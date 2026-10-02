@@ -34,18 +34,18 @@ wat al is doorgevoerd.
 | Leeg scherm als de renderer niet kan starten | **Gedaan:** foutmelding |
 | Audio pauzeren in een verborgen tabblad, geen inhaalstap bij terugkomst | **Gedaan** |
 | De shadow map werd bij elke verre chunk-upload opnieuw gerenderd | **Gedaan:** alleen chunks binnen het schaduwbereik |
-| Elke blokwijziging remesht 9 chunks, met een volledige lichtberekening (~2,6 MB kopiëren) | M/L: alleen buren remeshen als hun randlicht verandert; lichtcache per chunk |
-| Allocaties per frame (`rayHit`-arrays, closures, template-strings, iterators) | S |
-| Lege mob-meshes nog steeds in de render-loop; `getLight` per mob per frame | S |
-| Gedeelde GLSL voor licht en mist (5 kopieën lopen nu uiteen; entities missen de onderwater-mist) | S |
-| Worker-crash: jobs blijven "in flight" en het streamen stopt | S/M: worker vervangen, job opnieuw inplannen |
+| Elke blokwijziging remesht 9 chunks, met een volledige lichtberekening (~2,6 MB kopiëren) | **Gedaan:** alleen buren die de bewerking raken (rand) worden direct opnieuw gemesht; de overige alleen als het randlicht van de bewerkte chunk veranderde (`ChunkManager.propagateLight`). Gemeten over 48 bewerkingen (sterk licht en rand-gevallen): 8,7 → 4,4 mesh-jobs en 41 → 21 ms workertijd per bewerking; een steen in open lucht: 8,6 → 1 job. Het licht komt overeen met een volledige remesh (0 afwijkingen in 57 chunks). Een persistente lichtcache per chunk is niet gedaan |
+| Allocaties per frame (`rayHit`-arrays, closures, template-strings, iterators) | **Gedaan:** `rayHit` uitgerold, iterators/closures/vectoren weg uit `MobRenderer`, `RemotePlayers`, `Game`, `Interaction`; `World.chunkAt` heeft een cache (de `chunkKey` valt buiten het Smi-bereik, dus elke `Map.get` alloceerde een heap-getal). Heap-sampling met 29 mobs + 43 items: 58 → 25 KB/frame |
+| Lege mob-meshes nog steeds in de render-loop; `getLight` per mob per frame | **Gedaan:** mobtypes zonder instances worden niet getekend, mobs voorbij de mist-afstand worden overgeslagen, licht wordt per entity maar elke 6 frames opnieuw opgevraagd |
+| Gedeelde GLSL voor licht en mist (5 kopieën lopen nu uiteen; entities missen de onderwater-mist) | **Gedaan:** `LIGHT_GLSL`, `FOG_GLSL` en `ATLAS_GLSL` in `Materials.ts`; mobs, items, deeltjes en pijlen gebruiken nu dezelfde lichtcurve en mist (incl. zonsondergang-gloed en onderwater-mist), de hand dezelfde lichtcurve. Items zijn in schemerige gebieden iets donkerer (ze volgen nu de curve van de blokken) |
+| Worker-crash: jobs blijven "in flight" en het streamen stopt | **Gedaan:** worker vervangen, job opnieuw ingepland (max. 3 pogingen, daarna laat `ChunkManager` de chunk opnieuw proberen); Vitest met nep-worker |
 | `Game.ts` (~1000 regels) opsplitsen: GameStateMachine, WorldSession, SimulationLoop, Combat, DebugInfo | M |
-| Save-formaatversie en migraties, nodig vóór block states | S |
-| Instellingen valideren (min/max/enum) uit `localStorage` | S |
+| Save-formaatversie en migraties, nodig vóór block states | **Gedaan:** `version` op `WorldMeta` en op de chunk-edit-records, lijst `MIGRATIONS` + `migrateMeta`, nieuwere records worden overgeslagen i.p.v. verkeerd gelezen; Vitest met `fake-indexeddb` |
+| Instellingen valideren (min/max/enum) uit `localStorage` | **Gedaan:** `sanitizeSettings` begrenst getallen op het bereik van het menu, valideert enums, negeert onbekende sleutels; Vitest |
 | Standaardpreset kiezen op basis van de hardware | **Gedaan:** GPU-naam, cores en `deviceMemory` bij de eerste start (software-GPU, Intel HD/UHD, Mali, Adreno → Low) |
 | Dynamische resolutie voor zwakke GPU's en Retina | **Gedaan:** interne resolutie zakt bij < 48 FPS tot 0,5 px per CSS-pixel, en stijgt weer bij headroom. Software-GPU op Medium: 11–16 → 26–28 FPS |
 | Menu-blur (`backdrop-filter`) kostte zwakke GPU's het grootste deel van de frame | **Gedaan:** uit bij Fast of verlaagde resolutie (pauzemenu op een software-GPU: 14 → 45 FPS); `-webkit-`-prefix voor Safari < 18 |
-| Shadow map begrenzen op `maxTextureSize` | S |
+| Shadow map begrenzen op `maxTextureSize` | **Gedaan:** `ShadowRenderer.configure` klemt de grootte op `capabilities.maxTextureSize` |
 | Bij minimale resolutie en nog steeds traag: render distance tijdelijk verlagen | S |
 
 ## 3. Testen en tooling

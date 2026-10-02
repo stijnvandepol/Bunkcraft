@@ -8,7 +8,12 @@ export interface PlayerSave {
   flying: boolean;
 }
 
+/** Format version of saved worlds. Bump together with a new entry in MIGRATIONS. */
+export const SAVE_VERSION = 1;
+
 export interface WorldMeta {
+  /** Save format version; absent on worlds saved before versioning (treated as 0). */
+  version?: number;
   id: string;
   name: string;
   seed: number;
@@ -35,8 +40,32 @@ export interface WorldMeta {
 interface ChunkEditRecord {
   worldId: string;
   chunkKey: number;
+  /** Record format; absent on records saved before versioning (same layout as version 1). */
+  version?: number;
   /** Packed entries: blockIndex << 8 | blockId. */
   data: Uint32Array;
+}
+
+/** Version of the chunk edit records written by saveEdits(); loadEdits() decodes by record version. */
+export const EDIT_RECORD_VERSION = 1;
+
+/**
+ * Migration hooks: MIGRATIONS[n] upgrades world metadata from version n to n + 1, in place.
+ * Add one per format change (for example block states) and bump SAVE_VERSION.
+ */
+export const MIGRATIONS: ((meta: WorldMeta) => void)[] = [
+  // 0 → 1: worlds saved before versioning have the same layout, they only get stamped.
+  () => {},
+];
+
+/** Brings world metadata up to SAVE_VERSION. Worlds from a newer game are left untouched. */
+export function migrateMeta(meta: WorldMeta): WorldMeta {
+  let v = typeof meta.version === 'number' ? meta.version : 0;
+  while (v < SAVE_VERSION) {
+    MIGRATIONS[v](meta);
+    meta.version = ++v;
+  }
+  return meta;
 }
 
 const DB_NAME = 'bunkcraft';
@@ -68,7 +97,7 @@ export class SaveSystem {
   private readonly memoryPacks = new Map<string, ImportedPack>();
 
   async open(): Promise<void> {
-    if (!('indexedDB' in window)) return;
+    if (typeof indexedDB === 'undefined') return;
     try {
       this.db = await new Promise<IDBDatabase>((resolve, reject) => {
         const req = indexedDB.open(DB_NAME, DB_VERSION);
@@ -95,10 +124,12 @@ export class SaveSystem {
     const list = this.db
       ? await promisify(this.db.transaction('worlds').objectStore('worlds').getAll() as IDBRequest<WorldMeta[]>)
       : [...this.memory.values()];
+    for (const meta of list) migrateMeta(meta);
     return list.sort((a, b) => b.lastPlayed - a.lastPlayed);
   }
 
   async saveWorld(meta: WorldMeta): Promise<void> {
+    migrateMeta(meta);
     if (!this.db) { this.memory.set(meta.id, meta); return; }
     const tx = this.db.transaction('worlds', 'readwrite');
     tx.objectStore('worlds').put(meta);
@@ -120,6 +151,10 @@ export class SaveSystem {
       this.db.transaction('chunks').objectStore('chunks').getAll(IDBKeyRange.bound([worldId, -Infinity], [worldId, Infinity])) as IDBRequest<ChunkEditRecord[]>,
     );
     for (const r of records) {
+      if ((r.version ?? 1) > EDIT_RECORD_VERSION) {
+        console.warn(`Skipping chunk ${r.chunkKey}: saved by a newer BunkCraft (record v${r.version})`);
+        continue;
+      }
       const m = new Map<number, number>();
       for (const packed of r.data) m.set(packed >>> 8, packed & 255);
       edits.set(r.chunkKey, m);
@@ -142,7 +177,7 @@ export class SaveSystem {
       const data = new Uint32Array(m.size);
       let i = 0;
       for (const [idx, id] of m) data[i++] = (idx << 8) | id;
-      const record: ChunkEditRecord = { worldId, chunkKey: key, data };
+      const record: ChunkEditRecord = { worldId, chunkKey: key, version: EDIT_RECORD_VERSION, data };
       store.put(record);
     }
     try {

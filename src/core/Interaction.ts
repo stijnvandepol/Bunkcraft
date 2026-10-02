@@ -61,6 +61,8 @@ export class Interaction {
 
   constructor(private readonly d: InteractionDeps) {}
 
+  private readonly getBlock = (x: number, y: number, z: number): number => this.d.world.getBlock(x, y, z);
+
   reset(): void {
     this.breakProgress = 0;
     this.breakKey = -1;
@@ -73,11 +75,11 @@ export class Interaction {
   }
 
   update(dt: number, active: boolean, input: Input, mode: GameMode): void {
-    const { world, player, renderer, camera } = this.d;
+    const { player, renderer, camera } = this.d;
     const highlight = renderer.highlight;
     const pos = camera.position;
     camera.getWorldDirection(this.dir);
-    const hit = raycast((x, y, z) => world.getBlock(x, y, z), pos.x, pos.y, pos.z, this.dir.x, this.dir.y, this.dir.z, PHYSICS.REACH, this.ray);
+    const hit = raycast(this.getBlock, pos.x, pos.y, pos.z, this.dir.x, this.dir.y, this.dir.z, PHYSICS.REACH, this.ray);
     const mobHit = active && mode !== 'spectator'
       ? this.d.entities.raycastMob(pos.x, pos.y, pos.z, this.dir.x, this.dir.y, this.dir.z, Math.min(3, hit.hit ? hit.distance + 0.01 : 3))
       : null;

@@ -96,6 +96,53 @@ export function detectPreset(s: Settings): QualityPreset | undefined {
 
 const STORAGE_KEY = 'bunkcraft.settings';
 
+/** Numeric settings: the range the options menu allows (integers are rounded). */
+const NUMBER_RANGES = {
+  renderDistance: [2, MAX_RENDER_DISTANCE],
+  renderScale: [50, 200],
+  fov: [30, 110],
+  sensitivity: [10, 200],
+  soundVolume: [0, 100],
+  musicVolume: [0, 100],
+  masterVolume: [0, 100],
+  brightness: [0, 100],
+  guiScale: [0, 4],
+} as const satisfies Partial<Record<keyof Settings, readonly [number, number]>>;
+
+const ENUM_VALUES = {
+  graphics: ['fast', 'fancy'],
+  shadows: ['off', 'low', 'high', 'ultra'],
+  particles: ['all', 'decreased', 'minimal'],
+  clouds: ['fancy', 'off'],
+} as const satisfies Partial<Record<keyof Settings, readonly string[]>>;
+
+const BOOLEAN_KEYS = ['dynamicResolution', 'viewBobbing', 'invertMouse'] as const;
+
+/**
+ * A complete, valid Settings object from untrusted stored data: numbers are clamped to the menu's
+ * range, enums validated, unknown keys ignored and anything invalid falls back to the default.
+ */
+export function sanitizeSettings(raw: unknown): Settings {
+  const out: Settings = { ...DEFAULT_SETTINGS, keybinds: sanitizeKeybinds(null) };
+  const r = raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+  const o = out as unknown as Record<string, unknown>;
+  for (const [key, [min, max]] of Object.entries(NUMBER_RANGES)) {
+    const v = r[key];
+    if (typeof v === 'number' && Number.isFinite(v)) o[key] = Math.min(max, Math.max(min, Math.round(v)));
+  }
+  for (const [key, allowed] of Object.entries(ENUM_VALUES) as [string, readonly string[]][]) {
+    const v = r[key];
+    if (typeof v === 'string' && allowed.includes(v)) o[key] = v;
+  }
+  for (const key of BOOLEAN_KEYS) {
+    if (typeof r[key] === 'boolean') o[key] = r[key];
+  }
+  const pack = r.texturePack;
+  if (typeof pack === 'string' && pack.length > 0 && pack.length <= 200) out.texturePack = pack;
+  out.keybinds = sanitizeKeybinds(r.keybinds);
+  return out;
+}
+
 /** Settings persisted in localStorage, with change listeners. */
 export class SettingsStore {
   readonly values: Settings;
@@ -104,17 +151,16 @@ export class SettingsStore {
   private readonly listeners: ((s: Settings, key: keyof Settings) => void)[] = [];
 
   constructor() {
-    let stored: Partial<Settings> | null = null;
+    let stored: unknown = null;
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) stored = JSON.parse(raw) as Partial<Settings>;
+      if (raw) stored = JSON.parse(raw);
     } catch {
       stored = null;
     }
-    this.fresh = stored === null;
-    this.values = { ...DEFAULT_SETTINGS, ...stored };
-    // Stored bindings are untrusted: unknown actions are dropped, garbage falls back to the default.
-    this.values.keybinds = sanitizeKeybinds(stored?.keybinds);
+    this.fresh = stored === null || typeof stored !== 'object' || Array.isArray(stored);
+    // Stored values are untrusted: clamp, validate and drop unknown keys (keybinds included).
+    this.values = sanitizeSettings(stored);
   }
 
   set<K extends keyof Settings>(key: K, value: Settings[K]): void {

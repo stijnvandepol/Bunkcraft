@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { WorldUniforms } from '../rendering/Materials';
+import { FOG_GLSL, LIGHT_GLSL, type WorldUniforms } from '../rendering/Materials';
 import type { BlockIcons } from '../ui/BlockIcons';
 import type { World } from '../world/World';
 import type { ItemEntity } from './ItemEntity';
@@ -23,6 +23,7 @@ export class ItemRenderer {
   private readonly texture: THREE.CanvasTexture;
   private readonly cells = new Map<number, number>();
   private iconVersion = -1;
+  private frame = 0;
 
   constructor(uniforms: WorldUniforms, private readonly icons: BlockIcons) {
     this.canvas.width = this.canvas.height = ATLAS;
@@ -64,21 +65,16 @@ export class ItemRenderer {
         }
       `,
       fragmentShader: /* glsl */ `
+        ${LIGHT_GLSL}
+        ${FOG_GLSL}
         uniform sampler2D uIcons;
-        uniform float uDaylight;
-        uniform vec3 uSkyLightColor;
-        uniform vec3 uFogColor;
-        uniform float uFogNear, uFogFar;
         varying vec2 vUv;
         varying vec2 vLight;
         varying vec3 vWorldPos;
         void main() {
           vec4 tex = texture2D(uIcons, vUv);
           if (tex.a < 0.5) discard;
-          vec3 light = max(uSkyLightColor * vLight.x * uDaylight, vec3(1.0, 0.86, 0.66) * vLight.y);
-          vec3 c = tex.rgb * max(light, vec3(0.08));
-          float f = smoothstep(uFogNear, uFogFar, length(vWorldPos.xz - cameraPosition.xz));
-          gl_FragColor = vec4(mix(c, uFogColor, f), 1.0);
+          gl_FragColor = vec4(applyFog(tex.rgb * combineLight(vLight.x, vLight.y, 1.0), vWorldPos), 1.0);
         }
       `,
     });
@@ -106,6 +102,7 @@ export class ItemRenderer {
 
   update(items: ItemEntity[], alpha: number, time: number, world: World): void {
     const n = Math.min(items.length, MAX);
+    this.frame++;
     const p = this.iPos.array as Float32Array, d = this.iData.array as Float32Array;
     for (let i = 0; i < n; i++) {
       const it = items[i];
@@ -117,7 +114,7 @@ export class ItemRenderer {
       p[i * 4] = x; p[i * 4 + 1] = y + bob; p[i * 4 + 2] = z;
       p[i * 4 + 3] = it.stack.count > 1 ? 0.42 : 0.36;
       const cell = this.cellFor(it.stack.id);
-      const light = world.getLight(Math.floor(x), Math.floor(y + 0.2), Math.floor(z));
+      const light = it.lightAt(world, this.frame, x, y + 0.2, z);
       d[i * 4] = cell % PER_ROW;
       d[i * 4 + 1] = Math.floor(cell / PER_ROW);
       d[i * 4 + 2] = (light >> 4) / 15;
