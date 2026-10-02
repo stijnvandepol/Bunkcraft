@@ -50,6 +50,7 @@ import { CHUNK_VOLUME, blockIndex, chunkKey } from '../world/constants';
 import { hashString } from '../world/Noise';
 import { BIOME_NAMES } from '../world/TerrainGenerator';
 import { DEFAULT_MAP, getMap, parseMapId } from '../modes/maps';
+import { GEN_VERSION_CURRENT, normalizeGenVersion } from '../world/GenVersion';
 import { type WorldType, arenaWorldType } from '../world/WorldGenerator';
 import { createRayHit, raycast } from '../world/Raycast';
 import { World } from '../world/World';
@@ -404,9 +405,9 @@ export class Game {
 
   // ---------------------------------------------------------------- world lifecycle
 
-  private createWorldInstance(seed: number, edits?: Map<number, Map<number, number>>, worldType: WorldType = 'terrain'): World {
+  private createWorldInstance(seed: number, edits?: Map<number, Map<number, number>>, worldType: WorldType = 'terrain', genVersion = GEN_VERSION_CURRENT): World {
     this.world?.dispose();
-    const world = new World(seed, this.pool, { opaque: this.renderer.chunkMaterial, cutout: this.renderer.cutoutMaterial, water: this.renderer.waterMaterial }, edits, worldType);
+    const world = new World(seed, this.pool, { opaque: this.renderer.chunkMaterial, cutout: this.renderer.cutoutMaterial, water: this.renderer.waterMaterial }, edits, worldType, genVersion);
     world.chunks.fancyLeaves = this.settings.values.graphics === 'fancy';
     world.chunks.renderDistance = this.settings.values.renderDistance;
     this.world = world;
@@ -482,7 +483,7 @@ export class Game {
     else seed = hashString(seedText);
     const meta: WorldMeta = {
       id: newWorldId(), name, seed, seedText: seedText || String(seed),
-      created: Date.now(), lastPlayed: Date.now(), player: null,
+      created: Date.now(), lastPlayed: Date.now(), player: null, genVersion: GEN_VERSION_CURRENT,
       hotbar: [...DEFAULT_HOTBAR], selectedSlot: 0, time: 0.08, gameMode: mode,
     };
     await this.save.saveWorld(meta);
@@ -501,7 +502,7 @@ export class Game {
   private startSession(meta: WorldMeta, edits: Map<number, Map<number, number>>): void {
     this.meta = meta;
     const worldType: WorldType | undefined = meta.worldType === 'arena' ? arenaWorldType(parseMapId(this.arenaMap) ?? DEFAULT_MAP) : meta.worldType;
-    const world = this.createWorldInstance(meta.seed, edits, worldType);
+    const world = this.createWorldInstance(meta.seed, edits, worldType, normalizeGenVersion(meta.genVersion));
     this.cycle.time = meta.time;
     const mode = meta.gameMode ?? 'creative';
     // Inventory: saved stacks, else creative gets the default hotbar and survival starts empty.
@@ -658,7 +659,7 @@ export class Game {
     }
     const rec = welcome.player;
     const meta: WorldMeta = {
-      id: 'mp:' + address + (room ?? ''), name: welcome.worldName, seed: welcome.seed, seedText: '', created: 0, lastPlayed: Date.now(),
+      id: 'mp:' + address + (room ?? ''), name: welcome.worldName, seed: welcome.seed, genVersion: normalizeGenVersion(welcome.genVersion), seedText: '', created: 0, lastPlayed: Date.now(),
       player: rec ? { x: rec.x, y: rec.y, z: rec.z, yaw: rec.yaw, pitch: rec.pitch, flying: false } : null,
       hotbar: [...DEFAULT_HOTBAR], selectedSlot: 0, time: welcome.time, gameMode: welcome.gameMode,
       inventory: rec?.inventory, stats: rec?.stats, spawn: welcome.spawn, worldType: welcome.worldType,

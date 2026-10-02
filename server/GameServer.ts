@@ -14,6 +14,7 @@ import { SEA_LEVEL } from '../src/world/constants';
 import { hashString } from '../src/world/Noise';
 import { arenaWorldType } from '../src/world/WorldGenerator';
 import { TerrainGenerator } from '../src/world/TerrainGenerator';
+import { GEN_VERSION_CURRENT, GEN_VERSION_LEGACY } from '../src/world/GenVersion';
 import { Match, type MatchHost } from './Match';
 import { ServerEntities } from './ServerEntities';
 import { ServerWorld } from './ServerWorld';
@@ -32,6 +33,8 @@ const ARENA_DAY = 0.25; // arcade games are always noon
 interface WorldData {
   name: string;
   seed: number;
+  /** Terrain generator version (src/world/GenVersion.ts); files from before versioning have none = 1. */
+  genVersion?: number;
   gameMode: GameMode;
   time: number;
   spawn: { x: number; y: number; z: number };
@@ -158,7 +161,7 @@ export class GameServer {
         for (let i = 0; i < edits.length; i += 5 * BLOCKS_PER_MESSAGE) this.broadcast({ t: 'blocks', edits: edits.slice(i, i + 5 * BLOCKS_PER_MESSAGE) });
       },
       recordEdit: (x, y, z, id, meta) => { this.world.edits[`${x},${y},${z}`] = packState(id, meta); this.dirty = true; },
-    }, () => this.world.time);
+    }, () => this.world.time, this.world.genVersion);
     this.timers.push(setInterval(() => this.tick(), TICK_MS));
     this.timers.push(setInterval(() => this.save(), SAVE_INTERVAL_MS));
   }
@@ -172,6 +175,8 @@ export class GameServer {
   private load(): WorldData {
     if (existsSync(this.file)) {
       const data = JSON.parse(readFileSync(this.file, 'utf8')) as WorldData;
+      // World files from before generator versioning were made by version 1; keep them on it.
+      if (data.genVersion === undefined) { data.genVersion = GEN_VERSION_LEGACY; this.dirty = true; }
       this.log(`[world] loaded "${data.name}" (seed ${data.seed}, ${Object.keys(data.edits).length} edits, ${Object.keys(data.players).length} players)`);
       return data;
     }
@@ -180,9 +185,9 @@ export class GameServer {
       : /^-?\d+$/.test(seedText) ? Number(BigInt.asUintN(32, BigInt(seedText))) : hashString(seedText);
     const def = gameTypeDef(this.opts.gameType ?? 'minecraft');
     const mapSetting = parseMapSetting(this.opts.mapId) ?? DEFAULT_MAP;
-    const spawn = def.arcade ? getMap(parseMapId(mapSetting) ?? DEFAULT_MAP).spawns.ffa[0] : this.findSpawn(seed);
+    const spawn = def.arcade ? getMap(parseMapId(mapSetting) ?? DEFAULT_MAP).spawns.ffa[0] : this.findSpawn(seed, GEN_VERSION_CURRENT);
     const data: WorldData = {
-      name: this.opts.worldName, seed, gameMode: this.opts.gameMode, time: def.arcade ? ARENA_DAY : 0.08, spawn, edits: {}, players: {},
+      name: this.opts.worldName, seed, genVersion: GEN_VERSION_CURRENT, gameMode: this.opts.gameMode, time: def.arcade ? ARENA_DAY : 0.08, spawn, edits: {}, players: {},
     };
     if (def.arcade) {
       data.gameType = def.id;
@@ -198,15 +203,15 @@ export class GameServer {
   }
 
   /** Same dry-land spawn search as the client, using the shared terrain generator. */
-  private findSpawn(seed: number): { x: number; y: number; z: number } {
-    const gen = new TerrainGenerator(seed);
+  private findSpawn(seed: number, genVersion: number): { x: number; y: number; z: number } {
+    const gen = new TerrainGenerator(seed, genVersion);
     for (let r = 0; r < 2000; r += 8) {
       const steps = Math.max(1, Math.floor((r * Math.PI * 2) / 16));
       for (let s = 0; s < steps; s++) {
         const a = (s / steps) * Math.PI * 2;
         const x = Math.round(Math.cos(a) * r), z = Math.round(Math.sin(a) * r);
         const h = gen.heightAt(x, z);
-        if (h > SEA_LEVEL + 2 && h < 85) return { x: x + 0.5, y: Math.floor(h) + 2, z: z + 0.5 };
+        if (h > SEA_LEVEL + 2 && h < 85 && !gen.surfaceOpen(x, z)) return { x: x + 0.5, y: Math.floor(h) + 2, z: z + 0.5 };
       }
     }
     return { x: 0.5, y: 100, z: 0.5 };
@@ -348,7 +353,7 @@ export class GameServer {
       edits.push(x, y, z, stateId(state), stateMeta(state));
     }
     this.send(session, {
-      t: 'welcome', id: session.id, worldName: this.world.name, seed: this.world.seed, gameMode: this.world.gameMode,
+      t: 'welcome', id: session.id, worldName: this.world.name, seed: this.world.seed, genVersion: this.match ? undefined : this.world.genVersion, gameMode: this.world.gameMode,
       gameType: this.match?.info.type ?? 'minecraft', worldType: this.match ? 'arena' : 'terrain', match: this.match?.info,
       time: this.world.time, spawn: joined ? { x: joined.x, y: joined.y, z: joined.z } : this.world.spawn, edits, player: record,
       players: [...this.sessions.values()].map((s) => ({ id: s.id, name: s.name, team: this.match?.players.get(s.id)?.team || undefined })),

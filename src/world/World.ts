@@ -4,6 +4,7 @@ import { BLOCK, SHAPE, SHAPE_CROSS, SHAPE_DOOR, SHAPE_MODEL, SOLID, TINT } from 
 import { CHUNK_READY, type Chunk } from './Chunk';
 import { ChunkManager, type ChunkMaterials } from './ChunkManager';
 import { CHUNK_HEIGHT, CHUNK_VOLUME, SEA_LEVEL, blockIndex, chunkKey } from './constants';
+import { GEN_VERSION_CURRENT } from './GenVersion';
 import { DOOR_OPEN_BIT, isDoorUpper, packState, stateId, stateMeta } from './BlockStates';
 import { BIOME } from './TerrainGenerator';
 import { LAVA_TICK_DELAY, LiquidSim, WATER_TICK_DELAY, isLiquid } from './Liquids';
@@ -29,10 +30,10 @@ export class World {
   /** Local (player) edits, for multiplayer sync: position, new id and meta, previous id and meta. */
   onEdit: ((x: number, y: number, z: number, id: number, meta: number, prev: number, prevMeta: number) => void) | null = null;
 
-  constructor(readonly seed: number, pool: WorkerPool, materials: ChunkMaterials, edits: EditMap = new Map(), readonly worldType: WorldType = 'terrain') {
-    this.generator = createGenerator(worldType, seed);
+  constructor(readonly seed: number, pool: WorkerPool, materials: ChunkMaterials, edits: EditMap = new Map(), readonly worldType: WorldType = 'terrain', readonly genVersion: number = GEN_VERSION_CURRENT) {
+    this.generator = createGenerator(worldType, seed, genVersion);
     this.edits = edits;
-    this.chunks = new ChunkManager(seed, pool, materials, worldType);
+    this.chunks = new ChunkManager(seed, pool, materials, worldType, genVersion);
     this.chunks.onGenerated = (chunk) => {
       const e = this.edits.get(chunk.key);
       if (e && chunk.blocks) {
@@ -294,7 +295,7 @@ export class World {
         const x = Math.round(Math.cos(a) * r), z = Math.round(Math.sin(a) * r);
         const h = this.generator.heightAt(x, z);
         const biome = this.generator.biomeAt(x, z, Math.floor(h));
-        if (h > SEA_LEVEL + 2 && h < 85 && (biome === BIOME.PLAINS || biome === BIOME.FOREST || biome === BIOME.TAIGA)) {
+        if (h > SEA_LEVEL + 2 && h < 85 && (biome === BIOME.PLAINS || biome === BIOME.FOREST || biome === BIOME.TAIGA) && !this.generator.surfaceOpen?.(x, z)) {
           return { x: x + 0.5, z: z + 0.5 };
         }
       }
