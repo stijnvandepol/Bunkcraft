@@ -3,7 +3,7 @@ import type { GeometryData, MeshResult } from '../rendering/ChunkMesher';
 import type { WorkerPool } from '../workers/WorkerPool';
 import type { GenerateResponse, MeshResponse } from '../workers/protocol';
 import { CHUNK_EMPTY, CHUNK_GENERATING, CHUNK_READY, Chunk } from './Chunk';
-import { CHUNK_SIZE, chunkKey } from './constants';
+import { CHUNK_HEIGHT, CHUNK_SIZE, chunkKey } from './constants';
 
 export interface ChunkMaterials {
   opaque: THREE.Material;
@@ -228,13 +228,35 @@ export class ChunkManager {
     // An urgent (edit) remesh may already have uploaded a newer version.
     if (chunk.meshedVersion >= version) return;
     chunk.meshedVersion = version;
+    const prevLight = chunk.light;
     chunk.light = result.light;
+    if (prevLight) this.propagateLight(chunk, prevLight, result.light);
     chunk.opaque = this.setGeometry(chunk, chunk.opaque, result.opaque, this.materials.opaque, this.opaqueGroup);
     chunk.cutout = this.setGeometry(chunk, chunk.cutout, result.cutout, this.materials.cutout, this.opaqueGroup);
     // Only chunks inside the shadow map's reach (≤ 128 blocks) invalidate the cached shadows.
     if (Math.abs(chunk.cx - this.centerX) <= 9 && Math.abs(chunk.cz - this.centerZ) <= 9) this.geometryVersion++;
     chunk.water = this.setGeometry(chunk, chunk.water, result.water, this.materials.water, this.waterGroup);
     if (chunk.version !== version) this.scanNeeded = true;
+  }
+
+  /**
+   * Light only reaches a neighbour through the border cells of this chunk: when none of them changed
+   * between two mesh passes, the neighbour's light is unchanged too and it needs no remesh.
+   */
+  private propagateLight(chunk: Chunk, prev: Uint8Array, next: Uint8Array): void {
+    for (let dz = -1; dz <= 1; dz++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (!dx && !dz) continue;
+        const n = this.get(chunk.cx + dx, chunk.cz + dz);
+        if (!n || n.state !== CHUNK_READY || !n.light) continue;
+        // Border strip facing the neighbour: a full column (diagonal), a row or a column of cells.
+        const x0 = dx < 0 ? 0 : dx > 0 ? 15 : 0, x1 = dx === 0 ? 15 : x0;
+        const z0 = dz < 0 ? 0 : dz > 0 ? 15 : 0, z1 = dz === 0 ? 15 : z0;
+        if (!borderChanged(prev, next, x0, x1, z0, z1)) continue;
+        n.version++;
+        this.scanNeeded = true;
+      }
+    }
   }
 
   private setGeometry(
@@ -350,4 +372,14 @@ export class ChunkManager {
     this.opaqueGroup.removeFromParent();
     this.waterGroup.removeFromParent();
   }
+}
+
+function borderChanged(a: Uint8Array, b: Uint8Array, x0: number, x1: number, z0: number, z1: number): boolean {
+  for (let y = 0; y < CHUNK_HEIGHT; y++) {
+    for (let z = z0; z <= z1; z++) {
+      const row = (y << 8) | (z << 4);
+      for (let x = x0; x <= x1; x++) if (a[row | x] !== b[row | x]) return true;
+    }
+  }
+  return false;
 }
