@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { EntityManager } from '../entities/EntityManager';
 import type { PlayerInventory } from '../items/Inventory';
-import { ITEM, blockDrop, breakSeconds, getItemDef, isBlockItem } from '../items/ItemRegistry';
+import { ITEM, blockDrop, breakSeconds, getItemDef, isBlockItem, itemBlock, itemFromState, itemMeta } from '../items/ItemRegistry';
 import { type GameMode, hasSurvivalRules } from '../player/GameMode';
 import { PHYSICS } from '../player/Physics';
 import type { Player } from '../player/Player';
@@ -167,10 +167,11 @@ export class Interaction {
     // ---- Pick block (creative) ----
     if (input.middleClicked && hit.hit && mode === 'creative' && getBlockDef(hit.id)?.inInventory) {
       const inv = this.d.inventory;
+      const item = itemFromState(hit.id, this.getMeta(hit.x, hit.y, hit.z));
       let slot = -1;
-      for (let i = 0; i < 9; i++) if (inv.get(i).id === hit.id) slot = i;
+      for (let i = 0; i < 9; i++) if (inv.get(i).id === item) slot = i;
       if (slot >= 0) this.d.hotbar.select(slot);
-      else this.d.hotbar.setSlot(this.d.hotbar.selected, hit.id);
+      else this.d.hotbar.setSlot(this.d.hotbar.selected, item);
     }
   }
 
@@ -330,12 +331,14 @@ export class Interaction {
   private place(mode: GameMode): void {
     const { world, player, hotbar, inventory, audio, renderer, hand } = this.d;
     const hit = this.ray;
-    const id = hotbar.selectedBlock;
-    if (id === ITEM.FLINT_AND_STEEL) {
+    const item = hotbar.selectedBlock;
+    if (item === ITEM.FLINT_AND_STEEL) {
       this.useFlintAndSteel(mode);
       return;
     }
-    if (!id || !isBlockItem(id)) return;
+    if (!item || !isBlockItem(item)) return;
+    // A block item is a block id plus the variant bits of its state (colour, wood, material).
+    const id = itemBlock(item), baseMeta = itemMeta(item);
     // Where the click landed inside the block decides the half of a slab or stair.
     const cam = this.d.camera.position;
     const hx = cam.x + this.dir.x * hit.distance, hz = cam.z + this.dir.z * hit.distance;
@@ -353,8 +356,8 @@ export class Interaction {
     // Plants and torches need a solid block underneath.
     if ((SHAPE[id] === SHAPE_CROSS || SHAPE[id] === SHAPE_MODEL) && !SOLID[world.getBlock(x, y - 1, z)]) return;
     if (placed.upper && SOLID[id] && player.intersectsBlock(x, y + 1, z)) return;
-    if (!world.setBlock(x, y, z, id, placed.meta)) return;
-    if (placed.upper) world.setBlock(placed.upper.x, placed.upper.y, placed.upper.z, id, placed.upper.meta);
+    if (!world.setBlock(x, y, z, id, placed.meta | baseMeta)) return;
+    if (placed.upper) world.setBlock(placed.upper.x, placed.upper.y, placed.upper.z, id, placed.upper.meta | baseMeta);
     const def = getBlockDef(id)!;
     audio.play('place', def.sound);
     hand.swingHand();

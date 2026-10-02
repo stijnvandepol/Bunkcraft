@@ -1,4 +1,4 @@
-import { type ItemStack, getItemDef, maxDurability } from './ItemRegistry';
+import { type ItemStack, cloneStack, getItemDef, maxDurability, sameItem, stackFromArray, stackToArray } from './ItemRegistry';
 
 export const HOTBAR_SLOTS = 9;
 export const INVENTORY_SLOTS = 36; // 0–8 hotbar, 9–35 main inventory
@@ -20,7 +20,7 @@ export class PlayerInventory {
   }
 
   set(i: number, stack: ItemStack): void {
-    this.slots[i] = stack.count > 0 && stack.id > 0 ? { ...stack } : { id: 0, count: 0 };
+    this.slots[i] = stack.count > 0 && stack.id > 0 ? cloneStack(stack) : { id: 0, count: 0 };
     this.onChange?.();
   }
 
@@ -35,7 +35,7 @@ export class PlayerInventory {
     const max = PlayerInventory.maxStack(stack.id);
     for (const s of this.slots) {
       if (s.id === 0) left -= max;
-      else if (max > 1 && s.id === stack.id && s.count < max) left -= max - s.count;
+      else if (max > 1 && sameItem(s, stack) && s.count < max) left -= max - s.count;
       if (left <= 0) return true;
     }
     return false;
@@ -48,7 +48,7 @@ export class PlayerInventory {
     if (max > 1) {
       for (const s of this.slots) {
         if (left === 0) break;
-        if (s.id === stack.id && s.count < max) {
+        if (sameItem(s, stack) && s.count < max) {
           const n = Math.min(left, max - s.count);
           s.count += n;
           left -= n;
@@ -59,7 +59,7 @@ export class PlayerInventory {
       const s = this.slots[i];
       if (s.id === 0) {
         const n = Math.min(left, max);
-        this.slots[i] = { id: stack.id, count: n, damage: stack.damage };
+        this.slots[i] = { ...cloneStack(stack), count: n };
         left -= n;
       }
     }
@@ -113,13 +113,13 @@ export class PlayerInventory {
   }
 
   serialize(): number[][] {
-    return this.slots.map((s) => [s.id, s.count, s.damage ?? 0]);
+    return this.slots.map((s) => stackToArray(s));
   }
 
   load(data: number[][] | undefined): void {
     for (let i = 0; i < INVENTORY_SLOTS; i++) {
       const d = data?.[i];
-      this.slots[i] = d && d[0] > 0 && d[1] > 0 ? { id: d[0], count: d[1], damage: d[2] || undefined } : { id: 0, count: 0 };
+      this.slots[i] = stackFromArray(d) ?? { id: 0, count: 0 };
     }
     this.onChange?.();
   }

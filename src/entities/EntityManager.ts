@@ -1,4 +1,4 @@
-import { ITEM, type ItemStack, getItemDef } from '../items/ItemRegistry';
+import { ITEM, type ItemStack, cloneStack, getItemDef, sameItem } from '../items/ItemRegistry';
 import { BLOCK, OPAQUE, SOLID } from '../world/BlockRegistry';
 import { CHUNK_HEIGHT, blockIndex } from '../world/constants';
 import { hash2, mulberry32 } from '../world/Noise';
@@ -94,7 +94,7 @@ export class EntityManager {
   dropItem(stack: ItemStack, x: number, y: number, z: number, pickupDelay = 10, throwYaw?: number, force = false): void {
     if (stack.count <= 0 || (!force && this.items.length >= MAX_ITEMS)) return;
     if (this.dropHook?.(stack, x, y, z, pickupDelay, throwYaw)) return;
-    const e = new ItemEntity({ ...stack }, pickupDelay);
+    const e = new ItemEntity(cloneStack(stack), pickupDelay);
     e.setPosition(x, y, z);
     e.netId = this.nextNetId++;
     if (throwYaw !== undefined) {
@@ -339,7 +339,7 @@ export class EntityManager {
       if (a.removed) continue;
       for (let j = i + 1; j < items.length; j++) {
         const b = items[j];
-        if (b.removed || a.remote || b.remote || b.stack.id !== a.stack.id || a.stack.damage || b.stack.damage) continue;
+        if (b.removed || a.remote || b.remote || !sameItem(a.stack, b.stack) || a.stack.damage || b.stack.damage) continue;
         if (Math.abs(a.x - b.x) < 0.5 && Math.abs(a.y - b.y) < 0.5 && Math.abs(a.z - b.z) < 0.5 && a.stack.count + b.stack.count <= (getItemDef(a.stack.id)?.maxStack ?? 64)) {
           a.stack.count += b.stack.count;
           b.removed = true;

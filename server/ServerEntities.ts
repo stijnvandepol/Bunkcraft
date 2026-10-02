@@ -1,6 +1,6 @@
 import { EntityManager } from '../src/entities/EntityManager';
 import type { Mob, MobEvents, MobTarget } from '../src/entities/Mob';
-import { type ItemStack, ITEM, blockDrop, getItemDef } from '../src/items/ItemRegistry';
+import { type ItemStack, ITEM, blockDrop, encodeData, getItemDef } from '../src/items/ItemRegistry';
 import {
   type ArrowEntry, type ItemEntry, type MobEntry, NET_MOB_KINDS, type ServerMessage, type TntEntry,
 } from '../src/net/protocol';
@@ -151,7 +151,7 @@ export class ServerEntities {
     if (Math.hypot(it.x - p.x, it.y - (p.y + 0.8), it.z - p.z) > TAKE_REACH) return;
     it.removed = true;
     // The entity drops out of the snapshots at once and is compacted on the next tick.
-    this.host.send(p.id, { t: 'taken', id: it.netId, itemId: it.stack.id, count: it.stack.count, damage: it.stack.damage });
+    this.host.send(p.id, { t: 'taken', id: it.netId, itemId: it.stack.id, count: it.stack.count, damage: it.stack.damage, data: encodeData(it.stack.data) });
   }
 
   /** A client dropped something (block drop, Q, death). Validated like every other request. */
@@ -160,7 +160,7 @@ export class ServerEntities {
     if (stack.count < 1 || stack.count > 64 || !getItemDef(stack.id)) return;
     if (![x, y, z].every(Number.isFinite) || Math.hypot(x - p.x, y - (p.y + 1), z - p.z) > 10) return;
     const pickupDelay = Number.isFinite(delay) ? Math.min(100, Math.max(0, delay as number)) : 10;
-    this.manager.dropItem({ id: stack.id, count: stack.count, damage: stack.damage }, x, y, z, pickupDelay,
+    this.manager.dropItem({ id: stack.id, count: stack.count, damage: stack.damage, data: stack.data }, x, y, z, pickupDelay,
       Number.isFinite(yaw) ? yaw : undefined, true);
   }
 

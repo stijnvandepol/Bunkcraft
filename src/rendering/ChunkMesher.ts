@@ -1,6 +1,6 @@
 import {
-  CULL_SELF, FACE_LAYER, MODELS, OPAQUE, PARTIAL, SHAPE_DOOR, SHAPE_MODEL, SHAPE_SLAB, SHAPE_STAIRS, SOLID, TINT, SHAPE, SHAPE_CROSS, SHAPE_CUBE,
-  SHAPE_LIQUID, SWAY,
+  CULL_SELF, DYE, DYE_RGB, FACE_LAYER, FACING, FRONT_FACE, MODELS, OPAQUE, PARTIAL, SHAPE_DOOR, SHAPE_MODEL, SHAPE_SLAB, SHAPE_STAIRS, SOLID, TINT, SHAPE, SHAPE_CROSS, SHAPE_CUBE,
+  SHAPE_LIQUID, SWAY, VARIANT_LAYER, VARIANT_SHIFT, VARIANT_SLOT,
 } from '../world/BlockRegistry';
 import { liquidHeight } from '../world/Liquids';
 import { doorBox } from '../world/BlockShapes';
@@ -353,7 +353,8 @@ export class ChunkMesher {
 
           // Per-corner ambient occlusion and smooth light, sampled in the air cell q.
           const c4 = n * 4;
-          this.cellTint[n] = this.tintFor(id, nAxis === 0 ? s : uAxis === 0 ? a : b, nAxis === 2 ? s : uAxis === 2 ? a : b);
+          this.cellTint[n] = DYE[id] ? DYE_RGB[this.metaRegion[i] & 15]
+            : this.tintFor(id, nAxis === 0 ? s : uAxis === 0 ? a : b, nAxis === 2 ? s : uAxis === 2 ? a : b);
           let uniform = true;
           for (let k = 0; k < 4; k++) {
             const du = CU[k] ? uOff : -uOff;
@@ -374,7 +375,8 @@ export class ChunkMesher {
               uniform = false;
             }
           }
-          const layer = FACE_LAYER[id * 6 + f];
+          // Blocks with a front (furnace, chest, pumpkin) show it on the face their state points at.
+          const layer = FACING[id] ? FACE_LAYER[id * 6 + (FRONT_FACE[this.metaRegion[i] & 3] === f ? 4 : 0)] : FACE_LAYER[id * 6 + f];
           const flags = SWAY[id] && fancyLeaves ? FLAG_SWAY : 0;
           this.cellLayer[n] = layer;
           this.cellFlags[n] = flags;
@@ -700,7 +702,8 @@ export class ChunkMesher {
             continue;
           }
           if (SHAPE[id] !== SHAPE_CROSS) continue;
-          const layer = FACE_LAYER[id * 6];
+          const slot = VARIANT_SLOT[id];
+          const layer = slot ? VARIANT_LAYER[(slot * 32 + ((this.metaRegion[i] >> VARIANT_SHIFT[id]) & 31)) * 6] : FACE_LAYER[id * 6];
           geo.currentTint = this.tintFor(id, x, z);
           const ls = sky[i] * 17, lb = blk[i] * 17;
           const sway = SWAY[id] ? FLAG_SWAY << 5 : 0;

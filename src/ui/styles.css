@@ -512,8 +512,27 @@ html, body {
   position: relative;
 }
 
-.inv-scroll::after {
-  content: '';
+.inv-tabs.bottom { margin-top: calc(var(--s) * -1); }
+.inv-tab.bottom { margin-top: 0; border-top: none; border-bottom: var(--s) solid #000; box-shadow: inset var(--s) calc(var(--s) * -1) 0 #c6c6c6; height: calc(var(--s) * 28); }
+.inv-tab.bottom.active { height: calc(var(--s) * 32); background: #c6c6c6; }
+.inv-tab-glyph { color: #404040; font-size: calc(var(--fs) * 1.2); pointer-events: none; }
+.inv-search {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: calc(var(--s) * 3);
+  height: calc(var(--s) * 12);
+  background: #000;
+  color: #fff;
+  border: var(--s) solid #a0a0a0;
+  font: inherit;
+  padding: 0 calc(var(--s) * 2);
+  outline: none;
+}
+.inv-search.hidden, .inv-title.hidden { display: none; }
+.inv-scroll { cursor: pointer; }
+.inv-thumb.disabled { background: #a0a0a0; box-shadow: none; }
+
+.inv-thumb {
   position: absolute;
   left: 0;
   top: 0;

@@ -7,6 +7,7 @@ import {
 import { ARENA_FLOOR_Y, DEFAULT_MAP, type MapId, type MapSetting, getMap, nextMap, parseMapId, parseMapSetting } from '../src/modes/maps';
 import { type GameType, gameTypeDef } from '../src/modes/GameTypes';
 import { GAME_MODES, type GameMode } from '../src/player/GameMode';
+import { decodeData } from '../src/items/ItemRegistry';
 import { BLOCK, getBlockDef } from '../src/world/BlockRegistry';
 import { isValidMeta } from '../src/world/BlockShapes';
 import { packState, stateId, stateMeta } from '../src/world/BlockStates';
@@ -398,7 +399,7 @@ export class GameServer {
       case 'ignite': return void (s.edits.take() && entities.ignite(s, msg.x, msg.y, msg.z));
       case 'take': return void (s.takes.take() && entities.take(s, Number(msg.id)));
       case 'drop':
-        return void (s.drops.take() && entities.drop(s, { id: msg.id, count: msg.count, damage: msg.damage }, msg.x, msg.y, msg.z, msg.yaw, msg.delay));
+        return void (s.drops.take() && entities.drop(s, { id: msg.id, count: msg.count, damage: msg.damage, data: decodeData(Array.isArray(msg.data) ? msg.data.slice(0, 16).map(Number) : undefined) }, msg.x, msg.y, msg.z, msg.yaw, msg.delay));
       case 'state':
         if (Array.isArray(msg.inventory) && msg.inventory.length <= 64 && Array.isArray(msg.stats) && msg.stats.length <= 8) {
           const prev = this.world.players[s.name] ?? { x: s.x, y: s.y, z: s.z, yaw: s.yaw, pitch: s.pitch };

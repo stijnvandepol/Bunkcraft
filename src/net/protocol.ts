@@ -90,7 +90,7 @@ export type ClientMessage =
   /** Arcade: switch weapon slot (so everyone sees what you hold). */
   | { t: 'weapon'; slot: 0 | 1 | 2 }
   /** Drop an item into the world (block drops, Q, death); yaw = throw direction. */
-  | { t: 'drop'; id: number; count: number; damage?: number; x: number; y: number; z: number; yaw?: number; delay?: number };
+  | { t: 'drop'; id: number; count: number; damage?: number; data?: number[]; x: number; y: number; z: number; yaw?: number; delay?: number };
 
 // ---------------------------------------------------------------- server → client
 
@@ -153,7 +153,7 @@ export type ServerMessage =
   /** A weapon slot a remote player holds (third-person model). */
   | { t: 'holds'; id: number; weapon: string }
   /** The requested item entity is yours. */
-  | { t: 'taken'; id: number; itemId: number; count: number; damage?: number };
+  | { t: 'taken'; id: number; itemId: number; count: number; damage?: number; data?: number[] };
 
 /** No 0/O/1/I/L: game codes are read aloud and typed on phones. */
 export const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';

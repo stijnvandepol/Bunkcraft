@@ -13,7 +13,7 @@ import { inviteLink, inviteText, rememberGame } from '../net/RoomApi';
 import { RemotePlayers } from '../net/RemotePlayers';
 import { Chat } from '../ui/Chat';
 import { PlayerInventory } from '../items/Inventory';
-import { ITEM, type ItemStack, blockDrop, getItemDef } from '../items/ItemRegistry';
+import { ITEM, type ItemStack, blockDrop, decodeData, encodeData, getItemDef } from '../items/ItemRegistry';
 import type { Station } from '../items/Recipes';
 import { type GameMode, GAME_MODE_NAMES, canFly, hasSurvivalRules } from '../player/GameMode';
 import { PHYSICS } from '../player/Physics';
@@ -675,7 +675,7 @@ export class Game {
     const mirror = new NetEntities(entities);
     this.netEntities = mirror;
     entities.dropHook = (stack, x, y, z, delay, yaw) => {
-      net.sendDrop(stack.id, stack.count, stack.damage, x, y, z, yaw, delay);
+      net.sendDrop(stack.id, stack.count, stack.damage, x, y, z, yaw, delay, encodeData(stack.data));
       return true;
     };
     entities.takeHook = (item) => {
@@ -792,10 +792,11 @@ export class Game {
       }
       case 'taken': {
         this.netEntities?.taken(msg.id);
-        const left = this.playerInventory.add({ id: msg.itemId, count: msg.count, damage: msg.damage });
+        const data = decodeData(msg.data);
+        const left = this.playerInventory.add({ id: msg.itemId, count: msg.count, damage: msg.damage, data });
         if (left < msg.count) this.audio.playPop();
         // A race filled the inventory: hand the rest back to the world.
-        if (left > 0) this.entities?.dropItem({ id: msg.itemId, count: left, damage: msg.damage }, this.player.x, this.player.y + 1, this.player.z, 40, undefined, true);
+        if (left > 0) this.entities?.dropItem({ id: msg.itemId, count: left, damage: msg.damage, data }, this.player.x, this.player.y + 1, this.player.z, 40, undefined, true);
         break;
       }
       case 'block': world?.applyRemoteEdit(msg.x, msg.y, msg.z, msg.id, msg.meta ?? 0); break;

@@ -120,7 +120,8 @@ export class HandRenderer {
     this.heldId = id;
     this.iconVersion = this.icons.version;
     const def = id > 0 && id < 256 ? getBlockDef(id) : undefined;
-    const cube = def && def.shape === 'cube';
+    // Dyed blocks (and variants) are drawn as their tinted icon: the hand cube has no per-block tint.
+    const cube = def && def.shape === 'cube' && !def.dye;
     this.arm.visible = id === 0;
     this.block.visible = !!cube;
     this.sprite.visible = id > 0 && !cube;

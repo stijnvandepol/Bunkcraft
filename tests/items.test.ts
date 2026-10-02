@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { INVENTORY_SLOTS, PlayerInventory } from '../src/items/Inventory';
-import { ITEM, blockDrop, breakSeconds, canHarvest } from '../src/items/ItemRegistry';
+import { ITEM, blockDrop, breakSeconds, canHarvest, itemId } from '../src/items/ItemRegistry';
 import { RECIPES, type Recipe, type Station, canCraft, craft } from '../src/items/Recipes';
 import { BLOCK } from '../src/world/BlockRegistry';
 
@@ -144,7 +144,7 @@ describe('Mining rules', () => {
   it('iron ore needs at least a stone pickaxe', () => {
     expect(canHarvest(BLOCK.IRON_ORE, ITEM.WOODEN_PICKAXE)).toBe(false);
     expect(canHarvest(BLOCK.IRON_ORE, ITEM.STONE_PICKAXE)).toBe(true);
-    expect(blockDrop(BLOCK.IRON_ORE, ITEM.STONE_PICKAXE)).toEqual({ id: BLOCK.IRON_ORE, count: 1 });
+    expect(blockDrop(BLOCK.IRON_ORE, ITEM.STONE_PICKAXE)).toEqual({ id: itemId('raw_iron'), count: 1 });
   });
 
   it('diamond ore needs at least an iron pickaxe', () => {

@@ -1,5 +1,5 @@
 import {
-  BLOCK, OPAQUE, SHAPE, SHAPE_CROSS, SHAPE_CUBE, SHAPE_DOOR, SHAPE_LIQUID, SHAPE_NONE, SHAPE_SLAB, SHAPE_STAIRS, SOLID,
+  BLOCK, FACING, OPAQUE, SHAPE, SHAPE_CROSS, SHAPE_CUBE, SHAPE_DOOR, SHAPE_LIQUID, SHAPE_NONE, SHAPE_SLAB, SHAPE_STAIRS, SOLID,
 } from './BlockRegistry';
 import {
   FACING_CCW, FACING_CW, FACING_DX, FACING_DZ, SLAB_BOTTOM, SLAB_DOUBLE, SLAB_TOP, STAIR_TOP_BIT, canCombineSlab, doorMeta, facingFromYaw,
@@ -135,5 +135,6 @@ export function resolvePlacement(c: PlaceContext): Placement | null {
   const upper = placedOnUpperHalf(c.ny, c.fracY);
   if (shape === SHAPE_SLAB) return { x, y, z, id, meta: upper ? SLAB_TOP : SLAB_BOTTOM };
   if (shape === SHAPE_STAIRS) return { x, y, z, id, meta: stairMeta(facingFromYaw(c.yaw), upper) };
-  return { x, y, z, id, meta: 0 };
+  // Furnaces, chests and pumpkins show their front to the player.
+  return { x, y, z, id, meta: FACING[id] ? facingFromYaw(c.yaw) : 0 };
 }
