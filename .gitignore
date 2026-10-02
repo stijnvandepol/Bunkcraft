@@ -3,3 +3,6 @@ dist
 .playwright-mcp
 data
 data-test
+
+# Claude Code agent worktrees
+.claude/worktrees/
