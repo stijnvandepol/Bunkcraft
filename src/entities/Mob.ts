@@ -1,0 +1,189 @@
+import type { BlockGetter } from '../player/Collision';
+import { SOLID } from '../world/BlockRegistry';
+import { Entity } from './Entity';
+import type { MobType } from './MobTypes';
+
+export interface MobTarget {
+  x: number;
+  y: number;
+  z: number;
+  /** Whether hostile mobs may attack (survival, alive). */
+  attackable: boolean;
+}
+
+export interface MobEvents {
+  /** Melee hit on the player. */
+  attack(mob: Mob, damage: number): void;
+  explode(mob: Mob): void;
+  sound(mob: Mob, kind: 'idle' | 'hurt' | 'death' | 'fuse'): void;
+}
+
+/**
+ * A mob with Minecraft-style goal AI: passive mobs wander and panic when hurt,
+ * zombies chase and hit, creepers chase, swell for 1.5 s and explode.
+ * Steering is greedy (head for the target, jump over 1-block steps).
+ */
+export class Mob extends Entity {
+  health: number;
+  hurtTime = 0;
+  deathTime = 0;
+  limbSwing = 0;
+  limbAmount = 0;
+  prevLimbSwing = 0;
+  headYaw = 0;
+  headPitch = 0;
+  /** Creeper fuse 0..30 ticks. */
+  fuse = 0;
+  prevFuse = 0;
+  burning = 0;
+  /** Chunk this passive mob was spawned with (unloaded together with it). */
+  homeChunk = -1;
+  persistent = false;
+  private targetX = 0;
+  private targetZ = 0;
+  private moving = false;
+  private panic = 0;
+  private attackCooldown = 0;
+  private idleSound = Math.random() * 200;
+  age = 0;
+
+  constructor(readonly type: MobType) {
+    super(type.width, type.height);
+    this.health = type.health;
+    this.yaw = Math.random() * Math.PI * 2;
+  }
+
+  get dead(): boolean {
+    return this.health <= 0;
+  }
+
+  /** Damage from the player or an explosion; knockback away from (fromX, fromZ). */
+  hurt(amount: number, fromX: number, fromZ: number, knockback = 1): boolean {
+    if (this.dead || this.hurtTime > 0) return false;
+    this.health -= amount;
+    this.hurtTime = 10;
+    const dx = this.x - fromX, dz = this.z - fromZ;
+    const d = Math.hypot(dx, dz) || 1;
+    this.vx += (dx / d) * 8 * knockback;
+    this.vz += (dz / d) * 8 * knockback;
+    this.vy = 6;
+    if (!this.type.hostile) this.panic = 100;
+    return true;
+  }
+
+  tick(getBlock: BlockGetter, target: MobTarget, events: MobEvents): void {
+    this.age++;
+    this.prevLimbSwing = this.limbSwing;
+    this.prevFuse = this.fuse;
+    if (this.hurtTime > 0) this.hurtTime--;
+    if (this.dead) {
+      this.deathTime++;
+      if (this.deathTime >= 20) this.removed = true;
+      this.vx = this.vz = 0;
+      this.physicsTick(getBlock, false);
+      return;
+    }
+    if (this.attackCooldown > 0) this.attackCooldown--;
+    if (--this.idleSound <= 0) {
+      this.idleSound = 160 + Math.random() * 240;
+      events.sound(this, 'idle');
+    }
+
+    const t = this.type;
+    const dxT = target.x - this.x, dzT = target.z - this.z;
+    const distT = Math.hypot(dxT, dzT, target.y - this.y);
+    let speed = 0;
+
+    if (t.hostile && target.attackable && distT < 24) {
+      // Chase the player.
+      this.targetX = target.x;
+      this.targetZ = target.z;
+      speed = t.runSpeed;
+      this.lookAt(target.x, target.y + 1.5, target.z);
+      if (t.kind === 'creeper') {
+        if (distT < 3) {
+          if (this.fuse === 0) events.sound(this, 'fuse');
+          this.fuse++;
+          speed = 0;
+        } else if (distT > 7 && this.fuse > 0) this.fuse--;
+        if (this.fuse >= 30) {
+          events.explode(this);
+          this.removed = true;
+          return;
+        }
+      } else if (distT < 1.8 && Math.abs(target.y - this.y) < 1.5 && this.attackCooldown === 0) {
+        events.attack(this, t.attack);
+        this.attackCooldown = 20;
+      }
+    } else {
+      if (this.fuse > 0) this.fuse--;
+      if (this.panic > 0) {
+        this.panic--;
+        speed = t.runSpeed;
+        if (!this.moving || Math.random() < 0.05) this.pickWanderTarget(6);
+      } else if (this.moving) {
+        speed = t.walkSpeed;
+      } else if (Math.random() < 1 / 100) {
+        this.pickWanderTarget(8);
+      }
+      if (Math.random() < 0.02) this.headYaw = (Math.random() - 0.5) * 1.2;
+    }
+
+    // Steering towards the current target point.
+    const dx = this.targetX - this.x, dz = this.targetZ - this.z;
+    const dist = Math.hypot(dx, dz);
+    if (speed > 0 && dist > 0.4) {
+      const want = Math.atan2(-dx, -dz);
+      let diff = want - this.yaw;
+      diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+      this.yaw += Math.max(-0.35, Math.min(0.35, diff));
+      // Don't walk off ledges higher than 3 blocks unless chasing.
+      const ax = this.x - Math.sin(this.yaw) * 0.8, az = this.z - Math.cos(this.yaw) * 0.8;
+      const ground = this.groundBelow(getBlock, ax, az);
+      if (ground > 3 && !(t.hostile && target.attackable)) {
+        this.moving = false;
+      } else {
+        const accel = this.onGround || this.inWater ? 0.45 : 0.08;
+        this.vx += (-Math.sin(this.yaw) * speed - this.vx) * accel;
+        this.vz += (-Math.cos(this.yaw) * speed - this.vz) * accel;
+      }
+    } else {
+      this.moving = false;
+    }
+
+    this.physicsTick(getBlock, speed > 0);
+
+    // Limb swing from actual horizontal movement (Minecraft's limbSwing smoothing).
+    const moved = Math.hypot(this.x - this.prevX, this.z - this.prevZ);
+    this.limbAmount += (Math.min(1, moved * 4 * 4) - this.limbAmount) * 0.4;
+    this.limbSwing += this.limbAmount;
+  }
+
+  private pickWanderTarget(range: number): void {
+    const a = Math.random() * Math.PI * 2;
+    const r = 2 + Math.random() * range;
+    this.targetX = this.x + Math.cos(a) * r;
+    this.targetZ = this.z + Math.sin(a) * r;
+    this.moving = true;
+  }
+
+  private lookAt(x: number, y: number, z: number): void {
+    const dx = x - this.x, dz = z - this.z;
+    let rel = Math.atan2(-dx, -dz) - this.yaw;
+    rel = Math.atan2(Math.sin(rel), Math.cos(rel));
+    this.headYaw = Math.max(-1.2, Math.min(1.2, rel));
+    this.headPitch = Math.atan2(y - (this.y + this.height * 0.85), Math.hypot(dx, dz)) * 0.6;
+  }
+
+  private groundBelow(getBlock: BlockGetter, x: number, z: number): number {
+    const bx = Math.floor(x), bz = Math.floor(z);
+    for (let d = 0; d < 5; d++) {
+      if (SOLID[getBlock(bx, Math.floor(this.y) - 1 - d, bz)]) return d;
+    }
+    return 5;
+  }
+
+  protected override onLand(fall: number): void {
+    if (this.type.kind !== 'chicken' && fall > 3) this.health -= Math.ceil(fall - 3);
+  }
+}

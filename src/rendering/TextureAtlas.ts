@@ -440,7 +440,60 @@ function makeDestroyStages(): Img[] {
   return imgs;
 }
 
+/** Torch: 2 px stick (columns 7–8, rows 6–15) with a glowing tip, like the classic torch. */
+function paintTorch(img: Img, r: Rand): void {
+  img.clear();
+  const wood = P('#5c4024', '#6e4e2c', '#7d5a33');
+  for (let y = 8; y < 16; y++) for (let x = 7; x < 9; x++) img.set(x, y, pick(wood, r()));
+  img.set(7, 6, hex('#ffd85a')); img.set(8, 6, hex('#fff6b0'));
+  img.set(7, 7, hex('#ff9a1f')); img.set(8, 7, hex('#ffcb3a'));
+}
+
+/** Lava: bright orange cells with dark crusty seams (animated by scrolling in the shader). */
+function paintLava(img: Img, r: Rand): void {
+  const { cell, edge } = voronoi(r, 12);
+  const pal = P('#8a1d00', '#c23c00', '#e25d00', '#f78a12', '#ffb83a', '#ffe08a');
+  const heat = Array.from({ length: 12 }, () => 0.45 + r() * 0.55);
+  for (let i = 0; i < PX; i++) {
+    const t = edge[i] < 0.9 ? 0.1 + r() * 0.15 : heat[cell[i]] * (0.85 + r() * 0.15);
+    img.set(i % 16, Math.floor(i / 16), pick(pal, t));
+  }
+}
+
+/** Crafting table: planks with a dark tool-grid top and tools on the side. */
+function paintCraftingTop(img: Img, r: Rand): void {
+  paintPlanks(img, r, P('#8f7040', '#9a7a48', '#a2834f'), hex('#6e5532'));
+  const dark = hex('#4a3620');
+  for (let i = 0; i < 16; i++) { img.set(i, 0, dark); img.set(i, 15, dark); img.set(0, i, dark); img.set(15, i, dark); }
+  for (let i = 2; i < 14; i++) { img.set(i, 5, dark); img.set(i, 10, dark); img.set(5, i, dark); img.set(10, i, dark); }
+}
+
+function paintCraftingSide(img: Img, r: Rand): void {
+  paintPlanks(img, r, P('#8f7040', '#9a7a48', '#a2834f'), hex('#6e5532'));
+  for (let x = 0; x < 16; x++) for (let y = 0; y < 3; y++) img.set(x, y, shade(img.get(x, y), 0.8));
+  const metal = hex('#9a9a9a'), handle = hex('#5c4024');
+  for (let y = 5; y < 13; y++) img.set(4, y, handle);
+  for (let x = 2; x < 7; x++) img.set(x, 5, metal);
+  for (let y = 6; y < 13; y++) img.set(11, y, handle);
+  for (let y = 4; y < 7; y++) for (let x = 10; x < 13; x++) img.set(x, y, metal);
+}
+
+function paintFurnace(img: Img, r: Rand, front: boolean): void {
+  paintCobble(img, r, false);
+  if (!front) return;
+  const dark = hex('#1e1e1e'), rim = hex('#5a5a5a');
+  for (let y = 7; y < 14; y++) for (let x = 3; x < 13; x++) img.set(x, y, y === 7 || x === 3 || x === 12 ? rim : dark);
+  for (let x = 4; x < 12; x++) img.set(x, 3, rim);
+}
+
 const PAINTERS: Record<string, (img: Img, r: Rand) => void> = {
+  torch: paintTorch,
+  crafting_table_top: paintCraftingTop,
+  crafting_table_side: paintCraftingSide,
+  furnace_front: (i, r) => paintFurnace(i, r, true),
+  furnace_top: (i, r) => paintFurnace(i, r, false),
+  furnace_side: (i, r) => paintFurnace(i, r, false),
+  lava: paintLava,
   stone: paintStone,
   dirt: paintDirt,
   grass_top: paintGrassTop,

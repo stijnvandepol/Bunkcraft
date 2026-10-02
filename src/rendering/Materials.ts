@@ -41,7 +41,7 @@ const COMMON_VERTEX = /* glsl */ `
     vec3(0.0, 0.0, 1.0), vec3(0.0, 0.0, -1.0), vec3(0.0, 1.0, 0.0));
 
   vec2 chunkUv() {
-    return vec2(mod(packed.w, 32.0), floor(packed.w / 32.0));
+    return vec2(mod(packed.w, 241.0), floor(packed.w / 241.0)) / 16.0;
   }
 
   vec4 worldPosition(out int normalIndex, out float ao, out float flags) {
@@ -120,6 +120,7 @@ export function createChunkMaterial(u: WorldUniforms, cutout: boolean): THREE.Sh
       varying vec3 vShadowCoord;
       varying float vNdotL;
       varying vec3 vTint;
+      varying float vLava;
       attribute vec4 tint;
 
       // Minecraft face shading (E/W 0.6, N/S 0.8, top 1.0, bottom 0.5), slightly lifted
@@ -141,6 +142,8 @@ export function createChunkMaterial(u: WorldUniforms, cutout: boolean): THREE.Sh
         vShade = SHADE[ni];
         vWorldPos = world.xyz;
         vTint = tint.rgb;
+        vLava = flags >= 4.0 ? 1.0 : 0.0;
+        if (vLava > 0.5) vUv += vec2(uTime * 0.03, uTime * 0.05);
         gl_Position = projectionMatrix * viewMatrix * world;
       }
     `,
@@ -148,6 +151,7 @@ export function createChunkMaterial(u: WorldUniforms, cutout: boolean): THREE.Sh
       ${COMMON_FRAGMENT}
       uniform sampler2D uShadowMap;
       varying vec3 vTint;
+      varying float vLava;
       uniform float uShadowStrength;
       uniform float uShadowTexel;
       varying vec2 vUv;
@@ -189,6 +193,7 @@ export function createChunkMaterial(u: WorldUniforms, cutout: boolean): THREE.Sh
           skyFactor *= mix(1.0, 0.72 + 0.36 * direct, uShadowStrength);
         }
         vec3 light = combineLight(vLight.x, vLight.y, skyFactor);
+        if (vLava > 0.5) light = vec3(1.0); // lava is self-lit
         vec3 color = tex.rgb * light * vAO;
         gl_FragColor = vec4(applyFog(color, vWorldPos), 1.0);
       }

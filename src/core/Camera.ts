@@ -16,6 +16,12 @@ export class CameraController {
   private lastStepIndex = 0;
   /** Set when a footstep should be played this frame. */
   stepped = false;
+  /** Hurt camera: 0..1 (1 = just hit) and the side the hit came from (−1 left, 1 right). */
+  hurt = 0;
+  hurtSide = 1;
+  /** Walk phase and bob strength, exposed for the first-person hand. */
+  bobPhase = 0;
+  bobStrength = 0;
 
   constructor() {
     this.camera = new THREE.PerspectiveCamera(70, 1, 0.1, 1200);
@@ -45,7 +51,11 @@ export class CameraController {
     const amt = this.viewBobbing ? this.bobAmount : 0;
     const bobY = Math.abs(Math.sin(phase)) * 0.055 * amt - 0.02 * amt;
     const bobSide = Math.cos(phase) * 0.028 * amt;
-    const roll = Math.cos(phase) * 0.0045 * amt;
+    // Minecraft hurt cam: a quick tilt towards the side of the hit.
+    const hurtRoll = this.hurt > 0 ? -Math.sin(this.hurt ** 4 * Math.PI) * 0.24 * this.hurtSide : 0;
+    const roll = Math.cos(phase) * 0.0045 * amt + hurtRoll;
+    this.bobPhase = phase;
+    this.bobStrength = amt;
 
     const cam = this.camera;
     cam.rotation.set(p.pitch, p.yaw, roll, 'YXZ');

@@ -56,6 +56,8 @@ export class ChunkManager {
   geometryVersion = 0;
   /** Applied editing diffs, called after generation (saved player edits). */
   onGenerated: ((chunk: Chunk) => void) | null = null;
+  /** Called when a chunk is unloaded (entities tied to it are removed). */
+  onUnloaded: ((key: number) => void) | null = null;
 
   constructor(
     private readonly seed: number,
@@ -265,6 +267,7 @@ export class ChunkManager {
       if (dx * dx + dz * dz > limit) {
         this.disposeChunk(c);
         this.chunks.delete(key);
+        this.onUnloaded?.(key);
       }
     }
   }

@@ -72,7 +72,9 @@ Overige scripts:
 | Rechtermuisknop | Blok plaatsen |
 | Middelste muisknop | Blok kiezen (pick block) |
 | <kbd>1</kbd>–<kbd>9</kbd> / scrollwiel | Hotbar-slot kiezen |
-| <kbd>E</kbd> | Inventory |
+| Rechtermuisknop (vasthouden) | Eten (Survival) |
+| <kbd>Q</kbd> | Item laten vallen |
+| <kbd>E</kbd> | Inventory / crafting |
 | <kbd>F3</kbd> | Debug- en performance-overlay |
 | <kbd>F1</kbd> | HUD verbergen |
 | <kbd>Esc</kbd> | Muis vrijgeven / pauzemenu |
@@ -85,6 +87,12 @@ Overige scripts:
 - Biome-tinting van gras en bladeren met vloeiende overgangen tussen biomes, zoals in Minecraft.
 
 **Gameplay**
+- Vier game modes: **Survival**, **Creative**, **Hardcore** en **Spectator**.
+- Survival met health, honger, adem, valschade, lava, cactus, de void, een doodscherm en respawnen.
+- Mobs: varken, koe, schaap, kip, zombie en creeper (met explosies), met Minecraft-loopanimaties, AI, spawnen in het donker en gevechten met knockback.
+- Items en tools (hout, steen, ijzer, diamant), drops die je oppakt, eten en crafting via werkbank en oven.
+- First-person hand met swing-, equip- en eet-animaties; hurt cam.
+- Fakkels (licht 14) en lava (licht 15, lavameren in diepe grotten).
 - First-person-besturing met pointer lock, zwaartekracht, springen, sprinten, zwemmen en vliegen.
 - Blokken breken met crack-animatie en deeltjes; blokken plaatsen met een bereik van 5 blokken.
 - 42 bloktypes, een creative inventory met tabbladen en een hotbar.
@@ -169,7 +177,8 @@ flowchart LR
 | Opslaan | IndexedDB, alleen gewijzigde blokken per chunk (sparse) |
 
 Achtergrond, metingen en de afweging Three.js/WebGL2 tegenover WebGPU, Babylon, Godot en Unity staan in
-[`docs/RESEARCH.md`](docs/RESEARCH.md). De oorspronkelijke opdracht staat in [`plan`](plan).
+[`docs/RESEARCH.md`](docs/RESEARCH.md). Game modes, mobs, items en de roadmap staan in [`docs/GAMEPLAY.md`](docs/GAMEPLAY.md),
+het multiplayer-plan in [`docs/MULTIPLAYER.md`](docs/MULTIPLAYER.md). De oorspronkelijke opdracht staat in [`plan`](plan).
 
 ## Performance
 
@@ -191,8 +200,10 @@ Druk op <kbd>F3</kbd> voor live FPS, frametijd, draw calls, driehoeken, chunks e
 src/
 ├── core/        Game loop, renderer, input, camera, audio, settings
 ├── world/       Blokregistry, chunks, ChunkManager, terreingenerator, biomes, raycast
+├── entities/    Mobs (AI, modellen, rendering), item-drops, EntityManager
+├── items/       Items, tools, inventory, recepten
 ├── rendering/   Mesher, lighting, shaders, textures, texture packs, lucht, wolken, deeltjes, schaduwen
-├── player/      Speler, physics, collision
+├── player/      Speler, physics, collision, game modes, health/honger
 ├── ui/          Titelscherm, menu's, HUD, hotbar, inventory, F3, logo, GUI-schaal
 ├── workers/     Worker pool en chunk worker
 └── save/        IndexedDB-opslag

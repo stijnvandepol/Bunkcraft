@@ -32,6 +32,20 @@ export class Player {
   walkDistance = 0;
   /** Downward speed at the moment of the last landing (for landing sounds/bob). */
   landingImpact = 0;
+  inLava = false;
+  /** Blocks fallen since last on the ground (fall damage = distance − 3). */
+  fallDistance = 0;
+  /** Fall distance of the most recent landing, consumed by the game (fall damage). */
+  landedFall = 0;
+  /** Mode rules, set by the game. */
+  canFly = true;
+  canSprint = true;
+  /** Spectator: fly through blocks. */
+  noclip = false;
+  /** Distance travelled while sprinting / swimming and jumps since last read (hunger). */
+  sprintDistance = 0;
+  swimDistance = 0;
+  jumps = 0;
 
   private time = 0;
   private lastJumpPress = -1;
@@ -69,9 +83,13 @@ export class Player {
 
     this.inWater = getBlock(Math.floor(this.x), Math.floor(this.y + 0.4), Math.floor(this.z)) === BLOCK.WATER;
     this.headInWater = getBlock(Math.floor(this.x), Math.floor(this.eyeY), Math.floor(this.z)) === BLOCK.WATER;
+    this.inLava = getBlock(Math.floor(this.x), Math.floor(this.y + 0.4), Math.floor(this.z)) === BLOCK.LAVA;
+    if (this.inLava) this.inWater = true; // lava swims like (slow) water
+    if (this.noclip) this.flying = true;
+    else if (!this.canFly) this.flying = false;
 
     // Double-tap jump toggles flight (creative style).
-    if (input.jumpPressed) {
+    if (input.jumpPressed && this.canFly && !this.noclip) {
       if (this.time - this.lastJumpPress < 0.3) {
         this.flying = !this.flying;
         this.lastJumpPress = -1;
@@ -85,10 +103,10 @@ export class Player {
     let f = input.forward, s = input.strafe;
     const len = Math.hypot(f, s);
     if (len > 1) { f /= len; s /= len; }
-    this.sprinting = input.sprint && f > 0 && !this.inWater;
+    this.sprinting = input.sprint && f > 0 && !this.inWater && this.canSprint;
     let speed: number;
     if (this.flying) speed = this.sprinting ? PHYSICS.FLY_SPRINT_SPEED : PHYSICS.FLY_SPEED;
-    else if (this.inWater) speed = PHYSICS.SWIM_SPEED;
+    else if (this.inWater) speed = this.inLava ? PHYSICS.SWIM_SPEED * 0.5 : PHYSICS.SWIM_SPEED;
     else speed = this.sprinting ? PHYSICS.SPRINT_SPEED : PHYSICS.WALK_SPEED;
     const sin = Math.sin(this.yaw), cos = Math.cos(this.yaw);
     const tx = (-sin * f + cos * s) * speed;
@@ -108,8 +126,20 @@ export class Player {
       // Climb out onto the shore.
       if (input.jump && this.horizontalCollision) this.vy = Math.max(this.vy, 5.5);
     } else {
-      if (input.jump && this.onGround) this.vy = PHYSICS.JUMP_VELOCITY;
+      if (input.jump && this.onGround) {
+        this.vy = PHYSICS.JUMP_VELOCITY;
+        this.jumps++;
+      }
       this.vy = Math.max(this.vy - PHYSICS.GRAVITY * dt, -PHYSICS.TERMINAL_VELOCITY);
+    }
+
+    if (this.noclip) {
+      this.x += this.vx * dt;
+      this.y += this.vy * dt;
+      this.z += this.vz * dt;
+      this.onGround = false;
+      this.fallDistance = 0;
+      return;
     }
 
     // Collide per axis: Y first, then X and Z.
@@ -138,6 +168,17 @@ export class Player {
 
     if (this.flying && this.onGround) this.flying = false;
     if (this.onGround) this.walkDistance += Math.hypot(dx, dz);
+    const moved = Math.hypot(dx, dz);
+    if (this.sprinting) this.sprintDistance += moved;
+    if (this.inWater) this.swimDistance += moved;
+
+    // Fall distance (reset in liquids and while flying), reported on landing.
+    if (this.inWater || this.flying) this.fallDistance = 0;
+    else if (dy < 0) this.fallDistance -= dy;
+    if (this.onGround) {
+      if (this.fallDistance > 0) this.landedFall = this.fallDistance;
+      this.fallDistance = 0;
+    }
   }
 
   /** Pushes the player up if they end up inside a block (e.g. spawn in a tree). */

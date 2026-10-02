@@ -39,6 +39,10 @@ export class Renderer {
   readonly shadows: ShadowRenderer;
   private readonly depthMaterial: THREE.ShaderMaterial;
   private world: World | null = null;
+  /** Objects hidden during the shadow pass besides the built-ins (entities). */
+  readonly shadowExcluded: THREE.Object3D[] = [];
+  /** Extra pass after the main render (first-person hand). */
+  afterMain: ((renderer: THREE.WebGLRenderer) => void) | null = null;
   private readonly shadowHidden: THREE.Object3D[] = [];
   private readonly shadowVisible: boolean[] = [];
   private renderScale = 1;
@@ -144,6 +148,7 @@ export class Renderer {
 
     // 2. Main pass.
     this.three.render(this.scene, camera);
+    this.afterMain?.(this.three);
     this.stats.drawCalls = this.three.info.render.calls - this.stats.shadowCalls;
     this.stats.triangles = this.three.info.render.triangles;
   }
@@ -152,7 +157,7 @@ export class Renderer {
     const world = this.world!;
     const hidden = this.shadowHidden;
     hidden.length = 0;
-    hidden.push(this.sky.mesh, this.clouds.mesh, this.particles.mesh, this.highlight.group, world.chunks.waterGroup);
+    hidden.push(this.sky.mesh, this.clouds.mesh, this.particles.mesh, this.highlight.group, world.chunks.waterGroup, ...this.shadowExcluded);
     for (let i = 0; i < hidden.length; i++) {
       this.shadowVisible[i] = hidden[i].visible;
       hidden[i].visible = false;

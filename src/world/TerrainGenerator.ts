@@ -193,7 +193,8 @@ export class TerrainGenerator {
 
       // Caves: keep a solid lid under oceans/lakes so water never hangs in mid-air.
       if (y > 4 && !(underwater && y > h - 7) && this.isCave(x, y, z, depth)) {
-        blocks[i] = BLOCK.AIR;
+        // Deep caves fill with lava up to y = 10 (pre-1.18 Minecraft style lava lakes).
+        blocks[i] = y <= 10 ? BLOCK.LAVA : BLOCK.AIR;
         continue;
       }
       blocks[i] = id;

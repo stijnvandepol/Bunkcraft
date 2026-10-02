@@ -1,49 +1,62 @@
 import * as THREE from 'three';
+import { EntityManager } from '../entities/EntityManager';
+import { ItemRenderer } from '../entities/ItemRenderer';
+import type { Mob, MobEvents } from '../entities/Mob';
+import { MobRenderer } from '../entities/MobRenderer';
+import { PlayerInventory } from '../items/Inventory';
+import { type ItemStack, getItemDef } from '../items/ItemRegistry';
+import type { Station } from '../items/Recipes';
+import { type GameMode, GAME_MODE_NAMES, canFly, hasSurvivalRules } from '../player/GameMode';
 import { PHYSICS } from '../player/Physics';
 import { type MoveInput, Player } from '../player/Player';
+import { MAX_AIR, PlayerStats } from '../player/PlayerStats';
 import { DayCycle } from '../rendering/DayCycle';
+import { HandRenderer } from '../rendering/HandRenderer';
 import {
   IMPORTED_PREFIX, MINECRAFT_LAYOUT, type PackImage, builtinResolver, findBuiltinPack, importMinecraftArchive, importedResolver, loadPack,
 } from '../rendering/TexturePacks';
-import { resourcePacksScreen } from '../ui/ResourcePacksMenu';
 import { type WorldMeta, SaveSystem, newWorldId } from '../save/SaveSystem';
 import { BlockIcons } from '../ui/BlockIcons';
 import { DebugOverlay } from '../ui/DebugOverlay';
 import { h } from '../ui/dom';
+import { applyGuiScale } from '../ui/GuiScale';
 import { HUD } from '../ui/HUD';
 import { Hotbar } from '../ui/Hotbar';
 import { Inventory } from '../ui/Inventory';
-import { MainMenu, VERSION, pauseScreen } from '../ui/MainMenu';
-import { applyGuiScale } from '../ui/GuiScale';
 import { createLogo } from '../ui/Logo';
+import { MainMenu, VERSION, deathScreen, pauseScreen } from '../ui/MainMenu';
+import { resourcePacksScreen } from '../ui/ResourcePacksMenu';
 import { ScreenStack } from '../ui/Screens';
 import { optionsScreen } from '../ui/SettingsMenu';
+import { SurvivalInventory } from '../ui/SurvivalInventory';
 import { WorkerPool } from '../workers/WorkerPool';
-import { BLOCK, SHAPE, SHAPE_CROSS, SHAPE_LIQUID, SHAPE_NONE, SOLID, getBlockDef } from '../world/BlockRegistry';
+import { BLOCK, SOLID, getBlockDef } from '../world/BlockRegistry';
 import { CHUNK_VOLUME } from '../world/constants';
 import { hashString } from '../world/Noise';
-import { createRayHit, raycast } from '../world/Raycast';
 import { BIOME_NAMES } from '../world/TerrainGenerator';
 import { World } from '../world/World';
 import { AudioEngine } from './Audio';
 import { CameraController } from './Camera';
 import { Input } from './Input';
+import { Interaction } from './Interaction';
 import { Renderer } from './Renderer';
 import { SettingsStore } from './Settings';
 
-type GameState = 'menu' | 'loading' | 'playing' | 'paused' | 'inventory';
+type GameState = 'menu' | 'loading' | 'playing' | 'paused' | 'inventory' | 'dead';
 
 const DEFAULT_HOTBAR = [
   BLOCK.GRASS, BLOCK.DIRT, BLOCK.STONE, BLOCK.COBBLESTONE, BLOCK.OAK_PLANKS,
-  BLOCK.OAK_LOG, BLOCK.GLASS, BLOCK.BRICKS, BLOCK.GLOWSTONE,
+  BLOCK.OAK_LOG, BLOCK.GLASS, BLOCK.TORCH, BLOCK.GLOWSTONE,
 ];
 const MENU_SEED = hashString('BunkCraft');
 const AUTOSAVE_INTERVAL = 30;
 const FACING = ['south (Towards positive Z)', 'west (Towards negative X)', 'north (Towards negative Z)', 'east (Towards positive X)'];
+/** Physics runs at 60 Hz; game logic (entities, health) every 3rd step = 20 ticks/s like Minecraft. */
+const STEPS_PER_TICK = 3;
 
 /**
- * Top-level game: state machine (menu → loading → playing ⇄ paused/inventory),
- * fixed-timestep simulation with interpolated rendering, and block interaction.
+ * Top-level game: state machine (menu → loading → playing ⇄ paused/inventory/dead),
+ * fixed-timestep simulation with interpolated rendering, game modes and entities.
  */
 export class Game {
   private readonly settings = new SettingsStore();
@@ -55,16 +68,25 @@ export class Game {
   private readonly pool: WorkerPool;
   private readonly cycle = new DayCycle();
   readonly player = new Player();
+  private readonly stats = new PlayerStats();
+  private readonly playerInventory = new PlayerInventory();
   private readonly icons: BlockIcons;
   private readonly hotbar: Hotbar;
   private readonly hud: HUD;
   private readonly inventory: Inventory;
+  private readonly survivalInventory: SurvivalInventory;
+  private readonly hand: HandRenderer;
+  private readonly mobRenderer: MobRenderer;
+  private readonly itemRenderer: ItemRenderer;
   private readonly debug = new DebugOverlay();
   private readonly stack: ScreenStack;
   private readonly menu: MainMenu;
 
   private state: GameState = 'menu';
+  private mode: GameMode = 'creative';
   private world: World | null = null;
+  private entities: EntityManager | null = null;
+  private interaction: Interaction | null = null;
   private meta: WorldMeta | null = null;
   private needsSurface = false;
   private loadingProgress: ((status: string, p: number) => void) | null = null;
@@ -73,23 +95,18 @@ export class Game {
   /** Capture a world icon from the next rendered frame (like Minecraft's world screenshot). */
   private wantThumbnail = false;
   private packCredit = 'Procedural textures';
+  private score = 0;
 
   private last = 0;
   private time = 0;
   private accumulator = 0;
+  private stepCount = 0;
   private autosave = 0;
   private menuOrbit = new THREE.Vector3();
 
-  private readonly ray = createRayHit();
   private readonly move: MoveInput = { forward: 0, strafe: 0, jump: false, jumpPressed: false, sprint: false, descend: false };
-  /** Bound once: avoids allocating a closure per frame for physics and raycasts. */
+  /** Bound once: avoids allocating a closure per frame for physics. */
   private readonly getBlock = (x: number, y: number, z: number): number => this.world ? this.world.getBlock(x, y, z) : BLOCK.UNLOADED;
-  private readonly dir = new THREE.Vector3();
-  private breakProgress = 0;
-  private breakKey = -1;
-  private breakCooldown = 0;
-  private hitSoundTimer = 0;
-  private placeCooldown = 0;
   private underwater = false;
   private readonly frustum = new THREE.Frustum();
   private readonly projView = new THREE.Matrix4();
@@ -102,16 +119,34 @@ export class Game {
     // Leave cores for the main thread and the browser GPU process (smoother frame pacing).
     this.pool = new WorkerPool(Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 4) - 2)));
     this.icons = new BlockIcons(this.renderer.textures);
-    this.hotbar = new Hotbar(this.icons, DEFAULT_HOTBAR);
+    this.hotbar = new Hotbar(this.icons, this.playerInventory);
     this.hud = new HUD(this.hotbar);
     this.inventory = new Inventory(this.icons, this.hotbar);
+    this.survivalInventory = new SurvivalInventory(this.icons, this.playerInventory, {
+      drop: (s) => this.throwStack(s),
+      close: () => void this.resumeGame(),
+    });
+    this.playerInventory.onChange = () => {
+      this.hotbar.refresh();
+      this.survivalInventory.refresh();
+    };
     this.stack = new ScreenStack(root.querySelector<HTMLElement>('#screens')!);
-    root.append(this.hud.el, this.debug.el, this.inventory.el);
+    root.append(this.hud.el, this.debug.el, this.inventory.el, this.survivalInventory.el);
+
+    // Entities and the first-person hand.
+    this.hand = new HandRenderer(this.renderer.uniforms, this.icons);
+    this.mobRenderer = new MobRenderer(this.renderer.uniforms);
+    this.itemRenderer = new ItemRenderer(this.renderer.uniforms, this.icons);
+    this.renderer.scene.add(this.mobRenderer.group, this.itemRenderer.mesh);
+    this.renderer.shadowExcluded.push(this.mobRenderer.group, this.itemRenderer.mesh);
+    this.renderer.afterMain = (three) => {
+      if (this.state === 'playing' || this.state === 'inventory' || this.state === 'paused') this.hand.render(three);
+    };
 
     this.menu = new MainMenu(this.stack, {
       listWorlds: () => this.save.listWorlds(),
       playWorld: (m) => void this.enterWorld(m),
-      createWorld: (name, seed) => void this.createWorld(name, seed),
+      createWorld: (name, seed, mode) => void this.createWorld(name, seed, mode),
       deleteWorld: (id) => this.save.deleteWorld(id),
       openOptions: () => this.openOptions(),
       logo: () => createLogo('BUNKCRAFT', this.renderer.textures.canvas('stone')),
@@ -119,6 +154,7 @@ export class Game {
     });
 
     this.inventory.onClose = () => void this.resumeGame();
+    this.stats.onHurt = () => this.audio.playHurt();
     this.input.onKeyDown = (code) => this.onKey(code);
     this.input.onLockChange = (locked) => this.onLockChange(locked);
     this.settings.onChange((_, key) => this.applySettings(key));
@@ -160,7 +196,7 @@ export class Game {
         `Textures: ${this.packCredit}`,
         'Font: Minecraft-Font by Idrees Hassan — SIL Open Font License 1.1',
         'Rendering: three.js (MIT License)',
-        'Terrain, sounds, music, sky and procedural textures: generated in code',
+        'Terrain, mobs, sounds, music, sky and procedural textures: generated in code',
         'Not affiliated with Mojang or Microsoft',
       ],
     }));
@@ -237,6 +273,22 @@ export class Game {
     }
   }
 
+  // ---------------------------------------------------------------- game modes
+
+  private setMode(mode: GameMode): void {
+    this.mode = mode;
+    const p = this.player;
+    p.canFly = canFly(mode);
+    p.noclip = mode === 'spectator';
+    if (!p.canFly) p.flying = false;
+    const survival = hasSurvivalRules(mode);
+    this.hotbar.showCounts = survival;
+    this.hotbar.refresh();
+    this.hud.setMode(mode !== 'spectator', survival);
+    this.hand.visible = mode !== 'spectator';
+    if (this.meta) this.meta.gameMode = mode;
+  }
+
   // ---------------------------------------------------------------- world lifecycle
 
   private createWorldInstance(seed: number, edits?: Map<number, Map<number, number>>): World {
@@ -246,6 +298,15 @@ export class Game {
     world.chunks.renderDistance = this.settings.values.renderDistance;
     this.world = world;
     this.renderer.attachWorld(world);
+    // Entities live with the world.
+    const entities = new EntityManager(world, seed);
+    world.onChunkReady = (c) => entities.onChunkReady(c);
+    world.onChunkUnloaded = (k) => entities.onChunkUnloaded(k);
+    this.entities = entities;
+    this.interaction = new Interaction({
+      world, player: this.player, stats: this.stats, inventory: this.playerInventory, hotbar: this.hotbar,
+      entities, renderer: this.renderer, hand: this.hand, audio: this.audio, camera: this.cam.camera,
+    });
     return world;
   }
 
@@ -254,15 +315,18 @@ export class Game {
     this.meta = null;
     this.hud.setVisible(false);
     this.inventory.close();
+    this.survivalInventory.close();
     const world = this.createWorldInstance(MENU_SEED);
     world.chunks.renderDistance = Math.min(this.settings.values.renderDistance, 6);
+    // The menu panorama shows animals but no monsters.
+    this.entities!.hostileSpawning = false;
     const spawn = world.findSpawn();
     this.menuOrbit.set(spawn.x, world.generator.heightAt(spawn.x, spawn.z) + 14, spawn.z);
     this.cycle.time = 0.09;
     this.menu.showTitle();
   }
 
-  private async createWorld(name: string, seedText: string): Promise<void> {
+  private async createWorld(name: string, seedText: string, mode: GameMode): Promise<void> {
     let seed: number;
     if (!seedText) seed = (Math.random() * 4294967296) >>> 0;
     else if (/^-?\d+$/.test(seedText)) seed = Number(BigInt.asUintN(32, BigInt(seedText)));
@@ -270,7 +334,7 @@ export class Game {
     const meta: WorldMeta = {
       id: newWorldId(), name, seed, seedText: seedText || String(seed),
       created: Date.now(), lastPlayed: Date.now(), player: null,
-      hotbar: [...DEFAULT_HOTBAR], selectedSlot: 0, time: 0.08,
+      hotbar: [...DEFAULT_HOTBAR], selectedSlot: 0, time: 0.08, gameMode: mode,
     };
     await this.save.saveWorld(meta);
     await this.enterWorld(meta);
@@ -284,15 +348,24 @@ export class Game {
     this.meta = meta;
     const world = this.createWorldInstance(meta.seed, edits);
     this.cycle.time = meta.time;
-    this.hotbar.slots.splice(0, 9, ...meta.hotbar);
+    const mode = meta.gameMode ?? 'creative';
+    // Inventory: saved stacks, else creative gets the default hotbar and survival starts empty.
+    if (meta.inventory) this.playerInventory.load(meta.inventory);
+    else {
+      this.playerInventory.clear();
+      if (!hasSurvivalRules(mode)) meta.hotbar.forEach((id, i) => this.playerInventory.set(i, { id, count: id ? 1 : 0 }));
+    }
+    this.stats.load(meta.stats);
+    this.score = 0;
+    this.setMode(mode);
+    this.hotbar.selected = meta.selectedSlot;
     this.hotbar.refresh();
-    this.hotbar.select(meta.selectedSlot);
     const p = meta.player;
     if (p) {
       this.player.setPosition(p.x, p.y, p.z);
       this.player.yaw = p.yaw;
       this.player.pitch = p.pitch;
-      this.player.flying = p.flying;
+      this.player.flying = p.flying && this.player.canFly;
       this.needsSurface = false;
     } else {
       const spawn = world.findSpawn();
@@ -312,6 +385,9 @@ export class Game {
       this.player.setPosition(this.player.x, world.surfaceY(x, z) + 1, this.player.z);
     }
     this.player.unstick((x, y, z) => world.getBlock(x, y, z));
+    if (this.meta && !this.meta.spawn) this.meta.spawn = { x: this.player.x, y: this.player.y, z: this.player.z };
+    this.player.fallDistance = 0;
+    this.player.landedFall = 0;
     this.loadingProgress = null;
     this.autosave = 0;
     void this.resumeGame();
@@ -322,7 +398,10 @@ export class Game {
     if (!world || !meta || this.state === 'loading' || this.state === 'menu') return;
     const p = this.player;
     meta.player = { x: p.x, y: p.y, z: p.z, yaw: p.yaw, pitch: p.pitch, flying: p.flying };
-    meta.hotbar = [...this.hotbar.slots];
+    meta.hotbar = Array.from({ length: 9 }, (_, i) => this.playerInventory.get(i).id);
+    meta.inventory = this.playerInventory.serialize();
+    meta.stats = this.stats.serialize();
+    meta.gameMode = this.mode;
     meta.selectedSlot = this.hotbar.selected;
     meta.time = this.cycle.time;
     meta.lastPlayed = Date.now();
@@ -356,10 +435,59 @@ export class Game {
     this.enterMenu();
   }
 
+  // ---------------------------------------------------------------- death
+
+  private onDeath(): void {
+    this.state = 'dead';
+    this.suppressPause = true;
+    this.input.exitLock();
+    this.interaction?.reset();
+    // Drop the whole inventory where the player died.
+    const p = this.player;
+    for (let i = 0; i < 36; i++) {
+      const s = this.playerInventory.get(i);
+      if (s.count > 0) this.entities?.dropItem(s, p.x, p.y + 1, p.z, 40);
+    }
+    this.playerInventory.clear();
+    const hardcore = this.mode === 'hardcore';
+    this.stack.clear();
+    this.stack.push(deathScreen({
+      hardcore,
+      message: this.stats.deathMessage,
+      score: this.score,
+      respawn: () => this.respawn(),
+      spectate: () => {
+        this.stats.reset();
+        this.setMode('spectator');
+        void this.resumeGame();
+      },
+      title: () => {
+        if (!hardcore) this.respawnState();
+        void this.quitToTitle();
+      },
+    }));
+  }
+
+  private respawnState(): void {
+    this.stats.reset();
+    const s = this.meta?.spawn;
+    if (s) this.player.setPosition(s.x, s.y, s.z);
+    this.player.vx = this.player.vy = this.player.vz = 0;
+    this.player.unstick(this.getBlock);
+    this.player.fallDistance = 0;
+    this.player.landedFall = 0;
+  }
+
+  private respawn(): void {
+    this.respawnState();
+    void this.resumeGame();
+  }
+
   // ---------------------------------------------------------------- input / states
 
   private async resumeGame(): Promise<void> {
     this.inventory.close();
+    this.survivalInventory.close();
     this.stack.clear();
     this.state = 'playing';
     this.hud.setVisible(!this.hudHidden);
@@ -399,6 +527,18 @@ export class Game {
     }));
   }
 
+  /** Crafting stations within 4 blocks of the player. */
+  private nearbyStations(): Set<Station> {
+    const s = new Set<Station>(['hand']);
+    const p = this.player;
+    for (let y = -2; y <= 3; y++) for (let z = -4; z <= 4; z++) for (let x = -4; x <= 4; x++) {
+      const b = this.getBlock(Math.floor(p.x) + x, Math.floor(p.y) + y, Math.floor(p.z) + z);
+      if (b === BLOCK.CRAFTING_TABLE) s.add('table');
+      else if (b === BLOCK.FURNACE) s.add('furnace');
+    }
+    return s;
+  }
+
   private onKey(code: string): void {
     if (code === 'F3') this.debug.toggle();
     if (code === 'F1' && this.state === 'playing') {
@@ -406,13 +546,22 @@ export class Game {
       this.hud.setVisible(!this.hudHidden);
     }
     if (code === 'KeyE') {
-      if (this.state === 'playing' && this.input.locked) {
+      if (this.state === 'playing' && this.input.locked && this.mode !== 'spectator') {
         this.state = 'inventory';
         this.suppressPause = true;
         this.input.exitLock();
-        this.inventory.open();
+        if (this.mode === 'creative') this.inventory.open();
+        else this.survivalInventory.open(this.nearbyStations());
       } else if (this.state === 'inventory') {
         void this.resumeGame();
+      }
+    }
+    if (code === 'KeyQ' && this.state === 'playing' && this.input.locked && this.mode !== 'spectator') {
+      // Drop one item from the selected slot (Q), like Minecraft.
+      const s = this.hotbar.selectedStack;
+      if (s.count > 0) {
+        this.throwStack({ ...s, count: 1 });
+        if (hasSurvivalRules(this.mode)) this.playerInventory.consumeSlot(this.hotbar.selected);
       }
     }
     if (code === 'Escape') {
@@ -420,6 +569,11 @@ export class Game {
       else if (this.state === 'paused' && this.stack.depth > 1) this.stack.pop();
       else if (this.state === 'menu' && this.stack.depth > 1) this.stack.pop();
     }
+  }
+
+  private throwStack(stack: ItemStack): void {
+    const p = this.player;
+    this.entities?.dropItem(stack, p.x, p.eyeY - 0.3, p.z, 40, p.yaw);
   }
 
   // ---------------------------------------------------------------- frame loop
@@ -436,6 +590,7 @@ export class Game {
       case 'loading': this.updateLoading(); break;
       default: this.updatePlaying(dt);
     }
+    this.updateEntitiesRender();
 
     this.renderer.render(this.cam.camera, this.cycle, this.time, this.underwater);
     if (this.wantThumbnail) this.captureThumbnail();
@@ -445,6 +600,15 @@ export class Game {
     this.input.endFrame();
   };
 
+  private updateEntitiesRender(): void {
+    const e = this.entities, world = this.world;
+    if (!e || !world) return;
+    // Interpolation factor between 20 Hz entity ticks.
+    const alpha = Math.min(1, ((this.stepCount % STEPS_PER_TICK) + this.accumulator / PHYSICS.STEP) / STEPS_PER_TICK);
+    this.mobRenderer.update(e.mobs, alpha, world);
+    this.itemRenderer.update(e.items, alpha, this.time, world);
+  }
+
   private updateMenu(dt: number): void {
     const world = this.world!;
     this.cycle.time = (this.cycle.time + dt / 2400) % 1;
@@ -453,6 +617,14 @@ export class Game {
     world.chunks.update(this.menuOrbit.x, this.menuOrbit.z);
     this.renderer.clouds.update(dt, this.cycle);
     this.underwater = false;
+    // Animals wander around in the panorama.
+    this.accumulator += dt;
+    while (this.accumulator >= PHYSICS.STEP) {
+      this.accumulator -= PHYSICS.STEP;
+      if (++this.stepCount % STEPS_PER_TICK === 0) {
+        this.entities?.tick({ x: this.menuOrbit.x, y: this.menuOrbit.y, z: this.menuOrbit.z, attackable: false }, 0, this.mobEvents, null, true);
+      }
+    }
   }
 
   private updateLoading(): void {
@@ -472,6 +644,95 @@ export class Game {
     // Keep the camera at the spawn so the first frame after loading is correct.
     this.cam.camera.position.set(this.player.x, this.player.y + PHYSICS.EYE_HEIGHT, this.player.z);
     if (world.chunks.isAreaReady(this.player.x, this.player.z, r)) this.finishLoading();
+  }
+
+  private readonly mobEvents: MobEvents = {
+    attack: (mob, damage) => {
+      const p = this.player;
+      const yaw = Math.atan2(p.x - mob.x, p.z - mob.z);
+      if (this.stats.damage(damage, 'mob', this.mode, mob.type.name, yaw)) {
+        // Knockback away from the attacker.
+        const d = Math.hypot(p.x - mob.x, p.z - mob.z) || 1;
+        p.vx += ((p.x - mob.x) / d) * 8;
+        p.vz += ((p.z - mob.z) / d) * 8;
+        p.vy = Math.max(p.vy, 6);
+        this.cam.hurtSide = Math.sin(yaw - p.yaw) >= 0 ? 1 : -1;
+      }
+    },
+    explode: (mob) => this.explode(mob, mob.x, mob.y + 0.5, mob.z, 3),
+    sound: (mob, kind) => {
+      const d = Math.hypot(mob.x - this.player.x, mob.y - this.player.y, mob.z - this.player.z);
+      this.audio.playMob(mob.type.kind, kind, Math.max(0, 1 - d / 16));
+    },
+  };
+
+  /** Creeper explosion: blocks, drops, damage with distance falloff, knockback, effects. */
+  private explode(source: Mob | null, x: number, y: number, z: number, power: number): void {
+    const world = this.world!, entities = this.entities!;
+    const destroyed = world.explode(x, y, z, power * 1.3);
+    // Drop roughly 1/power of the destroyed blocks, like Minecraft.
+    for (const id of destroyed) {
+      if (Math.random() < 1 / power && getBlockDef(id)?.inInventory) {
+        entities.dropItem({ id: id === BLOCK.GRASS ? BLOCK.DIRT : id === BLOCK.STONE ? BLOCK.COBBLESTONE : id, count: 1 },
+          x + (Math.random() - 0.5) * power, y + Math.random() * power * 0.5, z + (Math.random() - 0.5) * power);
+      }
+    }
+    for (let i = 0; i < 6; i++) {
+      this.renderer.particles.spawnBreak(Math.floor(x + (Math.random() - 0.5) * 4), Math.floor(y + (Math.random() - 0.5) * 3),
+        Math.floor(z + (Math.random() - 0.5) * 4), BLOCK.COBBLESTONE, 0xf0);
+    }
+    const p = this.player;
+    const d = Math.hypot(p.x - x, p.y + 0.9 - y, p.z - z);
+    this.audio.playExplosion(Math.max(0.2, 1 - d / 40));
+    const reach = power * 2;
+    if (d < reach) {
+      const impact = 1 - d / reach;
+      const dmg = Math.floor(((impact * impact + impact) / 2) * 7 * reach + 1);
+      this.stats.damage(dmg, 'explosion', this.mode, source ? source.type.name : '', Math.atan2(p.x - x, p.z - z));
+      const len = d || 1;
+      p.vx += ((p.x - x) / len) * impact * 14;
+      p.vz += ((p.z - z) / len) * impact * 14;
+      p.vy += impact * 9;
+    }
+    for (const m of entities.mobs) {
+      const md = Math.hypot(m.x - x, m.y - y, m.z - z);
+      if (m !== source && md < reach) m.hurt(Math.floor((1 - md / reach) * 7 * power), x, z, 1.5);
+    }
+  }
+
+  /** 20 Hz game tick: health, hunger, entities. */
+  private gameTick(): void {
+    const p = this.player, stats = this.stats;
+    // Fall damage on landing (distance − 3), not in creative or water.
+    if (p.landedFall > 0) {
+      const dmg = Math.ceil(p.landedFall - 3);
+      if (dmg > 0 && !p.inWater) {
+        if (this.stats.damage(dmg, 'fall', this.mode)) this.cam.hurtSide = 1;
+      }
+      p.landedFall = 0;
+    }
+    if (hasSurvivalRules(this.mode)) {
+      // Exhaustion from movement (Minecraft values).
+      stats.addExhaustion(p.sprintDistance * 0.1 + p.swimDistance * 0.01 + p.jumps * (p.sprinting ? 0.2 : 0.05));
+    }
+    p.sprintDistance = p.swimDistance = 0;
+    p.jumps = 0;
+    stats.tick(p, this.getBlock, this.mode);
+    p.canSprint = !hasSurvivalRules(this.mode) || stats.canSprint;
+
+    const alive = !stats.dead;
+    this.entities?.tick(
+      { x: p.x, y: p.y, z: p.z, attackable: alive && hasSurvivalRules(this.mode) },
+      Math.round((1 - this.cycle.dayFactor) * 11),
+      this.mobEvents,
+      alive && this.mode !== 'spectator' ? (s) => {
+        const left = this.playerInventory.add(s);
+        if (left < s.count) this.audio.playPop();
+        return left;
+      } : null,
+      this.cycle.dayFactor > 0.6,
+    );
+    if (stats.dead && this.state === 'playing') this.onDeath();
   }
 
   private updatePlaying(dt: number): void {
@@ -494,16 +755,18 @@ export class Game {
       // Fixed-step simulation, rendered with interpolation.
       this.accumulator = Math.min(this.accumulator + dt, 0.25);
       const move = this.move;
-      move.forward = active ? (input.isDown('KeyW') ? 1 : 0) - (input.isDown('KeyS') ? 1 : 0) : 0;
-      move.strafe = active ? (input.isDown('KeyD') ? 1 : 0) - (input.isDown('KeyA') ? 1 : 0) : 0;
-      move.jump = active && input.isDown('Space');
-      move.jumpPressed = active && input.wasPressed('Space');
-      move.sprint = active && (input.isDown('ShiftLeft') || input.isDown('ShiftRight'));
-      move.descend = active && input.isDown('KeyC');
+      const control = active && this.state !== 'dead';
+      move.forward = control ? (input.isDown('KeyW') ? 1 : 0) - (input.isDown('KeyS') ? 1 : 0) : 0;
+      move.strafe = control ? (input.isDown('KeyD') ? 1 : 0) - (input.isDown('KeyA') ? 1 : 0) : 0;
+      move.jump = control && input.isDown('Space');
+      move.jumpPressed = control && input.wasPressed('Space');
+      move.sprint = control && (input.isDown('ShiftLeft') || input.isDown('ShiftRight'));
+      move.descend = control && input.isDown('KeyC');
       while (this.accumulator >= PHYSICS.STEP) {
         p.step(move, this.getBlock);
         move.jumpPressed = false;
         this.accumulator -= PHYSICS.STEP;
+        if (++this.stepCount % STEPS_PER_TICK === 0) this.gameTick();
       }
       this.cycle.update(dt);
       this.autosave += dt;
@@ -515,109 +778,26 @@ export class Game {
     this.cycle.compute();
 
     world.chunks.update(p.x, p.z);
+    this.cam.hurt = Math.max(0, (this.stats.hurtTime - this.accumulator / PHYSICS.STEP / STEPS_PER_TICK) / 10);
     this.cam.update(p, this.accumulator / PHYSICS.STEP, dt);
-    if (this.cam.stepped && !p.inWater) {
+    if (this.cam.stepped && !p.inWater && !p.noclip) {
       const below = world.getBlock(Math.floor(p.x), Math.floor(p.y - 0.1), Math.floor(p.z));
       const def = getBlockDef(below);
       if (def && SOLID[below]) this.audio.play('step', def.sound);
     }
 
-    this.underwater = world.getBlock(Math.floor(this.cam.camera.position.x), Math.floor(this.cam.camera.position.y), Math.floor(this.cam.camera.position.z)) === BLOCK.WATER;
+    const eye = this.cam.camera.position;
+    this.underwater = world.getBlock(Math.floor(eye.x), Math.floor(eye.y), Math.floor(eye.z)) === BLOCK.WATER;
     this.hud.setUnderwater(this.underwater);
+    this.hud.setHurt(this.stats.hurtTime / 10);
+    this.hud.survival.update({ health: this.stats.health, hunger: this.stats.hunger, air: this.stats.air, maxAir: MAX_AIR }, this.time);
 
-    this.updateInteraction(dt, active);
+    this.interaction!.update(dt, active, input, this.mode);
+    const held = this.hotbar.selectedBlock;
+    this.hand.update(dt, held, this.cam.bobPhase, this.cam.bobStrength, world.getLight(Math.floor(p.x), Math.floor(p.eyeY), Math.floor(p.z)),
+      this.interaction!.eating, window.innerWidth / Math.max(1, window.innerHeight));
     this.renderer.particles.update(dt, world);
     this.renderer.clouds.update(dt, this.cycle);
-  }
-
-  private updateInteraction(dt: number, active: boolean): void {
-    const world = this.world!;
-    const input = this.input;
-    const highlight = this.renderer.highlight;
-    const camPos = this.cam.camera.position;
-    this.cam.camera.getWorldDirection(this.dir);
-    const hit = raycast(this.getBlock, camPos.x, camPos.y, camPos.z,
-      this.dir.x, this.dir.y, this.dir.z, PHYSICS.REACH, this.ray);
-
-    if (!hit.hit || !active) {
-      highlight.hide();
-      highlight.setProgress(0);
-      this.breakProgress = 0;
-      return;
-    }
-    highlight.show(hit.x, hit.y, hit.z);
-    const def = getBlockDef(hit.id)!;
-
-    // --- Breaking (hold left mouse) ---
-    this.breakCooldown -= dt;
-    const key = hit.x * 73856093 ^ hit.y * 19349663 ^ hit.z * 83492791;
-    if (input.leftDown && def.hardness >= 0 && this.breakCooldown <= 0) {
-      if (key !== this.breakKey) {
-        this.breakKey = key;
-        this.breakProgress = 0;
-      }
-      this.breakProgress += def.hardness === 0 ? 1 : dt / def.hardness;
-      this.hitSoundTimer -= dt;
-      if (this.hitSoundTimer <= 0 && this.breakProgress < 1) {
-        this.hitSoundTimer = 0.22;
-        this.audio.play('hit', def.sound);
-        this.renderer.particles.spawnFace(hit.x, hit.y, hit.z, hit.nx, hit.ny, hit.nz, hit.id, this.lightAt(hit.x + hit.nx, hit.y + hit.ny, hit.z + hit.nz), 2, world.tintAt(hit.x, hit.z, hit.id));
-      }
-      if (this.breakProgress >= 1) {
-        const light = this.lightAt(hit.x, hit.y + 1, hit.z);
-        const broken = world.breakBlock(hit.x, hit.y, hit.z);
-        if (broken) {
-          this.renderer.particles.spawnBreak(hit.x, hit.y, hit.z, broken, light, world.tintAt(hit.x, hit.z, broken));
-          this.audio.play('break', def.sound);
-        }
-        this.breakProgress = 0;
-        this.breakKey = -1;
-        this.breakCooldown = 0.18;
-      }
-    } else if (!input.leftDown) {
-      this.breakProgress = 0;
-      this.hitSoundTimer = 0;
-    }
-    highlight.setProgress(this.breakProgress);
-
-    // --- Placing (right click, repeats while held) ---
-    this.placeCooldown -= dt;
-    if (input.rightClicked || (input.rightDown && this.placeCooldown <= 0)) {
-      this.placeCooldown = 0.22;
-      this.placeBlock();
-    }
-
-    // --- Pick block (middle click) ---
-    if (input.middleClicked && getBlockDef(hit.id)?.inInventory) {
-      const slot = this.hotbar.slots.indexOf(hit.id);
-      if (slot >= 0) this.hotbar.select(slot);
-      else this.hotbar.setSlot(this.hotbar.selected, hit.id);
-    }
-  }
-
-  private placeBlock(): void {
-    const world = this.world!;
-    const hit = this.ray;
-    const id = this.hotbar.selectedBlock;
-    if (!id) return;
-    let x = hit.x + hit.nx, y = hit.y + hit.ny, z = hit.z + hit.nz;
-    // Placing onto grass/flowers replaces them, like in Minecraft.
-    if (SHAPE[hit.id] === SHAPE_CROSS) { x = hit.x; y = hit.y; z = hit.z; }
-    const existing = world.getBlock(x, y, z);
-    const replaceable = SHAPE[existing] === SHAPE_NONE || SHAPE[existing] === SHAPE_LIQUID || SHAPE[existing] === SHAPE_CROSS;
-    if (!replaceable || existing === BLOCK.UNLOADED) return;
-    if (SOLID[id] && this.player.intersectsBlock(x, y, z)) return;
-    if (SHAPE[id] === SHAPE_CROSS && !SOLID[world.getBlock(x, y - 1, z)]) return;
-    if (world.setBlock(x, y, z, id)) {
-      const def = getBlockDef(id)!;
-      this.audio.play('place', def.sound);
-      this.renderer.particles.spawnFace(x - hit.nx, y - hit.ny, z - hit.nz, hit.nx, hit.ny, hit.nz, id, this.lightAt(x, y, z), 3, world.tintAt(x, z, id));
-      this.breakProgress = 0;
-    }
-  }
-
-  private lightAt(x: number, y: number, z: number): number {
-    return this.world ? this.world.getLight(x, y, z) : 0xf0;
   }
 
   // ---------------------------------------------------------------- debug
@@ -639,14 +819,16 @@ export class Game {
     const light = world.getLight(bx, by, bz);
     const mem = (performance as Performance & { memory?: { usedJSHeapSize: number; totalJSHeapSize: number } }).memory;
     const worldBlocks = stats.loaded * CHUNK_VOLUME;
-    const target = this.ray.hit ? `${getBlockDef(this.ray.id)?.displayName} @ ${this.ray.x}, ${this.ray.y}, ${this.ray.z}` : '—';
+    const ray = this.interaction?.ray;
+    const target = ray?.hit ? `${getBlockDef(ray.id)?.displayName} @ ${ray.x}, ${ray.y}, ${ray.z}` : '—';
+    const e = this.entities;
     d.set([
       `BunkCraft 1.0 (WebGL2 · three.js r${THREE.REVISION})`,
       `${d.fps} fps · frame ${d.frameMs.toFixed(2)} ms CPU · worst ${d.worstMs.toFixed(1)} ms`,
       `Chunks: ${stats.loaded} loaded · ${stats.meshed} meshed · ${visible} rendered`,
       `Draw calls: ${r.drawCalls} (+${r.shadowCalls} shadow) · Triangles: ${(r.triangles / 1000).toFixed(1)}k`,
       `Workers: ${this.pool.size} · queue ${this.pool.queued} · gen ${this.pool.genMs.toFixed(1)} ms · mesh ${this.pool.meshMs.toFixed(1)} ms`,
-      `Particles: ${this.renderer.particles.active} · Shadow map renders: ${this.renderer.shadows.updates}`,
+      `Entities: ${e?.mobs.length ?? 0} mobs · ${e?.items.length ?? 0} items · Particles: ${this.renderer.particles.active}`,
       '',
       `XYZ: ${p.x.toFixed(3)} / ${p.y.toFixed(3)} / ${p.z.toFixed(3)}`,
       `Block: ${bx} ${by} ${bz}`,
@@ -655,7 +837,8 @@ export class Game {
       `Biome: ${BIOME_NAMES[world.biomeName(bx, bz)]}`,
       `Light: ${light >> 4} sky, ${light & 15} block`,
       `Time: ${this.cycle.clock()} · Render distance: ${world.chunks.renderDistance} chunks`,
-      `${p.flying ? 'Flying' : p.onGround ? 'On ground' : 'Airborne'}${p.sprinting ? ' · Sprinting' : ''}${p.inWater ? ' · In water' : ''}`,
+      `${GAME_MODE_NAMES[this.mode]} · ${p.flying ? 'Flying' : p.onGround ? 'On ground' : 'Airborne'}${p.sprinting ? ' · Sprinting' : ''}${p.inWater ? ' · In water' : ''}`,
+      `Health ${this.stats.health} · Food ${this.stats.hunger} (sat ${this.stats.saturation.toFixed(1)}) · Air ${this.stats.air}`,
     ], [
       mem ? `JS heap: ${(mem.usedJSHeapSize / 1048576).toFixed(0)} / ${(mem.totalJSHeapSize / 1048576).toFixed(0)} MB` : 'JS heap: n/a',
       `World blocks: ${(worldBlocks / 1e6).toFixed(2)}M (${(worldBlocks / 1048576).toFixed(1)} MB)`,
@@ -666,6 +849,7 @@ export class Game {
       `GPU: ${this.gpuName.replace(/^ANGLE \(|\)$/g, '').split(',').slice(0, 2).join(',')}`,
       '',
       `Targeted: ${target}`,
+      `Holding: ${getItemDef(this.hotbar.selectedBlock)?.displayName ?? 'Empty hand'}`,
       `Seed: ${world.seed}`,
     ]);
   }

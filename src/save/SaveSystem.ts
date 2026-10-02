@@ -1,3 +1,4 @@
+import type { GameMode } from '../player/GameMode';
 import type { ImportedPack } from '../rendering/TexturePacks';
 import type { EditMap } from '../world/World';
 
@@ -20,6 +21,13 @@ export interface WorldMeta {
   time: number;
   /** 64×64 PNG data URL screenshot shown in the world list. */
   icon?: string;
+  gameMode?: GameMode;
+  /** Survival inventory: [id, count, damage] per slot. */
+  inventory?: number[][];
+  /** [health, hunger, saturation, exhaustion, air] */
+  stats?: number[];
+  /** World spawn / respawn point. */
+  spawn?: { x: number; y: number; z: number };
 }
 
 interface ChunkEditRecord {

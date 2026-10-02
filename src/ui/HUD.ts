@@ -1,18 +1,27 @@
 import { h } from './dom';
 import type { Hotbar } from './Hotbar';
+import { SurvivalHud } from './SurvivalHud';
 
-/** In-game overlay: crosshair, vignette, underwater tint and the hotbar. */
+/** In-game overlay: crosshair, vignette, underwater tint, hurt flash, survival bars and hotbar. */
 export class HUD {
   readonly el: HTMLDivElement;
+  readonly survival = new SurvivalHud();
   private readonly water: HTMLDivElement;
+  private readonly hurtFlash: HTMLDivElement;
+  private readonly crosshair: HTMLDivElement;
   private underwater = false;
+  private hurt = -1;
 
-  constructor(hotbar: Hotbar) {
+  constructor(private readonly hotbar: Hotbar) {
     this.water = h('div', { class: 'underwater' });
+    this.hurtFlash = h('div', { class: 'hurt-flash' });
+    this.crosshair = h('div', { class: 'crosshair' });
+    hotbar.hudSlot.append(this.survival.el);
     this.el = h('div', { class: 'hud hidden' },
       h('div', { class: 'vignette' }),
       this.water,
-      h('div', { class: 'crosshair' }),
+      this.hurtFlash,
+      this.crosshair,
       hotbar.el,
     );
   }
@@ -21,9 +30,23 @@ export class HUD {
     this.el.classList.toggle('hidden', !v);
   }
 
+  /** Spectators see neither hotbar nor survival bars; creative has no bars. */
+  setMode(showHotbar: boolean, showSurvival: boolean): void {
+    this.hotbar.el.classList.toggle('hidden', !showHotbar);
+    this.survival.setVisible(showSurvival);
+  }
+
   setUnderwater(v: boolean): void {
     if (v === this.underwater) return;
     this.underwater = v;
     this.water.classList.toggle('on', v);
+  }
+
+  /** 0..1 red flash strength after taking damage. */
+  setHurt(v: number): void {
+    const q = Math.round(v * 20) / 20;
+    if (q === this.hurt) return;
+    this.hurt = q;
+    this.hurtFlash.style.opacity = String(q);
   }
 }

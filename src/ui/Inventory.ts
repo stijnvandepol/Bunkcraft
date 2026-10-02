@@ -97,7 +97,7 @@ export class Inventory {
   private renderHotbarRow(): void {
     this.hotbarRow.replaceChildren();
     for (let i = 0; i < HOTBAR_SIZE; i++) {
-      this.hotbarRow.append(this.slot(this.hotbar.slots[i], () => {
+      this.hotbarRow.append(this.slot(this.hotbar.inventory.get(i).id, () => {
         this.hotbar.select(i);
         this.renderHotbarRow();
       }, i === this.hotbar.selected));

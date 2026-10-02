@@ -111,7 +111,7 @@ function controlsScreen(store: SettingsStore, nav: OptionsNav): HTMLDivElement {
     ['Walk Forwards', 'W'], ['Walk Backwards', 'S'], ['Strafe Left', 'A'], ['Strafe Right', 'D'],
     ['Jump', 'Space'], ['Sprint', 'Left Shift'], ['Fly Down', 'C'], ['Toggle Flight', 'Space ×2'],
     ['Attack/Destroy', 'Button 1'], ['Use Item/Place Block', 'Button 2'], ['Pick Block', 'Button 3'],
-    ['Open/Close Inventory', 'E'], ['Hotbar Slots', '1 – 9'], ['Toggle HUD', 'F1'], ['Debug Screen', 'F3'],
+    ['Open/Close Inventory', 'E'], ['Drop Item', 'Q'], ['Hotbar Slots', '1 – 9'], ['Toggle HUD', 'F1'], ['Debug Screen', 'F3'],
     ['Pause', 'Escape'],
   ];
   return menuScreen('Controls', [

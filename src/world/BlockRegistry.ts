@@ -8,7 +8,7 @@ import { TINT_BIRCH, TINT_FOLIAGE, TINT_GRASS, TINT_NONE, TINT_SPRUCE } from './
  * Face order used everywhere: 0 +X, 1 -X, 2 +Y (top), 3 -Y (bottom), 4 +Z, 5 -Z.
  */
 
-export type RenderShape = 'none' | 'cube' | 'cross' | 'liquid';
+export type RenderShape = 'none' | 'cube' | 'cross' | 'liquid' | 'model';
 export type BlockSound = 'stone' | 'wood' | 'grass' | 'gravel' | 'sand' | 'glass' | 'wool' | 'snow';
 
 export interface BlockTextures {
@@ -16,6 +16,8 @@ export interface BlockTextures {
   top?: string;
   bottom?: string;
   side?: string;
+  /** Texture of the +Z face (furnace mouth); blocks have no facing state yet. */
+  front?: string;
 }
 
 export interface BlockDef {
@@ -42,6 +44,12 @@ export interface BlockDef {
   inInventory?: boolean;
   /** Biome colour applied to the greyscale tintable texture parts (see BiomeColors). */
   tint?: number;
+  /** For shape "model": boxes in 1/16 block units [x0, y0, z0, x1, y1, z1]. */
+  model?: number[][];
+  /** Damage per second when touching the block (survival). */
+  contactDamage?: number;
+  /** Breaking needs a tool in survival (no drop by hand) — informational for now. */
+  drops?: number;
   textures: BlockTextures;
 }
 
@@ -89,6 +97,10 @@ export const BLOCK = {
   BLUE_WOOL: 40,
   YELLOW_WOOL: 41,
   GREEN_WOOL: 42,
+  TORCH: 43,
+  LAVA: 44,
+  CRAFTING_TABLE: 45,
+  FURNACE: 46,
   /** Sentinel returned for blocks in chunks that are not loaded (treated as solid). */
   UNLOADED: 255,
 } as const;
@@ -161,6 +173,17 @@ export const BLOCK_DEFS: BlockDef[] = [
   cube(B.BLUE_WOOL, 'blue_wool', 'Blue Wool', { all: 'blue_wool' }, 0.4, 'wool'),
   cube(B.YELLOW_WOOL, 'yellow_wool', 'Yellow Wool', { all: 'yellow_wool' }, 0.4, 'wool'),
   cube(B.GREEN_WOOL, 'green_wool', 'Green Wool', { all: 'green_wool' }, 0.4, 'wool'),
+  {
+    id: B.TORCH, name: 'torch', displayName: 'Torch', shape: 'model', solid: false, transparent: true,
+    hardness: 0, sound: 'wood', light: 14, inInventory: true, textures: { all: 'torch' },
+    model: [[7, 0, 7, 9, 10, 9]],
+  },
+  {
+    id: B.LAVA, name: 'lava', displayName: 'Lava', shape: 'liquid', solid: false, transparent: true,
+    cullSelf: true, lightFilter: 2, light: 15, hardness: -1, sound: 'stone', contactDamage: 8, textures: { all: 'lava' },
+  },
+  cube(B.CRAFTING_TABLE, 'crafting_table', 'Crafting Table', { top: 'crafting_table_top', bottom: 'oak_planks', side: 'crafting_table_side' }, 0.8, 'wood'),
+  cube(B.FURNACE, 'furnace', 'Furnace', { top: 'furnace_top', bottom: 'furnace_top', side: 'furnace_side', front: 'furnace_front' }, 1.2, 'stone'),
 ];
 
 /** Extra texture layers that are not tied to a block face (crack overlay stages). */
@@ -175,7 +198,7 @@ export const TEXTURE_NAMES: string[] = (() => {
   };
   for (const def of BLOCK_DEFS) {
     const t = def.textures;
-    add(t.all); add(t.top); add(t.side); add(t.bottom);
+    add(t.all); add(t.top); add(t.side); add(t.bottom); add(t.front);
   }
   EXTRA_TEXTURES.forEach(add);
   return names;
@@ -192,6 +215,7 @@ export const SHAPE_NONE = 0;
 export const SHAPE_CUBE = 1;
 export const SHAPE_CROSS = 2;
 export const SHAPE_LIQUID = 3;
+export const SHAPE_MODEL = 4;
 
 export const SHAPE = new Uint8Array(256);
 export const SOLID = new Uint8Array(256);
@@ -211,7 +235,8 @@ const blockById: (BlockDef | undefined)[] = [];
 for (const def of BLOCK_DEFS) {
   const id = def.id;
   blockById[id] = def;
-  SHAPE[id] = def.shape === 'cube' ? SHAPE_CUBE : def.shape === 'cross' ? SHAPE_CROSS : def.shape === 'liquid' ? SHAPE_LIQUID : SHAPE_NONE;
+  SHAPE[id] = def.shape === 'cube' ? SHAPE_CUBE : def.shape === 'cross' ? SHAPE_CROSS : def.shape === 'liquid' ? SHAPE_LIQUID
+    : def.shape === 'model' ? SHAPE_MODEL : SHAPE_NONE;
   SOLID[id] = def.solid ? 1 : 0;
   OPAQUE[id] = def.shape === 'cube' && !def.transparent ? 1 : 0;
   CULL_SELF[id] = def.cullSelf ? 1 : 0;
@@ -221,7 +246,7 @@ for (const def of BLOCK_DEFS) {
   TINT[id] = def.tint ?? TINT_NONE;
   const t = def.textures;
   const side = t.side ?? t.all;
-  const faces = [side, side, t.top ?? t.all, t.bottom ?? t.all, side, side];
+  const faces = [side, side, t.top ?? t.all, t.bottom ?? t.all, t.front ?? side, side];
   for (let f = 0; f < 6; f++) {
     const name = faces[f];
     FACE_LAYER[id * 6 + f] = name ? textureLayer(name) : 0;
@@ -244,6 +269,10 @@ export const TINTED_TEXTURES: Record<string, { type: number; mode: 'full' | 'mas
   birch_leaves: { type: TINT_BIRCH, mode: 'full', opaque: false },
   spruce_leaves: { type: TINT_SPRUCE, mode: 'full', opaque: false },
 };
+
+/** Model boxes per block id (shape "model"). */
+export const MODELS: (number[][] | undefined)[] = [];
+for (const def of BLOCK_DEFS) if (def.model) MODELS[def.id] = def.model;
 
 export function getBlockDef(id: number): BlockDef | undefined {
   return blockById[id];

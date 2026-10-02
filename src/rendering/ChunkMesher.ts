@@ -1,5 +1,5 @@
 import {
-  CULL_SELF, FACE_LAYER, OPAQUE, TINT, SHAPE, SHAPE_CROSS, SHAPE_CUBE, SHAPE_LIQUID, SWAY,
+  CULL_SELF, FACE_LAYER, MODELS, OPAQUE, SHAPE_MODEL, TINT, SHAPE, SHAPE_CROSS, SHAPE_CUBE, SHAPE_LIQUID, SWAY,
 } from '../world/BlockRegistry';
 import { CHUNK_HEIGHT, CHUNK_SIZE, CHUNK_VOLUME } from '../world/constants';
 import { BLOCK } from '../world/BlockRegistry';
@@ -18,13 +18,15 @@ import { LightEngine, REGION, REGION_AREA, REGION_HEIGHT, REGION_VOLUME } from '
  *
  * Vertex format (12 bytes, every attribute 4-component: ANGLE/D3D11 has no 3-component
  * short or 2-component byte formats and would convert those on the CPU per upload):
- *   packed Int16×4  — chunk-local x, y, z × 16 (1/16 block precision), uv = u + v * 32
+ *   packed Uint16×4 — chunk-local x, y, z × 16 (1/16 block precision) and the texture
+ *                     coordinate w = u16 + v16 * 241 (u, v in 1/16 texels, 0..240), so
+ *                     non-cube models can map sub-rectangles of a texture
  *   data   Uint8×4  — [texture layer, normal | ao<<3 | flags<<5, sky light, block light]
  *   tint   Uint8×4  — biome colour (normalised), white for untinted blocks
  */
 
 export interface GeometryData {
-  packed: Int16Array;
+  packed: Uint16Array;
   data: Uint8Array;
   tint: Uint8Array;
   index: Uint16Array | Uint32Array;
@@ -44,6 +46,8 @@ export interface MeshResult {
 
 export const FLAG_SWAY = 1;
 export const FLAG_WAVE = 2;
+/** Lava: self-lit and animated. */
+export const FLAG_LAVA = 4;
 
 const SX = 1;
 const SZ = REGION;
@@ -71,7 +75,7 @@ const CU = [0, 1, 1, 0];
 const CV = [0, 0, 1, 1];
 
 class GeometryBuilder {
-  pos = new Int16Array(4096 * 4);
+  pos = new Uint16Array(4096 * 4);
   data = new Uint8Array(4096 * 4);
   tint = new Uint8Array(4096 * 4);
   /** Packed 0xRRGGBB applied to subsequently emitted vertices. */
@@ -92,7 +96,7 @@ class GeometryBuilder {
   private grow(): void {
     const cap = this.pos.length / 4;
     const n = cap * 2;
-    const pos = new Int16Array(n * 4); pos.set(this.pos); this.pos = pos;
+    const pos = new Uint16Array(n * 4); pos.set(this.pos); this.pos = pos;
     const data = new Uint8Array(n * 4); data.set(this.data); this.data = data;
     const tint = new Uint8Array(n * 4); tint.set(this.tint); this.tint = tint;
     const idx = new Uint32Array(n * 1.5); idx.set(this.idx); this.idx = idx;
@@ -101,7 +105,7 @@ class GeometryBuilder {
   vertex(x: number, y: number, z: number, u: number, v: number, d0: number, d1: number, d2: number, d3: number): void {
     if (this.vertexCount * 4 + 4 > this.pos.length) this.grow();
     const i = this.vertexCount++;
-    this.pos[i * 4] = x; this.pos[i * 4 + 1] = y; this.pos[i * 4 + 2] = z; this.pos[i * 4 + 3] = u + v * 32;
+    this.pos[i * 4] = x; this.pos[i * 4 + 1] = y; this.pos[i * 4 + 2] = z; this.pos[i * 4 + 3] = Math.round(u * 16) + Math.round(v * 16) * 241;
     this.data[i * 4] = d0; this.data[i * 4 + 1] = d1; this.data[i * 4 + 2] = d2; this.data[i * 4 + 3] = d3;
     const t = this.currentTint;
     this.tint[i * 4] = t >> 16; this.tint[i * 4 + 1] = (t >> 8) & 255; this.tint[i * 4 + 2] = t & 255; this.tint[i * 4 + 3] = 255;
@@ -136,6 +140,7 @@ class GeometryBuilder {
 }
 
 const MASK_SIZE = CHUNK_SIZE * CHUNK_HEIGHT;
+const MAX_MERGE = 15;
 
 export class ChunkMesher {
   private readonly region = new Uint8Array(REGION_VOLUME);
@@ -233,6 +238,38 @@ export class ChunkMesher {
     }
   }
 
+  /**
+   * Small non-cube models (torch): every box face is emitted with texture coordinates
+   * taken from the same 1/16 rectangle of the texture, like Minecraft block models.
+   */
+  private emitModel(id: number, x: number, y: number, z: number, i: number): void {
+    const boxes = MODELS[id];
+    if (!boxes) return;
+    const geo = this.cutout;
+    geo.currentTint = 0xffffff;
+    const layer = FACE_LAYER[id * 6];
+    const ls = this.lighting.sky[i] * 17, lb = this.lighting.block[i] * 17;
+    const bx = x * 16, by = y * 16, bz = z * 16;
+    for (const [x0, y0, z0, x1, y1, z1] of boxes) {
+      const quad = (pts: number[][], uv: number[][], normal: number) => {
+        for (let k = 0; k < 4; k++) {
+          geo.vertex(bx + pts[k][0], by + pts[k][1], bz + pts[k][2], uv[k][0] / 16, uv[k][1] / 16, layer, normal | (3 << 3), ls, lb);
+        }
+        geo.quad(false);
+      };
+      // Sides: u follows the box width, v the height (texture rows counted from the bottom).
+      const side = (u0: number, u1: number) => [[u0, y0], [u1, y0], [u1, y1], [u0, y1]];
+      quad([[x1, y0, z1], [x1, y0, z0], [x1, y1, z0], [x1, y1, z1]], side(z0, z1), 0);
+      quad([[x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0]], side(z0, z1), 1);
+      quad([[x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]], side(x0, x1), 4);
+      quad([[x1, y0, z0], [x0, y0, z0], [x0, y1, z0], [x1, y1, z0]], side(x0, x1), 5);
+      // Top shows the 2×2 just below the tip; bottom the stick end.
+      const top = [[x0, y1 - 2], [x1, y1 - 2], [x1, y1], [x0, y1]];
+      quad([[x0, y1, z1], [x1, y1, z1], [x1, y1, z0], [x0, y1, z0]], top, 2);
+      quad([[x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1]], [[x0, 0], [x1, 0], [x1, 2], [x0, 2]], 3);
+    }
+  }
+
   private extractLight(): Uint8Array {
     const out = new Uint8Array(CHUNK_VOLUME);
     const sky = this.lighting.sky, blk = this.lighting.block;
@@ -307,7 +344,8 @@ export class ChunkMesher {
           if (liquid) {
             // Water surface sits 2/16 lower when there is no water above it.
             lowered = region[i + SY] !== id ? 1 : 0;
-            if (f === 2) flags = FLAG_WAVE;
+            if (id === BLOCK.LAVA) flags = FLAG_LAVA;
+            else if (f === 2) flags = FLAG_WAVE;
             // Never merge water: the surface is displaced per vertex in the shader, and
             // merged quads would create T-junction cracks with smaller neighbours.
             uniform = false;
@@ -317,7 +355,8 @@ export class ChunkMesher {
           this.cellLayer[n] = layer;
           this.cellFlags[n] = flags;
           this.cellLowered[n] = lowered;
-          this.cellTarget[n] = liquid ? 2 : OPAQUE[id] ? 0 : 1;
+          // Water is blended; lava is drawn opaque (it glows and hides what is under it).
+          this.cellTarget[n] = liquid ? (id === BLOCK.WATER ? 2 : 0) : OPAQUE[id] ? 0 : 1;
           mask[n] = uniform
             ? (1 << 30) | layer | (cellAO[c4] << 8) | (cellSky[c4] << 10) | (cellBlk[c4] << 18) | (flags << 26) | ((liquid ? 1 : 0) << 28) | (lowered << 29)
             : -(n + 1);
@@ -332,9 +371,10 @@ export class ChunkMesher {
           if (key === 0) { a++; n++; continue; }
           let w = 1;
           const tint = this.cellTint[n];
-          while (a + w < dimA && mask[n + w] === key && this.cellTint[n + w] === tint) w++;
+          // Merged quads are capped at 15 blocks so the packed texture coordinate fits.
+          while (a + w < dimA && w < MAX_MERGE && mask[n + w] === key && this.cellTint[n + w] === tint) w++;
           let h = 1;
-          grow: while (b + h < dimB) {
+          grow: while (b + h < dimB && h < MAX_MERGE) {
             const row = n + h * dimA;
             for (let k = 0; k < w; k++) if (mask[row + k] !== key || this.cellTint[row + k] !== tint) break grow;
             h++;
@@ -386,6 +426,10 @@ export class ChunkMesher {
         let i = (y + 1) * SY + (z + 16) * SZ + 16;
         for (let x = 0; x < CHUNK_SIZE; x++, i++) {
           const id = region[i];
+          if (SHAPE[id] === SHAPE_MODEL) {
+            this.emitModel(id, x, y, z, i);
+            continue;
+          }
           if (SHAPE[id] !== SHAPE_CROSS) continue;
           const layer = FACE_LAYER[id * 6];
           geo.currentTint = this.tintFor(id, x, z);

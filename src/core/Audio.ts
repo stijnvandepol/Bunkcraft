@@ -138,6 +138,107 @@ export class AudioEngine {
     }
   }
 
+  private get ready(): AudioContext | null {
+    const ctx = this.ctx;
+    return ctx && this.soundVolume > 0 && ctx.state === 'running' ? ctx : null;
+  }
+
+  /** Oscillator voice with a pitch glide and an attack/decay envelope. */
+  private voice(type: OscillatorType, f0: number, f1: number, dur: number, vol: number, delay = 0): void {
+    const ctx = this.ready;
+    if (!ctx) return;
+    const t = ctx.currentTime + delay;
+    const o = ctx.createOscillator();
+    o.type = type;
+    o.frequency.setValueAtTime(f0, t);
+    o.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t + dur);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(vol, t + Math.min(0.03, dur / 4));
+    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 2400;
+    o.connect(lp).connect(g).connect(this.sfx);
+    o.start(t);
+    o.stop(t + dur + 0.05);
+  }
+
+  /** Filtered noise burst (hiss, explosion, crunch). */
+  private noiseBurst(freq: number, q: number, dur: number, vol: number, type: BiquadFilterType = 'bandpass', delay = 0): void {
+    const ctx = this.ready;
+    if (!ctx) return;
+    const t = ctx.currentTime + delay;
+    const src = ctx.createBufferSource();
+    src.buffer = this.noise;
+    src.loop = dur > 0.9;
+    const f = ctx.createBiquadFilter();
+    f.type = type;
+    f.frequency.value = freq;
+    f.Q.value = q;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(vol, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    src.connect(f).connect(g).connect(this.sfx);
+    src.start(t, Math.random() * 0.4);
+    src.stop(t + dur + 0.05);
+  }
+
+  /** Mob sounds, synthesised per kind; `volume` already includes distance falloff. */
+  playMob(kind: string, event: 'idle' | 'hurt' | 'death' | 'fuse', volume: number): void {
+    if (volume <= 0.02) return;
+    const v = volume * (event === 'idle' ? 0.5 : 0.7);
+    const p = 0.9 + Math.random() * 0.2;
+    switch (kind) {
+      case 'pig':
+        this.voice('sawtooth', 210 * p, 150 * p, 0.18, v * 0.5);
+        this.voice('sawtooth', 190 * p, 130 * p, 0.16, v * 0.4, 0.2);
+        break;
+      case 'cow':
+        this.voice('sawtooth', 130 * p, 95 * p, 0.9, v * 0.45);
+        break;
+      case 'sheep':
+        for (let i = 0; i < 4; i++) this.voice('sawtooth', 330 * p, 300 * p, 0.12, v * 0.35, i * 0.1);
+        break;
+      case 'chicken':
+        this.voice('square', 900 * p, 700 * p, 0.07, v * 0.25);
+        this.voice('square', 1100 * p, 800 * p, 0.06, v * 0.2, 0.09);
+        break;
+      case 'zombie':
+        this.voice('sawtooth', 95 * p, 70 * p, 0.8, v * 0.5);
+        this.noiseBurst(300, 1, 0.6, v * 0.25);
+        break;
+      case 'creeper':
+        if (event === 'fuse') this.noiseBurst(3500, 0.6, 1.4, volume * 0.6, 'highpass');
+        else this.noiseBurst(2000, 0.8, 0.25, v * 0.4);
+        break;
+    }
+    if (event === 'hurt' || event === 'death') this.voice('triangle', 500 * p, 250 * p, 0.12, v * 0.3);
+  }
+
+  playHurt(): void {
+    this.voice('square', 220, 120, 0.12, 0.35);
+    this.noiseBurst(600, 1, 0.1, 0.3);
+  }
+
+  playExplosion(volume: number): void {
+    this.noiseBurst(120, 0.5, 1.6, Math.min(1, volume) * 1.2, 'lowpass');
+    this.noiseBurst(900, 0.7, 0.5, Math.min(1, volume) * 0.6);
+    this.voice('sine', 70, 30, 1.0, Math.min(1, volume) * 0.8);
+  }
+
+  playPop(): void {
+    this.voice('sine', 900 + Math.random() * 400, 1800, 0.08, 0.25);
+  }
+
+  playEat(): void {
+    this.noiseBurst(1600, 0.8, 0.09, 0.4);
+  }
+
+  playBurp(): void {
+    this.voice('sawtooth', 110, 80, 0.3, 0.3);
+  }
+
   private note(freq: number, at: number, length: number, velocity: number): void {
     const ctx = this.ctx!;
     const g = ctx.createGain();

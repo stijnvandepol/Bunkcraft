@@ -1,3 +1,4 @@
+import { GAME_MODES, GAME_MODE_HINTS, GAME_MODE_NAMES, type GameMode } from '../player/GameMode';
 import type { WorldMeta } from '../save/SaveSystem';
 import { button, h, menuScreen, screen } from './dom';
 import type { ScreenStack } from './Screens';
@@ -5,7 +6,7 @@ import type { ScreenStack } from './Screens';
 export interface MenuActions {
   listWorlds(): Promise<WorldMeta[]>;
   playWorld(meta: WorldMeta): void;
-  createWorld(name: string, seedText: string): void;
+  createWorld(name: string, seedText: string, mode: GameMode): void;
   deleteWorld(id: string): Promise<void>;
   openOptions(): void;
   logo(): HTMLCanvasElement;
@@ -81,7 +82,7 @@ export class MainMenu {
           h('div', { class: 'world-text' },
             h('div', { class: 'world-name', text: w.name }),
             h('div', { class: 'world-meta', text: `${w.id} (${new Date(w.lastPlayed).toLocaleString()})` }),
-            h('div', { class: 'world-meta', text: `Creative Mode, Seed: ${w.seedText || w.seed}` }),
+            h('div', { class: 'world-meta', text: `${GAME_MODE_NAMES[w.gameMode ?? 'creative']} Mode, Seed: ${w.seedText || w.seed}` }),
           ),
         );
         item.addEventListener('click', () => { selected = w; render(); });
@@ -128,14 +129,22 @@ export class MainMenu {
   showCreate(): void {
     const name = h('input', { class: 'mc-input', value: 'New World', maxLength: 32 });
     const seed = h('input', { class: 'mc-input', placeholder: 'Leave blank for a random seed', maxLength: 32 });
-    const create = () => this.actions.createWorld(name.value.trim() || 'New World', seed.value.trim());
+    let mode: GameMode = 'survival';
+    const create = () => this.actions.createWorld(name.value.trim() || 'New World', seed.value.trim(), mode);
     for (const input of [name, seed]) input.addEventListener('keydown', (e) => { if (e.key === 'Enter') create(); });
 
     const column = 'display: flex; flex-direction: column; align-items: center; gap: calc(var(--s) * 4);';
+    const modeHint = h('div', { class: 'hint', text: GAME_MODE_HINTS[mode] });
+    const modeButton = button(`Game Mode: ${GAME_MODE_NAMES[mode]}`, () => {
+      mode = GAME_MODES[(GAME_MODES.indexOf(mode) + 1) % GAME_MODES.length];
+      modeButton.textContent = `Game Mode: ${GAME_MODE_NAMES[mode]}`;
+      modeHint.textContent = GAME_MODE_HINTS[mode];
+    });
     const gameTab = h('div', { style: column },
       h('div', { class: 'field-label', text: 'World Name' }), name,
-      button('Game Mode: Creative', () => undefined, { disabled: true }),
-      button('Difficulty: Peaceful', () => undefined, { disabled: true }),
+      modeButton,
+      modeHint,
+      button('Difficulty: Normal', () => undefined, { disabled: true }),
     );
     const worldTab = h('div', { class: 'hidden', style: column },
       button('World Type: Default', () => undefined, { disabled: true }),
@@ -175,6 +184,23 @@ export class MainMenu {
       bar.style.width = `${Math.round(Math.min(1, p) * 100)}%`;
     };
   }
+}
+
+/** Death screen ("You died!" / Hardcore "Game over!"). */
+export function deathScreen(opts: {
+  hardcore: boolean; message: string; score: number;
+  respawn(): void; spectate(): void; title(): void;
+}): HTMLDivElement {
+  return screen('death-screen',
+    h('div', { class: 'death-title', text: opts.hardcore ? 'Game over!' : 'You died!' }),
+    h('div', { class: 'death-message', text: opts.message }),
+    h('div', { class: 'death-score' }, 'Score: ', h('b', { text: String(opts.score) })),
+    h('div', { style: 'height: calc(var(--s) * 12)' }),
+    opts.hardcore
+      ? button('Spectate World', opts.spectate)
+      : button('Respawn', opts.respawn),
+    button('Title Screen', opts.title),
+  );
 }
 
 /** "Game Menu" laid out like Minecraft's pause screen. */

@@ -1,6 +1,6 @@
 import type { WorkerPool } from '../workers/WorkerPool';
 import { tintColor } from './BiomeColors';
-import { BLOCK, SHAPE, SHAPE_CROSS, SOLID, TINT } from './BlockRegistry';
+import { BLOCK, SHAPE, SHAPE_CROSS, SHAPE_MODEL, SOLID, TINT } from './BlockRegistry';
 import { CHUNK_READY, type Chunk } from './Chunk';
 import { ChunkManager, type ChunkMaterials } from './ChunkManager';
 import { CHUNK_HEIGHT, SEA_LEVEL, blockIndex, chunkKey } from './constants';
@@ -15,6 +15,9 @@ export class World {
   readonly generator: TerrainGenerator;
   readonly edits: EditMap;
   readonly dirtyEditChunks = new Set<number>();
+  /** Entity hooks: a chunk finished generating / was unloaded. */
+  onChunkReady: ((chunk: Chunk) => void) | null = null;
+  onChunkUnloaded: ((key: number) => void) | null = null;
 
   constructor(readonly seed: number, pool: WorkerPool, materials: ChunkMaterials, edits: EditMap = new Map()) {
     this.generator = new TerrainGenerator(seed);
@@ -23,7 +26,9 @@ export class World {
     this.chunks.onGenerated = (chunk) => {
       const e = this.edits.get(chunk.key);
       if (e && chunk.blocks) for (const [i, id] of e) chunk.blocks[i] = id;
+      this.onChunkReady?.(chunk);
     };
+    this.chunks.onUnloaded = (key) => this.onChunkUnloaded?.(key);
   }
 
   private chunkAt(cx: number, cz: number): Chunk | undefined {
@@ -90,6 +95,51 @@ export class World {
     return true;
   }
 
+  /**
+   * Explosion: clears a noisy sphere of blocks in one batch and remeshes each touched
+   * chunk once (instead of 9 remeshes per block). Returns the ids that were destroyed.
+   */
+  explode(cx: number, cy: number, cz: number, radius: number): number[] {
+    const destroyed: number[] = [];
+    const touched = new Set<Chunk>();
+    const r = Math.ceil(radius);
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dz = -r; dz <= r; dz++) {
+        for (let dx = -r; dx <= r; dx++) {
+          const d = Math.hypot(dx, dy, dz);
+          if (d > radius * (0.75 + Math.random() * 0.35)) continue;
+          const x = Math.floor(cx + dx), y = Math.floor(cy + dy), z = Math.floor(cz + dz);
+          if (y < 1 || y >= CHUNK_HEIGHT) continue;
+          const c = this.chunkAt(x >> 4, z >> 4);
+          if (!c || !c.blocks) continue;
+          const i = blockIndex(x & 15, y, z & 15);
+          const id = c.blocks[i];
+          if (id === BLOCK.AIR || id === BLOCK.BEDROCK || id === BLOCK.OBSIDIAN || id === BLOCK.WATER || id === BLOCK.LAVA) continue;
+          c.blocks[i] = BLOCK.AIR;
+          let e = this.edits.get(c.key);
+          if (!e) { e = new Map(); this.edits.set(c.key, e); }
+          e.set(i, BLOCK.AIR);
+          this.dirtyEditChunks.add(c.key);
+          touched.add(c);
+          destroyed.push(id);
+        }
+      }
+    }
+    const remesh = new Set<Chunk>();
+    for (const c of touched) {
+      for (let oz = -1; oz <= 1; oz++) for (let ox = -1; ox <= 1; ox++) {
+        const n = this.chunks.get(c.cx + ox, c.cz + oz);
+        if (n && n.state === CHUNK_READY) remesh.add(n);
+      }
+    }
+    for (const c of remesh) {
+      c.version++;
+      if (touched.has(c)) this.chunks.requestMeshUrgent(c);
+    }
+    this.chunks.markDirty();
+    return destroyed;
+  }
+
   /** Highest y whose block is solid, in a loaded chunk; -1 if unknown. */
   surfaceY(x: number, z: number): number {
     const c = this.chunkAt(x >> 4, z >> 4);
@@ -127,7 +177,7 @@ export class World {
     const id = this.getBlock(x, y, z);
     if (!this.setBlock(x, y, z, BLOCK.AIR)) return 0;
     const above = this.getBlock(x, y + 1, z);
-    if (SHAPE[above] === SHAPE_CROSS) this.setBlock(x, y + 1, z, BLOCK.AIR);
+    if (SHAPE[above] === SHAPE_CROSS || SHAPE[above] === SHAPE_MODEL) this.setBlock(x, y + 1, z, BLOCK.AIR);
     return id;
   }
 
