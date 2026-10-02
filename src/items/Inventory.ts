@@ -29,6 +29,18 @@ export class PlayerInventory {
     this.onChange?.();
   }
 
+  /** Whether `add` would take the whole stack (checked before asking a server for an item). */
+  canFit(stack: ItemStack): boolean {
+    let left = stack.count;
+    const max = PlayerInventory.maxStack(stack.id);
+    for (const s of this.slots) {
+      if (s.id === 0) left -= max;
+      else if (max > 1 && s.id === stack.id && s.count < max) left -= max - s.count;
+      if (left <= 0) return true;
+    }
+    return false;
+  }
+
   /** Adds a stack, merging into existing stacks first (hotbar before main). Returns what didn't fit. */
   add(stack: ItemStack): number {
     let left = stack.count;

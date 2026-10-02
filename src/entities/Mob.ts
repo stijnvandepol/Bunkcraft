@@ -11,16 +11,18 @@ export interface MobTarget {
   z: number;
   /** Whether hostile mobs may attack (survival, alive). */
   attackable: boolean;
+  /** Which player this is (multiplayer server); echoed back in attack and shoot events. */
+  id?: number;
 }
 
 export interface MobEvents {
   /** Melee hit on the player. */
-  attack(mob: Mob, damage: number): void;
+  attack(mob: Mob, damage: number, target: MobTarget): void;
   explode(mob: Mob): void;
   /** A ranged mob (skeleton) releases an arrow at the player. */
-  shoot(mob: Mob): void;
+  shoot(mob: Mob, target: MobTarget): void;
   /** An arrow struck the player. */
-  arrowHit(arrow: Arrow, damage: number): void;
+  arrowHit(arrow: Arrow, damage: number, targetId: number | undefined): void;
   /** An arrow stuck in a block or hit a mob (sound). */
   arrowImpact(arrow: Arrow): void;
   /** Lit TNT whose fuse ran out. */
@@ -138,7 +140,7 @@ export class Mob extends Entity {
         if (sees && distT < 15) {
           speed = distT < 4 ? -t.walkSpeed : 0;
           if (++this.aimTicks >= 20 && this.attackCooldown === 0) {
-            events.shoot(this);
+            events.shoot(this, target);
             this.aimTicks = 0;
             this.attackCooldown = 20;
           }
@@ -157,7 +159,7 @@ export class Mob extends Entity {
           return;
         }
       } else if (distT < 1.4 + this.width / 2 && Math.abs(target.y - this.y) < 1.5 && this.attackCooldown === 0 && sees) {
-        events.attack(this, t.attack);
+        events.attack(this, t.attack, target);
         this.attackCooldown = 20;
       } else if (t.climbs && this.onGround && distT > 2 && distT < 4 && Math.random() < 0.2) {
         // Spider leap (Minecraft's LeapAtTargetGoal: 0.4 blocks/tick up and forward).

@@ -8,7 +8,11 @@ import type { GameMode } from '../player/GameMode';
  * the network. Movement is client-predicted and sanity-checked by the server; block
  * edits are applied optimistically and confirmed or rolled back by the server.
  */
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
+
+/** Mob kinds in network order (index in entity snapshots). */
+export const NET_MOB_KINDS = ['pig', 'cow', 'sheep', 'chicken', 'zombie', 'creeper', 'skeleton', 'spider'] as const;
+export type NetMobKind = typeof NET_MOB_KINDS[number];
 
 /** Saved per player on the server (by name). */
 export interface PlayerRecord {
@@ -26,6 +30,15 @@ export interface RemotePlayerInfo {
 /** Snapshot entry: [id, x, y, z, yaw, pitch, flags, heldItem]. flags: 1 sprinting, 2 flying, 4 on ground. */
 export type SnapshotEntry = [number, number, number, number, number, number, number, number];
 
+/** Mob snapshot: [id, kind, x, y, z, yaw, headYaw, headPitch, flags, hurtTime, fuse, deathTime]. flags: 1 on ground, 2 burning, 4 dead. */
+export type MobEntry = [number, number, number, number, number, number, number, number, number, number, number, number];
+/** Dropped item: [id, itemId, count, x, y, z]. */
+export type ItemEntry = [number, number, number, number, number, number];
+/** Arrow: [id, x, y, z, yaw, pitch, inGround]. */
+export type ArrowEntry = [number, number, number, number, number, number, number];
+/** Lit TNT: [id, x, y, z, fuse]. */
+export type TntEntry = [number, number, number, number, number];
+
 // ---------------------------------------------------------------- client → server
 
 export type ClientMessage =
@@ -33,7 +46,17 @@ export type ClientMessage =
   | { t: 'pos'; x: number; y: number; z: number; yaw: number; pitch: number; flags: number; held: number }
   | { t: 'block'; seq: number; x: number; y: number; z: number; id: number }
   | { t: 'chat'; text: string }
-  | { t: 'state'; inventory: number[][]; stats: number[] };
+  | { t: 'state'; inventory: number[][]; stats: number[] }
+  /** Melee hit on a server mob (damage comes from the held item the server knows). */
+  | { t: 'attack'; id: number }
+  /** Bow shot; power 0..1. */
+  | { t: 'shoot'; x: number; y: number; z: number; dx: number; dy: number; dz: number; power: number }
+  /** Flint and steel on a TNT block. */
+  | { t: 'ignite'; x: number; y: number; z: number }
+  /** Pick up a dropped item entity. */
+  | { t: 'take'; id: number }
+  /** Drop an item into the world (block drops, Q, death); yaw = throw direction. */
+  | { t: 'drop'; id: number; count: number; damage?: number; x: number; y: number; z: number; yaw?: number; delay?: number };
 
 // ---------------------------------------------------------------- server → client
 
@@ -55,7 +78,16 @@ export type ServerMessage =
   | { t: 'chat'; from: string; text: string; system?: boolean }
   | { t: 'time'; time: number }
   | { t: 'teleport'; x: number; y: number; z: number }
-  | { t: 'kick'; reason: string };
+  | { t: 'kick'; reason: string }
+  /** Entities around the player (10 Hz). Lists replace what the client knows. */
+  | { t: 'ent'; m: MobEntry[]; i: ItemEntry[]; a: ArrowEntry[]; b: TntEntry[] }
+  /** A mob or arrow hurt this player. */
+  | { t: 'hurt'; amount: number; cause: 'mob' | 'arrow'; by: string; yaw: number }
+  /** An explosion: destroyed blocks as x, y, z triples; the client plays effects and takes its own damage. */
+  | { t: 'boom'; x: number; y: number; z: number; power: number; by: string; water: boolean; blocks: number[] }
+  | { t: 'msound'; kind: string; event: 'idle' | 'hurt' | 'death' | 'fuse' | 'arrow'; x: number; y: number; z: number }
+  /** The requested item entity is yours. */
+  | { t: 'taken'; id: number; itemId: number; count: number; damage?: number };
 
 /** No 0/O/1/I/L: game codes are read aloud and typed on phones. */
 export const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';

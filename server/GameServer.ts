@@ -9,6 +9,7 @@ import { BLOCK, getBlockDef } from '../src/world/BlockRegistry';
 import { SEA_LEVEL } from '../src/world/constants';
 import { hashString } from '../src/world/Noise';
 import { TerrainGenerator } from '../src/world/TerrainGenerator';
+import { ServerEntities } from './ServerEntities';
 
 const TICK_MS = 50; // 20 ticks per second, like Minecraft
 const DAY_SECONDS = 1200;
@@ -54,6 +55,11 @@ interface Session {
   hasPos: boolean;
   lastPosTime: number;
   edits: Bucket;
+  /** Melee, bow, drop and pickup requests (mob and item interaction). */
+  attacks: Bucket;
+  shots: Bucket;
+  drops: Bucket;
+  takes: Bucket;
   chat: Bucket;
   moves: Bucket;
   violations: number;
@@ -84,11 +90,20 @@ export class GameServer {
   private lastTick = Date.now();
   private tickCount = 0;
   private timers: NodeJS.Timeout[] = [];
+  /** Mobs, items, arrows and TNT for this world. */
+  private readonly entities: ServerEntities;
+  private entitiesActive = false;
 
   constructor(private readonly opts: ServerOptions) {
     mkdirSync(opts.dataDir, { recursive: true });
     this.file = join(opts.dataDir, 'world.json');
     this.world = this.load();
+    this.entities = new ServerEntities(this.world.seed, this.world.edits, this.world.gameMode, {
+      send: (id, msg) => { const s = this.sessions.get(id); if (s) this.send(s, msg); },
+      broadcast: (msg) => this.broadcast(msg),
+      broadcastBlock: (x, y, z, id) => this.broadcast({ t: 'block', x, y, z, id }),
+      recordEdit: (x, y, z, id) => { this.world.edits[`${x},${y},${z}`] = id; this.dirty = true; },
+    }, () => this.world.time);
     this.timers.push(setInterval(() => this.tick(), TICK_MS));
     this.timers.push(setInterval(() => this.save(), SAVE_INTERVAL_MS));
   }
@@ -211,7 +226,8 @@ export class GameServer {
       id: this.nextId++, name, ws,
       x: start.x, y: start.y, z: start.z, yaw: 0, pitch: 0, flags: 0, held: 0,
       hasPos: false, lastPosTime: Date.now(),
-      edits: new Bucket(20, 40), chat: new Bucket(1, 5), moves: new Bucket(40, 80), violations: 0,
+      edits: new Bucket(20, 40), attacks: new Bucket(8, 12), shots: new Bucket(3, 5), drops: new Bucket(30, 60), takes: new Bucket(20, 30),
+      chat: new Bucket(1, 5), moves: new Bucket(40, 80), violations: 0,
     };
     const edits: number[] = [];
     for (const [key, id] of Object.entries(this.world.edits)) {
@@ -235,6 +251,7 @@ export class GameServer {
     if (!this.sessions.has(s.id)) return;
     this.storePlayer(s);
     this.sessions.delete(s.id);
+    this.entities.forget(s.id);
     this.broadcast({ t: 'leave', id: s.id, name: s.name });
     this.broadcast({ t: 'chat', from: '', text: `${s.name} left the game`, system: true });
     this.log(`[leave] ${s.name} (${this.sessions.size} online)`);
@@ -254,6 +271,13 @@ export class GameServer {
       case 'pos': return this.onPos(s, msg);
       case 'block': return this.onBlock(s, msg);
       case 'chat': return this.onChat(s, msg.text);
+      case 'attack': return void (s.attacks.take() && this.entities.attack(s, Number(msg.id)));
+      case 'shoot':
+        return void (s.shots.take() && this.entities.shoot(s, msg.x, msg.y, msg.z, msg.dx, msg.dy, msg.dz, msg.power));
+      case 'ignite': return void (s.edits.take() && this.entities.ignite(s, msg.x, msg.y, msg.z));
+      case 'take': return void (s.takes.take() && this.entities.take(s, Number(msg.id)));
+      case 'drop':
+        return void (s.drops.take() && this.entities.drop(s, { id: msg.id, count: msg.count, damage: msg.damage }, msg.x, msg.y, msg.z, msg.yaw, msg.delay));
       case 'state':
         if (Array.isArray(msg.inventory) && msg.inventory.length <= 64 && Array.isArray(msg.stats) && msg.stats.length <= 8) {
           const prev = this.world.players[s.name] ?? { x: s.x, y: s.y, z: s.z, yaw: s.yaw, pitch: s.pitch };
@@ -296,9 +320,7 @@ export class GameServer {
     // Reach: distance from the player's eyes to the block centre.
     const d = Math.hypot(x + 0.5 - s.x, y + 0.5 - (s.y + 1.62), z + 0.5 - s.z);
     if (!s.hasPos || d > REACH) return reject();
-    const key = `${x},${y},${z}`;
-    this.world.edits[key] = id;
-    this.dirty = true;
+    this.entities.setBlock(x, y, z, id); // records the edit and updates what the mobs see
     this.broadcast({ t: 'block', x, y, z, id }, s.id);
   }
 
@@ -347,7 +369,16 @@ export class GameServer {
     this.lastTick = now;
     this.tickCount++;
     if (this.sessions.size > 0) this.world.time = (this.world.time + dt / DAY_SECONDS) % 1;
-    if (this.sessions.size === 0) return;
+    if (this.sessions.size === 0) {
+      // Nobody around: free the chunks and mobs (passive mobs respawn from the seed).
+      if (this.entitiesActive) {
+        this.entities.clear();
+        this.entitiesActive = false;
+      }
+      return;
+    }
+    this.entitiesActive = true;
+    this.entities.tick([...this.sessions.values()]);
     const players: SnapshotEntry[] = [];
     for (const s of this.sessions.values()) {
       if (!s.hasPos) continue;

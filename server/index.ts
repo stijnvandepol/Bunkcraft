@@ -182,15 +182,16 @@ http.on('upgrade', (req, socket, head) => {
     return;
   }
   const server = target;
-  wss.handleUpgrade(req, socket, head, (ws) => server.accept(ws));
+  wss.handleUpgrade(req, socket, head, (ws) => {
+    // noServer mode does not emit 'connection' by itself: track liveness here.
+    alive.add(ws);
+    ws.on('pong', () => alive.add(ws));
+    server.accept(ws);
+  });
 });
 
 // Proxies and mobile networks silently drop idle sockets: ping every 25 s, drop dead ones.
 const alive = new WeakSet<WebSocket>();
-wss.on('connection', (ws) => {
-  alive.add(ws);
-  ws.on('pong', () => alive.add(ws));
-});
 setInterval(() => {
   for (const ws of wss.clients) {
     if (!alive.has(ws)) { ws.terminate(); continue; }

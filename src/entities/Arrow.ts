@@ -18,6 +18,8 @@ export interface ArrowTarget {
   z: number;
   /** The player can be hit (survival, alive). */
   attackable: boolean;
+  /** Which player (multiplayer server), passed back with the hit. */
+  id?: number;
 }
 
 /**
@@ -34,6 +36,9 @@ export class Arrow {
   pitch = 0;
   inGround = false;
   removed = false;
+  /** Mirror of a server-simulated arrow (multiplayer): never simulated locally. */
+  remote = false;
+  netId = 0;
   age = 0;
   private stuckTicks = 0;
   private stuckX = 0; private stuckY = 0; private stuckZ = 0;

@@ -175,6 +175,40 @@ export class World {
     e.set(blockIndex(x & 15, y, z & 15), id);
   }
 
+  /**
+   * Many removals at once (a server explosion): sets the blocks, then remeshes each touched
+   * chunk and its neighbours once instead of nine chunks per block. Unloaded chunks only record the edit.
+   */
+  applyRemoteRemovals(positions: number[]): void {
+    const touched = new Set<Chunk>();
+    for (let k = 0; k + 2 < positions.length; k += 3) {
+      const x = positions[k], y = positions[k + 1], z = positions[k + 2];
+      if (y < 0 || y >= CHUNK_HEIGHT) continue;
+      const c = this.chunkAt(x >> 4, z >> 4);
+      const i = blockIndex(x & 15, y, z & 15);
+      let e = this.edits.get(chunkKey(x >> 4, z >> 4));
+      if (!e) { e = new Map(); this.edits.set(chunkKey(x >> 4, z >> 4), e); }
+      e.set(i, BLOCK.AIR);
+      this.dirtyEditChunks.add(chunkKey(x >> 4, z >> 4));
+      if (c?.blocks) {
+        c.blocks[i] = BLOCK.AIR;
+        touched.add(c);
+      }
+    }
+    const remesh = new Set<Chunk>();
+    for (const c of touched) {
+      for (let oz = -1; oz <= 1; oz++) for (let ox = -1; ox <= 1; ox++) {
+        const n = this.chunks.get(c.cx + ox, c.cz + oz);
+        if (n && n.state === CHUNK_READY) remesh.add(n);
+      }
+    }
+    for (const c of remesh) {
+      c.version++;
+      if (touched.has(c)) this.chunks.requestMeshUrgent(c);
+    }
+    this.chunks.markDirty();
+  }
+
   /** Highest y whose block is solid, in a loaded chunk; -1 if unknown. */
   surfaceY(x: number, z: number): number {
     const c = this.chunkAt(x >> 4, z >> 4);

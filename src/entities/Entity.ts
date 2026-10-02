@@ -19,6 +19,10 @@ export abstract class Entity {
   inWater = false;
   inLava = false;
   removed = false;
+  /** Mirror of a server-simulated entity (multiplayer): never simulated or removed locally. */
+  remote = false;
+  /** Server-assigned id (0 = local). */
+  netId = 0;
   fallDistance = 0;
   protected readonly box: AABB = { minX: 0, minY: 0, minZ: 0, maxX: 0, maxY: 0, maxZ: 0 };
 

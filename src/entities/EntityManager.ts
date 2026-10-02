@@ -1,9 +1,7 @@
 import { ITEM, type ItemStack, getItemDef } from '../items/ItemRegistry';
 import { BLOCK, OPAQUE, SOLID } from '../world/BlockRegistry';
-import type { Chunk } from '../world/Chunk';
 import { CHUNK_HEIGHT, blockIndex } from '../world/constants';
 import { hash2, mulberry32 } from '../world/Noise';
-import type { World } from '../world/World';
 import { Arrow, type ArrowTarget } from './Arrow';
 import { ItemEntity } from './ItemEntity';
 import { Mob, type MobEvents, type MobTarget } from './Mob';
@@ -14,6 +12,23 @@ const MAX_PASSIVE = 24;
 const MAX_HOSTILE = 16;
 const MAX_ITEMS = 160;
 const MAX_ARROWS = 128;
+
+/** What entities need from a world: the client's World and the server's ServerWorld both fit. */
+export interface EntityWorld {
+  getBlock(x: number, y: number, z: number): number;
+  /** Sky light only (cheaper than getLight where block light needs a search). */
+  getSkyLight?(x: number, y: number, z: number): number;
+  /** Packed light (sky << 4 | block). */
+  getLight(x: number, y: number, z: number): number;
+}
+
+/** A freshly generated chunk, as far as passive spawning cares. */
+export interface ChunkLike {
+  key: number;
+  cx: number;
+  cz: number;
+  blocks: Uint8Array | null;
+}
 
 export interface PickupHandler {
   /** Try to give the stack to the player; returns how many items were NOT taken. */
@@ -30,7 +45,18 @@ export class EntityManager {
   readonly items: ItemEntity[] = [];
   readonly tnt: PrimedTnt[] = [];
   readonly arrows: Arrow[] = [];
+  /**
+   * All players the mobs may target (multiplayer server). Empty = the single `target`
+   * passed to tick(). Each mob and arrow picks the nearest one.
+   */
+  targets: MobTarget[] = [];
+  /** Multiplayer client: intercepts local drops and sends them to the server (true = handled). */
+  dropHook: ((stack: ItemStack, x: number, y: number, z: number, pickupDelay: number, throwYaw: number | undefined) => boolean) | null = null;
+  /** Multiplayer client: asks the server for a nearby dropped item. */
+  takeHook: ((item: ItemEntity) => void) | null = null;
+  private nextNetId = 1;
   private events: MobEvents | null = null;
+  private readonly single: MobTarget[] = [];
   private readonly arrowTarget: ArrowTarget = { x: 0, y: 0, z: 0, attackable: false };
   private readonly spawnedChunks = new Set<number>();
   private tickCount = 0;
@@ -38,7 +64,7 @@ export class EntityManager {
   /** Multiplayer v1 is peaceful: mobs are not yet simulated by the server. */
   passiveSpawning = true;
 
-  constructor(private readonly world: World, private readonly seed: number) {}
+  constructor(private readonly world: EntityWorld, private readonly seed: number) {}
 
   private readonly getBlock = (x: number, y: number, z: number) => this.world.getBlock(x, y, z);
 
@@ -55,6 +81,7 @@ export class EntityManager {
   spawnMob(kind: MobKind, x: number, y: number, z: number): Mob {
     const m = new Mob(MOB_TYPES[kind]);
     m.setPosition(x, y, z);
+    m.netId = this.nextNetId++;
     this.mobs.push(m);
     return m;
   }
@@ -62,8 +89,10 @@ export class EntityManager {
   /** @param force ignore the entity cap (death drops must never vanish). */
   dropItem(stack: ItemStack, x: number, y: number, z: number, pickupDelay = 10, throwYaw?: number, force = false): void {
     if (stack.count <= 0 || (!force && this.items.length >= MAX_ITEMS)) return;
+    if (this.dropHook?.(stack, x, y, z, pickupDelay, throwYaw)) return;
     const e = new ItemEntity({ ...stack }, pickupDelay);
     e.setPosition(x, y, z);
+    e.netId = this.nextNetId++;
     if (throwYaw !== undefined) {
       e.vx = -Math.sin(throwYaw) * 5;
       e.vz = -Math.cos(throwYaw) * 5;
@@ -80,6 +109,7 @@ export class EntityManager {
   primeTnt(x: number, y: number, z: number, fuse = TNT_FUSE): PrimedTnt {
     const t = new PrimedTnt(fuse);
     t.setPosition(x + 0.5, y, z + 0.5);
+    t.netId = this.nextNetId++;
     this.tnt.push(t);
     return t;
   }
@@ -99,6 +129,7 @@ export class EntityManager {
     const len = Math.hypot(dx, dy, dz) || 1;
     const spread = 0.0075 * inaccuracy;
     const a = new Arrow(shooter, fromPlayer, crit, pickup);
+    a.netId = this.nextNetId++;
     a.setPosition(x, y, z);
     a.vx = (dx / len + gaussian() * spread) * speed;
     a.vy = (dy / len + gaussian() * spread) * speed;
@@ -116,7 +147,7 @@ export class EntityManager {
   }
 
   /** Seeded passive group for a freshly loaded chunk (grass surface, daylight). */
-  onChunkReady(chunk: Chunk): void {
+  onChunkReady(chunk: ChunkLike): void {
     if (!this.passiveSpawning || this.spawnedChunks.has(chunk.key) || !chunk.blocks) return;
     this.spawnedChunks.add(chunk.key);
     const rand = mulberry32((hash2(this.seed ^ 0x51ed, chunk.cx, chunk.cz) * 4294967296) >>> 0);
@@ -153,10 +184,10 @@ export class EntityManager {
    * Minecraft-style hostile spawning: a random spot 24–48 blocks away with two blocks of
    * air above a solid block, block light 0 and (darkened) sky light ≤ random 0..7.
    */
-  private trySpawnHostile(px: number, py: number, pz: number, darkness: number): void {
+  private trySpawnHostile(px: number, py: number, pz: number, darkness: number, cap: number): void {
     let hostile = 0;
     for (const m of this.mobs) if (m.type.hostile) hostile++;
-    if (hostile >= MAX_HOSTILE) return;
+    if (hostile >= cap) return;
     const a = Math.random() * Math.PI * 2;
     const r = 24 + Math.random() * 24;
     const x = Math.floor(px + Math.cos(a) * r), z = Math.floor(pz + Math.sin(a) * r);
@@ -185,13 +216,27 @@ export class EntityManager {
     this.tickCount++;
     this.events = events;
     const getBlock = this.getBlock;
+    let targets = this.targets;
+    if (targets.length === 0) {
+      this.single[0] = target;
+      targets = this.single;
+    }
 
-    if (this.hostileSpawning && this.tickCount % 20 === 0) this.trySpawnHostile(target.x, target.y, target.z, darkness);
+    if (this.hostileSpawning && this.tickCount % 20 === 0) {
+      // One spawn attempt per second, rotating through the players; the cap grows with their number.
+      const t = targets[(this.tickCount / 20) % targets.length];
+      this.trySpawnHostile(t.x, t.y, t.z, darkness, Math.min(48, MAX_HOSTILE + 12 * (targets.length - 1)));
+    }
 
     for (const m of this.mobs) {
-      if (m.removed) continue;
+      if (m.removed || m.remote) continue;
+      // Each mob follows the nearest player.
+      let nearest = targets[0], d = Infinity;
+      for (const t of targets) {
+        const dt = Math.hypot(m.x - t.x, m.z - t.z);
+        if (dt < d) { d = dt; nearest = t; }
+      }
       // Hostiles despawn far away (instantly > 128, randomly > 32 blocks).
-      const d = Math.hypot(m.x - target.x, m.z - target.z);
       if (m.type.hostile && (d > 128 || (d > 32 && Math.random() < 1 / 800))) { m.removed = true; continue; }
       if (getBlock(Math.floor(m.x), Math.floor(m.y), Math.floor(m.z)) === BLOCK.UNLOADED) continue; // frozen until loaded
       if (m.type.neutralInLight) {
@@ -199,10 +244,11 @@ export class EntityManager {
         const light = this.world.getLight(Math.floor(m.x), Math.floor(m.y + 0.5), Math.floor(m.z));
         m.calm = Math.max((light >> 4) - darkness, light & 15) >= 12;
       }
-      m.tick(getBlock, target, events);
+      m.tick(getBlock, nearest, events);
       // Zombies and skeletons burn in daylight when they can see the sky.
       if (m.type.burnsInDaylight && dayBright && !m.inWater && !m.dead) {
-        const sky = this.world.getLight(Math.floor(m.x), Math.floor(m.y + 1.6), Math.floor(m.z)) >> 4;
+        const bx = Math.floor(m.x), by = Math.floor(m.y + 1.6), bz = Math.floor(m.z);
+        const sky = this.world.getSkyLight ? this.world.getSkyLight(bx, by, bz) : this.world.getLight(bx, by, bz) >> 4;
         if (sky > 11) {
           m.burning = 20;
           if (this.tickCount % 20 === 0) m.hurt(1, m.x, m.z, 0);
@@ -219,14 +265,19 @@ export class EntityManager {
 
     for (let i = 0; i < this.tnt.length; i++) {
       const t = this.tnt[i];
-      if (!t.removed && t.tick(getBlock)) events.tntExplode(t);
+      if (!t.removed && !t.remote && t.tick(getBlock)) events.tntExplode(t);
     }
 
     const at = this.arrowTarget;
-    at.x = target.x; at.y = target.y; at.z = target.z; at.attackable = target.attackable;
     for (let i = 0; i < this.arrows.length; i++) {
       const a = this.arrows[i];
-      if (a.removed) continue;
+      if (a.removed || a.remote) continue;
+      let hit = targets[0], hd = Infinity;
+      for (const t of targets) {
+        const dt = Math.hypot(a.x - t.x, a.z - t.z);
+        if (dt < hd) { hd = dt; hit = t; }
+      }
+      at.x = hit.x; at.y = hit.y; at.z = hit.z; at.attackable = hit.attackable; at.id = hit.id;
       a.tick(getBlock, this.mobs, at, this.onArrowHitMob, this.onArrowHitPlayer, this.onArrowLand);
       // Stuck player arrows can be picked up again (survival).
       if (a.inGround && a.pickup && pickup && Math.abs(a.x - target.x) < 1.3 && Math.abs(a.z - target.z) < 1.3
@@ -235,6 +286,12 @@ export class EntityManager {
 
     for (const it of this.items) {
       if (it.removed) continue;
+      if (it.remote) {
+        // Server item: ask for it when close; the server decides who gets it.
+        if (this.takeHook && it.pickupDelay <= 0 && Math.abs(target.x - it.x) < 1.3 && Math.abs(target.z - it.z) < 1.3
+          && Math.abs(target.y + 0.8 - it.y) < 1.5) this.takeHook(it);
+        continue;
+      }
       it.tick(getBlock);
       if (!pickup || it.pickupDelay > 0) continue;
       // Pickup box: player AABB grown by 1 horizontally; items are pulled in first.
@@ -263,7 +320,7 @@ export class EntityManager {
   };
 
   private readonly onArrowHitPlayer = (a: Arrow, damage: number): void => {
-    this.events?.arrowHit(a, damage);
+    this.events?.arrowHit(a, damage, this.arrowTarget.id);
   };
 
   private readonly onArrowLand = (a: Arrow): void => {
@@ -277,7 +334,7 @@ export class EntityManager {
       if (a.removed) continue;
       for (let j = i + 1; j < items.length; j++) {
         const b = items[j];
-        if (b.removed || b.stack.id !== a.stack.id || a.stack.damage || b.stack.damage) continue;
+        if (b.removed || a.remote || b.remote || b.stack.id !== a.stack.id || a.stack.damage || b.stack.damage) continue;
         if (Math.abs(a.x - b.x) < 0.5 && Math.abs(a.y - b.y) < 0.5 && Math.abs(a.z - b.z) < 0.5 && a.stack.count + b.stack.count <= (getItemDef(a.stack.id)?.maxStack ?? 64)) {
           a.stack.count += b.stack.count;
           b.removed = true;

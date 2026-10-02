@@ -28,7 +28,9 @@ export interface InteractionDeps {
   hand: HandRenderer;
   audio: AudioEngine;
   camera: THREE.PerspectiveCamera;
-  /** Lights the TNT block at a position; false when not allowed (multiplayer). */
+  /** Multiplayer: asks the server to hit one of its mobs. */
+  attackRemote(mobId: number): void;
+  /** Lights the TNT block at a position; false when not allowed. */
   igniteTnt(x: number, y: number, z: number): boolean;
   /** Fires an arrow from the eye along the view direction (power 0..1). */
   shootArrow(power: number, pickup: boolean): void;
@@ -150,9 +152,20 @@ export class Interaction {
     hand.swingHand();
     const tool = getItemDef(hotbar.selectedBlock)?.tool;
     const damage = tool ? tool.damage : 1;
-    // Sprint hits knock back further, like Minecraft.
-    if (mob.hurt(damage, player.x, player.z, player.sprinting ? 1.6 : 1, true)) {
+    // A server mob is hit by the server (damage from the held item, sound comes back with it).
+    let hit = false;
+    if (mob.remote) {
+      if (mob.hurtTime === 0 && !mob.dead) {
+        this.d.attackRemote(mob.netId);
+        mob.hurtTime = 10; // no second request during its invulnerability frames
+        hit = true;
+      }
+    } else if (mob.hurt(damage, player.x, player.z, player.sprinting ? 1.6 : 1, true)) {
+      // Sprint hits knock back further, like Minecraft.
       audio.playMob(mob.type.kind, 'hurt', 1);
+      hit = true;
+    }
+    if (hit) {
       if (hasSurvivalRules(mode)) {
         stats.addExhaustion(0.1);
         if (tool) {

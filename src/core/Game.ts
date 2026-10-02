@@ -6,6 +6,7 @@ import { ArrowRenderer } from '../entities/ArrowRenderer';
 import type { Mob, MobEvents } from '../entities/Mob';
 import { MobRenderer } from '../entities/MobRenderer';
 import { NetClient } from '../net/NetClient';
+import { NetEntities } from '../net/NetEntities';
 import { type ServerMessage, formatCode, normalizeCode } from '../net/protocol';
 import { inviteLink, inviteText, rememberGame } from '../net/RoomApi';
 import { RemotePlayers } from '../net/RemotePlayers';
@@ -122,6 +123,7 @@ export class Game {
   private score = 0;
 
   private last = 0;
+  private frameDt = 0;
   private time = 0;
   private accumulator = 0;
   private stepCount = 0;
@@ -137,6 +139,8 @@ export class Game {
   private gpuName = '';
   /** Code of the hosted game we are in (null in singleplayer or on the main world). */
   private roomCode: string | null = null;
+  /** Mirror of the server's mobs, items, arrows and TNT while in multiplayer. */
+  private netEntities: NetEntities | null = null;
   private contextLost: HTMLDivElement | null = null;
 
   constructor(root: HTMLElement) {
@@ -384,9 +388,13 @@ export class Game {
     this.interaction = new Interaction({
       world, player: this.player, stats: this.stats, inventory: this.playerInventory, hotbar: this.hotbar,
       entities, renderer: this.renderer, hand: this.hand, audio: this.audio, camera: this.cam.camera,
+      attackRemote: (id) => this.net?.sendAttack(id),
       igniteTnt: (x, y, z) => {
-        // Explosions are not synchronised yet: TNT stays inert on multiplayer servers.
-        if (this.net) return false;
+        if (this.net) {
+          // The server validates, removes the block and simulates the fuse.
+          this.net.sendIgnite(x, y, z);
+          return true;
+        }
         if (!world.setBlock(x, y, z, BLOCK.AIR)) return false;
         entities.primeTnt(x, y, z);
         return true;
@@ -394,6 +402,10 @@ export class Game {
       shootArrow: (power, pickup) => {
         const cam = this.cam.camera;
         const dir = cam.getWorldDirection(this.tmpDir);
+        if (this.net) {
+          this.net.sendShoot(cam.position.x, cam.position.y - 0.1, cam.position.z, dir.x, dir.y, dir.z, power);
+          return;
+        }
         // Player bow: speed 3 × power blocks/tick, inaccuracy 1, critical at full draw.
         entities.shootArrow(cam.position.x, cam.position.y - 0.1, cam.position.z, dir.x, dir.y, dir.z,
           power * 3, 1, null, true, power >= 1, pickup);
@@ -580,9 +592,20 @@ export class Game {
     this.loadingProgress = progress;
     this.startSession(meta, edits);
     const world = this.world!;
-    // Multiplayer v1 is peaceful: mobs are not simulated by the server yet.
-    this.entities!.passiveSpawning = false;
-    this.entities!.hostileSpawning = false;
+    // The server simulates the mobs, items, arrows and TNT; we only mirror them.
+    const entities = this.entities!;
+    entities.passiveSpawning = false;
+    entities.hostileSpawning = false;
+    const mirror = new NetEntities(entities);
+    this.netEntities = mirror;
+    entities.dropHook = (stack, x, y, z, delay, yaw) => {
+      net.sendDrop(stack.id, stack.count, stack.damage, x, y, z, yaw, delay);
+      return true;
+    };
+    entities.takeHook = (item) => {
+      // Only ask when the whole stack fits; the server hands it to the first asker.
+      if (this.playerInventory.canFit(item.stack) && mirror.shouldTake(item, performance.now() / 1000)) net.sendTake(item.netId);
+    };
     world.onEdit = (x, y, z, id, prev) => net.sendBlock(x, y, z, id, prev);
     net.onRevert = (x, y, z, id) => world.applyRemoteEdit(x, y, z, id);
     net.onMessage = (msg) => this.onServerMessage(msg);
@@ -611,6 +634,27 @@ export class Game {
     const world = this.world;
     switch (msg.t) {
       case 'snap': this.remote.snapshot(msg.players, this.net?.id ?? -1, performance.now() / 1000); break;
+      case 'ent': this.netEntities?.apply(msg, performance.now() / 1000); break;
+      case 'hurt': this.hurtByServer(msg.cause, msg.amount, msg.by, msg.yaw); break;
+      case 'boom':
+        world?.applyRemoteRemovals(msg.blocks);
+        this.explosionEffects(msg.by, msg.x, msg.y, msg.z, msg.power);
+        break;
+      case 'msound': {
+        const p = this.player;
+        const volume = Math.max(0, 1 - Math.hypot(msg.x - p.x, msg.y - p.y, msg.z - p.z) / 16);
+        if (msg.event === 'arrow') this.audio.playArrowHit(volume);
+        else this.audio.playMob(msg.kind, msg.event, volume);
+        break;
+      }
+      case 'taken': {
+        this.netEntities?.taken(msg.id);
+        const left = this.playerInventory.add({ id: msg.itemId, count: msg.count, damage: msg.damage });
+        if (left < msg.count) this.audio.playPop();
+        // A race filled the inventory: hand the rest back to the world.
+        if (left > 0) this.entities?.dropItem({ id: msg.itemId, count: left, damage: msg.damage }, this.player.x, this.player.y + 1, this.player.z, 40, undefined, true);
+        break;
+      }
       case 'block': world?.applyRemoteEdit(msg.x, msg.y, msg.z, msg.id); break;
       case 'join': this.remote.add(msg.id, msg.name); break;
       case 'leave': this.remote.remove(msg.id); break;
@@ -623,6 +667,8 @@ export class Game {
 
   private disconnect(): void {
     this.roomCode = null;
+    this.netEntities?.clear();
+    this.netEntities = null;
     if (!this.net) return;
     const net = this.net;
     this.net = null;
@@ -813,6 +859,7 @@ export class Game {
   private readonly frame = (now: number): void => {
     requestAnimationFrame(this.frame);
     const rawDt = (now - this.last) / 1000;
+    this.frameDt = Math.min(rawDt, 0.1);
     const dt = Math.min(rawDt, 0.1);
     this.last = now;
     const cpuStart = performance.now();
@@ -840,6 +887,7 @@ export class Game {
   private updateEntitiesRender(): void {
     const e = this.entities, world = this.world;
     if (!e || !world) return;
+    this.netEntities?.update(performance.now() / 1000, this.frameDt);
     // Interpolation factor between 20 Hz entity ticks.
     const alpha = Math.min(1, ((this.stepCount % STEPS_PER_TICK) + this.accumulator / PHYSICS.STEP) / STEPS_PER_TICK);
     const list = this.renderMobs;
@@ -955,6 +1003,16 @@ export class Game {
           x + (Math.random() - 0.5) * power, y + Math.random() * power * 0.5, z + (Math.random() - 0.5) * power);
       }
     }
+    this.explosionEffects(source ? source.type.name : '', x, y, z, power);
+    const reach = power * 2;
+    for (const m of entities.mobs) {
+      const md = Math.hypot(m.x - x, m.y - y, m.z - z);
+      if (m !== source && md < reach) m.hurt(Math.floor((1 - md / reach) * 7 * power), x, z, 1.5);
+    }
+  }
+
+  /** Particles, sound and the player's own damage and knockback by distance (also for server explosions). */
+  private explosionEffects(by: string, x: number, y: number, z: number, power: number): void {
     for (let i = 0; i < 6; i++) {
       this.renderer.particles.spawnBreak(Math.floor(x + (Math.random() - 0.5) * 4), Math.floor(y + (Math.random() - 0.5) * 3),
         Math.floor(z + (Math.random() - 0.5) * 4), BLOCK.COBBLESTONE, 0xf0);
@@ -966,16 +1024,30 @@ export class Game {
     if (d < reach) {
       const impact = 1 - d / reach;
       const dmg = Math.floor(((impact * impact + impact) / 2) * 7 * reach + 1);
-      this.stats.damage(dmg, 'explosion', this.mode, source ? source.type.name : '', Math.atan2(p.x - x, p.z - z));
+      this.stats.damage(dmg, 'explosion', this.mode, by, Math.atan2(p.x - x, p.z - z));
       const len = d || 1;
       p.vx += ((p.x - x) / len) * impact * 14;
       p.vz += ((p.z - z) / len) * impact * 14;
       p.vy += impact * 9;
     }
-    for (const m of entities.mobs) {
-      const md = Math.hypot(m.x - x, m.y - y, m.z - z);
-      if (m !== source && md < reach) m.hurt(Math.floor((1 - md / reach) * 7 * power), x, z, 1.5);
+  }
+
+  /** Damage from a server mob or arrow: same hurt camera, knockback and rules as a local hit. */
+  private hurtByServer(cause: 'mob' | 'arrow', amount: number, by: string, yaw: number): void {
+    const p = this.player;
+    if (!this.stats.damage(amount, cause, this.mode, by, yaw)) return;
+    // yaw points from the attacker to the player (mob) or along the arrow's flight (arrow).
+    const sin = Math.sin(yaw), cos = Math.cos(yaw);
+    if (cause === 'mob') {
+      p.vx += sin * 8;
+      p.vz += cos * 8;
+      p.vy = Math.max(p.vy, 6);
+    } else {
+      p.vx -= sin * 3;
+      p.vz -= cos * 3;
+      p.vy = Math.max(p.vy, 3);
     }
+    this.cam.hurtSide = Math.sin(yaw - p.yaw) >= 0 ? 1 : -1;
   }
 
   /** 20 Hz game tick: health, hunger, entities. */

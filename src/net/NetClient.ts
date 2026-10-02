@@ -123,6 +123,26 @@ export class NetClient {
     this.send({ t: 'pos', x, y, z, yaw, pitch, flags, held });
   }
 
+  sendAttack(id: number): void {
+    this.send({ t: 'attack', id });
+  }
+
+  sendShoot(x: number, y: number, z: number, dx: number, dy: number, dz: number, power: number): void {
+    this.send({ t: 'shoot', x, y, z, dx, dy, dz, power });
+  }
+
+  sendIgnite(x: number, y: number, z: number): void {
+    this.send({ t: 'ignite', x, y, z });
+  }
+
+  sendTake(id: number): void {
+    this.send({ t: 'take', id });
+  }
+
+  sendDrop(id: number, count: number, damage: number | undefined, x: number, y: number, z: number, yaw: number | undefined, delay: number): void {
+    this.send({ t: 'drop', id, count, damage, x, y, z, yaw, delay });
+  }
+
   sendChat(text: string): void {
     this.send({ t: 'chat', text });
   }
