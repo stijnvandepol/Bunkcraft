@@ -1,9 +1,10 @@
-import { type ItemStack, getItemDef } from '../items/ItemRegistry';
+import { ITEM, type ItemStack, getItemDef } from '../items/ItemRegistry';
 import { BLOCK, OPAQUE, SOLID } from '../world/BlockRegistry';
 import type { Chunk } from '../world/Chunk';
 import { CHUNK_HEIGHT, blockIndex } from '../world/constants';
 import { hash2, mulberry32 } from '../world/Noise';
 import type { World } from '../world/World';
+import { Arrow, type ArrowTarget } from './Arrow';
 import { ItemEntity } from './ItemEntity';
 import { Mob, type MobEvents, type MobTarget } from './Mob';
 import { HOSTILE_KINDS, MOB_TYPES, type MobKind, PASSIVE_KINDS } from './MobTypes';
@@ -12,6 +13,7 @@ import { PrimedTnt, TNT_FUSE } from './PrimedTnt';
 const MAX_PASSIVE = 24;
 const MAX_HOSTILE = 16;
 const MAX_ITEMS = 160;
+const MAX_ARROWS = 128;
 
 export interface PickupHandler {
   /** Try to give the stack to the player; returns how many items were NOT taken. */
@@ -27,6 +29,9 @@ export class EntityManager {
   readonly mobs: Mob[] = [];
   readonly items: ItemEntity[] = [];
   readonly tnt: PrimedTnt[] = [];
+  readonly arrows: Arrow[] = [];
+  private events: MobEvents | null = null;
+  private readonly arrowTarget: ArrowTarget = { x: 0, y: 0, z: 0, attackable: false };
   private readonly spawnedChunks = new Set<number>();
   private tickCount = 0;
   hostileSpawning = true;
@@ -41,6 +46,7 @@ export class EntityManager {
     this.mobs.length = 0;
     this.items.length = 0;
     this.tnt.length = 0;
+    this.arrows.length = 0;
     this.spawnedChunks.clear();
   }
 
@@ -76,6 +82,37 @@ export class EntityManager {
     t.setPosition(x + 0.5, y, z + 0.5);
     this.tnt.push(t);
     return t;
+  }
+
+  /**
+   * Fires an arrow (Minecraft's Projectile.shoot): direction plus gaussian spread of
+   * 0.0075 × inaccuracy, scaled to `speed` blocks per tick.
+   */
+  shootArrow(x: number, y: number, z: number, dx: number, dy: number, dz: number, speed: number, inaccuracy: number,
+    shooter: Mob | null, fromPlayer: boolean, crit: boolean, pickup: boolean): Arrow | null {
+    if (this.arrows.length >= MAX_ARROWS) {
+      // Oldest stuck arrow makes room.
+      const i = this.arrows.findIndex((a) => a.inGround);
+      if (i < 0) return null;
+      this.arrows.splice(i, 1);
+    }
+    const len = Math.hypot(dx, dy, dz) || 1;
+    const spread = 0.0075 * inaccuracy;
+    const a = new Arrow(shooter, fromPlayer, crit, pickup);
+    a.setPosition(x, y, z);
+    a.vx = (dx / len + gaussian() * spread) * speed;
+    a.vy = (dy / len + gaussian() * spread) * speed;
+    a.vz = (dz / len + gaussian() * spread) * speed;
+    this.arrows.push(a);
+    return a;
+  }
+
+  /** Skeleton shot at the player (Normal difficulty: speed 1.6, inaccuracy 6). */
+  skeletonShoot(mob: Mob, tx: number, ty: number, tz: number): void {
+    const sy = mob.y + mob.height * 0.85 - 0.1;
+    const dx = tx - mob.x, dz = tz - mob.z;
+    const dy = ty + 0.6 - sy; // aim at a third of the player's height
+    this.shootArrow(mob.x, sy, mob.z, dx, dy + Math.hypot(dx, dz) * 0.2, dz, 1.6, 6, mob, false, false, false);
   }
 
   /** Seeded passive group for a freshly loaded chunk (grass surface, daylight). */
@@ -146,6 +183,7 @@ export class EntityManager {
    */
   tick(target: MobTarget, darkness: number, events: MobEvents, pickup: PickupHandler | null, dayBright: boolean): void {
     this.tickCount++;
+    this.events = events;
     const getBlock = this.getBlock;
 
     if (this.hostileSpawning && this.tickCount % 20 === 0) this.trySpawnHostile(target.x, target.y, target.z, darkness);
@@ -156,9 +194,14 @@ export class EntityManager {
       const d = Math.hypot(m.x - target.x, m.z - target.z);
       if (m.type.hostile && (d > 128 || (d > 32 && Math.random() < 1 / 800))) { m.removed = true; continue; }
       if (getBlock(Math.floor(m.x), Math.floor(m.y), Math.floor(m.z)) === BLOCK.UNLOADED) continue; // frozen until loaded
+      if (m.type.neutralInLight) {
+        // Spiders turn neutral above light level 11 (Minecraft: brightness > 0.5).
+        const light = this.world.getLight(Math.floor(m.x), Math.floor(m.y + 0.5), Math.floor(m.z));
+        m.calm = Math.max((light >> 4) - darkness, light & 15) >= 12;
+      }
       m.tick(getBlock, target, events);
-      // Zombies burn in daylight when they can see the sky.
-      if (m.type.kind === 'zombie' && dayBright && !m.inWater && !m.dead) {
+      // Zombies and skeletons burn in daylight when they can see the sky.
+      if (m.type.burnsInDaylight && dayBright && !m.inWater && !m.dead) {
         const sky = this.world.getLight(Math.floor(m.x), Math.floor(m.y + 1.6), Math.floor(m.z)) >> 4;
         if (sky > 11) {
           m.burning = 20;
@@ -168,7 +211,7 @@ export class EntityManager {
       if (m.burning > 0) m.burning--;
       if (m.inLava && this.tickCount % 10 === 0) m.hurt(4, m.x, m.z, 0);
       if (m.dead && m.deathTime === 1) {
-        for (const s of m.type.drops()) this.dropItem(s, m.x, m.y + 0.5, m.z);
+        for (const s of m.type.drops(m.hurtByPlayer > 0)) this.dropItem(s, m.x, m.y + 0.5, m.z);
         events.sound(m, 'death');
       }
     }
@@ -176,6 +219,17 @@ export class EntityManager {
     for (let i = 0; i < this.tnt.length; i++) {
       const t = this.tnt[i];
       if (!t.removed && t.tick(getBlock)) events.tntExplode(t);
+    }
+
+    const at = this.arrowTarget;
+    at.x = target.x; at.y = target.y; at.z = target.z; at.attackable = target.attackable;
+    for (let i = 0; i < this.arrows.length; i++) {
+      const a = this.arrows[i];
+      if (a.removed) continue;
+      a.tick(getBlock, this.mobs, at, this.onArrowHitMob, this.onArrowHitPlayer, this.onArrowLand);
+      // Stuck player arrows can be picked up again (survival).
+      if (a.inGround && a.pickup && pickup && Math.abs(a.x - target.x) < 1.3 && Math.abs(a.z - target.z) < 1.3
+        && a.y > target.y - 0.5 && a.y < target.y + 2.3 && pickup({ id: ITEM.ARROW, count: 1 }) === 0) a.removed = true;
     }
 
     for (const it of this.items) {
@@ -200,6 +254,20 @@ export class EntityManager {
     this.compact();
   }
 
+  private readonly onArrowHitMob = (a: Arrow, m: Mob, damage: number): void => {
+    // Knockback along the arrow's flight direction.
+    if (m.hurt(damage, a.x - a.vx * 4, a.z - a.vz * 4, 0.5, a.fromPlayer)) this.events?.sound(m, 'hurt');
+    this.events?.arrowImpact(a);
+  };
+
+  private readonly onArrowHitPlayer = (a: Arrow, damage: number): void => {
+    this.events?.arrowHit(a, damage);
+  };
+
+  private readonly onArrowLand = (a: Arrow): void => {
+    this.events?.arrowImpact(a);
+  };
+
   private mergeItems(): void {
     const items = this.items;
     for (let i = 0; i < items.length; i++) {
@@ -220,6 +288,7 @@ export class EntityManager {
     for (let i = this.mobs.length - 1; i >= 0; i--) if (this.mobs[i].removed) this.mobs.splice(i, 1);
     for (let i = this.items.length - 1; i >= 0; i--) if (this.items[i].removed) this.items.splice(i, 1);
     for (let i = this.tnt.length - 1; i >= 0; i--) if (this.tnt[i].removed) this.tnt.splice(i, 1);
+    for (let i = this.arrows.length - 1; i >= 0; i--) if (this.arrows[i].removed) this.arrows.splice(i, 1);
   }
 
   /** Nearest living mob hit by a ray, with distance. */
@@ -233,4 +302,11 @@ export class EntityManager {
     }
     return best ? { mob: best, distance: bestD } : null;
   }
+}
+
+/** Standard normal sample (Box–Muller), like java.util.Random#nextGaussian. */
+function gaussian(): number {
+  let u = 0;
+  while (u === 0) u = Math.random();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * Math.random());
 }

@@ -9,6 +9,8 @@ import type { Player } from '../player/Player';
 export class CameraController {
   readonly camera: THREE.PerspectiveCamera;
   baseFov = 70;
+  /** Bow draw 0..1 (FOV zoom). */
+  bowPull = 0;
   viewBobbing = true;
   private bobAmount = 0;
   private fov = 70;
@@ -65,6 +67,8 @@ export class CameraController {
     let fovTarget = this.baseFov;
     if (p.sprinting) fovTarget *= p.flying ? 1.18 : 1.12;
     if (p.headInWater) fovTarget *= 0.9;
+    // Drawing a bow zooms in (Minecraft: up to 15% at full draw).
+    if (this.bowPull > 0) fovTarget *= 1 - this.bowPull * this.bowPull * 0.15;
     this.fov = approach(this.fov, fovTarget, 8, dt);
     if (Math.abs(cam.fov - this.fov) > 0.01) {
       cam.fov = this.fov;

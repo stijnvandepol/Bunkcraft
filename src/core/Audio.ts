@@ -234,6 +234,18 @@ export class AudioEngine {
     this.voice('sine', 70, 30, 1.0, Math.min(1, volume) * 0.8);
   }
 
+  /** Bow release: a short twang. */
+  playBow(power: number): void {
+    this.voice('triangle', 520 + power * 200, 180, 0.18, 0.35);
+    this.noiseBurst(1800, 0.9, 0.12, 0.25);
+  }
+
+  /** Arrow thunk into a block or mob. */
+  playArrowHit(volume: number): void {
+    if (volume <= 0) return;
+    this.noiseBurst(700, 1.4, 0.07, Math.min(1, volume) * 0.45);
+  }
+
   /** Flint and steel strike, then the TNT fuse hiss. */
   playIgnite(volume: number): void {
     this.noiseBurst(2600, 1.2, 0.08, Math.min(1, volume) * 0.5);

@@ -175,7 +175,7 @@ export class MobRenderer {
       const flash = fuse > 0 && Math.floor(fuse * 30 / 4) % 2 === 0 ? fuse : 0;
 
       for (const pm of parts) {
-        const rot = this.partRotation(pm.part.anim, swing, amount, m, alpha);
+        const rot = this.partRotation(pm.part, swing, amount, m, alpha);
         const [px, py, pz] = pm.part.pivot;
         tmpPivot.makeTranslation(px / 16, py / 16, pz / 16);
         tmpRot.makeRotationFromEuler(rot);
@@ -200,9 +200,20 @@ export class MobRenderer {
     }
   }
 
-  private partRotation(anim: PartAnim, swing: number, amount: number, m: Mob, alpha: number): THREE.Euler {
+  private partRotation(part: ModelPart, swing: number, amount: number, m: Mob, alpha: number): THREE.Euler {
+    const anim: PartAnim = part.anim;
     const legSwing = Math.cos(swing * 0.6662) * 1.4 * amount;
     switch (anim) {
+      case 'spiderA':
+      case 'spiderB': {
+        // Minecraft's spider gait: legs sweep forward/back and lift, alternating sets.
+        const phase = anim === 'spiderA' ? 0 : Math.PI;
+        const sweep = Math.cos(swing * 0.6662 * 2 + phase) * 0.4 * amount;
+        const lift = Math.abs(Math.sin(swing * 0.6662 + phase)) * 0.4 * amount;
+        const [rx, ry, rz] = part.rest ?? [0, 0, 0];
+        const side = rz > 0 ? 1 : -1;
+        return tmpEuler.set(rx, ry + sweep * side, rz - lift * side, 'YXZ');
+      }
       case 'head': return tmpEuler.set(-m.headPitch, m.headYaw, 0, 'YXZ');
       case 'legA': return tmpEuler.set(legSwing, 0, 0);
       case 'legB': return tmpEuler.set(-legSwing, 0, 0);

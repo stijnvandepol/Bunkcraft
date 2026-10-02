@@ -30,6 +30,8 @@ export interface InteractionDeps {
   camera: THREE.PerspectiveCamera;
   /** Lights the TNT block at a position; false when not allowed (multiplayer). */
   igniteTnt(x: number, y: number, z: number): boolean;
+  /** Fires an arrow from the eye along the view direction (power 0..1). */
+  shootArrow(power: number, pickup: boolean): void;
 }
 
 /**
@@ -50,6 +52,10 @@ export class Interaction {
   private eatItem = 0;
   /** True while the eat animation is playing (hand renderer). */
   eating = false;
+  /** Seconds the bow has been drawn (0 = not drawing). */
+  private bowDraw = 0;
+  /** Bow draw 0..1 for the FOV zoom. */
+  bowPull = 0;
 
   constructor(private readonly d: InteractionDeps) {}
 
@@ -58,6 +64,8 @@ export class Interaction {
     this.breakKey = -1;
     this.eatTime = 0;
     this.eating = false;
+    this.bowDraw = 0;
+    this.bowPull = 0;
     this.d.renderer.highlight.hide();
     this.d.renderer.highlight.setProgress(0);
   }
@@ -96,7 +104,12 @@ export class Interaction {
     const held = this.d.hotbar.selectedStack;
     const food = getItemDef(held.id)?.food;
     const canEat = food && hasSurvivalRules(mode) && this.d.stats.hunger < 20;
-    if (canEat && input.rightDown) {
+    if (held.id === ITEM.BOW) {
+      this.eatTime = 0;
+      this.eating = false;
+      this.updateBow(dt, input, mode);
+    } else if (canEat && input.rightDown) {
+      this.bowDraw = this.bowPull = 0;
       if (held.id !== this.eatItem) {
         this.eatItem = held.id;
         this.eatTime = 0;
@@ -106,6 +119,7 @@ export class Interaction {
       if (Math.floor((this.eatTime - dt) / 0.2) !== Math.floor(this.eatTime / 0.2)) this.d.audio.playEat();
       if (this.eatTime >= EAT_TIME) {
         this.d.stats.eat(food.hunger, food.saturation);
+        if (food.poison) this.d.stats.poison = Math.max(this.d.stats.poison, food.poison);
         this.d.inventory.consumeSlot(this.d.hotbar.selected);
         this.d.audio.playBurp();
         this.eatTime = 0;
@@ -113,6 +127,7 @@ export class Interaction {
     } else {
       this.eatTime = 0;
       this.eating = false;
+      this.bowDraw = this.bowPull = 0;
       this.placeCooldown -= dt;
       if (hit.hit && !mobHit && (input.rightClicked || (input.rightDown && this.placeCooldown <= 0))) {
         this.placeCooldown = 0.22;
@@ -136,7 +151,7 @@ export class Interaction {
     const tool = getItemDef(hotbar.selectedBlock)?.tool;
     const damage = tool ? tool.damage : 1;
     // Sprint hits knock back further, like Minecraft.
-    if (mob.hurt(damage, player.x, player.z, player.sprinting ? 1.6 : 1)) {
+    if (mob.hurt(damage, player.x, player.z, player.sprinting ? 1.6 : 1, true)) {
       audio.playMob(mob.type.kind, 'hurt', 1);
       if (hasSurvivalRules(mode)) {
         stats.addExhaustion(0.1);
@@ -234,6 +249,34 @@ export class Interaction {
     renderer.particles.spawnFace(x - hit.nx, y - hit.ny, z - hit.nz, hit.nx, hit.ny, hit.nz, id, world.getLight(x, y, z), 3, world.tintAt(x, z, id));
     if (hasSurvivalRules(mode)) inventory.consumeSlot(hotbar.selected);
     this.breakProgress = 0;
+  }
+
+  /**
+   * Bow: hold Use to draw, release to shoot. Minecraft's power curve: f = t/20 s-ticks,
+   * power = (f² + 2f) / 3 capped at 1; full draw is a critical shot. Needs an arrow
+   * (consumed in survival; creative shoots without).
+   */
+  private updateBow(dt: number, input: Input, mode: GameMode): void {
+    const { inventory, hotbar, audio, hand } = this.d;
+    const survival = hasSurvivalRules(mode);
+    const hasArrow = !survival || inventory.count(ITEM.ARROW) > 0;
+    if (input.rightDown && hasArrow) {
+      this.bowDraw += dt;
+      this.bowPull = Math.min(1, this.bowDraw);
+      return;
+    }
+    if (this.bowDraw <= 0) return;
+    const f = this.bowDraw;
+    this.bowDraw = this.bowPull = 0;
+    const power = Math.min(1, (f * f + f * 2) / 3);
+    if (power < 0.1 || !hasArrow) return;
+    this.d.shootArrow(power, survival);
+    audio.playBow(power);
+    hand.swingHand();
+    if (survival) {
+      inventory.remove(ITEM.ARROW, 1);
+      inventory.damageTool(hotbar.selected);
+    }
   }
 
   /** Flint and steel lights TNT (fire blocks don't exist yet, so other blocks are unaffected). */

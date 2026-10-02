@@ -125,6 +125,29 @@ export function paintItemSprite(key: string): HTMLCanvasElement {
     case 'gold_ingot':
       for (let y = 6; y < 11; y++) for (let x = 2 + (10 - y); x < 14 - (y - 6); x++) px(x, y, y === 6 ? '#fffbd0' : pick(['#f0d43c', '#e2bd22', '#f8e46a']));
       break;
+    case 'bone':
+      for (let i = 0; i < 9; i++) { px(4 + i, 11 - i, '#e8e4d4'); px(5 + i, 11 - i, '#cfc9b4'); }
+      line(px, [[2, 12], [3, 13], [3, 11], [4, 13], [12, 2], [13, 3], [14, 3], [13, 1]], '#f4f1e4');
+      break;
+    case 'arrow':
+      for (let i = 0; i < 9; i++) px(4 + i, 11 - i, '#6e4e2c');
+      line(px, [[13, 2], [12, 2], [13, 3], [11, 2], [13, 4]], '#9a9a9a');
+      line(px, [[14, 1]], '#d0d0d0');
+      line(px, [[2, 11], [3, 11], [3, 12], [4, 13], [4, 12], [2, 13], [1, 13], [2, 14]], '#e8e8e8');
+      break;
+    case 'bow':
+      // Curved limbs on the left, taut string on the right.
+      line(px, [[9, 1], [8, 2], [7, 2], [6, 3], [5, 4], [4, 5], [4, 6], [3, 7], [3, 8], [4, 9], [4, 10], [5, 11], [6, 12], [7, 13], [8, 13], [9, 14]], '#7a5631');
+      line(px, [[8, 1], [7, 1], [5, 3], [3, 6], [2, 8], [3, 10], [5, 12], [7, 14], [8, 14]], '#5c4024');
+      for (let y = 2; y < 14; y++) px(9 + (y < 8 ? 0 : 0), y, '#d8d8d8');
+      break;
+    case 'string':
+      line(px, [[3, 12], [4, 11], [5, 11], [6, 10], [7, 9], [7, 8], [8, 7], [9, 7], [10, 6], [11, 5], [11, 4], [12, 3]], '#efefef');
+      line(px, [[5, 12], [8, 8], [12, 4]], '#c8c8c8');
+      break;
+    case 'spider_eye':
+      blob(px, 8, 8, 4.5, 4.5, (x, y) => (Math.hypot(x - 7, y - 7) < 1.6 ? '#f2c0c0' : pick(['#8a1f2a', '#a52a36', '#6e1820'])));
+      break;
     case 'flint':
       blob(px, 8, 8, 4, 5.5, (x, y) => (x + y < 13 ? pick(['#5a5a5a', '#6a6a6a']) : pick(['#2e2e2e', '#3c3c3c', '#262626'])));
       line(px, [[6, 4], [7, 4], [5, 5]], '#8a8a8a');

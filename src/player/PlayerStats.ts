@@ -5,7 +5,7 @@ import { PHYSICS } from './Physics';
 import type { Player } from './Player';
 
 export type DamageCause =
-  | 'fall' | 'drown' | 'lava' | 'fire' | 'cactus' | 'void' | 'suffocate' | 'starve' | 'mob' | 'explosion';
+  | 'fall' | 'drown' | 'lava' | 'fire' | 'cactus' | 'void' | 'suffocate' | 'starve' | 'mob' | 'explosion' | 'arrow' | 'poison';
 
 const DEATH_MESSAGES: Record<DamageCause, string> = {
   fall: 'fell from a high place',
@@ -18,6 +18,8 @@ const DEATH_MESSAGES: Record<DamageCause, string> = {
   starve: 'starved to death',
   mob: 'was slain',
   explosion: 'blew up',
+  arrow: 'was shot',
+  poison: 'was killed by magic',
 };
 
 export const MAX_HEALTH = 20;
@@ -42,6 +44,8 @@ export class PlayerStats {
   /** Direction the last hit came from, in radians around Y (for the hurt cam tilt). */
   hurtDirection = 0;
   burnTicks = 0;
+  /** Ticks of Poison I left (1 damage every 25 ticks, never below half a heart). */
+  poison = 0;
   dead = false;
   deathMessage = '';
   /** The loaded save was made while dead (on the death screen). */
@@ -61,6 +65,7 @@ export class PlayerStats {
     this.invulnerable = 0;
     this.hurtTime = 0;
     this.burnTicks = 0;
+    this.poison = 0;
     this.dead = false;
     this.deathMessage = '';
   }
@@ -85,7 +90,8 @@ export class PlayerStats {
     this.onHurt?.(cause);
     if (this.health <= 0) {
       this.dead = true;
-      const by = killer ? (cause === 'explosion' ? ` was blown up by ${killer}` : ` was slain by ${killer}`) : ` ${DEATH_MESSAGES[cause]}`;
+      const verb = cause === 'explosion' ? 'was blown up by' : cause === 'arrow' ? 'was shot by' : 'was slain by';
+      const by = killer ? ` ${verb} ${killer}` : ` ${DEATH_MESSAGES[cause]}`;
       this.deathMessage = `Player${by}`;
     }
     return true;
@@ -152,6 +158,7 @@ export class PlayerStats {
       else if (--this.burnTicks % 20 === 0) this.damage(1, 'fire', mode);
     }
     if (cactus) this.damage(1, 'cactus', mode);
+    if (this.poison > 0 && --this.poison % 25 === 0 && this.health > 1) this.damage(1, 'poison', mode);
     const eye = getBlock(Math.floor(p.x), Math.floor(p.eyeY), Math.floor(p.z));
     // Unloaded chunks count as solid for collision, but must not suffocate the player.
     if (eye !== BLOCK.UNLOADED && SOLID[eye] && OPAQUE[eye] && this.hazardTimer % 10 === 0) this.damage(1, 'suffocate', mode);

@@ -1,10 +1,10 @@
 import { ITEM, type ItemStack } from '../items/ItemRegistry';
 import { BLOCK } from '../world/BlockRegistry';
 
-export type MobKind = 'pig' | 'cow' | 'sheep' | 'chicken' | 'zombie' | 'creeper' | 'player';
+export type MobKind = 'pig' | 'cow' | 'sheep' | 'chicken' | 'zombie' | 'creeper' | 'skeleton' | 'spider' | 'player';
 
 /** Animation slot a model part follows. */
-export type PartAnim = 'none' | 'head' | 'legA' | 'legB' | 'armL' | 'armR' | 'wingL' | 'wingR';
+export type PartAnim = 'none' | 'head' | 'legA' | 'legB' | 'armL' | 'armR' | 'wingL' | 'wingR' | 'spiderA' | 'spiderB';
 
 /** A box in model pixels (16 px = 1 block). Front of the mob faces −Z. */
 export interface ModelBox {
@@ -22,6 +22,8 @@ export interface ModelPart {
   anim: PartAnim;
   /** Rotation pivot in model pixels. */
   pivot: [number, number, number];
+  /** Rest pose rotation (x, y, z radians; applied Z, then X, then Y), e.g. splayed spider legs. */
+  rest?: [number, number, number];
   boxes: ModelBox[];
 }
 
@@ -39,8 +41,17 @@ export interface MobType {
   attack: number;
   /** Zombie pose: arms held straight forward. */
   armsForward?: boolean;
+  /** Burns in direct sunlight (zombie, skeleton). */
+  burnsInDaylight?: boolean;
+  /** Shoots arrows instead of melee (skeleton). */
+  ranged?: boolean;
+  /** Climbs walls (spider). */
+  climbs?: boolean;
+  /** Neutral in bright light unless provoked (spider). */
+  neutralInLight?: boolean;
   parts: ModelPart[];
-  drops(): ItemStack[];
+  /** @param byPlayer killed by the player (some drops, like spider eyes, need it). */
+  drops(byPlayer: boolean): ItemStack[];
 }
 
 const rnd = (min: number, max: number) => min + Math.floor(Math.random() * (max - min + 1));
@@ -70,6 +81,30 @@ const WOOL = ['#e9e9e9', '#dedede', '#f4f4f4', '#d2d2d2'];
 const SHEEP_SKIN = ['#d9bfa6', '#cdb194', '#e3cbb4'];
 const ZOMBIE_SKIN = ['#4f8a3c', '#457c34', '#5a9a45', '#3f7130'];
 const CREEPER = ['#4caa3a', '#3a8a2c', '#6dc95a', '#2f6e23', '#87d873', '#5bb748'];
+const BONE = ['#c8c8c8', '#b4b4b4', '#d8d8d8', '#a0a0a0'];
+const SPIDER = ['#2e2620', '#3a3029', '#241e19', '#463a31'];
+
+/**
+ * Spider legs as in Minecraft's model: 16×2×2, four per side, tilted 45° down and fanned
+ * forward/back; alternate legs swing in opposite phase.
+ */
+function spiderLegs(): ModelPart[] {
+  const legs: ModelPart[] = [];
+  const fan = [-Math.PI / 4, -Math.PI / 8, Math.PI / 8, Math.PI / 4];
+  [-1, 0, 1, 2].forEach((zRow, i) => {
+    const z = zRow;
+    for (const side of [-1, 1]) {
+      const x0 = side < 0 ? -19 : 3, x1 = side < 0 ? -3 : 19;
+      legs.push({
+        anim: (i + (side < 0 ? 0 : 1)) % 2 === 0 ? 'spiderA' : 'spiderB',
+        pivot: [side * 3, 9, z],
+        rest: [0, side < 0 ? fan[i] : -fan[i], side < 0 ? Math.PI / 4 * 0.75 : -Math.PI / 4 * 0.75],
+        boxes: [{ from: [x0, 8, z - 1], to: [x1, 10, z + 1], colors: SPIDER }],
+      });
+    }
+  });
+  return legs;
+}
 
 export const MOB_TYPES = {
   pig: {
@@ -143,7 +178,7 @@ export const MOB_TYPES = {
     drops: () => [...stack(ITEM.CHICKEN, 1), ...stack(ITEM.FEATHER, rnd(0, 2))],
   },
   zombie: {
-    kind: 'zombie', name: 'Zombie', health: 20, width: 0.6, height: 1.95, walkSpeed: 1.0, runSpeed: 2.6, hostile: true, attack: 3, armsForward: true,
+    kind: 'zombie', name: 'Zombie', health: 20, width: 0.6, height: 1.95, walkSpeed: 1.0, runSpeed: 2.6, hostile: true, attack: 3, armsForward: true, burnsInDaylight: true,
     parts: [
       {
         anim: 'head', pivot: [0, 24, 0], boxes: [{ from: [-4, 24, -4], to: [4, 32, 4], colors: ZOMBIE_SKIN, face: (px, w) => {
@@ -173,7 +208,45 @@ export const MOB_TYPES = {
     ],
     drops: () => stack(ITEM.GUNPOWDER, rnd(0, 2)),
   },
-} as Record<MobKind, MobType>;
+  skeleton: {
+    kind: 'skeleton', name: 'Skeleton', health: 20, width: 0.6, height: 1.99, walkSpeed: 1.0, runSpeed: 2.5, hostile: true, attack: 0,
+    armsForward: true, burnsInDaylight: true, ranged: true,
+    parts: [
+      {
+        anim: 'head', pivot: [0, 24, 0], boxes: [{ from: [-4, 24, -4], to: [4, 32, 4], colors: BONE, face: (px, w) => {
+          for (const [x, y] of [[1, 3], [2, 3], [1, 4], [2, 4], [w - 3, 3], [w - 2, 3], [w - 3, 4], [w - 2, 4]]) px(x, y, '#2a2a2a');
+          px(3, 5, '#5a5a5a'); px(4, 5, '#5a5a5a');
+          for (let x = 1; x < w - 1; x++) px(x, 6, x % 2 ? '#3a3a3a' : '#8a8a8a');
+        } }],
+      },
+      { anim: 'none', pivot: [0, 0, 0], boxes: [{ from: [-4, 12, -1], to: [4, 24, 1], colors: BONE }] },
+      { anim: 'armL', pivot: [-5, 22, 0], boxes: [{ from: [-6, 12, -1], to: [-4, 24, 1], colors: BONE }] },
+      { anim: 'armR', pivot: [5, 22, 0], boxes: [{ from: [4, 12, -1], to: [6, 24, 1], colors: BONE }] },
+      { anim: 'legA', pivot: [-2, 12, 0], boxes: [{ from: [-3, 0, -1], to: [-1, 12, 1], colors: BONE }] },
+      { anim: 'legB', pivot: [2, 12, 0], boxes: [{ from: [1, 0, -1], to: [3, 12, 1], colors: BONE }] },
+    ],
+    drops: () => [...stack(ITEM.BONE, rnd(0, 2)), ...stack(ITEM.ARROW, rnd(0, 2))],
+  },
+  spider: {
+    kind: 'spider', name: 'Spider', health: 16, width: 1.4, height: 0.9, walkSpeed: 1.2, runSpeed: 3.4, hostile: true, attack: 2,
+    climbs: true, neutralInLight: true,
+    parts: [
+      {
+        anim: 'none', pivot: [0, 0, 0], boxes: [
+          { from: [-5, 4, 3], to: [5, 12, 15], colors: SPIDER, patches: '#4a1414' },
+          { from: [-3, 6, -3], to: [3, 12, 3], colors: SPIDER },
+        ],
+      },
+      {
+        anim: 'head', pivot: [0, 9, -3], boxes: [{ from: [-4, 5, -11], to: [4, 13, -3], colors: SPIDER, face: (px) => {
+          for (const [x, y] of [[1, 2], [2, 2], [5, 2], [6, 2], [2, 3], [5, 3], [3, 3], [4, 3]]) px(x, y, '#c41414');
+        } }],
+      },
+      ...spiderLegs(),
+    ],
+    drops: (byPlayer: boolean) => [...stack(ITEM.STRING, rnd(0, 2)), ...(byPlayer && Math.random() < 1 / 3 ? stack(ITEM.SPIDER_EYE, 1) : [])],
+  },
+} satisfies Omit<Record<MobKind, MobType>, 'player'> as unknown as Record<MobKind, MobType>;
 
 const SKIN = ['#c99a7a', '#bf8f6f', '#d1a585'];
 const SHIRT = ['#2d9fa6', '#268a90', '#33b0b8'];
@@ -200,4 +273,5 @@ MOB_TYPES.player = {
 };
 
 export const PASSIVE_KINDS: MobKind[] = ['pig', 'cow', 'sheep', 'chicken'];
-export const HOSTILE_KINDS: MobKind[] = ['zombie', 'creeper'];
+// Minecraft overworld spawn weights are equal (100 each) for these four.
+export const HOSTILE_KINDS: MobKind[] = ['zombie', 'creeper', 'skeleton', 'spider'];

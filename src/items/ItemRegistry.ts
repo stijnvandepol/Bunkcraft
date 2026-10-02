@@ -43,6 +43,11 @@ export const ITEM = {
   GOLDEN_AXE: 295,
   GOLDEN_SHOVEL: 296,
   GOLDEN_SWORD: 297,
+  BONE: 298,
+  ARROW: 299,
+  BOW: 300,
+  STRING: 301,
+  SPIDER_EYE: 302,
 } as const;
 
 export type ToolKind = 'pickaxe' | 'axe' | 'shovel' | 'sword';
@@ -61,7 +66,8 @@ export interface ItemDef {
   name: string;
   displayName: string;
   maxStack: number;
-  food?: { hunger: number; saturation: number };
+  /** `poison`: ticks of Poison I after eating (spider eye). */
+  food?: { hunger: number; saturation: number; poison?: number };
   tool?: ToolInfo;
   /** Uses before breaking, for non-tool items that wear out (flint and steel). */
   durability?: number;
@@ -108,6 +114,11 @@ add({ id: ITEM.IRON_INGOT, name: 'iron_ingot', displayName: 'Iron Ingot', maxSta
 add({ id: ITEM.STICK, name: 'stick', displayName: 'Stick', maxStack: 64, sprite: 'stick' });
 add({ id: ITEM.GOLD_INGOT, name: 'gold_ingot', displayName: 'Gold Ingot', maxStack: 64, sprite: 'gold_ingot' });
 add({ id: ITEM.FLINT, name: 'flint', displayName: 'Flint', maxStack: 64, sprite: 'flint' });
+add({ id: ITEM.BONE, name: 'bone', displayName: 'Bone', maxStack: 64, sprite: 'bone' });
+add({ id: ITEM.ARROW, name: 'arrow', displayName: 'Arrow', maxStack: 64, sprite: 'arrow' });
+add({ id: ITEM.BOW, name: 'bow', displayName: 'Bow', maxStack: 1, durability: 384, sprite: 'bow' });
+add({ id: ITEM.STRING, name: 'string', displayName: 'String', maxStack: 64, sprite: 'string' });
+add({ id: ITEM.SPIDER_EYE, name: 'spider_eye', displayName: 'Spider Eye', maxStack: 64, food: { hunger: 2, saturation: 3.2, poison: 100 }, sprite: 'spider_eye' });
 add({ id: ITEM.FLINT_AND_STEEL, name: 'flint_and_steel', displayName: 'Flint and Steel', maxStack: 1, durability: 64, sprite: 'flint_and_steel' });
 
 const TOOL_BASE: Record<ToolKind, { id: number; damage: number }> = {

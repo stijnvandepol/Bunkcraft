@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { EntityManager } from '../entities/EntityManager';
 import { ItemRenderer } from '../entities/ItemRenderer';
 import { TntRenderer } from '../entities/TntRenderer';
+import { ArrowRenderer } from '../entities/ArrowRenderer';
 import type { Mob, MobEvents } from '../entities/Mob';
 import { MobRenderer } from '../entities/MobRenderer';
 import { NetClient } from '../net/NetClient';
@@ -87,6 +88,8 @@ export class Game {
   private readonly mobRenderer: MobRenderer;
   private readonly itemRenderer: ItemRenderer;
   private readonly tntRenderer: TntRenderer;
+  private readonly arrowRenderer: ArrowRenderer;
+  private readonly tmpDir = new THREE.Vector3();
   private readonly debug = new DebugOverlay();
   private readonly remote = new RemotePlayers();
   private readonly chat = new Chat();
@@ -158,8 +161,9 @@ export class Game {
     this.mobRenderer = new MobRenderer(this.renderer.uniforms);
     this.itemRenderer = new ItemRenderer(this.renderer.uniforms, this.icons);
     this.tntRenderer = new TntRenderer(this.renderer.uniforms);
-    this.renderer.scene.add(this.mobRenderer.group, this.itemRenderer.mesh, this.tntRenderer.mesh);
-    this.renderer.shadowExcluded.push(this.mobRenderer.group, this.itemRenderer.mesh, this.tntRenderer.mesh);
+    this.arrowRenderer = new ArrowRenderer(this.renderer.uniforms);
+    this.renderer.scene.add(this.mobRenderer.group, this.itemRenderer.mesh, this.tntRenderer.mesh, this.arrowRenderer.mesh);
+    this.renderer.shadowExcluded.push(this.mobRenderer.group, this.itemRenderer.mesh, this.tntRenderer.mesh, this.arrowRenderer.mesh);
     this.renderer.afterMain = (three) => {
       if (this.state === 'playing' || this.state === 'inventory' || this.state === 'paused' || this.state === 'chat') this.hand.render(three);
     };
@@ -368,6 +372,13 @@ export class Game {
         if (!world.setBlock(x, y, z, BLOCK.AIR)) return false;
         entities.primeTnt(x, y, z);
         return true;
+      },
+      shootArrow: (power, pickup) => {
+        const cam = this.cam.camera;
+        const dir = cam.getWorldDirection(this.tmpDir);
+        // Player bow: speed 3 × power blocks/tick, inaccuracy 1, critical at full draw.
+        entities.shootArrow(cam.position.x, cam.position.y - 0.1, cam.position.z, dir.x, dir.y, dir.z,
+          power * 3, 1, null, true, power >= 1, pickup);
       },
     });
     return world;
@@ -803,6 +814,7 @@ export class Game {
     this.mobRenderer.update(list, alpha, world);
     this.itemRenderer.update(e.items, alpha, this.time, world);
     this.tntRenderer.update(e.tnt, alpha, world);
+    this.arrowRenderer.update(e.arrows, alpha, world);
   }
 
   private updateMenu(dt: number): void {
@@ -856,6 +868,28 @@ export class Game {
       }
     },
     explode: (mob) => this.explode(mob, mob.x, mob.y + 0.5, mob.z, 3),
+    shoot: (mob) => {
+      const p = this.player;
+      this.entities?.skeletonShoot(mob, p.x, p.y, p.z);
+      const d = Math.hypot(mob.x - p.x, mob.y - p.y, mob.z - p.z);
+      this.audio.playBow(Math.max(0, 1 - d / 16) * 0.6);
+    },
+    arrowHit: (arrow, damage) => {
+      const p = this.player;
+      const yaw = Math.atan2(-arrow.vx, -arrow.vz);
+      if (this.stats.damage(damage, 'arrow', this.mode, arrow.shooter ? arrow.shooter.type.name : '', yaw)) {
+        // Knockback along the arrow's direction.
+        const h = Math.hypot(arrow.vx, arrow.vz) || 1;
+        p.vx += (arrow.vx / h) * 3;
+        p.vz += (arrow.vz / h) * 3;
+        p.vy = Math.max(p.vy, 3);
+        this.cam.hurtSide = Math.sin(yaw - p.yaw) >= 0 ? 1 : -1;
+      }
+    },
+    arrowImpact: (arrow) => {
+      const p = this.player;
+      this.audio.playArrowHit(1 - Math.hypot(arrow.x - p.x, arrow.y - p.y, arrow.z - p.z) / 16);
+    },
     tntExplode: (t) => this.explode(null, t.x, t.y + 0.49, t.z, 4, t.inWater),
     sound: (mob, kind) => {
       const d = Math.hypot(mob.x - this.player.x, mob.y - this.player.y, mob.z - this.player.z);
@@ -986,6 +1020,7 @@ export class Game {
 
     world.chunks.update(p.x, p.z);
     this.cam.hurt = Math.max(0, (this.stats.hurtTime - this.accumulator / PHYSICS.STEP / STEPS_PER_TICK) / 10);
+    this.cam.bowPull = this.interaction?.bowPull ?? 0;
     this.cam.update(p, this.accumulator / PHYSICS.STEP, dt);
     if (this.cam.stepped && !p.inWater && !p.noclip) {
       const below = world.getBlock(Math.floor(p.x), Math.floor(p.y - 0.1), Math.floor(p.z));

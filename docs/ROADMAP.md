@@ -67,12 +67,12 @@ wat al is doorgevoerd.
    - TNT (5 buskruit + 4 zand), Flint and Steel (ijzer + vuursteen): **Gedaan** (lont 80 ticks, kracht 4, kettingreactie met korte lont, onder water geen blokschade). In multiplayer blijft TNT inert tot de server explosies synchroniseert;
    - vuursteen: **Gedaan** (grind, 10%);
    - bed (wol + planken: spawnpunt en nacht overslaan): wacht op block states (een bed is 2 blokken met een richting);
-   - pijl en boog: wacht op spin (draad) en skeleton.
+   - pijl en boog: **Gedaan** (boog: 3 stokken + 3 draad, 384 gebruik, kracht (f²+2f)/3, kritiek bij volle spanning, FOV-zoom; pijl: vuursteen + stok + veer → 4, zwaartekracht 0,05/tick, blijft steken en is op te rapen).
 2. **~15 advancements (S–M):** "Getting Wood", "Stone Age", "Acquire Hardware", "Diamonds!", met toast-meldingen. Ze dienen ook als tutorial.
 3. **Kisten met loot (M):** nodig voor alle structuren.
 4. **Block states (L):** een `meta`-array per chunk. Dit ontgrendelt stromend water en lava, obsidiaan, slabs, trappen, deuren, ladders, muurfakkels, gewassen en een oven met een richting.
 5. **Landbouw (M):** saplings, tarwe, brood en een schoffel. Hernieuwbaar hout en voedsel.
-6. **Meer survival-inhoud (M):** harnas met een armor-bar, skeleton (bogen) en spin, XP-orbs met een XP-balk.
+6. **Meer survival-inhoud (M):** harnas met een armor-bar, XP-orbs met een XP-balk. Skeleton (schiet elke 2 s, verbrandt in daglicht; drops botten en pijlen) en spin (klimt, springt, neutraal in fel licht; drops draad en spinnenoog met Poison) zijn **Gedaan**.
 7. **Structuren (M per stuk):** dungeon met spawner en kisten, mijnschachten, later dorpen.
 8. **Eindspel (L):** een "Underworld"-dimensie of een stronghold met een eindbaas en credits.
 

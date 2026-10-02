@@ -2,6 +2,7 @@ import type { BlockGetter } from '../player/Collision';
 import { OPAQUE, SOLID } from '../world/BlockRegistry';
 import { Entity } from './Entity';
 import type { MobType } from './MobTypes';
+import type { Arrow } from './Arrow';
 import type { PrimedTnt } from './PrimedTnt';
 
 export interface MobTarget {
@@ -16,6 +17,12 @@ export interface MobEvents {
   /** Melee hit on the player. */
   attack(mob: Mob, damage: number): void;
   explode(mob: Mob): void;
+  /** A ranged mob (skeleton) releases an arrow at the player. */
+  shoot(mob: Mob): void;
+  /** An arrow struck the player. */
+  arrowHit(arrow: Arrow, damage: number): void;
+  /** An arrow stuck in a block or hit a mob (sound). */
+  arrowImpact(arrow: Arrow): void;
   /** Lit TNT whose fuse ran out. */
   tntExplode(tnt: PrimedTnt): void;
   sound(mob: Mob, kind: 'idle' | 'hurt' | 'death' | 'fuse'): void;
@@ -23,7 +30,8 @@ export interface MobEvents {
 
 /**
  * A mob with Minecraft-style goal AI: passive mobs wander and panic when hurt,
- * zombies chase and hit, creepers chase, swell for 1.5 s and explode.
+ * zombies chase and hit, creepers chase, swell for 1.5 s and explode, skeletons keep
+ * their distance and shoot, spiders climb walls, leap and are neutral in bright light.
  * Steering is greedy (head for the target, jump over 1-block steps).
  */
 export class Mob extends Entity {
@@ -42,6 +50,14 @@ export class Mob extends Entity {
   /** Chunk this passive mob was spawned with (unloaded together with it). */
   homeChunk = -1;
   persistent = false;
+  /** Set each tick by the EntityManager: bright light keeps neutral-in-light mobs calm. */
+  calm = false;
+  /** Attacked: neutral mobs (spiders) stay hostile. */
+  provoked = false;
+  /** Ticks since the player last hurt this mob (player-kill drops). */
+  hurtByPlayer = 0;
+  /** Bow draw progress in ticks (skeleton). */
+  aimTicks = 0;
   private targetX = 0;
   private targetZ = 0;
   private moving = false;
@@ -60,11 +76,15 @@ export class Mob extends Entity {
     return this.health <= 0;
   }
 
-  /** Damage from the player or an explosion; knockback away from (fromX, fromZ). */
-  hurt(amount: number, fromX: number, fromZ: number, knockback = 1): boolean {
+  /** Damage from the player, an arrow or an explosion; knockback away from (fromX, fromZ). */
+  hurt(amount: number, fromX: number, fromZ: number, knockback = 1, byPlayer = false): boolean {
     if (this.dead || this.hurtTime > 0) return false;
     this.health -= amount;
     this.hurtTime = 10;
+    if (byPlayer) {
+      this.hurtByPlayer = 100;
+      this.provoked = true;
+    }
     const dx = this.x - fromX, dz = this.z - fromZ;
     const d = Math.hypot(dx, dz) || 1;
     if (knockback > 0) {
@@ -81,6 +101,7 @@ export class Mob extends Entity {
     this.prevLimbSwing = this.limbSwing;
     this.prevFuse = this.fuse;
     if (this.hurtTime > 0) this.hurtTime--;
+    if (this.hurtByPlayer > 0) this.hurtByPlayer--;
     if (this.dead) {
       this.deathTime++;
       if (this.deathTime >= 20) this.removed = true;
@@ -99,14 +120,28 @@ export class Mob extends Entity {
     const distT = Math.hypot(dxT, dzT, target.y - this.y);
     let speed = 0;
 
-    if (t.hostile && target.attackable && distT < 24) {
+    const hunting = t.hostile && target.attackable && distT < (t.ranged ? 16 : 24) && !(t.neutralInLight && this.calm && !this.provoked);
+    if (!hunting) this.aimTicks = 0;
+    if (hunting) {
       // Chase the player.
       this.targetX = target.x;
       this.targetZ = target.z;
       speed = t.runSpeed;
       this.lookAt(target.x, target.y + 1.5, target.z);
-      const sees = distT < 4 ? this.canSee(getBlock, target) : false;
-      if (t.kind === 'creeper') {
+      const sees = distT < (t.ranged ? 16 : 4) ? this.canSee(getBlock, target) : false;
+      if (t.ranged) {
+        // Skeleton: stop within 15 blocks with line of sight, draw for 1 s, shoot every 2 s.
+        if (sees && distT < 15) {
+          speed = distT < 4 ? -t.walkSpeed : 0;
+          if (++this.aimTicks >= 20 && this.attackCooldown === 0) {
+            events.shoot(this);
+            this.aimTicks = 0;
+            this.attackCooldown = 20;
+          }
+        } else {
+          this.aimTicks = 0;
+        }
+      } else if (t.kind === 'creeper') {
         if (distT < 3 && sees) {
           if (this.fuse === 0) events.sound(this, 'fuse');
           this.fuse++;
@@ -117,9 +152,15 @@ export class Mob extends Entity {
           this.removed = true;
           return;
         }
-      } else if (distT < 1.8 && Math.abs(target.y - this.y) < 1.5 && this.attackCooldown === 0 && sees) {
+      } else if (distT < 1.4 + this.width / 2 && Math.abs(target.y - this.y) < 1.5 && this.attackCooldown === 0 && sees) {
         events.attack(this, t.attack);
         this.attackCooldown = 20;
+      } else if (t.climbs && this.onGround && distT > 2 && distT < 4 && Math.random() < 0.2) {
+        // Spider leap (Minecraft's LeapAtTargetGoal: 0.4 blocks/tick up and forward).
+        const d = Math.hypot(dxT, dzT) || 1;
+        this.vx = (dxT / d) * 8 + this.vx * 0.2;
+        this.vz = (dzT / d) * 8 + this.vz * 0.2;
+        this.vy = 8;
       }
     } else {
       if (this.fuse > 0) this.fuse--;
@@ -138,7 +179,16 @@ export class Mob extends Entity {
     // Steering towards the current target point.
     const dx = this.targetX - this.x, dz = this.targetZ - this.z;
     const dist = Math.hypot(dx, dz);
-    if (speed > 0 && dist > 0.4) {
+    if (speed < 0) {
+      // Back away while facing the target (ranged mobs keeping distance).
+      const want = Math.atan2(-dx, -dz);
+      let diff = want - this.yaw;
+      diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+      this.yaw += Math.max(-0.35, Math.min(0.35, diff));
+      const accel = this.onGround ? 0.45 : 0.08;
+      this.vx += (Math.sin(this.yaw) * -speed - this.vx) * accel;
+      this.vz += (Math.cos(this.yaw) * -speed - this.vz) * accel;
+    } else if (speed > 0 && dist > 0.4) {
       const want = Math.atan2(-dx, -dz);
       let diff = want - this.yaw;
       diff = Math.atan2(Math.sin(diff), Math.cos(diff));
@@ -157,7 +207,12 @@ export class Mob extends Entity {
       this.moving = false;
     }
 
-    this.physicsTick(getBlock, speed > 0);
+    this.physicsTick(getBlock, speed > 0 && !t.climbs);
+    // Spiders climb walls at 0.2 blocks/tick.
+    if (t.climbs && speed > 0 && this.horizontalCollision) {
+      this.vy = 4;
+      this.fallDistance = 0;
+    }
 
     // Limb swing from actual horizontal movement (Minecraft's limbSwing smoothing).
     const moved = Math.hypot(this.x - this.prevX, this.z - this.prevZ);

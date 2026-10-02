@@ -39,6 +39,8 @@ export const RECIPES: Recipe[] = [
   { result: { id: B.BOOKSHELF, count: 1 }, ingredients: [any(PLANKS, 6)], station: 'table' },
   { result: { id: B.TNT, count: 1 }, ingredients: [one(ITEM.GUNPOWDER, 5), one(B.SAND, 4)], station: 'table' },
   { result: { id: ITEM.FLINT_AND_STEEL, count: 1 }, ingredients: [one(ITEM.IRON_INGOT), one(ITEM.FLINT)], station: 'hand' },
+  { result: { id: ITEM.BOW, count: 1 }, ingredients: [one(ITEM.STICK, 3), one(ITEM.STRING, 3)], station: 'table' },
+  { result: { id: ITEM.ARROW, count: 4 }, ingredients: [one(ITEM.FLINT), one(ITEM.STICK), one(ITEM.FEATHER)], station: 'table' },
   // Smelting.
   { result: { id: B.GLASS, count: 1 }, ingredients: [one(B.SAND), any(FUEL, 1)], station: 'furnace' },
   { result: { id: B.STONE, count: 1 }, ingredients: [one(B.COBBLESTONE), any(FUEL, 1)], station: 'furnace' },
