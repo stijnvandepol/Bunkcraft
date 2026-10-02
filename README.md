@@ -100,9 +100,10 @@ Options → Controls → Key Binds, ook naar muisknoppen (zoals in Minecraft).
 - Advancements met toast-meldingen en een Advancements-scherm (tabs Minecraft en Adventure, zoals in Minecraft 1.21); alleen in survival, per wereld opgeslagen.
 - First-person hand met swing-, equip- en eet-animaties; hurt cam.
 - Fakkels (licht 14) en lava (licht 15, lavameren in diepe grotten).
+- **Block states:** slabs en trappen (9 materialen, plaatsing als in Minecraft), een eikenhouten deur, en **stromend water en lava** (water 7 blokken per 5 ticks, lava 3 blokken per 30, oneindige bronnen, obsidiaan en cobblestone waar ze elkaar raken) met ijzeren, water- en lavaemmers. In multiplayer simuleert de server de vloeistoffen. Zie [`docs/BLOCKSTATES.md`](docs/BLOCKSTATES.md).
 - First-person-besturing met pointer lock, zwaartekracht, springen, sprinten, zwemmen en vliegen.
 - Blokken breken met crack-animatie en deeltjes; blokken plaatsen met een bereik van 5 blokken.
-- 42 bloktypes, een creative inventory met tabbladen en een hotbar.
+- 66 bloktypes, een creative inventory met tabbladen en een hotbar.
 - Werelden en je bouwwerken worden automatisch opgeslagen (IndexedDB).
 
 **Graphics**

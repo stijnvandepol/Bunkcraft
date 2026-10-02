@@ -91,13 +91,17 @@ in BunkCraft zit. Getallen komen uit de Minecraft Wiki, tenzij anders vermeld.
 | Fakkel | Licht 14, eigen 3D-model (2×10×2 px), heeft een blok eronder nodig |
 | Lava | Licht 15, geanimeerd, schade en vertraging; lavameren in grotten onder y = 11 |
 | Werkbank, oven | Crafting-stations |
+| Slabs en trappen | Stone, cobblestone, mossy cobblestone, stone brick, brick, sandstone, oak, birch en spruce. 3 blokken → 6 slabs, 6 blokken → 4 trappen. Een slab komt op de aangeklikte helft, twee gelijke worden een dubbele slab (geeft 2 drops); een trap kijkt de kant van de speler op en klapt om aan een plafond of de bovenste helft. Je loopt ze op zonder te springen (stap 0,6) |
+| Eikenhouten deur | 6 eikenhouten planken → 3 deuren. Twee blokken hoog, scharnier links of rechts (naast een muur of andere deur zoals in Minecraft), rechtermuisknop opent en sluit, breken haalt beide helften weg. Staat op een blok met een stevige bovenkant |
+| Water en lava | Stromend: water 7 blokken ver, elke 5 ticks; lava 3 blokken ver, elke 30 ticks. Twee waterbronnen naast elkaar maken een nieuwe bron; water naast lava geeft obsidiaan (bron) of cobblestone (stromend). Stromend water spoelt planten en fakkels weg |
+| Emmers | Ijzeren emmer (3 ijzerstaven); rechtermuisknop op een bron schept hem op, een volle emmer plaatst een bron (survival: je krijgt een lege emmer terug) |
 
 Een geïmporteerd Minecraft-resourcepack levert ook textures voor `torch`, `lava_still`, `crafting_table_*` en `furnace_*`.
 
 ## Roadmap
 
-1. **Block states:** een `meta`-array per chunk voor stromend water, slabs, trappen, deuren, ladders, muurfakkels en blokken met een richting (oven).
-2. **Vloeistofstroming:** water (niveau 0–7, elke 5 ticks) en lava, met obsidiaan of cobblestone waar ze elkaar raken.
+1. **Block states:** **gedaan** voor slabs, trappen, deuren en vloeistoffen ([`BLOCKSTATES.md`](BLOCKSTATES.md)); ladders, muurfakkels, gewassen en een oven met een richting volgen op dezelfde basis.
+2. **Vloeistofstroming:** **gedaan** (water en lava, emmers).
 3. **Vallend zand en grind** als entity.
 4. **Meer mobs:** skeleton (pijlen) en spin (klimmen).
 5. **Meer blokken en items:** kist, TNT, harnas, XP-orbs en de XP-balk.

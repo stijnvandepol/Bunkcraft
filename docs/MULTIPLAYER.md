@@ -10,7 +10,7 @@ Samenvatting van het multiplayer-onderzoek (oktober 2026). Bronnen staan onderaa
 
 - `TerrainGenerator`, `Noise`, `BlockRegistry` en de player-physics (`Collision`, `Physics`, `Player`) hebben geen DOM- of Three.js-afhankelijkheden. Ze draaien ongewijzigd in een server, een worker of de browser van een host.
 - Het terrein is **deterministisch vanuit de seed**. Over het netwerk gaan dus alleen de **wijzigingen** (block edits), nooit hele chunks.
-- `World.edits` slaat wijzigingen al compact op (`blockIndex << 8 | id`). Dat kan direct het wire-formaat zijn.
+- `World.edits` slaat wijzigingen al compact op (blokindex → `id | meta << 8`, de packed block state). Dat kan direct het wire-formaat zijn.
 
 ## Opties
 
@@ -49,6 +49,8 @@ Bij 8 spelers is dat ongeveer 19 KB/s upload voor de host: prima voor een gewone
 2. **Interpolatie:** andere spelers worden ~100 ms in het verleden getoond, vloeiend tussen twee snapshots.
 3. **Block edits:** worden lokaal meteen toegepast en naar de server gestuurd. Bij een weigering zet de client `prevId` terug.
 4. **Conflicten:** de server verwerkt edits op volgorde van aankomst. Met `prevId` worden verouderde edits geweigerd.
+5. **Block states (protocol 4):** een `block`-bericht heeft een optionele `meta` (weggelaten = 0); de server weigert een meta die het blok niet kan hebben (`isValidMeta`). `welcome.edits` is een platte lijst `x, y, z, id, meta`. Een oudere client krijgt "Outdated client".
+6. **Vloeistoffen:** de server simuleert water en lava (`LiquidSim` in `ServerWorld`, alleen terwijl er spelers zijn) met een budget van 600 updates en 200 blokwijzigingen per tick. De wijzigingen gaan als `blocks`-berichten (`x, y, z, id, meta, …`, hoogstens 100 per bericht) naar alle clients, dus maximaal ~4000 wijzigingen per seconde in een extreme vloed; een client simuleert zelf niet.
 
 ## Aanbevolen plan
 
