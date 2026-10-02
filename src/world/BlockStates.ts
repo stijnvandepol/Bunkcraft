@@ -81,30 +81,33 @@ export function stairMeta(facing: number, top: boolean): number {
 export function stairShape(meta: number, nNorth: number, nSouth: number, nWest: number, nEast: number): number {
   const facing = meta & STAIR_FACING_MASK;
   const top = meta & STAIR_TOP_BIT;
-  const at = (dir: number): number => (dir === NORTH ? nNorth : dir === SOUTH ? nSouth : dir === WEST ? nWest : nEast);
-  // A neighbour of another orientation next to us only blocks a corner when it has the same facing and half.
-  const canTakeShape = (dir: number): boolean => {
-    const b = at(dir);
-    return b < 0 || (b & STAIR_FACING_MASK) !== facing || (b & STAIR_TOP_BIT) !== top;
-  };
   // Outer corner: the stair in front of us (the way our back points) runs sideways.
-  const front = at(facing);
+  const front = sideOf(facing, nNorth, nSouth, nWest, nEast);
   if (front >= 0 && (front & STAIR_TOP_BIT) === top) {
     const f1 = front & STAIR_FACING_MASK;
-    // Different axis (north/south = 0/1, west/east = 2/3).
-    if ((f1 >> 1) !== (facing >> 1) && canTakeShape(FACING_OPPOSITE[f1])) {
+    // Different axis (north/south = 0/1, west/east = 2/3) and not already continued by a stair like ours on the far side.
+    if ((f1 >> 1) !== (facing >> 1) && canTakeShape(sideOf(FACING_OPPOSITE[f1], nNorth, nSouth, nWest, nEast), facing, top)) {
       return f1 === FACING_CCW[facing] ? STAIR_OUTER_LEFT : STAIR_OUTER_RIGHT;
     }
   }
   // Inner corner: the stair behind us runs sideways.
-  const back = at(FACING_OPPOSITE[facing]);
+  const back = sideOf(FACING_OPPOSITE[facing], nNorth, nSouth, nWest, nEast);
   if (back >= 0 && (back & STAIR_TOP_BIT) === top) {
     const f2 = back & STAIR_FACING_MASK;
-    if ((f2 >> 1) !== (facing >> 1) && canTakeShape(f2)) {
+    if ((f2 >> 1) !== (facing >> 1) && canTakeShape(sideOf(f2, nNorth, nSouth, nWest, nEast), facing, top)) {
       return f2 === FACING_CCW[facing] ? STAIR_INNER_LEFT : STAIR_INNER_RIGHT;
     }
   }
   return STAIR_STRAIGHT;
+}
+
+function sideOf(dir: number, nNorth: number, nSouth: number, nWest: number, nEast: number): number {
+  return dir === NORTH ? nNorth : dir === SOUTH ? nSouth : dir === WEST ? nWest : nEast;
+}
+
+/** A neighbour of another orientation next to us only blocks a corner when it has the same facing and half. */
+function canTakeShape(neighbour: number, facing: number, top: number): boolean {
+  return neighbour < 0 || (neighbour & STAIR_FACING_MASK) !== facing || (neighbour & STAIR_TOP_BIT) !== top;
 }
 
 // ---------------------------------------------------------------- octants
@@ -175,34 +178,25 @@ export function stairOctants(meta: number, shape: number): number {
  */
 export function octantBoxes(mask: number, out: Float64Array | number[], at = 0): number {
   const low = mask & 15, high = mask >> 4;
-  let n = 0;
-  const layer = (foot: number, y0: number, y1: number): void => {
-    if (foot === 0) return;
-    const row0 = foot & 3, row1 = foot >> 2;
-    const put = (x0: number, z0: number, x1: number, z1: number): void => {
-      const o = at + n * 6;
-      out[o] = x0; out[o + 1] = y0; out[o + 2] = z0; out[o + 3] = x1; out[o + 4] = y1; out[o + 5] = z1;
-      n++;
-    };
-    const cols = (bits: number, z0: number, z1: number): void => {
-      if (bits === 3) put(0, z0, 1, z1);
-      else if (bits === 1) put(0, z0, 0.5, z1);
-      else if (bits === 2) put(0.5, z0, 1, z1);
-    };
-    if (row0 === row1) {
-      cols(row0, 0, 1);
-      return;
-    }
-    cols(row0, 0, 0.5);
-    cols(row1, 0.5, 1);
-  };
-  if (low === high) {
-    layer(low, 0, 1);
-  } else {
-    layer(low, 0, 0.5);
-    layer(high, 0.5, 1);
-  }
-  return n;
+  if (low === high) return layerBoxes(low, 0, 1, out, at, 0);
+  return layerBoxes(high, 0.5, 1, out, at, layerBoxes(low, 0, 0.5, out, at, 0));
+}
+
+/** One layer of boxes (a 2×2 footprint, bit = x | z << 1) between y0 and y1; `n` boxes already written, returns the new count. */
+function layerBoxes(foot: number, y0: number, y1: number, out: Float64Array | number[], at: number, n: number): number {
+  if (foot === 0) return n;
+  const row0 = foot & 3, row1 = foot >> 2;
+  if (row0 === row1) return rowBox(row0, 0, 1, y0, y1, out, at, n);
+  return rowBox(row1, 0.5, 1, y0, y1, out, at, rowBox(row0, 0, 0.5, y0, y1, out, at, n));
+}
+
+/** A strip along x (bits: 3 = full width, 1 = west half, 2 = east half) between z0 and z1. */
+function rowBox(bits: number, z0: number, z1: number, y0: number, y1: number, out: Float64Array | number[], at: number, n: number): number {
+  if (bits === 0) return n;
+  const x0 = bits === 2 ? 0.5 : 0, x1 = bits === 1 ? 0.5 : 1;
+  const o = at + n * 6;
+  out[o] = x0; out[o + 1] = y0; out[o + 2] = z0; out[o + 3] = x1; out[o + 4] = y1; out[o + 5] = z1;
+  return n + 1;
 }
 
 // ---------------------------------------------------------------- placement rules

@@ -52,6 +52,20 @@ export function liquidHeight(meta: number): number {
   return liquidAmount(meta) / 9;
 }
 
+/**
+ * Is the point (px, py, pz) under the liquid surface of its cell? A cell with the same liquid above it is full; otherwise
+ * the liquid only reaches up to its level, so a thin film on the floor does not drown anyone standing in the cell.
+ */
+export function pointInLiquid(
+  getBlock: (x: number, y: number, z: number) => number, getMeta: ((x: number, y: number, z: number) => number) | undefined,
+  kind: number, px: number, py: number, pz: number,
+): boolean {
+  const x = Math.floor(px), y = Math.floor(py), z = Math.floor(pz);
+  if (getBlock(x, y, z) !== kind) return false;
+  if (!getMeta || getBlock(x, y + 1, z) === kind) return true;
+  return py - y < liquidHeight(getMeta(x, y, z));
+}
+
 export const WATER_TICK_DELAY = 5;
 export const LAVA_TICK_DELAY = 30;
 const WATER_DROP_OFF = 1;

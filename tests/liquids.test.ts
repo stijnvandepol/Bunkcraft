@@ -7,7 +7,7 @@ import { CHUNK_AREA, CHUNK_VOLUME, blockIndex, chunkKey as chunkKeyOf } from '..
 import { resolveBucketTarget } from '../src/world/Placement';
 import { emptyChunk, makeTestWorld, setLocal } from './helpers';
 import {
-  FALLING_BIT, type LiquidGrid, LiquidSim, MAX_CHANGES_PER_TICK, MAX_PENDING, isLiquid, liquidAmount, liquidHeight, liquidMeta,
+  FALLING_BIT, type LiquidGrid, LiquidSim, MAX_CHANGES_PER_TICK, MAX_PENDING, isLiquid, liquidAmount, liquidHeight, liquidMeta, pointInLiquid,
 } from '../src/world/Liquids';
 
 const W = BLOCK.WATER, L = BLOCK.LAVA, AIR = BLOCK.AIR, STONE = BLOCK.STONE;
@@ -66,6 +66,24 @@ describe('liquid state', () => {
     expect(liquidMeta(8, true)).toBe(FALLING_BIT);
     expect(liquidHeight(0)).toBeCloseTo(8 / 9, 9);
     expect(liquidHeight(7)).toBeCloseTo(1 / 9, 9);
+  });
+});
+
+describe('swimming in flowing water', () => {
+  it('is under the surface only below the liquid level (a thin film does not drown, a column does)', () => {
+    const { g } = setup();
+    const gb = (x: number, y: number, z: number) => g.getBlock(x, y, z);
+    const gm = (x: number, y: number, z: number) => g.getMeta(x, y, z);
+    g.cells.set('0,1,0', [W, 7]); // thinnest film: 1/9
+    g.cells.set('2,1,0', [W, 0]); // source: 8/9
+    g.cells.set('4,1,0', [W, 8]); g.cells.set('4,2,0', [W, 8]); // falling column: full
+    expect(pointInLiquid(gb, gm, W, 0.5, 1.05, 0.5)).toBe(true);
+    expect(pointInLiquid(gb, gm, W, 0.5, 1.5, 0.5)).toBe(false);
+    expect(pointInLiquid(gb, gm, W, 2.5, 1.8, 0.5)).toBe(true);
+    expect(pointInLiquid(gb, gm, W, 2.5, 1.95, 0.5)).toBe(false);
+    expect(pointInLiquid(gb, gm, W, 4.5, 1.99, 0.5)).toBe(true); // liquid above: full height
+    expect(pointInLiquid(gb, undefined, W, 0.5, 1.99, 0.5)).toBe(true); // no states known: the whole cell
+    expect(pointInLiquid(gb, gm, L, 0.5, 1.05, 0.5)).toBe(false);
   });
 });
 

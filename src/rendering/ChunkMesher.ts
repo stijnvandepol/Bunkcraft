@@ -150,8 +150,11 @@ const MAX_MERGE = 15;
 
 export class ChunkMesher {
   private readonly region = new Uint8Array(REGION_VOLUME);
+  /** 32-bit views of the region arrays: chunk rows (16 bytes, 4-byte aligned) are copied as four words, without allocating. */
+  private readonly region32 = new Uint32Array(this.region.buffer);
   /** Block state bytes of the same region; only valid (non-zero) while `metaUsed` is set. */
   private readonly metaRegion = new Uint8Array(REGION_VOLUME);
+  private readonly metaRegion32 = new Uint32Array(this.metaRegion.buffer);
   private metaUsed = false;
   private readonly lighting = new LightEngine();
   private readonly opaque = new GeometryBuilder();
@@ -203,17 +206,33 @@ export class ChunkMesher {
     r.fill(BLOCK.BEDROCK, 0, REGION_AREA);
     r.fill(0, (REGION_HEIGHT - 1) * REGION_AREA, REGION_VOLUME);
     for (let n = 0; n < 9; n++) {
-      const src = neighbours[n];
       const ox = (n % 3) * CHUNK_SIZE;
       const oz = Math.floor(n / 3) * CHUNK_SIZE;
+      this.copyChunk(neighbours[n], r, this.region32, ox, oz);
+      const m = anyMeta ? metas![n] : null;
+      if (m) this.copyChunk(m, mr, this.metaRegion32, ox, oz);
+    }
+  }
+
+  /** Copies a chunk's 128 layers into the region at (ox, oz), row by row (16 bytes = four 32-bit words per row). */
+  private copyChunk(src: Uint8Array, dst: Uint8Array, dst32: Uint32Array, ox: number, oz: number): void {
+    if (src.byteOffset & 3) {
+      // Unaligned view (never from the workers): the slow, allocating way.
       for (let y = 0; y < CHUNK_HEIGHT; y++) {
-        const ry = (y + 1) * REGION_AREA;
         for (let z = 0; z < CHUNK_SIZE; z++) {
           const s = (y << 8) | (z << 4);
-          r.set(src.subarray(s, s + CHUNK_SIZE), ry + (oz + z) * REGION + ox);
-          const m = anyMeta ? metas![n] : null;
-          if (m) mr.set(m.subarray(s, s + CHUNK_SIZE), ry + (oz + z) * REGION + ox);
+          dst.set(src.subarray(s, s + CHUNK_SIZE), (y + 1) * REGION_AREA + (oz + z) * REGION + ox);
         }
+      }
+      return;
+    }
+    const s32 = new Uint32Array(src.buffer, src.byteOffset, CHUNK_VOLUME >> 2);
+    for (let y = 0; y < CHUNK_HEIGHT; y++) {
+      const ry = (y + 1) * REGION_AREA;
+      for (let z = 0; z < CHUNK_SIZE; z++) {
+        const s = (y << 6) | (z << 2);
+        const d = (ry + (oz + z) * REGION + ox) >> 2;
+        dst32[d] = s32[s]; dst32[d + 1] = s32[s + 1]; dst32[d + 2] = s32[s + 2]; dst32[d + 3] = s32[s + 3];
       }
     }
   }
@@ -465,7 +484,6 @@ export class ChunkMesher {
     hc[1] = this.cornerHeight(i, kind, 1, 0);
     hc[2] = this.cornerHeight(i, kind, 0, 1);
     hc[3] = this.cornerHeight(i, kind, 1, 1);
-    const flagsFor = (f: number) => (kind === BLOCK.LAVA ? FLAG_LAVA : f === 2 ? FLAG_WAVE : 0);
     const ys = this.liquidVerts;
     for (let f = 0; f < 6; f++) {
       const face = FACES[f];
@@ -474,7 +492,7 @@ export class ChunkMesher {
       const layer = FACE_LAYER[kind * 6 + f];
       this.cornerSample(f, q);
       for (let k = 0; k < 4; k++) this.pAO[k] = 3; // liquids take no ambient occlusion
-      const flags = flagsFor(f);
+      const flags = kind === BLOCK.LAVA ? FLAG_LAVA : f === 2 ? FLAG_WAVE : 0;
       const coord = this.rectCoord;
       for (let k = 0; k < 4; k++) {
         const cu = CU[k], cv = CV[k];

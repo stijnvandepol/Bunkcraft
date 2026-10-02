@@ -1,4 +1,5 @@
 import { BLOCK } from '../world/BlockRegistry';
+import { pointInLiquid } from '../world/Liquids';
 import { type AABB, type BlockGetter, boxIntersectsSolid, clipAxis } from './Collision';
 import { PHYSICS, approach } from './Physics';
 
@@ -90,7 +91,7 @@ export class Player {
     this.prevX = this.x; this.prevY = this.y; this.prevZ = this.z;
 
     this.inWater = getBlock(Math.floor(this.x), Math.floor(this.y + 0.4), Math.floor(this.z)) === BLOCK.WATER;
-    this.headInWater = getBlock(Math.floor(this.x), Math.floor(this.eyeY), Math.floor(this.z)) === BLOCK.WATER;
+    this.headInWater = pointInLiquid(getBlock, getMeta, BLOCK.WATER, this.x, this.eyeY, this.z);
     this.inLava = getBlock(Math.floor(this.x), Math.floor(this.y + 0.4), Math.floor(this.z)) === BLOCK.LAVA;
     if (this.inLava) this.inWater = true; // lava swims like (slow) water
     if (this.noclip) this.flying = true;

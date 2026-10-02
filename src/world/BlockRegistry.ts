@@ -340,6 +340,13 @@ SOLID[BLOCK.UNLOADED] = 1;
 OPAQUE[BLOCK.UNLOADED] = 1;
 
 /**
+ * Sky light going down a column, in one lookup per cell: the light filter (0..2), 254 for a cell that receives
+ * light but stops it (slabs, stairs), 255 for opaque blocks.
+ */
+export const LIGHT_COLUMN = new Uint8Array(256);
+for (let id = 0; id < 256; id++) LIGHT_COLUMN[id] = OPAQUE[id] ? 255 : LIGHT_STOP[id] ? 254 : LIGHT_FILTER[id];
+
+/**
  * Textures that are converted to greyscale for biome tinting. "full" tints every pixel,
  * "mask" only the green overlay (grass block side: the dirt part stays untinted).
  */

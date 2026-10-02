@@ -65,7 +65,7 @@ function drawTool(px: Px, kind: string, tier: number): void {
 function drawBucket(px: Px, fill: [string, string] | null): void {
   const metal = ['#c4c4c4', '#b0b0b0', '#d8d8d8'];
   for (let y = 4; y <= 13; y++) {
-    const left = 3 + Math.floor((y - 4) / 3), right = 12 - Math.floor((y - 4) / 3);
+    const left = 3 + Math.floor((y - 4) / 5), right = 12 - Math.floor((y - 4) / 5);
     for (let x = left; x <= right; x++) {
       const edge = x === left || x === right;
       px(x, y, edge ? '#8a8a8a' : metal[(x + y) % 3]);

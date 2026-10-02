@@ -1,4 +1,4 @@
-import { LIGHT_EMIT, LIGHT_FILTER, LIGHT_STOP, OPAQUE } from '../world/BlockRegistry';
+import { LIGHT_COLUMN, LIGHT_EMIT, LIGHT_FILTER, LIGHT_STOP, OPAQUE } from '../world/BlockRegistry';
 import { CHUNK_HEIGHT as WORLD_HEIGHT } from '../world/constants';
 
 /**
@@ -42,9 +42,13 @@ export class LightEngine {
         const i = c + y * REGION_AREA;
         const b = blocks[i];
         if (b !== 0 && highest < 0) highest = y;
-        if (OPAQUE[b]) break;
-        if (LIGHT_STOP[b]) { sky[i] = l; break; }
-        l -= LIGHT_FILTER[b];
+        const f = LIGHT_COLUMN[b];
+        if (f >= 254) {
+          // Opaque blocks end the column; slabs and stairs are lit from above but pass nothing down.
+          if (f === 254) sky[i] = l;
+          break;
+        }
+        l -= f;
         if (l <= 0) break;
         sky[i] = l;
       }
