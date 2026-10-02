@@ -161,6 +161,33 @@ regenereert, respawns en een scoreboard. Beschrijving, besturing en wapentabel: 
 - **CrazyGames en Poki (M–L):** pas na touchbediening. Verberg daarvoor de Minecraft-jar-import en zwak de 1-op-1 Minecraft-styling af (risico op IP-problemen).
 - **Delen:** seed in de URL, F2-screenshots, en export/import van werelden als zip (fflate is al aanwezig).
 
+## Plan vanaf oktober 2026 (op basis van het onderzoek)
+
+Onderzoek: `docs/research/UPDATES.md` (versiegeschiedenis tot Java 26.3 "Wilderness Bound", feature-vergelijking)
+en `docs/research/MECHANICS.md` (exacte regels en getallen, 30 mechanics in drie fasen).
+
+**Nu in uitvoering (parallel):** content (alle blokken en items, tabs in het creative-scherm, harnas, `ItemStack.data`),
+mobs (varkensoog, nachtelijke spawns in groepen, dierdichtheid), wereldgeneratie (grotten met ingangen, ravijnen,
+ertsaders, `genVersion` voor bestaande werelden).
+
+**Fundamenten die bijna alles blokkeren (eerst):**
+1. Random-tick systeem (planten, bladverval, farmland, vuur, ijs).
+2. Block entities (kisten, ovens, spawners) met opslag per wereld en server-sync.
+3. Eén centrale schade-pijplijn (moeilijkheidsgraad, harnas, effecten, enchantments).
+
+**Fase 1, early game loop:** saplings en bladverval, landbouw (schoffel, farmland, tarwe, brood, bone meal), bed met
+spawnpunt en nacht overslaan, difficulty en game rules, harnas, attack cooldown met crits en sweep, kist met loot-tabellen,
+vallend zand en grind, XP-orbs, ladders/hekken/trapdoors/knoppen, echte oven met kooktijd.
+
+**Fase 2, mid game:** fokken en baby's, weer, dungeons met spawner, meer mobs (enderman, witch, slime, wolf, paard),
+status-effecten, schild, vuur, enchanting, anvil en grindstone, mijnschachten en kleine structuren, vissen, meer planten.
+
+**Fase 3, late game:** minimale redstone, dorpen met handel, brewing, Nether-lite, extra biomes (jungle, savanne, moeras,
+badlands), rivieren.
+
+Onzeker en eerst te verifiëren: verdrinkings- en lava-intervallen in de code tegen de wiki, de void-grens (y < −64 terwijl
+de wereld 0–127 loopt), sapling-groeilicht en de XP-tabel (zie "onzeker" in MECHANICS.md).
+
 ## Voorgestelde volgorde
 
 1. **Komende 2 weken:**
