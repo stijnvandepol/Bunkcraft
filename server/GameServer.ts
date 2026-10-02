@@ -236,6 +236,7 @@ export class GameServer {
     }
     this.send(session, {
       t: 'welcome', id: session.id, worldName: this.world.name, seed: this.world.seed, gameMode: this.world.gameMode,
+      gameType: 'minecraft', worldType: 'terrain',
       time: this.world.time, spawn: this.world.spawn, edits, player: record,
       players: [...this.sessions.values()].map((s) => ({ id: s.id, name: s.name })),
       motd: this.opts.motd,

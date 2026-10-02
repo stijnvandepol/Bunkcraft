@@ -1,3 +1,4 @@
+import type { GameType, Team } from '../modes/GameTypes';
 import type { GameMode } from '../player/GameMode';
 
 /**
@@ -8,7 +9,7 @@ import type { GameMode } from '../player/GameMode';
  * the network. Movement is client-predicted and sanity-checked by the server; block
  * edits are applied optimistically and confirmed or rolled back by the server.
  */
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 /** Mob kinds in network order (index in entity snapshots). */
 export const NET_MOB_KINDS = ['pig', 'cow', 'sheep', 'chicken', 'zombie', 'creeper', 'skeleton', 'spider'] as const;
@@ -25,6 +26,28 @@ export interface PlayerRecord {
 export interface RemotePlayerInfo {
   id: number;
   name: string;
+  /** Arcade game types only. */
+  team?: Team;
+}
+
+/** One row of the scoreboard (arcade game types). */
+export interface RosterEntry {
+  id: number;
+  name: string;
+  team: Team | '';
+  kills: number;
+  deaths: number;
+  /** Round-trip time in ms as measured by the server, 0 if unknown. */
+  ping: number;
+}
+
+export type MatchPhase = 'warmup' | 'live' | 'ended';
+
+/** Settings the server announces for an arcade game. */
+export interface MatchInfo {
+  type: GameType;
+  scoreLimit: number;
+  timeLimitSec: number;
 }
 
 /** Snapshot entry: [id, x, y, z, yaw, pitch, flags, heldItem]. flags: 1 sprinting, 2 flying, 4 on ground. */
@@ -55,6 +78,14 @@ export type ClientMessage =
   | { t: 'ignite'; x: number; y: number; z: number }
   /** Pick up a dropped item entity. */
   | { t: 'take'; id: number }
+  /** Arcade: choose the primary weapon for the next life (rifle, smg, shotgun, sniper). */
+  | { t: 'loadout'; primary: string }
+  /** Arcade: fire the weapon in a slot. Origin is the client's eye, dir the aim; the server re-checks both. */
+  | { t: 'fire'; slot: 0 | 1 | 2; ox: number; oy: number; oz: number; dx: number; dy: number; dz: number; ads: boolean }
+  /** Arcade: start reloading the weapon in a slot. */
+  | { t: 'reload'; slot: 0 | 1 | 2 }
+  /** Arcade: switch weapon slot (so everyone sees what you hold). */
+  | { t: 'weapon'; slot: 0 | 1 | 2 }
   /** Drop an item into the world (block drops, Q, death); yaw = throw direction. */
   | { t: 'drop'; id: number; count: number; damage?: number; x: number; y: number; z: number; yaw?: number; delay?: number };
 
@@ -63,6 +94,12 @@ export type ClientMessage =
 export type ServerMessage =
   | {
     t: 'welcome'; id: number; worldName: string; seed: number; gameMode: GameMode; time: number;
+    /** Game type of this game; "minecraft" unless it is an arcade game. */
+    gameType: GameType;
+    /** "terrain" = generated landscape, "arena" = the fixed arcade map. */
+    worldType: 'terrain' | 'arena';
+    /** Arcade games: match settings. */
+    match?: MatchInfo;
     spawn: { x: number; y: number; z: number };
     /** Flat list of edits: x, y, z, id, x, y, z, id, … */
     edits: number[];
@@ -86,6 +123,29 @@ export type ServerMessage =
   /** An explosion: destroyed blocks as x, y, z triples; the client plays effects and takes its own damage. */
   | { t: 'boom'; x: number; y: number; z: number; power: number; by: string; water: boolean; blocks: number[] }
   | { t: 'msound'; kind: string; event: 'idle' | 'hurt' | 'death' | 'fuse' | 'arrow'; x: number; y: number; z: number }
+  // ---- arcade game types ----
+  /** Match state, about once a second and on every change. `scores` is team kills (tdm) or empty (ffa). */
+  | { t: 'match'; phase: MatchPhase; timeLeft: number; scores: { red: number; blue: number }; info: MatchInfo }
+  /** Who is on which team plus kills/deaths; sent on joins, leaves, kills and every few seconds. */
+  | { t: 'roster'; players: RosterEntry[] }
+  /** You (re)spawn: position, facing, team, loadout and full health. */
+  | { t: 'spawn'; x: number; y: number; z: number; yaw: number; team: Team | ''; primary: string; health: number }
+  /** Your health changed (damage, regeneration). */
+  | { t: 'hp'; health: number }
+  /** Your ammo is authoritative: magazine, spare bullets are unlimited, reloading flag per slot. */
+  | { t: 'ammo'; slot: 0 | 1 | 2; mag: number; reloading: boolean }
+  /** Someone fired: draw tracer and play sound. `end` is where the bullet stopped. */
+  | { t: 'shot'; id: number; weapon: string; ox: number; oy: number; oz: number; ex: number; ey: number; ez: number }
+  /** Your shot hit a player: hit marker, damage dealt, headshot, and whether it killed. */
+  | { t: 'hit'; victim: number; damage: number; head: boolean; killed: boolean }
+  /** You took damage from `from` at direction (dx, dz) relative to the world. */
+  | { t: 'damaged'; from: number; damage: number; dx: number; dz: number }
+  /** Kill feed entry (also tells everyone a player is down until the next spawn). */
+  | { t: 'kill'; killer: number; victim: number; weapon: string; head: boolean }
+  /** The match ended; a new one starts after `restartIn` seconds. winner: team, a player id or 0 for a draw. */
+  | { t: 'matchend'; winnerTeam: Team | ''; winnerId: number; restartIn: number }
+  /** A weapon slot a remote player holds (third-person model). */
+  | { t: 'holds'; id: number; weapon: string }
   /** The requested item entity is yours. */
   | { t: 'taken'; id: number; itemId: number; count: number; damage?: number };
 
