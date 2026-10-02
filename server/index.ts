@@ -17,7 +17,7 @@ import { extname, join, normalize, resolve, sep } from 'node:path';
 import { type WebSocket, WebSocketServer } from 'ws';
 import { GameServer, parseGameMode } from './GameServer';
 import { RateLimiter, Rooms } from './Rooms';
-import { SECURITY_HEADERS } from './security';
+import { SECURITY_HEADERS, clientAddress } from './security';
 
 const PORT = Number(process.env.PORT ?? 3000);
 const ROOT = resolve(process.env.STATIC_DIR ?? 'dist');
@@ -71,12 +71,7 @@ setInterval(() => { createLimit.prune(); lookupLimit.prune(); }, 600_000).unref(
 
 /** Client address; X-Forwarded-For only when a trusted reverse proxy sets it. */
 function clientIp(req: IncomingMessage): string {
-  if (TRUST_PROXY) {
-    const fwd = req.headers['x-forwarded-for'];
-    const first = (Array.isArray(fwd) ? fwd[0] : fwd)?.split(',')[0]?.trim();
-    if (first) return first;
-  }
-  return req.socket.remoteAddress ?? 'unknown';
+  return clientAddress(req.headers['x-forwarded-for'], req.socket.remoteAddress, TRUST_PROXY);
 }
 
 function json(res: ServerResponse, status: number, body: unknown): void {
@@ -196,7 +191,12 @@ http.on('upgrade', (req, socket, head) => {
     target = main;
   } else {
     const m = /^\/ws\/([^/]+)$/.exec(path);
-    if (m && rooms && lookupLimit.take(clientIp(req))) target = rooms.get(m[1])?.server ?? null;
+    try {
+      if (m && rooms && lookupLimit.take(clientIp(req))) target = rooms.get(m[1])?.server ?? null;
+    } catch (err) {
+      // A room whose world file cannot be loaded must not take the whole server down.
+      console.error('[room] load failed:', err instanceof Error ? err.message : err);
+    }
   }
   if (!target) {
     socket.write('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n');

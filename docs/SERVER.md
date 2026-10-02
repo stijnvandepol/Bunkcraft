@@ -101,6 +101,8 @@ server {
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_set_header Host $host;
+        # Overschrijf X-Forwarded-For (geen $proxy_add_x_forwarded_for): clients kunnen dat anders zelf kiezen.
+        proxy_set_header X-Forwarded-For $remote_addr;
         proxy_read_timeout 1h;
     }
 }
@@ -226,6 +228,8 @@ Duurt zo'n 25 seconden. Hulpscripts voor kaarten: `scripts/ascii-map.ts` (bovena
 Playwright en de dev-preview).
 
 ## Bekende beperkingen
+
+Beveiliging (dreigingsmodel, bevindingen, hardening-checklist voor een domein): zie [SECURITY.md](SECURITY.md).
 
 - **Geen PvP in Minecraft-games:** pijlen en explosies raken wel mobs en de speler die in de buurt is. PvP bestaat alleen in de arcade-speltypes.
 - **Arcade-games vertrouwen de positie van de client** (alleen snelheid en arena-grenzen worden gecontroleerd): er is geen botsingscontrole tegen de blokken en geen server-side beweging.

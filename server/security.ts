@@ -34,3 +34,17 @@ export const SECURITY_HEADERS: Readonly<Record<string, string>> = {
   'cross-origin-opener-policy': 'same-origin',
   'cross-origin-resource-policy': 'same-origin',
 };
+
+/**
+ * The address used for rate limits. X-Forwarded-For is only read behind a trusted proxy (TRUST_PROXY=1), and then
+ * its LAST entry: that is the one the proxy appended itself. Earlier entries are whatever the client sent, so a
+ * proxy that appends (nginx's $proxy_add_x_forwarded_for) would otherwise let anyone pick their own address.
+ */
+export function clientAddress(forwarded: string | string[] | undefined, remote: string | undefined, trustProxy: boolean): string {
+  if (trustProxy) {
+    const header = Array.isArray(forwarded) ? forwarded.join(',') : forwarded;
+    const last = header?.split(',').pop()?.trim();
+    if (last) return last;
+  }
+  return remote ?? 'unknown';
+}
