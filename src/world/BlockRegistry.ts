@@ -1,3 +1,4 @@
+import type { BlockSound } from '../core/audio/profiles';
 import { TINT_BIRCH, TINT_FOLIAGE, TINT_GRASS, TINT_NONE, TINT_SPRUCE } from './BiomeColors';
 
 /**
@@ -13,7 +14,8 @@ import { TINT_BIRCH, TINT_FOLIAGE, TINT_GRASS, TINT_NONE, TINT_SPRUCE } from './
  * block's state byte and are collectively the "partial" blocks (not a full cube, but they collide).
  */
 export type RenderShape = 'none' | 'cube' | 'cross' | 'liquid' | 'model' | 'slab' | 'stairs' | 'door';
-export type BlockSound = 'stone' | 'wood' | 'grass' | 'gravel' | 'sand' | 'glass' | 'wool' | 'snow';
+/** Sound type of a block; the available types (and their synthesis) live in `core/audio/profiles.ts`. */
+export type { BlockSound };
 
 export interface BlockTextures {
   all?: string;
@@ -180,7 +182,7 @@ export const BLOCK_DEFS: BlockDef[] = [
   { id: B.AIR, name: 'air', displayName: 'Air', shape: 'none', solid: false, transparent: true, hardness: 0, sound: 'stone', textures: {} },
   cube(B.STONE, 'stone', 'Stone', { all: 'stone' }, 1.0, 'stone'),
   cube(B.GRASS, 'grass_block', 'Grass Block', { top: 'grass_top', side: 'grass_side', bottom: 'dirt' }, 0.45, 'grass', { tint: TINT_GRASS }),
-  cube(B.DIRT, 'dirt', 'Dirt', { all: 'dirt' }, 0.4, 'gravel'),
+  cube(B.DIRT, 'dirt', 'Dirt', { all: 'dirt' }, 0.4, 'dirt'),
   cube(B.COBBLESTONE, 'cobblestone', 'Cobblestone', { all: 'cobblestone' }, 1.2, 'stone'),
   cube(B.OAK_PLANKS, 'oak_planks', 'Oak Planks', { all: 'oak_planks' }, 0.8, 'wood'),
   cube(B.BEDROCK, 'bedrock', 'Bedrock', { all: 'bedrock' }, -1, 'stone', { inInventory: false }),
@@ -212,7 +214,7 @@ export const BLOCK_DEFS: BlockDef[] = [
   cube(B.SANDSTONE, 'sandstone', 'Sandstone', { top: 'sandstone_top', bottom: 'sandstone_bottom', side: 'sandstone_side' }, 0.8, 'stone'),
   cube(B.STONE_BRICKS, 'stone_bricks', 'Stone Bricks', { all: 'stone_bricks' }, 1.3, 'stone'),
   cube(B.WHITE_WOOL, 'white_wool', 'White Wool', { all: 'white_wool' }, 0.4, 'wool'),
-  cube(B.CLAY, 'clay', 'Clay', { all: 'clay' }, 0.45, 'gravel'),
+  cube(B.CLAY, 'clay', 'Clay', { all: 'clay' }, 0.45, 'dirt'),
   cube(B.OBSIDIAN, 'obsidian', 'Obsidian', { all: 'obsidian' }, 3.0, 'stone'),
   cube(B.BOOKSHELF, 'bookshelf', 'Bookshelf', { top: 'oak_planks', bottom: 'oak_planks', side: 'bookshelf' }, 0.8, 'wood'),
   cube(B.MOSSY_COBBLESTONE, 'mossy_cobblestone', 'Mossy Cobblestone', { all: 'mossy_cobblestone' }, 1.2, 'stone'),

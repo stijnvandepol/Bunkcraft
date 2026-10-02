@@ -104,7 +104,10 @@ function soundScreen(store: SettingsStore, nav: OptionsNav): HTMLDivElement {
     h('div', { class: 'grid2' },
       h('div', { class: 'wide' }, slider(0, 100, 1, s.masterVolume, vol('Master Volume'), (v) => store.set('masterVolume', v))),
       slider(0, 100, 1, s.musicVolume, vol('Music'), (v) => store.set('musicVolume', v)),
-      slider(0, 100, 1, s.soundVolume, vol('Blocks'), (v) => store.set('soundVolume', v)),
+      slider(0, 100, 1, s.soundVolume, vol('Blocks & Actions'), (v) => store.set('soundVolume', v)),
+      slider(0, 100, 1, s.ambientVolume, vol('Ambient'), (v) => store.set('ambientVolume', v)),
+      slider(0, 100, 1, s.uiVolume, vol('Interface'), (v) => store.set('uiVolume', v)),
+      cycleButton<'stereo' | 'hrtf'>('3D Sound', ['stereo', 'hrtf'], { stereo: 'Stereo', hrtf: 'Headphones (HRTF)' }, s.spatialAudio, (v) => store.set('spatialAudio', v)),
     ),
   ], [button('Done', () => nav.pop())], { list: true });
 }

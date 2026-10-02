@@ -1,4 +1,8 @@
 import * as THREE from 'three';
+import { MobSteps } from './audio/mobSteps';
+import { PlayerSounds, surfaceLookup } from './audio/playerSounds';
+import { WorldAudioProbe } from './audio/worldProbe';
+import { bindUiSounds } from '../ui/uiSound';
 import { EntityManager } from '../entities/EntityManager';
 import { ItemRenderer } from '../entities/ItemRenderer';
 import { TntRenderer } from '../entities/TntRenderer';
@@ -85,6 +89,9 @@ export class Game {
   private readonly input: Input;
   private readonly cam = new CameraController();
   private readonly audio = new AudioEngine();
+  private playerSounds!: PlayerSounds;
+  private mobSteps!: MobSteps;
+  private audioProbe!: WorldAudioProbe;
   private readonly save = new SaveSystem();
   private readonly pool: WorkerPool;
   private readonly cycle = new DayCycle();
@@ -226,6 +233,7 @@ export class Game {
 
     this.inventory.onClose = () => void this.resumeGame();
     this.stats.onHurt = () => this.audio.playHurt();
+    this.initAudioHooks();
     this.input.onKeyDown = (code) => this.onKey(code);
     this.input.onLockChange = (locked) => this.onLockChange(locked);
     this.settings.onChange((_, key) => this.applySettings(key));
@@ -257,8 +265,7 @@ export class Game {
     });
     window.addEventListener('pagehide', () => void this.saveGame());
     // Audio needs a user gesture before it may start.
-    window.addEventListener('pointerdown', () => this.audio.unlock());
-    window.addEventListener('keydown', () => this.audio.unlock());
+    this.audio.installGestureUnlock();
 
     const gl = this.renderer.three.getContext();
     const info = gl.getExtension('WEBGL_debug_renderer_info');
@@ -366,7 +373,9 @@ export class Game {
       this.input.setBindings(resolveKeybinds(s.keybinds));
       this.arcade?.setBindings(this.input);
     }
-    this.audio.setVolumes((s.soundVolume * s.masterVolume) / 100, (s.musicVolume * s.masterVolume) / 100);
+    const master = s.masterVolume / 100;
+    this.audio.setVolumes(s.soundVolume * master, s.musicVolume * master, s.ambientVolume * master, s.uiVolume * master);
+    this.audio.setSpatialMode(s.spatialAudio);
     applyGuiScale(s.guiScale);
     if (this.world) {
       this.world.chunks.renderDistance = this.state === 'menu' ? Math.min(s.renderDistance, 6) : s.renderDistance;
@@ -380,6 +389,25 @@ export class Game {
   }
 
   /** Menu backdrop blur only when the GPU has headroom (Fancy, full dynamic resolution). */
+  /** Movement sounds, mob footsteps, ambience probe, occlusion and interface sounds. */
+  private initAudioHooks(): void {
+    const solid = (x: number, y: number, z: number): boolean => {
+      const id = this.getBlock(x, y, z);
+      return id !== BLOCK.UNLOADED && SOLID[id] === 1;
+    };
+    const surface = surfaceLookup(this.getBlock);
+    this.playerSounds = new PlayerSounds(this.audio, surface);
+    this.mobSteps = new MobSteps(this.audio, surface);
+    this.audioProbe = new WorldAudioProbe({
+      getBlock: this.getBlock,
+      getMeta: this.getMeta,
+      getLight: (x, y, z) => (this.world ? this.world.getLight(x, y, z) : 0xf0),
+      biomeAt: (x, z) => (this.world ? this.world.biomeName(x, z) : 2),
+    }, solid, { water: BLOCK.WATER, lava: BLOCK.LAVA });
+    this.audio.setOcclusionProbe(this.audioProbe.occlusion);
+    bindUiSounds(this.root, (name) => this.audio.playUi(name));
+  }
+
   private updateMenuBlur(): void {
     const weak = this.settings.values.graphics === 'fast' || this.dynamicResolution.scale < 1;
     document.body.classList.toggle('no-blur', weak);
@@ -786,8 +814,8 @@ export class Game {
       case 'msound': {
         const p = this.player;
         const volume = Math.max(0, 1 - Math.hypot(msg.x - p.x, msg.y - p.y, msg.z - p.z) / 16);
-        if (msg.event === 'arrow') this.audio.playArrowHit(volume);
-        else this.audio.playMob(msg.kind, msg.event, volume);
+        if (msg.event === 'arrow') this.audio.playArrowHit(volume, msg);
+        else this.audio.playMob(msg.kind, msg.event, volume, msg);
         break;
       }
       case 'taken': {
@@ -813,7 +841,10 @@ export class Game {
         if (this.arcade) this.arcade.removePlayer(msg.id);
         else this.remote.remove(msg.id);
         break;
-      case 'chat': this.chat.add(msg.system ? msg.text : '<' + msg.from + '> ' + msg.text, msg.system); break;
+      case 'chat':
+        this.chat.add(msg.system ? msg.text : '<' + msg.from + '> ' + msg.text, msg.system);
+        if (!msg.system) this.audio.playUi('chat');
+        break;
       case 'time': this.cycle.time = msg.time; break;
       case 'teleport': this.player.setPosition(msg.x, msg.y, msg.z); break;
       default: this.arcade?.handle(msg, performance.now() / 1000); break;
@@ -1122,6 +1153,8 @@ export class Game {
     }
     if (this.wantThumbnail) this.captureThumbnail();
     this.world?.chunks.afterRender();
+    this.audio.setMusicMode(this.state === 'menu' || this.state === 'loading' ? 'menu' : this.arcade ? 'arcade' : 'game');
+    this.audio.setMusicIntensity(this.arcade?.phase === 'live' ? 1 : 0);
     this.audio.update(dt);
     if (this.debug.tick(dt, performance.now() - cpuStart)) this.updateDebug();
     this.input.endFrame();
@@ -1231,7 +1264,7 @@ export class Game {
     tntExplode: (t) => this.explode(null, t.x, t.y + 0.49, t.z, 4, t.inWater),
     sound: (mob, kind) => {
       const d = Math.hypot(mob.x - this.player.x, mob.y - this.player.y, mob.z - this.player.z);
-      this.audio.playMob(mob.type.kind, kind, Math.max(0, 1 - d / 16));
+      this.audio.playMob(mob.type.kind, kind, Math.max(0, 1 - d / 16), mob);
     },
   };
 
@@ -1272,7 +1305,7 @@ export class Game {
     }
     const p = this.player;
     const d = Math.hypot(p.x - x, p.y + 0.9 - y, p.z - z);
-    this.audio.playExplosion(Math.max(0.2, 1 - d / 40));
+    this.audio.playExplosion(1, { x, y, z });
     const reach = power * 2;
     if (d < reach) {
       const impact = 1 - d / reach;
@@ -1342,6 +1375,7 @@ export class Game {
       alive && this.mode !== 'spectator' ? this.pickupItem : null,
       this.cycle.dayFactor > 0.6,
     );
+    if (this.entities) this.mobSteps.update(this.entities.mobs, p.x, p.z);
     if (stats.dead && (this.state === 'playing' || this.state === 'inventory' || this.state === 'chat' || this.state === 'paused')) this.onDeath();
   }
 
@@ -1402,14 +1436,11 @@ export class Game {
     } else this.cam.hurt = Math.max(0, (this.stats.hurtTime - this.accumulator / PHYSICS.STEP / STEPS_PER_TICK) / 10);
     this.cam.bowPull = this.interaction?.bowPull ?? 0;
     this.cam.update(p, this.accumulator / PHYSICS.STEP, dt);
-    if (this.cam.stepped && !p.inWater && !p.noclip) {
-      const below = world.getBlock(Math.floor(p.x), Math.floor(p.y - 0.1), Math.floor(p.z));
-      const def = getBlockDef(below);
-      if (def && SOLID[below]) this.audio.play('step', def.sound);
-    }
-
     const eye = this.cam.camera.position;
     this.underwater = pointInLiquid(this.getBlock, this.getMeta, BLOCK.WATER, eye.x, eye.y, eye.z);
+    this.playerSounds.update(p);
+    this.audio.setListener(eye.x, eye.y, eye.z, p.yaw);
+    this.audioProbe.update(dt, this.audio.env, eye.x, eye.y, eye.z, this.cycle.dayFactor, this.underwater);
     this.hud.setUnderwater(this.underwater);
     this.hud.setHurt(this.arcade ? this.arcade.hurt * 0.8 : this.stats.hurtTime / 10);
     if (!this.arcade) this.hud.survival.update({ health: this.stats.health, hunger: this.stats.hunger, air: this.stats.air, maxAir: MAX_AIR }, this.time);
@@ -1480,6 +1511,7 @@ export class Game {
       `Facing: ${facing} (${yawDeg.toFixed(1)} / ${((-p.pitch * 180) / Math.PI).toFixed(1)})`,
       `Biome: ${BIOME_NAMES[world.biomeName(bx, bz)]}`,
       `Light: ${light >> 4} sky, ${light & 15} block`,
+      `${this.audio.debugLine()} · enclosure ${this.audio.env.enclosure.toFixed(2)}`,
       `Time: ${this.cycle.clock()} · Render distance: ${world.chunks.renderDistance} chunks`,
       `${GAME_MODE_NAMES[this.mode]} · ${p.flying ? 'Flying' : p.onGround ? 'On ground' : 'Airborne'}${p.sprinting ? ' · Sprinting' : ''}${p.inWater ? ' · In water' : ''}`,
       `Health ${this.stats.health} · Food ${this.stats.hunger} (sat ${this.stats.saturation.toFixed(1)}) · Air ${this.stats.air}`,
