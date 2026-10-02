@@ -51,6 +51,15 @@ export class ChunkManager {
   private readonly meshPool: THREE.Mesh[] = [];
   /** Meshes uploaded this frame; frustum culling is skipped once to force the GPU upload. */
   private readonly fresh: THREE.Mesh[] = [];
+  /** Chunks that own at least one mesh (flat array: no iterator garbage in the per-frame cull). */
+  private readonly drawList: Chunk[] = [];
+  private readonly planes = new Float64Array(24);
+  private readonly cullKey = new Float64Array(20).fill(NaN);
+  private readonly projView = new THREE.Matrix4();
+  private readonly cullFrustum = new THREE.Frustum();
+  private cullDirty = true;
+  /** Meshes hidden from the main camera by the CPU cull (drawn only in the shadow pass). */
+  culledChunks = 0;
   private disposed = false;
   private scanNeeded = true;
   /** Incremented whenever chunk geometry changes (used to invalidate the cached shadow map). */
@@ -68,8 +77,12 @@ export class ChunkManager {
     private readonly materials: ChunkMaterials,
     private readonly worldType: WorldType = 'terrain',
   ) {
+    // The groups never move and chunk meshes have their matrixWorld set once: keep the per-frame
+    // updateMatrixWorld traversal out of ~1000 children.
     this.opaqueGroup.matrixAutoUpdate = false;
     this.waterGroup.matrixAutoUpdate = false;
+    this.opaqueGroup.matrixWorldAutoUpdate = false;
+    this.waterGroup.matrixWorldAutoUpdate = false;
   }
 
   get(cx: number, cz: number): Chunk | undefined {
@@ -224,8 +237,10 @@ export class ChunkManager {
 
   /** Call after rendering: re-enable frustum culling for meshes force-drawn this frame. */
   afterRender(): void {
+    if (this.fresh.length === 0) return;
     for (const m of this.fresh) m.frustumCulled = true;
     this.fresh.length = 0;
+    this.cullDirty = true; // their layer mask was forced visible: re-evaluate next frame
   }
 
   private uploadMesh(chunk: Chunk, version: number, result: MeshResult): void {
@@ -240,6 +255,7 @@ export class ChunkManager {
     // Only chunks inside the shadow map's reach (≤ 128 blocks) invalidate the cached shadows.
     if (Math.abs(chunk.cx - this.centerX) <= 9 && Math.abs(chunk.cz - this.centerZ) <= 9) this.geometryVersion++;
     chunk.water = this.setGeometry(chunk, chunk.water, result.water, this.materials.water, this.waterGroup);
+    this.updateExtent(chunk);
     if (chunk.version !== version) this.scanNeeded = true;
   }
 
@@ -289,9 +305,92 @@ export class ChunkManager {
       group.add(mesh);
     }
     mesh.geometry = geo;
+    mesh.layers.mask = 3;
     mesh.frustumCulled = false;
     this.fresh.push(mesh);
     return mesh;
+  }
+
+  private updateExtent(c: Chunk): void {
+    let lo = Infinity, hi = -Infinity;
+    for (const m of [c.opaque, c.cutout, c.water]) {
+      if (!m) continue;
+      const b = m.geometry.boundingBox!;
+      if (b.min.y < lo) lo = b.min.y;
+      if (b.max.y > hi) hi = b.max.y;
+    }
+    if (hi < lo) {
+      this.removeFromDrawList(c);
+    } else {
+      c.minY = lo;
+      c.maxY = hi;
+      if (c.drawSlot < 0) {
+        c.drawSlot = this.drawList.length;
+        this.drawList.push(c);
+      }
+    }
+    this.cullDirty = true;
+  }
+
+  private removeFromDrawList(c: Chunk): void {
+    const i = c.drawSlot;
+    if (i < 0) return;
+    const last = this.drawList.pop()!;
+    if (last !== c) {
+      this.drawList[i] = last;
+      last.drawSlot = i;
+    }
+    c.drawSlot = -1;
+    this.cullDirty = true;
+  }
+
+  /**
+   * CPU visibility pass before the main render: one box test per chunk column instead of one
+   * bounding-sphere test per mesh inside three.js' scene traversal (opaque, cutout and water are up
+   * to three objects per chunk). Hidden meshes only lose layer 0, so the shadow camera (all
+   * layers) still draws shadow casters behind the player. Columns beyond `farDist` are fully
+   * fogged and skipped as well. Skipped entirely while the camera and the chunk set are unchanged.
+   */
+  cull(camera: THREE.PerspectiveCamera, farDist: number): void {
+    camera.updateMatrixWorld();
+    this.projView.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    const e = this.projView.elements, key = this.cullKey;
+    let same = !this.cullDirty && key[16] === farDist;
+    for (let i = 0; same && i < 16; i++) if (key[i] !== e[i]) same = false;
+    if (same) return;
+    for (let i = 0; i < 16; i++) key[i] = e[i];
+    key[16] = farDist;
+    this.cullDirty = false;
+
+    const fr = this.cullFrustum.setFromProjectionMatrix(this.projView);
+    const pl = this.planes;
+    for (let i = 0; i < 6; i++) {
+      const p = fr.planes[i];
+      pl[i * 4] = p.normal.x; pl[i * 4 + 1] = p.normal.y; pl[i * 4 + 2] = p.normal.z; pl[i * 4 + 3] = p.constant;
+    }
+    const cx = camera.position.x, cz = camera.position.z;
+    const far2 = farDist * farDist;
+    const list = this.drawList;
+    let culled = 0;
+    for (let n = 0; n < list.length; n++) {
+      const c = list[n];
+      const x0 = c.cx * CHUNK_SIZE, z0 = c.cz * CHUNK_SIZE, x1 = x0 + CHUNK_SIZE, z1 = z0 + CHUNK_SIZE;
+      const dx = Math.max(x0 - cx, 0, cx - x1), dz = Math.max(z0 - cz, 0, cz - z1);
+      let visible = dx * dx + dz * dz < far2;
+      for (let i = 0; visible && i < 6; i++) {
+        const nx = pl[i * 4], ny = pl[i * 4 + 1], nz = pl[i * 4 + 2];
+        // Corner of the box furthest along the plane normal: if even that is behind, the box is out.
+        if (nx * (nx > 0 ? x1 : x0) + ny * (ny > 0 ? c.maxY : c.minY) + nz * (nz > 0 ? z1 : z0) + pl[i * 4 + 3] < 0) visible = false;
+      }
+      if (!visible) culled++;
+      const mask = visible ? 3 : 2;
+      if (c.opaque) c.opaque.layers.mask = mask;
+      if (c.cutout) c.cutout.layers.mask = mask;
+      if (c.water) c.water.layers.mask = mask;
+    }
+    this.culledChunks = culled;
+    // Fresh meshes are force-drawn once so the GPU upload happens now.
+    for (let i = 0; i < this.fresh.length; i++) this.fresh[i].layers.mask = 3;
   }
 
   private releaseMesh(mesh: THREE.Mesh): void {
@@ -320,6 +419,7 @@ export class ChunkManager {
       }
     }
     c.opaque = c.cutout = c.water = null;
+    this.removeFromDrawList(c);
     c.blocks = null;
     c.meta = null;
     c.biomes = null;
@@ -372,6 +472,7 @@ export class ChunkManager {
     this.disposed = true;
     for (const c of this.chunks.values()) this.disposeChunk(c);
     this.chunks.clear();
+    this.drawList.length = 0;
     this.epoch++;
     this.results.length = 0;
     this.opaqueGroup.removeFromParent();

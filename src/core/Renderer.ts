@@ -168,6 +168,7 @@ export class Renderer {
     this.stats.shadowCalls = this.three.info.render.calls;
 
     // 2. Main pass.
+    this.world?.chunks.cull(camera, underwater ? Infinity : fogFar);
     this.three.render(this.scene, camera);
     this.afterMain?.(this.three);
     this.stats.drawCalls = this.three.info.render.calls - this.stats.shadowCalls;

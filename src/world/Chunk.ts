@@ -26,6 +26,10 @@ export class Chunk {
   opaque: THREE.Mesh | null = null;
   cutout: THREE.Mesh | null = null;
   water: THREE.Mesh | null = null;
+  /** Vertical extent of the meshes (culling box), and position in ChunkManager's draw list (-1 = not in it). */
+  minY = 0;
+  maxY = 0;
+  drawSlot = -1;
 
   constructor(readonly cx: number, readonly cz: number, readonly key: number) {}
 
