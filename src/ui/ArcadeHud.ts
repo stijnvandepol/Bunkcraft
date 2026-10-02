@@ -1,6 +1,7 @@
 import { TEAM_COLORS, type Team } from '../modes/GameTypes';
 import { type KillFeedEntry, damageAngle, formatClock, kdRatio, sortRoster } from '../modes/ArcadeLogic';
-import { PLAYER_MAX_HEALTH, PRIMARY_WEAPONS, type WeaponDef, weaponDef } from '../modes/Weapons';
+import { LOADOUT_PRESETS, presetFor } from '../modes/Loadouts';
+import { DEFAULT_SECONDARY, PLAYER_MAX_HEALTH, PRIMARY_WEAPONS, type WeaponDef, weaponDef } from '../modes/Weapons';
 import type { MatchPhase, RosterEntry } from '../net/protocol';
 import { h } from './dom';
 
@@ -80,6 +81,7 @@ export class ArcadeHud {
   private readonly endBoard: HTMLDivElement;
   private readonly endCount: HTMLDivElement;
   private readonly loadoutCards = new Map<string, HTMLDivElement>();
+  private readonly presetCards = new Map<string, HTMLDivElement>();
   private readonly loadoutNote: HTMLDivElement;
 
   private lastHealth = -1;
@@ -97,7 +99,8 @@ export class ArcadeHud {
   private lastEndCount = -1;
 
   /** Called when a primary weapon is chosen in the loadout menu. */
-  onLoadout: ((primary: string) => void) | null = null;
+  /** A primary card (primary only) or a class preset (primary and secondary) was clicked. */
+  onLoadout: ((primary: string, secondary?: string) => void) | null = null;
   onLoadoutClose: (() => void) | null = null;
 
   constructor() {
@@ -186,9 +189,23 @@ export class ArcadeHud {
       this.loadoutCards.set(id, card);
       cards.append(card);
     }
+    const presets = h('div', { class: 'arc-loadout-cards presets' });
+    for (const pr of LOADOUT_PRESETS) {
+      const card = h('div', { class: 'arc-card preset' },
+        h('div', { class: 'arc-card-name', text: pr.name }),
+        h('div', { class: 'arc-card-desc', text: `${weaponDef(pr.primary)!.name} + ${weaponDef(pr.secondary)!.name}` }),
+        h('div', { class: 'arc-card-desc', text: pr.description }),
+      );
+      card.addEventListener('click', () => this.onLoadout?.(pr.primary, pr.secondary));
+      this.presetCards.set(pr.id, card);
+      presets.append(card);
+    }
     this.loadoutEl = h('div', { class: 'arc-loadout hidden' },
       h('div', { class: 'arc-loadout-panel' },
         h('div', { class: 'arc-loadout-title', text: 'Loadout' }),
+        h('div', { class: 'arc-card-desc', text: 'Classes' }),
+        presets,
+        h('div', { class: 'arc-card-desc', text: 'Primary weapon' }),
         cards,
         this.loadoutNote,
         h('button', { class: 'mc-btn w150', text: 'Done', onclick: () => this.onLoadoutClose?.() }),
@@ -389,15 +406,17 @@ export class ArcadeHud {
   }
 
   /** Respawn countdown in whole seconds; also lists the loadout choices. */
-  setRespawn(seconds: number, primary: string, pending: string): void {
+  setRespawn(seconds: number, primary: string, pending: string, secondary: string = DEFAULT_SECONDARY, pendingSecondary = ''): void {
     const n = Math.max(0, Math.ceil(seconds));
-    if (n === this.lastCount && pending === this.lastRespawnPending) return;
+    const key = `${pending}|${pendingSecondary}`;
+    if (n === this.lastCount && key === this.lastRespawnPending) return;
     this.lastCount = n;
-    this.lastRespawnPending = pending;
+    this.lastRespawnPending = key;
     this.deathCount.textContent = `Respawning in ${n}`;
-    this.deathLoadout.replaceChildren(h('div', { class: 'arc-death-hint', text: 'Next weapon (keys 1-4, or B for the loadout menu)' }),
-      h('div', { class: 'arc-death-weapons' }, ...PRIMARY_WEAPONS.map((id, i) =>
-        h('span', { class: id === (pending || primary) ? 'sel' : '', text: `${i + 1} ${weaponDef(id)!.name}` }))));
+    const cur = presetFor(pending || primary, pendingSecondary || secondary);
+    this.deathLoadout.replaceChildren(h('div', { class: 'arc-death-hint', text: `Next class (keys 1-${LOADOUT_PRESETS.length}, or B for the loadout menu)` }),
+      h('div', { class: 'arc-death-weapons' }, ...LOADOUT_PRESETS.map((pr, i) =>
+        h('span', { class: pr === cur ? 'sel' : '', text: `${i + 1} ${pr.name}` }))));
   }
 
   setMatchEnd(info: { title: string; color: string; roster: readonly RosterEntry[]; ctx: ScoreboardContext } | null): void {
@@ -416,14 +435,16 @@ export class ArcadeHud {
     this.endCount.textContent = `Next match in ${n}`;
   }
 
-  showLoadout(selected: string, nextLife: boolean): void {
+  showLoadout(selected: string, nextLife: boolean, secondary: string = DEFAULT_SECONDARY): void {
     this.loadoutEl.classList.remove('hidden');
-    this.markLoadout(selected);
+    this.markLoadout(selected, secondary);
     this.loadoutNote.textContent = nextLife ? 'Applies from your next life' : 'Applies when you respawn';
   }
 
-  markLoadout(selected: string): void {
+  markLoadout(selected: string, secondary: string = DEFAULT_SECONDARY): void {
     for (const [id, card] of this.loadoutCards) card.classList.toggle('selected', id === selected);
+    const cur = presetFor(selected, secondary);
+    for (const [id, card] of this.presetCards) card.classList.toggle('selected', id === cur?.id);
   }
 
   hideLoadout(): void {

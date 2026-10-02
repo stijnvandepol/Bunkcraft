@@ -52,13 +52,36 @@ export class FireControl {
     return true;
   }
 
+  private burstLeft = 0;
+  private burstStart = 0;
+
+  /**
+   * Burst weapons: one press fires `count` shots `interval` apart; the next burst may start
+   * `cycleSec` after the first shot. Returns true for every shot that goes out now.
+   */
+  tryBurst(now: number, interval: number, count: number, cycleSec: number, pressed: boolean): boolean {
+    if (now < this.nextAt) return false;
+    if (this.burstLeft > 0) {
+      this.burstLeft--;
+      this.nextAt = this.burstLeft > 0 ? now + interval : Math.max(now + interval, this.burstStart + cycleSec);
+      return true;
+    }
+    if (!pressed) return false;
+    this.burstStart = now;
+    this.burstLeft = count - 1;
+    this.nextAt = this.burstLeft > 0 ? now + interval : now + cycleSec;
+    return true;
+  }
+
   /** Block the trigger for a while (weapon switch, reload). */
   delay(now: number, seconds: number): void {
     this.nextAt = Math.max(this.nextAt, now + seconds);
+    this.burstLeft = 0;
   }
 
   reset(): void {
     this.nextAt = 0;
+    this.burstLeft = 0;
   }
 }
 

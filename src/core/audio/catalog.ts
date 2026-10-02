@@ -71,7 +71,7 @@ export function buildCatalog(): CatalogEntry[] {
   add('item.pickup', 0.3, (e) => e.playPop());
   add('player.eat', 0.3, (e) => e.playEat());
   add('player.burp', 0.5, (e) => e.playBurp());
-  for (const w of ['rifle', 'smg', 'shotgun', 'sniper', 'pistol', 'knife']) add(`weapon.${w}`, w === 'shotgun' ? 1.2 : 0.9, (e) => e.playGun(w, 1));
+  for (const w of ['rifle', 'smg', 'shotgun', 'sniper', 'dmr', 'burst', 'pistol', 'revolver', 'knife']) add(`weapon.${w}`, w === 'shotgun' || w === 'revolver' ? 1.2 : 0.9, (e) => e.playGun(w, 1));
   add('weapon.reload', 1.6, (e) => e.playReload(1.5));
   add('weapon.empty', 0.3, (e) => e.playEmpty());
   add('weapon.hitmarker', 0.4, (e) => e.playHitMarker(false));

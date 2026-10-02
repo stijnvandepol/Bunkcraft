@@ -628,7 +628,7 @@ export class AudioEngine {
   private gunRecipe(weapon: string, v: number): void {
     const p = 0.95 + Math.random() * 0.1;
     // Far shots: only the crack (one voice); the body and thump are inaudible at that range anyway.
-    if (this.synth.level < 0.5 && weapon !== 'sniper' && weapon !== 'shotgun') {
+    if (this.synth.level < 0.5 && weapon !== 'sniper' && weapon !== 'shotgun' && weapon !== 'revolver') {
       this.noiseBurst(weapon === 'pistol' ? 2400 : 2800 * p, 0.8, 0.06, v * 0.6);
       return;
     }
@@ -656,6 +656,21 @@ export class AudioEngine {
         this.noiseBurst(350, 0.4, 0.55, v * 0.9, 'lowpass');
         this.voice('sine', 80, 28, 0.45, v * 1.0);
         this.noiseBurst(600, 0.5, 0.4, v * 0.25, 'lowpass', 0.12);
+        break;
+      case 'dmr':
+        this.noiseBurst(2600 * p, 0.6, 0.1, v * 0.8);
+        this.noiseBurst(420, 0.5, 0.25, v * 0.7, 'lowpass');
+        this.voice('sine', 110 * p, 40, 0.2, v * 0.8);
+        break;
+      case 'burst':
+        this.noiseBurst(2800 * p, 0.7, 0.06, v * 0.6);
+        this.noiseBurst(600, 0.6, 0.08, v * 0.4, 'lowpass');
+        this.voice('sine', 160 * p, 60, 0.07, v * 0.5);
+        break;
+      case 'revolver':
+        this.noiseBurst(1800 * p, 0.6, 0.12, v * 0.9);
+        this.noiseBurst(380, 0.5, 0.3, v * 0.8, 'lowpass');
+        this.voice('sine', 95 * p, 36, 0.25, v * 0.9);
         break;
       case 'pistol':
         this.noiseBurst(2600 * p, 0.8, 0.06, v * 0.6);

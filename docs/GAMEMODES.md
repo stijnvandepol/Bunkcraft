@@ -95,14 +95,24 @@ Schade is uit 100 health.
 | Wapen | Slot | Schade | Headshot | Kogels | Schoten/min | Magazijn | Herladen | Spreiding heup / ADS | Volle schade tot / val-af tot | Zoom | Snelheid | Terugslag |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | Assault Rifle (automatisch) | primair | 20 | ×2 | 1 | 600 | 30 | 1.6 s | 2.2° / 0.4° | 40 / 90 m (min. 60%) | ×1.3 | ×1 | 0.9° |
-| SMG (automatisch) | primair | 13 | ×1.8 | 1 | 900 | 25 | 1.3 s | 3.4° / 1.2° | 22 / 60 m (min. 50%) | ×1.2 | ×1.06 | 0.6° |
-| Shotgun (semi) | primair | 9 | ×1.5 | 8 | 75 | 6 | 2.4 s | 5.5° / 4.2° | 10 / 28 m (min. 20%) | ×1.1 | ×0.97 | 4° |
+| SMG (automatisch) | primair | 15 | ×1.8 | 1 | 900 | 25 | 1.3 s | 2.6° / 1.2° | 16 / 50 m (min. 50%) | ×1.2 | ×1.08 | 0.6° |
+| Shotgun (semi) | primair | 13 | ×1.5 | 10 | 70 | 6 | 2.4 s | 4.5° / 3.5° | 6 / 20 m (min. 15%) | ×1.1 | ×0.97 | 4° |
 | Sniper Rifle (semi) | primair | 85 | ×1.6 | 1 | 45 | 4 | 2.2 s | 9° / 0° | 300 / 300 m (min. 100%) | ×4.0 | ×0.92 | 3° |
+| DMR (semi) | primair | 34 | ×2 | 1 | 270 | 12 | 2.0 s | 3.5° / 0.1° | 60 / 140 m (min. 70%) | ×1.8 | ×0.96 | 1.6° |
+| Burst Rifle (3 schoten per klik) | primair | 22 | ×1.6 | 1 | 900 binnen de burst, 0,38 s per cyclus | 30 | 1.7 s | 2.0° / 0.25° | 45 / 100 m (min. 60%) | ×1.25 | ×1 | 1.2° |
 | Pistol (semi) | secundair | 18 | ×2 | 1 | 400 | 12 | 1.1 s | 1.8° / 0.5° | 25 / 60 m (min. 50%) | ×1.1 | ×1.04 | 1.1° |
+| Revolver (semi) | secundair | 52 | ×2 | 1 | 150 | 6 | 2.4 s | 2.5° / 0.15° | 30 / 70 m (min. 60%) | ×1.2 | ×1 | 4.5° |
 | Knife (semi) | melee | 55 | ×1 | 1 | 120 | – | – | – | 2.6 / 2.6 m (min. 100%) | – | ×1.08 | 0° |
 
 De spreiding is de halve openingshoek van de kegel waarin een kogel kan landen. Je start elk leven met je gekozen
-primaire wapen, de pistol en het mes.
+primaire wapen, je secundaire wapen (standaard de pistol) en het mes.
+
+**Klassen (loadout-presets)** staan in `src/modes/Loadouts.ts` en kiezen primair en secundair in één klik
+(bericht `loadout { primary, secondary? }`; de server controleert de ids): Assault (rifle + pistol), Rusher (SMG + pistol),
+Breacher (shotgun + pistol), Marksman (DMR + revolver), Burst (burst rifle + pistol) en Sniper (sniper + pistol).
+In het loadout-menu (B) staan de klassen boven de losse primaire kaarten; op het doodscherm kies je met 1-6 een klas voor je
+volgende leven. Balans: `npx tsx scripts/ttk-matrix.ts --current` (SMG wint close-range van de rifle, de rifle op 30 m; de shotgun
+doodt in één schot tot ongeveer 4 m; de DMR wint van de rifle pas ver weg).
 
 ## Matchregels
 

@@ -16,39 +16,20 @@
  */
 import { PLAYER_MAX_HEALTH, WEAPONS, type WeaponDef, damageAt, fireInterval } from '../src/modes/Weapons';
 
-interface Burst { count: number; cycleSec: number; inBurstRpm: number }
-type W = WeaponDef & { burstSpec?: Burst; proposed?: boolean };
+type W = WeaponDef & { proposed?: boolean };
 
 const base = (id: string): WeaponDef => WEAPONS.find((w) => w.id === id)!;
 const mk = (id: string, name: string, over: Partial<W>): W => ({ ...base('rifle'), id, name, proposed: true, ...over });
 
-/** Proposed additions (numbers are starting points, see the balance section of ARCADE.md). */
+/** Still proposed (SMG v2, shotgun v2, DMR, burst rifle and revolver are real now, see Weapons.ts). */
 const PROPOSED: W[] = [
-  // Rebalanced versions of existing weapons (suffix 2).
-  mk('smg2', 'SMG v2', { ...base('smg'), damage: 15, spread: 2.6, range: 16, falloffEnd: 50, moveSpeed: 1.08 }),
-  mk('shotgun2', 'Shotgun v2', {
-    ...base('shotgun'), damage: 13, pellets: 10, rpm: 70, spread: 4.5, adsSpread: 3.5, range: 6, falloffEnd: 20, minDamage: 0.15, maxRange: 40,
-  }),
   mk('lmg', 'LMG', {
     slot: 'primary', auto: true, damage: 16, headshot: 1.8, rpm: 700, magazine: 60, reloadSec: 3.8, spread: 2.8, adsSpread: 1.0,
     range: 35, falloffEnd: 80, minDamage: 0.6, maxRange: 140, zoom: 0.85, moveSpeed: 0.9, recoil: 0.7,
   }),
-  mk('dmr', 'DMR', {
-    slot: 'primary', auto: false, damage: 34, headshot: 2, rpm: 270, magazine: 12, reloadSec: 2.0, spread: 3.5, adsSpread: 0.1,
-    range: 60, falloffEnd: 140, minDamage: 0.7, maxRange: 250, zoom: 0.5, moveSpeed: 0.96, recoil: 1.6,
-  }),
-  mk('burst', 'Burst Rifle', {
-    slot: 'primary', auto: false, damage: 22, headshot: 1.6, rpm: 900, magazine: 30, reloadSec: 1.7, spread: 2.0, adsSpread: 0.25,
-    range: 45, falloffEnd: 100, minDamage: 0.6, maxRange: 160, zoom: 0.75, moveSpeed: 1, recoil: 1.2,
-    burstSpec: { count: 3, cycleSec: 0.38, inBurstRpm: 900 },
-  }),
   mk('akimbo', 'Akimbo SMGs', {
     slot: 'primary', auto: true, damage: 10, headshot: 1.5, rpm: 1400, magazine: 40, reloadSec: 2.1, spread: 4.0, adsSpread: 3.2,
     range: 14, falloffEnd: 40, minDamage: 0.4, maxRange: 70, zoom: 1, moveSpeed: 1.08, recoil: 0.5,
-  }),
-  mk('revolver', 'Revolver', {
-    slot: 'primary', auto: false, damage: 52, headshot: 2, rpm: 150, magazine: 6, reloadSec: 2.4, spread: 2.5, adsSpread: 0.15,
-    range: 30, falloffEnd: 70, minDamage: 0.6, maxRange: 150, zoom: 0.85, moveSpeed: 1, recoil: 4.5,
   }),
   mk('machete', 'Machete', {
     slot: 'melee', auto: false, damage: 70, headshot: 1, rpm: 90, magazine: 0, reloadSec: 0, spread: 0, adsSpread: 0, range: 2.4,
@@ -65,9 +46,9 @@ const HIP_RANGE = 7; // up to this distance the model assumes hip fire (close-ra
 
 function shotTime(w: W, n: number): number {
   // Time of shot number n (1-based), first shot at 0.
-  if (!w.burstSpec) return (n - 1) * fireInterval(w);
+  if (!w.burst || !w.burstCycleSec) return (n - 1) * fireInterval(w);
   const k = n - 1;
-  return Math.floor(k / w.burstSpec.count) * w.burstSpec.cycleSec + (k % w.burstSpec.count) * (60 / w.burstSpec.inBurstRpm);
+  return Math.floor(k / w.burst) * w.burstCycleSec + (k % w.burst) * fireInterval(w);
 }
 
 function spreadHit(w: W, dist: number, ads: boolean): number {

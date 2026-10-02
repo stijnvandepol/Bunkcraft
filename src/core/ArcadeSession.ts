@@ -4,8 +4,9 @@ import {
   impactNormal, reloadProgress, spectateCandidates, spreadPixels,
 } from '../modes/ArcadeLogic';
 import { type Team, TEAM_COLORS, gameTypeDef } from '../modes/GameTypes';
+import { LOADOUT_PRESETS } from '../modes/Loadouts';
 import {
-  DEFAULT_PRIMARY, PLAYER_MAX_HEALTH, PRIMARY_WEAPONS, RESPAWN_SECONDS, type WeaponDef, fireInterval, weaponDef,
+  DEFAULT_PRIMARY, DEFAULT_SECONDARY, PLAYER_MAX_HEALTH, PRIMARY_WEAPONS, RESPAWN_SECONDS, SECONDARY_WEAPONS, type WeaponDef, fireInterval, weaponDef,
 } from '../modes/Weapons';
 import type { ClientMessage, MatchInfo, MatchPhase, RosterEntry, ServerMessage } from '../net/protocol';
 import type { RemotePlayers } from '../net/RemotePlayers';
@@ -101,9 +102,11 @@ export class ArcadeSession {
   team: Team | '' = '';
   private primary = DEFAULT_PRIMARY;
   private pendingPrimary = '';
+  private secondary = DEFAULT_SECONDARY;
+  private pendingSecondary = '';
   private slot: Slot = 0;
   private prevSlot: Slot = 1;
-  private readonly weaponIds: [string, string, string] = [DEFAULT_PRIMARY, 'pistol', 'knife'];
+  private readonly weaponIds: [string, string, string] = [DEFAULT_PRIMARY, DEFAULT_SECONDARY, 'knife'];
   private readonly ammo: AmmoState[] = [0, 1, 2].map(() => ({ mag: 0, reloading: false, since: 0 }));
   private pending = 0;
   private readonly trigger = new FireControl();
@@ -140,7 +143,7 @@ export class ArcadeSession {
     this.info = d.info;
     this.teams = gameTypeDef(d.info.type).teams;
     this.players.set(d.selfId, { name: d.selfName, team: '' });
-    this.hud.onLoadout = (id) => this.selectPrimary(id);
+    this.hud.onLoadout = (id, secondary) => this.selectLoadout(id, secondary);
     this.hud.setHealth(this.health);
     this.equipSlot(0, false);
     this.fillAmmo();
@@ -231,6 +234,7 @@ export class ArcadeSession {
       case 'kill': this.onKill(msg, now); break;
       case 'matchend': this.onMatchEnd(msg, now); break;
       case 'holds': this.d.remote.setWeapon(msg.id, msg.weapon); break;
+      case 'gear': this.onGear(msg); break;
       default: break;
     }
   }
@@ -290,7 +294,10 @@ export class ArcadeSession {
     this.hud.setDeath(null);
     this.primary = weaponDef(msg.primary) ? msg.primary : DEFAULT_PRIMARY;
     this.pendingPrimary = '';
+    this.pendingSecondary = '';
+    this.secondary = msg.secondary && weaponDef(msg.secondary) ? msg.secondary : DEFAULT_SECONDARY;
     this.weaponIds[0] = this.primary;
+    this.weaponIds[1] = this.secondary;
     this.health = msg.health;
     this.hud.setHealth(this.health);
     this.protect = SPAWN_PROTECTION;
@@ -306,6 +313,15 @@ export class ArcadeSession {
     }
     this.d.audio.playSpawn();
     this.lastNow = now;
+  }
+
+  /** The mode swapped our weapons while we live (gun game level): new primary/secondary, full magazines, primary in hand. */
+  private onGear(msg: Extract<ServerMessage, { t: 'gear' }>): void {
+    if (weaponDef(msg.primary)) { this.primary = msg.primary; this.weaponIds[0] = msg.primary; }
+    if (msg.secondary && weaponDef(msg.secondary)) { this.secondary = msg.secondary; this.weaponIds[1] = msg.secondary; }
+    this.fillAmmo();
+    this.equipSlot(0, false);
+    this.d.audio.playSpawn();
   }
 
   private onHealth(hp: number, now: number): void {
@@ -492,16 +508,24 @@ export class ArcadeSession {
     return this.weaponIds.map((id) => weaponDef(id)?.name ?? id);
   }
 
-  selectPrimary(id: string): void {
+  /** Chooses the weapons for the next life: a primary, and optionally a secondary (class presets). */
+  selectLoadout(id: string, secondary?: string): void {
     if (!PRIMARY_WEAPONS.includes(id)) return;
     this.pendingPrimary = id;
-    this.d.send({ t: 'loadout', primary: id });
-    this.hud.markLoadout(id);
+    if (secondary !== undefined && SECONDARY_WEAPONS.includes(secondary)) {
+      this.pendingSecondary = secondary;
+      this.d.send({ t: 'loadout', primary: id, secondary });
+    } else this.d.send({ t: 'loadout', primary: id });
+    this.hud.markLoadout(id, this.pendingSecondary || this.secondary);
+  }
+
+  selectPrimary(id: string): void {
+    this.selectLoadout(id);
   }
 
   openLoadout(): void {
     this.loadoutOpen = true;
-    this.hud.showLoadout(this.pendingPrimary || this.primary, !this.dead);
+    this.hud.showLoadout(this.pendingPrimary || this.primary, !this.dead, this.pendingSecondary || this.secondary);
   }
 
   closeLoadout(): void {
@@ -602,7 +626,7 @@ export class ArcadeSession {
       if (input.actionPressed(KB.RELOAD)) this.requestReload(now);
     } else if (this.dead && f.controls) {
       // On the death screen the number keys pick the next weapon (the loadout menu is B).
-      for (let i = 0; i < PRIMARY_WEAPONS.length; i++) if (input.wasPressed(`Digit${i + 1}`)) this.selectPrimary(PRIMARY_WEAPONS[i]);
+      for (let i = 0; i < LOADOUT_PRESETS.length; i++) if (input.wasPressed(`Digit${i + 1}`)) this.selectLoadout(LOADOUT_PRESETS[i].primary, LOADOUT_PRESETS[i].secondary);
     }
 
     const w = this.weapon;
@@ -614,6 +638,8 @@ export class ArcadeSession {
         if (mag <= 0) {
           if (input.leftClicked) this.d.audio.playEmpty();
           if (input.leftDown) this.requestReload(now);
+        } else if (w.burst && w.burstCycleSec) {
+          if (this.trigger.tryBurst(now, fireInterval(w), w.burst, w.burstCycleSec, input.leftClicked)) this.shoot();
         } else if (this.trigger.tryFire(now, fireInterval(w), w.auto, input.leftDown, input.leftClicked)) {
           this.shoot();
         }
@@ -676,7 +702,7 @@ export class ArcadeSession {
     }
 
     if (this.dead) {
-      hud.setRespawn(RESPAWN_SECONDS - (now - this.deadAt), this.primary, this.pendingPrimary);
+      hud.setRespawn(RESPAWN_SECONDS - (now - this.deadAt), this.primary, this.pendingPrimary, this.secondary, this.pendingSecondary);
       if (!this.ended) this.updateSpectate(f, input);
     }
     if (this.ended) hud.setNextMatch(this.endAt - now);
