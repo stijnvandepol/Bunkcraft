@@ -27,6 +27,7 @@ interface Totals {
   belowSeaVoxels: number; belowSeaAir: number; landBelowVoxels: number; landBelowAir: number;
   caveAir: number; openings: number; lava: number; undergroundWater: number; surfaceLava: number;
   ores: number[][]; // [ore][band]
+  airByBand: number[]; // air voxels per 8-layer band below the surface
   spots: { kind: string; x: number; y: number; z: number }[];
 }
 
@@ -34,7 +35,7 @@ function newTotals(): Totals {
   return {
     chunks: 0, landChunks: 0, ms: 0, belowSeaVoxels: 0, belowSeaAir: 0, landBelowVoxels: 0, landBelowAir: 0,
     caveAir: 0, openings: 0, lava: 0, undergroundWater: 0, surfaceLava: 0,
-    ores: ORES.map(() => BANDS.map(() => 0)), spots: [],
+    ores: ORES.map(() => BANDS.map(() => 0)), airByBand: new Array(16).fill(0), spots: [],
   };
 }
 
@@ -65,7 +66,7 @@ function analyze(gen: TerrainGenerator, cx: number, cz: number, t: Totals, block
       }
       for (let y = 1; y < h - 1 && y < CHUNK_HEIGHT; y++) {
         const b = blocks[blockIndex(x, y, z)];
-        if (b === BLOCK.AIR) t.caveAir++;
+        if (b === BLOCK.AIR) { t.caveAir++; t.airByBand[y >> 3]++; }
         else if (b === BLOCK.LAVA) t.lava++;
         else if (b === BLOCK.WATER) t.undergroundWater++;
         const oi = ORES.findIndex((o) => o[1] === b);
@@ -137,12 +138,14 @@ for (const seed of SEEDS) {
   }
   for (const k of scalar) (all[k] as number) += t[k] as number;
   t.ores.forEach((row, i) => row.forEach((v, b) => { all.ores[i][b] += v; }));
+  t.airByBand.forEach((v, b) => { all.airByBand[b] += v; });
 }
 const c = all.chunks;
 console.log('--- total over seeds');
 console.log(`air below sea level: ${(100 * all.belowSeaAir / all.belowSeaVoxels).toFixed(2)}%  (land columns only: ${(100 * all.landBelowAir / all.landBelowVoxels).toFixed(2)}%)`);
 console.log(`surface openings per 100 land chunks: ${(100 * all.openings / all.landChunks).toFixed(0)}  (land chunks ${all.landChunks}/${c})`);
 console.log(`cave air per chunk: ${(all.caveAir / c).toFixed(0)}, underground lava ${(all.lava / c).toFixed(1)}, underground water ${(all.undergroundWater / c).toFixed(1)}, surface lava cells ${all.surfaceLava}`);
+console.log('cave air per chunk by 8-layer band (y 0..127): ' + all.airByBand.map((v) => (v / c).toFixed(0)).join(' '));
 console.log(`generate: ${(all.ms / c).toFixed(2)} ms/chunk`);
 console.log('ore blocks per chunk by height band ' + BANDS.map(([a, b]) => `${a}-${b - 1}`).join(' | '));
 ORES.forEach(([name], i) => console.log(`  ${name.padEnd(8)} ${all.ores[i].map((v) => (v / c).toFixed(1).padStart(6)).join(' |')}  total ${(all.ores[i].reduce((s, v) => s + v, 0) / c).toFixed(1)}`));
