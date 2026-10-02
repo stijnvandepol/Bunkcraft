@@ -24,6 +24,7 @@ Server configuration uses environment variables (`PORT`, `DATA_DIR`, `SEED`, `GA
 - `src/world/`:
   - `BlockRegistry.ts` is data-driven: ids < 256, face order +X −X +Y −Y +Z −Z, flat lookup tables.
   - `TerrainGenerator.ts` is deterministic from the seed and runs in workers *and* on the server.
+    Generator output must never change for an existing world: every world has a `genVersion` (`GenVersion.ts`; saves, `world.json`, `welcome`, worker requests). Change terrain by adding a version, keep the old path and its golden hashes in `tests/terrain.test.ts`. Caves, ravines and ores (v2) live in `CaveCarver.ts` and `OreTable.ts`.
   - `ChunkManager.ts` handles streaming, priority meshing and upload budgets.
   - `World.ts` covers get/setBlock, sparse edits, explosions and `onEdit` for network sync.
   - Chunks are 16×16×128 `Uint8Array`, index `x | z<<4 | y<<8`.

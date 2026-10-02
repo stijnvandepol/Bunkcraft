@@ -43,14 +43,14 @@ with sync_playwright() as p:
     for name, v in VIEWS:
         page.evaluate(f"""() => {{
             const g = window.game;
-            g.player.setPosition({v['x']}, {v['y']}, {v['z']});
+            g.player.setPosition({v['x']}, {v['y']} - 1.62, {v['z']});  // the poses are eye positions
             g.player.yaw = {v['yaw']}; g.player.pitch = {v['pitch']};
             g.player.vx = g.player.vy = g.player.vz = 0;
             g.input.locked = true; g.state = 'playing';
             document.querySelector('.click-to-play')?.remove();
             // Caves are pitch dark: a glowstone above the camera lights the view (interior shots only).
             if ({'true' if name in ('ravineInside', 'cavernLava', 'lake', 'ore') else 'false'}) {{
-                g.world.setBlock(Math.floor({v['x']}), Math.floor({v['y']}) + 1, Math.floor({v['z']}), 28);
+                g.world.setBlock(Math.floor({v['x']}), Math.floor({v['y']}) + 3, Math.floor({v['z']}), 28);
             }}
         }}""")
         for _ in range(16):

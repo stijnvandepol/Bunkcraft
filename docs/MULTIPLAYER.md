@@ -51,6 +51,7 @@ Bij 8 spelers is dat ongeveer 19 KB/s upload voor de host: prima voor een gewone
 4. **Conflicten:** de server verwerkt edits op volgorde van aankomst. Met `prevId` worden verouderde edits geweigerd.
 5. **Block states (protocol 4):** een `block`-bericht heeft een optionele `meta` (weggelaten = 0); de server weigert een meta die het blok niet kan hebben (`isValidMeta`). `welcome.edits` is een platte lijst `x, y, z, id, meta`. Een oudere client krijgt "Outdated client".
 6. **Vloeistoffen:** de server simuleert water en lava (`LiquidSim` in `ServerWorld`, alleen terwijl er spelers zijn) met een budget van 600 updates en 200 blokwijzigingen per tick. De wijzigingen gaan als `blocks`-berichten (`x, y, z, id, meta, …`, hoogstens 100 per bericht) naar alle clients, dus maximaal ~4000 wijzigingen per seconde in een extreme vloed; een client simuleert zelf niet.
+7. **Generatorversie:** `welcome.genVersion` (optioneel, weggelaten = 1) zegt met welke terreingenerator de seed gelezen moet worden. De server bewaart hem in `world.json` (een bestand zonder veld is een wereld van versie 1 en blijft dat), een nieuwe wereld krijgt de huidige versie. Een client die het veld niet kent genereert versie 1: daarom blijft de versie van een bestaande wereld staan en is er geen protocolversie voor nodig. Arena's negeren het veld.
 
 ## Aanbevolen plan
 
