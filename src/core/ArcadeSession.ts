@@ -44,6 +44,11 @@ export interface ArcadeDeps {
   selfId: number;
   selfName: string;
   info: MatchInfo;
+  /** Captions (Subtitles option) and controller rumble. */
+  feedback?: {
+    caption(label: string, x: number, z: number): void;
+    haptic(strong: number, weak: number, ms: number): void;
+  };
   /** The server started a match on another map than this session was built for. */
   onMapChange?(map: string): void;
 }
@@ -218,12 +223,14 @@ export class ArcadeSession {
         this.hud.showHit(msg.killed ? 'kill' : msg.head ? 'head' : 'hit');
         if (msg.killed) this.d.audio.playKillDing();
         else this.d.audio.playHitMarker(msg.head);
+        this.d.feedback?.haptic(msg.killed ? 0.4 : 0, msg.killed ? 0.6 : 0.35, msg.killed ? 120 : 45);
         break;
       case 'damaged': {
         this.hud.addDamage(msg.dx, msg.dz, now);
         this.hurt = 1;
         this.hurtSide = Math.sin(Math.atan2(msg.dx, msg.dz) - this.d.player.yaw) >= 0 ? 1 : -1;
         this.d.audio.playHurt();
+        this.d.feedback?.haptic(0.7, 0.5, 200);
         break;
       }
       case 'kill': this.onKill(msg, now); break;
@@ -435,6 +442,7 @@ export class ArcadeSession {
     if (msg.id === this.d.selfId) return;
     const dist = Math.hypot(msg.ox - p.x, msg.oy - p.eyeY, msg.oz - p.z);
     this.d.audio.playGun(msg.weapon, gunVolume(dist));
+    if (dist < 60) this.d.feedback?.caption(msg.weapon === 'knife' ? 'Knife swings' : 'Gunshot', msg.ox, msg.oz);
     if (msg.weapon === 'knife') return;
     // Muzzle of the shooter: ahead of the eye, a bit to the right and down.
     let dx = msg.ex - msg.ox, dy = msg.ey - msg.oy, dz = msg.ez - msg.oz;

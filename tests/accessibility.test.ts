@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_PALETTE, FlashLimiter, REDUCED_FLASH_MAX, SAFE_PALETTE, effectiveParticles, limitFlash, paletteFor,
-  soundArrow, subtitleText,
+  mobSoundLabel, soundArrow, subtitleText,
 } from '../src/core/Accessibility';
 
 describe('flashes', () => {
@@ -62,5 +62,17 @@ describe('palettes and particles', () => {
     expect(effectiveParticles({ particles: 'all', reducedMotion: true })).toBe('decreased');
     expect(effectiveParticles({ particles: 'minimal', reducedMotion: true })).toBe('minimal');
     expect(effectiveParticles({ particles: 'all', reducedMotion: false })).toBe('all');
+  });
+});
+
+describe('mobSoundLabel', () => {
+  it('names the mob and the sound', () => {
+    expect(mobSoundLabel('zombie', 'idle')).toBe('Zombie groans');
+    expect(mobSoundLabel('cow', 'hurt')).toBe('Cow hurts');
+    expect(mobSoundLabel('creeper', 'fuse')).toBe('Creeper hisses');
+    expect(mobSoundLabel('pig', 'death')).toBe('Pig dies');
+  });
+  it('has a fallback for unknown mobs', () => {
+    expect(mobSoundLabel('slime', 'idle')).toBe('Slime makes a sound');
   });
 });

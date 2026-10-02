@@ -67,6 +67,21 @@ export function subtitleText(label: string, arrow: string): string {
   return arrow ? `${arrow} ${text}` : text;
 }
 
+const MOB_SOUNDS: Record<string, [string, string]> = {
+  // kind: [name, idle verb]
+  pig: ['Pig', 'oinks'], cow: ['Cow', 'moos'], sheep: ['Sheep', 'bleats'], chicken: ['Chicken', 'clucks'],
+  zombie: ['Zombie', 'groans'], creeper: ['Creeper', 'hisses'], skeleton: ['Skeleton', 'rattles'], spider: ['Spider', 'hisses'],
+};
+
+/** Caption for a mob sound: "Zombie groans", "Cow hurts", "Creeper dies", "Creeper hisses" (fuse). */
+export function mobSoundLabel(kind: string, event: 'idle' | 'hurt' | 'death' | 'fuse'): string {
+  const [name, idle] = MOB_SOUNDS[kind] ?? [kind.charAt(0).toUpperCase() + kind.slice(1), 'makes a sound'];
+  if (event === 'hurt') return `${name} hurts`;
+  if (event === 'death') return `${name} dies`;
+  if (event === 'fuse') return `${name} hisses`;
+  return `${name} ${idle}`;
+}
+
 // ------------------------------------------------------------------ colour-blind palettes
 
 export interface Palette {

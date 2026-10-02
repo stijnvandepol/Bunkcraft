@@ -69,7 +69,7 @@ export class Input {
     window.addEventListener('pointerdown', (e) => {
       if (e.pointerType === 'touch' || e.pointerType === 'pen') {
         this.lastTouch = performance.now();
-        if (e.pointerType === 'touch') this.touchMode = true;
+        if (e.pointerType === 'touch' && !this.touchDisabled) this.touchMode = true;
       } else if (e.isTrusted && performance.now() - this.lastTouch > 700) {
         this.padMode = false;
         if (!this.forceTouch) this.touchMode = false;
@@ -110,6 +110,21 @@ export class Input {
 
   /** Forced touch mode (Touch Controls: ON). */
   forceTouch = false;
+  /** Touch Controls: OFF. Touches then behave like a plain mouse (and never lock virtually). */
+  touchDisabled = false;
+  /** Sprint requested by a stick or joystick push (kept apart from the Sprint key, which may be a toggle). */
+  sprintAxis = false;
+
+  /** Apply the "Touch Controls" option: ON forces, OFF disables, AUTO starts in touch mode on pure touch devices. */
+  applyTouchSetting(mode: 'auto' | 'on' | 'off'): void {
+    this.forceTouch = mode === 'on';
+    this.touchDisabled = mode === 'off';
+    if (mode === 'on') this.touchMode = true;
+    else if (mode === 'off') this.touchMode = false;
+    else if (typeof matchMedia === 'function') {
+      this.touchMode = matchMedia('(any-pointer: coarse)').matches && !matchMedia('(any-pointer: fine)').matches;
+    }
+  }
 
   /** Lock without Pointer Lock (touch screens, gamepad). */
   get softLock(): boolean {
@@ -140,6 +155,7 @@ export class Input {
     this.virtDown.fill(false);
     this.latched.fill(false);
     this.axisForward = this.axisStrafe = 0;
+    this.sprintAxis = false;
   }
 
   /**
