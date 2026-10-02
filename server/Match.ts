@@ -1,13 +1,15 @@
-import { type ArenaMap, DEFAULT_MAP, type Spawn, getMap } from '../src/modes/maps';
-import type { Team } from '../src/modes/GameTypes';
+import { type ArenaMap, DEFAULT_MAP, type Spawn, getMap, mapFor, parseMapId } from '../src/modes/maps';
+import { type GameTypeDef, type Team, gameTypeDef } from '../src/modes/GameTypes';
 import {
-  DEFAULT_PRIMARY, PLAYER_MAX_HEALTH, PRIMARY_WEAPONS, REGEN_DELAY, REGEN_PER_SECOND, RESPAWN_SECONDS,
+  DEFAULT_PRIMARY, DEFAULT_SECONDARY, PLAYER_MAX_HEALTH, PRIMARY_WEAPONS, REGEN_DELAY, REGEN_PER_SECOND, SECONDARY_WEAPONS,
   type WeaponDef, damageAt, fireInterval, weaponDef,
 } from '../src/modes/Weapons';
 import type {
-  ClientMessage, MatchInfo, MatchPhase, RosterEntry, ServerMessage,
+  ClientMessage, MatchInfo, MatchPhase, ModeEventKind, RosterEntry, ServerMessage,
 } from '../src/net/protocol';
 import { type BlockQuery, rayPlayer, spreadDirection, traceBlocks } from './Combat';
+import { type MatchResult, type ModeLogic } from './modes/ModeLogic';
+import { createLogic } from './modes';
 
 /** Seconds of warm-up once at least two players are in the game. */
 export const WARMUP_SECONDS = 10;
@@ -25,6 +27,8 @@ export const DEFAULT_REWIND = 0.1;
 /** Fire messages may arrive this much (s) earlier than the weapon's cadence allows (network jitter). */
 const FIRE_SLACK = 0.04;
 const HISTORY_SIZE = 24;
+/** The mode state (zones, flags) is re-sent at least this often. */
+const MODE_INTERVAL = 0.5;
 
 export interface MatchHost {
   /** Monotonic clock in seconds. */
@@ -40,9 +44,9 @@ export interface MatchHost {
   ping(id: number): number;
   /**
    * A new match is about to start on `current`: returns the map to play next (the host swaps its
-   * bullet world), or null to keep the map.
+   * bullet world), or null to keep the map. `requires` is the map data the game type needs.
    */
-  nextMap?(current: string): string | null;
+  nextMap?(current: string, requires?: readonly ('zones' | 'flags')[]): string | null;
 }
 
 interface Slot {
@@ -51,6 +55,9 @@ interface Slot {
   nextFireAt: number;
   /** 0 when not reloading. */
   reloadDoneAt: number;
+  /** Burst weapons: shots fired in the current burst and when it started. */
+  burstShots: number;
+  burstStart: number;
 }
 
 interface Sample { t: number; x: number; y: number; z: number }
@@ -61,6 +68,8 @@ export interface MatchPlayer {
   team: Team | '';
   kills: number;
   deaths: number;
+  /** Objective score of the mode (gun game level, flag captures). */
+  pts: number;
   /** Order of joining (higher = joined later); decides who moves when the teams get uneven. */
   joinSeq: number;
   x: number; y: number; z: number;
@@ -71,9 +80,11 @@ export interface MatchPlayer {
   lastHpSent: number;
   respawnAt: number;
   protectedUntil: number;
-  /** Primary weapon of this life and the one chosen for the next. */
+  /** Weapons of this life and the ones chosen for the next. */
   primary: string;
   nextPrimary: string;
+  secondary: string;
+  nextSecondary: string;
   slots: [Slot, Slot, Slot];
   slot: 0 | 1 | 2;
   switchReadyAt: number;
@@ -85,20 +96,26 @@ export interface MatchPlayer {
 const dist2 = (ax: number, az: number, bx: number, bz: number) => Math.hypot(ax - bx, az - bz);
 
 /**
- * One arcade match (team deathmatch or free for all): teams, phases, scores, spawns, health,
- * weapons and the server-authoritative hitscan. Knows nothing about sockets: everything goes
- * through the MatchHost, which makes it testable with a fake clock.
+ * One arcade match: teams, phases, scores, spawns, health, weapons and the server-authoritative
+ * hitscan. The rules of the game type (what scores, rounds, objectives, when it ends) live in a
+ * `ModeLogic` (server/modes/*), chosen by the type's `GameTypeDef`. Knows nothing about sockets:
+ * everything goes through the MatchHost, which makes it testable with a fake clock.
  */
 export class Match {
   phase: MatchPhase = 'warmup';
   readonly players = new Map<number, MatchPlayer>();
-  private readonly scores = { red: 0, blue: 0 };
+  /** Team points: kills (tdm), round wins (elimination), points (hardpoint), captures (ctf). Zero without teams. */
+  readonly scores = { red: 0, blue: 0 };
+  readonly def: GameTypeDef;
+  readonly logic: ModeLogic;
   private warmupEnd = 0;
-  private liveEnd = 0;
-  private restartAt = 0;
+  /** When the current phase (not warm-up) ends; Infinity = never. */
+  private phaseEnd = Infinity;
   private lastTick = 0;
   private nextMatchMsg = 0;
   private nextRoster = 0;
+  private nextModeMsg = 0;
+  private modeDirty = false;
   private joinCounter = 0;
   /** Player who changes team at their next respawn because the other team lost players (0 = nobody). */
   private moveId = 0;
@@ -110,7 +127,9 @@ export class Match {
 
   constructor(private readonly host: MatchHost, readonly info: MatchInfo) {
     this.lastTick = host.now();
-    this.map = getMap(info.map ?? DEFAULT_MAP);
+    this.def = gameTypeDef(info.type);
+    this.logic = createLogic(this.def);
+    this.map = getMap(mapFor(parseMapId(info.map) ?? DEFAULT_MAP, this.def.requires));
     info.map = this.map.id;
   }
 
@@ -120,11 +139,19 @@ export class Match {
   }
 
   get teams(): boolean {
-    return this.info.type === 'tdm';
+    return this.def.teams;
   }
 
   teamScore(team: Team): number {
     return this.scores[team];
+  }
+
+  now(): number {
+    return this.host.now();
+  }
+
+  random(): number {
+    return this.host.random();
   }
 
   // ---------------------------------------------------------------- players
@@ -143,13 +170,15 @@ export class Match {
       team = red !== blue ? (red < blue ? 'red' : 'blue') : this.scores.red <= this.scores.blue ? 'red' : 'blue';
     }
     const p: MatchPlayer = {
-      id, name, team, kills: 0, deaths: 0, joinSeq: ++this.joinCounter, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, alive: false, health: PLAYER_MAX_HEALTH,
+      id, name, team, kills: 0, deaths: 0, pts: 0, joinSeq: ++this.joinCounter, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, alive: false, health: PLAYER_MAX_HEALTH,
       lastDamageAt: -1e9, lastHpSent: PLAYER_MAX_HEALTH, respawnAt: 0, protectedUntil: 0,
-      primary: DEFAULT_PRIMARY, nextPrimary: DEFAULT_PRIMARY, slots: [newSlot(DEFAULT_PRIMARY), newSlot('pistol'), newSlot('knife')], slot: 0,
+      primary: DEFAULT_PRIMARY, nextPrimary: DEFAULT_PRIMARY, secondary: DEFAULT_SECONDARY, nextSecondary: DEFAULT_SECONDARY,
+      slots: [newSlot(DEFAULT_PRIMARY), newSlot(DEFAULT_SECONDARY), newSlot('knife')], slot: 0,
       switchReadyAt: 0, history: Array.from({ length: HISTORY_SIZE }, () => ({ t: 0, x: 0, y: 0, z: 0 })), historyHead: 0, historyCount: 0,
     };
     this.players.set(id, p);
     this.resetLife(p, now);
+    this.logic.onJoin?.(this, p, now);
     return p;
   }
 
@@ -157,8 +186,10 @@ export class Match {
   ready(id: number): void {
     const p = this.players.get(id);
     if (!p) return;
-    this.sendSpawn(p);
+    if (p.alive) this.sendSpawn(p);
+    else this.host.send(id, { t: 'hp', health: 0 }); // joined between lives of a round: spectate until the next one
     this.host.send(id, this.matchMessage());
+    this.sendMode(id);
     for (const o of this.players.values()) {
       if (o.id !== id) this.host.send(id, { t: 'holds', id: o.id, weapon: o.slots[o.slot].def.id });
     }
@@ -167,7 +198,10 @@ export class Match {
   }
 
   leave(id: number): void {
-    if (!this.players.delete(id)) return;
+    const p = this.players.get(id);
+    if (!p) return;
+    this.players.delete(id);
+    this.logic.onLeave?.(this, p, this.host.now());
     if (this.teams) this.planBalance();
     this.broadcastRoster();
     if (this.players.size === 0) this.reset();
@@ -177,8 +211,10 @@ export class Match {
   reset(): void {
     this.phase = 'warmup';
     this.warmupEnd = 0;
+    this.phaseEnd = Infinity;
     this.scores.red = this.scores.blue = 0;
-    for (const p of this.players.values()) { p.kills = 0; p.deaths = 0; }
+    for (const p of this.players.values()) { p.kills = 0; p.deaths = 0; p.pts = 0; }
+    this.logic.onReset?.(this);
   }
 
   setPosition(id: number, x: number, y: number, z: number, yaw = 0, pitch = 0): void {
@@ -187,9 +223,12 @@ export class Match {
     p.x = x; p.y = y; p.z = z; p.yaw = yaw; p.pitch = pitch;
   }
 
-  setLoadout(id: number, primary: string): void {
+  /** The weapons for the next life: a primary and optionally a secondary (unknown ids are ignored). */
+  setLoadout(id: number, primary: string, secondary?: string): void {
     const p = this.players.get(id);
-    if (p && PRIMARY_WEAPONS.includes(primary)) p.nextPrimary = primary;
+    if (!p) return;
+    if (PRIMARY_WEAPONS.includes(primary)) p.nextPrimary = primary;
+    if (secondary !== undefined && SECONDARY_WEAPONS.includes(secondary)) p.nextSecondary = secondary;
   }
 
   // ---------------------------------------------------------------- weapons
@@ -225,6 +264,21 @@ export class Match {
     this.host.send(p.id, { t: 'ammo', slot: p.slot, mag: s.mag, reloading: true });
   }
 
+  /**
+   * Changes the weapons of a living player on the spot (gun game level up): new slots with full
+   * magazines, the primary slot in hand, and the player and everyone else are told.
+   */
+  giveGear(p: MatchPlayer, primary: string, secondary?: string, melee?: string): void {
+    p.primary = primary;
+    if (secondary) p.secondary = secondary;
+    p.slots = [newSlot(primary), newSlot(secondary ?? p.secondary), newSlot(melee ?? 'knife')];
+    p.slot = 0;
+    p.switchReadyAt = this.host.now() + SWITCH_DELAY;
+    this.host.send(p.id, { t: 'gear', primary, secondary: p.secondary });
+    for (let i = 0; i < 3; i++) this.host.send(p.id, { t: 'ammo', slot: i as 0 | 1 | 2, mag: p.slots[i].mag, reloading: false });
+    this.host.broadcast({ t: 'holds', id: p.id, weapon: primary }, p.id);
+  }
+
   /** A `fire` request: validates and resolves the whole hitscan shot. Returns whether a shot was fired. */
   fire(id: number, m: Extract<ClientMessage, { t: 'fire' }>): boolean {
     const p = this.players.get(id);
@@ -243,7 +297,15 @@ export class Match {
       this.startReload(p, now); // clicking an empty weapon reloads it
       return false;
     }
-    s.nextFireAt = Math.max(s.nextFireAt, now - FIRE_SLACK) + fireInterval(w);
+    const shotAt = Math.max(s.nextFireAt, now - FIRE_SLACK);
+    if (w.burst && w.burstCycleSec) {
+      // Burst weapons: `burst` shots `fireInterval` apart, then the cycle time from the first shot.
+      if (s.burstShots === 0 || shotAt - s.burstStart > w.burstCycleSec) { s.burstShots = 1; s.burstStart = shotAt; } else s.burstShots++;
+      if (s.burstShots >= w.burst) {
+        s.nextFireAt = Math.max(shotAt + fireInterval(w), s.burstStart + w.burstCycleSec);
+        s.burstShots = 0;
+      } else s.nextFireAt = shotAt + fireInterval(w);
+    } else s.nextFireAt = shotAt + fireInterval(w);
     if (w.magazine > 0) {
       s.mag--;
       this.host.send(id, { t: 'ammo', slot: p.slot, mag: s.mag, reloading: false });
@@ -302,17 +364,23 @@ export class Match {
       this.sendHp(victim, true);
       return;
     }
+    this.kill(killer, victim, w, head, now);
+  }
+
+  /** Takes a life: counters, respawn timer, kill feed, then the mode decides what it is worth. */
+  private kill(killer: MatchPlayer | null, victim: MatchPlayer, w: WeaponDef, head: boolean, now: number): void {
     victim.alive = false;
     victim.deaths++;
-    victim.respawnAt = now + RESPAWN_SECONDS;
+    const delay = this.logic.respawnDelay(this, victim);
+    victim.respawnAt = delay < 0 ? Infinity : now + delay;
     victim.historyCount = 0;
-    killer.kills++;
-    if (this.teams && killer.team) this.scores[killer.team]++;
+    if (killer) killer.kills++;
+    this.logic.onKill(this, killer, victim, w, head, now);
     this.sendHp(victim, true);
-    this.host.broadcast({ t: 'kill', killer: killer.id, victim: victim.id, weapon: w.id, head });
+    this.host.broadcast({ t: 'kill', killer: killer?.id ?? 0, victim: victim.id, weapon: w.id, head });
     this.broadcastRoster();
     this.broadcastMatch();
-    this.checkScoreLimit(now);
+    this.checkEnd(now);
   }
 
   // ---------------------------------------------------------------- lag compensation
@@ -352,13 +420,16 @@ export class Match {
     for (const p of this.players.values()) if (p.alive) this.record(p, now);
 
     if (this.phase === 'warmup') {
-      if (this.players.size < 2) this.warmupEnd = 0;
+      if (!this.logic.canStart(this)) this.warmupEnd = 0;
       else if (this.warmupEnd === 0) { this.warmupEnd = now + WARMUP_SECONDS; this.broadcastMatch(); }
-      else if (now >= this.warmupEnd) this.startLive(now);
-    } else if (this.phase === 'live') {
-      if (this.info.timeLimitSec > 0 && now >= this.liveEnd) this.endMatch(now);
-    } else if (now >= this.restartAt) {
-      this.restart(now);
+      else if (now >= this.warmupEnd) this.beginMatch(now);
+    } else if (now >= this.phaseEnd) {
+      if (this.phase === 'ended') this.restart(now);
+      else this.logic.onPhaseEnd(this, this.phase, now);
+    }
+    if (this.phase !== 'warmup' && this.phase !== 'ended') {
+      this.logic.onTick?.(this, dt, now);
+      this.checkEnd(now);
     }
 
     for (const p of this.players.values()) {
@@ -382,65 +453,93 @@ export class Match {
 
     if (now >= this.nextMatchMsg) this.broadcastMatch();
     if (now >= this.nextRoster) this.broadcastRoster();
+    if (this.modeDirty || now >= this.nextModeMsg) this.broadcastMode();
   }
 
-  private startLive(now: number): void {
-    this.phase = 'live';
-    this.liveEnd = now + this.info.timeLimitSec;
+  /** Warm-up is over: zero everything and hand over to the mode. */
+  private beginMatch(now: number): void {
     this.scores.red = this.scores.blue = 0;
-    for (const p of this.players.values()) { p.kills = 0; p.deaths = 0; }
-    this.respawnAll(now);
+    for (const p of this.players.values()) { p.kills = 0; p.deaths = 0; p.pts = 0; }
+    this.logic.onStart(this, now);
     this.broadcastMatch();
     this.broadcastRoster();
   }
 
-  private checkScoreLimit(now: number): void {
-    if (this.phase !== 'live' || this.info.scoreLimit <= 0) return;
-    const limit = this.info.scoreLimit;
-    const reached = this.teams
-      ? this.scores.red >= limit || this.scores.blue >= limit
-      : [...this.players.values()].some((p) => p.kills >= limit);
-    if (reached) this.endMatch(now);
+  /** Enters a phase that lasts `seconds` (0 or less = until the mode ends it) and tells everybody. */
+  setPhase(phase: MatchPhase, seconds: number): void {
+    this.phase = phase;
+    this.phaseEnd = seconds > 0 ? this.host.now() + seconds : Infinity;
+    this.modeDirty = true;
+    this.broadcastMatch();
   }
 
-  private endMatch(now: number): void {
+  /** The plain "go": everybody respawns and the clock of the match (the time limit) starts. */
+  startLive(): void {
+    this.respawnAll(this.host.now());
+    this.setPhase('live', this.info.timeLimitSec);
+    this.broadcastRoster();
+  }
+
+  private checkEnd(now: number): void {
+    if (this.phase !== 'live') return;
+    const result = this.logic.checkEnd(this);
+    if (result) this.endMatch(now, result);
+  }
+
+  /** Ends the match: the given result, or the mode's winner by the current standings. */
+  endMatch(now: number = this.host.now(), result?: MatchResult): void {
+    if (this.phase === 'ended') return;
+    const r = result ?? this.logic.winner(this);
     this.phase = 'ended';
-    this.restartAt = now + ENDED_SECONDS;
-    let winnerTeam: Team | '' = '';
-    let winnerId = 0;
-    if (this.teams) {
-      if (this.scores.red > this.scores.blue) winnerTeam = 'red';
-      else if (this.scores.blue > this.scores.red) winnerTeam = 'blue';
-    } else {
-      let best = 0, tie = false;
-      for (const p of this.players.values()) {
-        if (p.kills > best) { best = p.kills; winnerId = p.id; tie = false; } else if (p.kills === best && best > 0) tie = true;
-      }
-      if (tie) winnerId = 0;
-    }
-    this.host.broadcast({ t: 'matchend', winnerTeam, winnerId, restartIn: ENDED_SECONDS });
+    this.phaseEnd = now + ENDED_SECONDS;
+    this.host.broadcast({ t: 'matchend', winnerTeam: r.winnerTeam, winnerId: r.winnerId, restartIn: ENDED_SECONDS });
     this.broadcastMatch();
     this.broadcastRoster();
+    this.broadcastMode();
   }
 
   /** Next match: scores reset, teams rebalanced, everyone respawns into a new warm-up. */
   private restart(now: number): void {
-    const next = this.host.nextMap?.(this.map.id);
+    const next = this.host.nextMap?.(this.map.id, this.def.requires);
     if (next && next !== this.map.id) this.setMap(next);
     this.phase = 'warmup';
     this.warmupEnd = 0;
+    this.phaseEnd = Infinity;
     this.scores.red = this.scores.blue = 0;
-    for (const p of this.players.values()) { p.kills = 0; p.deaths = 0; }
+    for (const p of this.players.values()) { p.kills = 0; p.deaths = 0; p.pts = 0; }
+    this.logic.onReset?.(this);
     if (this.teams) this.rebalance();
     this.respawnAll(now);
     this.broadcastMatch();
     this.broadcastRoster();
+    this.broadcastMode();
+  }
+
+  /** Back to the warm-up (the mode cannot go on, for example one team is empty). */
+  returnToWarmup(): void {
+    this.phase = 'warmup';
+    this.warmupEnd = 0;
+    this.phaseEnd = Infinity;
+    this.scores.red = this.scores.blue = 0;
+    for (const p of this.players.values()) { p.kills = 0; p.deaths = 0; p.pts = 0; }
+    this.logic.onReset?.(this);
+    this.respawnAll(this.host.now());
+    this.broadcastMatch();
+    this.broadcastRoster();
+    this.broadcastMode();
   }
 
   /** Number of players on a team. */
-  private teamSize(team: Team): number {
+  teamSize(team: Team): number {
     let n = 0;
     for (const p of this.players.values()) if (p.team === team) n++;
+    return n;
+  }
+
+  /** Number of living players on a team. */
+  aliveCount(team: Team): number {
+    let n = 0;
+    for (const p of this.players.values()) if (p.team === team && p.alive) n++;
     return n;
   }
 
@@ -466,7 +565,7 @@ export class Match {
     const own = this.teamSize(p.team), other = this.teamSize(p.team === 'red' ? 'blue' : 'red');
     if (own - other < 2) return;
     p.team = p.team === 'red' ? 'blue' : 'red';
-    this.host.broadcast({ t: 'chat', from: '', text: `${p.name} moved to the ${p.team} team to even the teams`, system: true });
+    this.say(`${p.name} moved to the ${p.team} team to even the teams`);
     this.broadcastRoster();
   }
 
@@ -482,41 +581,45 @@ export class Match {
 
   // ---------------------------------------------------------------- spawning
 
-  private respawnAll(now: number): void {
+  respawnAll(now: number): void {
     for (const p of this.players.values()) this.respawn(p, now);
   }
 
-  private respawn(p: MatchPlayer, now: number): void {
+  respawn(p: MatchPlayer, now: number): void {
     if (this.teams) this.applyBalance(p);
     this.resetLife(p, now);
     this.sendSpawn(p);
-    this.host.broadcast({ t: 'holds', id: p.id, weapon: p.primary }, p.id);
+    this.host.broadcast({ t: 'holds', id: p.id, weapon: p.slots[0].def.id }, p.id);
   }
 
-  /** Full health, full magazines, the chosen primary, a fresh spawn point and brief protection. */
+  /** Full health, full magazines, the chosen (or the mode's) weapons, a fresh spawn point and brief protection. */
   private resetLife(p: MatchPlayer, now: number): void {
     p.alive = true;
     p.health = PLAYER_MAX_HEALTH;
     p.lastHpSent = PLAYER_MAX_HEALTH;
     p.lastDamageAt = -1e9;
-    p.protectedUntil = now + SPAWN_PROTECTION;
-    p.primary = p.nextPrimary;
-    p.slots = [newSlot(p.primary), newSlot('pistol'), newSlot('knife')];
+    p.protectedUntil = now + (this.def.respawn?.protectionSec ?? SPAWN_PROTECTION);
+    const kit = this.logic.loadoutFor?.(this, p) ?? { primary: p.nextPrimary, secondary: p.nextSecondary };
+    p.primary = kit.primary;
+    p.secondary = kit.secondary ?? DEFAULT_SECONDARY;
+    p.slots = [newSlot(p.primary), newSlot(p.secondary), newSlot(kit.melee ?? 'knife')];
     p.slot = 0;
     p.switchReadyAt = 0;
-    const s = this.pickSpawn(p);
+    const s = this.logic.pickSpawn?.(this, p) ?? this.pickSpawn(p);
     p.x = s.x; p.y = s.y; p.z = s.z; p.yaw = s.yaw; p.pitch = 0;
     p.historyCount = 0;
+    p.respawnAt = 0;
+    this.logic.onSpawn?.(this, p, now);
   }
 
   private sendSpawn(p: MatchPlayer): void {
     this.host.moveTo(p.id, p.x, p.y, p.z);
-    this.host.send(p.id, { t: 'spawn', x: p.x, y: p.y, z: p.z, yaw: p.yaw, team: p.team, primary: p.primary, health: p.health });
+    this.host.send(p.id, { t: 'spawn', x: p.x, y: p.y, z: p.z, yaw: p.yaw, team: p.team, primary: p.primary, secondary: p.secondary, health: p.health });
     for (let i = 0; i < 3; i++) this.host.send(p.id, { t: 'ammo', slot: i as 0 | 1 | 2, mag: p.slots[i].mag, reloading: false });
   }
 
   /**
-   * The team's spawn (tdm) or any spawn (ffa) that is furthest from the living opponents, with a
+   * The team's spawn (team modes) or any spawn (ffa) that is furthest from the living opponents, with a
    * little randomness so the same point is not used every time.
    */
   pickSpawn(p: MatchPlayer): Spawn {
@@ -552,14 +655,14 @@ export class Match {
   timeLeft(): number {
     const now = this.host.now();
     if (this.phase === 'warmup') return this.warmupEnd > 0 ? Math.max(0, Math.ceil(this.warmupEnd - now)) : WARMUP_SECONDS;
-    if (this.phase === 'live') return Math.max(0, Math.ceil(this.liveEnd - now));
-    return Math.max(0, Math.ceil(this.restartAt - now));
+    return Number.isFinite(this.phaseEnd) ? Math.max(0, Math.ceil(this.phaseEnd - now)) : 0;
   }
 
   private matchMessage(): ServerMessage {
     return {
       t: 'match', phase: this.phase, timeLeft: this.timeLeft(),
       scores: this.teams ? { red: this.scores.red, blue: this.scores.blue } : { red: 0, blue: 0 }, info: this.info,
+      text: this.logic.scoreText(this),
     };
   }
 
@@ -568,13 +671,43 @@ export class Match {
     this.host.broadcast(this.matchMessage());
   }
 
+  /** The mode's HUD state to everybody (zones, flags, rounds); nothing for plain deathmatch. */
+  private broadcastMode(): void {
+    this.nextModeMsg = this.host.now() + MODE_INTERVAL;
+    this.modeDirty = false;
+    const state = this.logic.modeState?.(this);
+    if (state) this.host.broadcast({ t: 'mode', state });
+  }
+
+  private sendMode(id: number): void {
+    const state = this.logic.modeState?.(this);
+    if (state) this.host.send(id, { t: 'mode', state });
+  }
+
+  /** Marks the mode state as changed: it goes out at the end of this tick. */
+  markModeDirty(): void {
+    this.modeDirty = true;
+  }
+
+  /** A one-off happening for the clients (banner and sound). */
+  event(kind: ModeEventKind, team: Team | '' = '', id = 0, text = ''): void {
+    this.host.broadcast({ t: 'event', kind, ...(team ? { team } : {}), ...(id ? { id } : {}), ...(text ? { text } : {}) });
+  }
+
+  /** A system line in the chat. */
+  say(text: string): void {
+    this.host.broadcast({ t: 'chat', from: '', text, system: true });
+  }
+
   roster(): RosterEntry[] {
+    const withPts = !!this.def.scoreColumn;
     return [...this.players.values()].map((p) => ({
       id: p.id, name: p.name, team: p.team, kills: p.kills, deaths: p.deaths, ping: Math.round(this.host.ping(p.id)),
+      ...(withPts ? { pts: p.pts } : {}),
     }));
   }
 
-  private broadcastRoster(): void {
+  broadcastRoster(): void {
     this.nextRoster = this.host.now() + 3;
     this.host.broadcast({ t: 'roster', players: this.roster() });
   }
@@ -582,7 +715,7 @@ export class Match {
 
 function newSlot(id: string): Slot {
   const def = weaponDef(id) ?? weaponDef(DEFAULT_PRIMARY)!;
-  return { def, mag: def.magazine, nextFireAt: 0, reloadDoneAt: 0 };
+  return { def, mag: def.magazine, nextFireAt: 0, reloadDoneAt: 0, burstShots: 0, burstStart: 0 };
 }
 
 function isSlot(v: unknown): v is 0 | 1 | 2 {

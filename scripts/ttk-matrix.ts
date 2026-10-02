@@ -17,7 +17,7 @@
 import { PLAYER_MAX_HEALTH, WEAPONS, type WeaponDef, damageAt, fireInterval } from '../src/modes/Weapons';
 
 interface Burst { count: number; cycleSec: number; inBurstRpm: number }
-type W = WeaponDef & { burst?: Burst; proposed?: boolean };
+type W = WeaponDef & { burstSpec?: Burst; proposed?: boolean };
 
 const base = (id: string): WeaponDef => WEAPONS.find((w) => w.id === id)!;
 const mk = (id: string, name: string, over: Partial<W>): W => ({ ...base('rifle'), id, name, proposed: true, ...over });
@@ -40,7 +40,7 @@ const PROPOSED: W[] = [
   mk('burst', 'Burst Rifle', {
     slot: 'primary', auto: false, damage: 22, headshot: 1.6, rpm: 900, magazine: 30, reloadSec: 1.7, spread: 2.0, adsSpread: 0.25,
     range: 45, falloffEnd: 100, minDamage: 0.6, maxRange: 160, zoom: 0.75, moveSpeed: 1, recoil: 1.2,
-    burst: { count: 3, cycleSec: 0.38, inBurstRpm: 900 },
+    burstSpec: { count: 3, cycleSec: 0.38, inBurstRpm: 900 },
   }),
   mk('akimbo', 'Akimbo SMGs', {
     slot: 'primary', auto: true, damage: 10, headshot: 1.5, rpm: 1400, magazine: 40, reloadSec: 2.1, spread: 4.0, adsSpread: 3.2,
@@ -65,9 +65,9 @@ const HIP_RANGE = 7; // up to this distance the model assumes hip fire (close-ra
 
 function shotTime(w: W, n: number): number {
   // Time of shot number n (1-based), first shot at 0.
-  if (!w.burst) return (n - 1) * fireInterval(w);
+  if (!w.burstSpec) return (n - 1) * fireInterval(w);
   const k = n - 1;
-  return Math.floor(k / w.burst.count) * w.burst.cycleSec + (k % w.burst.count) * (60 / w.burst.inBurstRpm);
+  return Math.floor(k / w.burstSpec.count) * w.burstSpec.cycleSec + (k % w.burstSpec.count) * (60 / w.burstSpec.inBurstRpm);
 }
 
 function spreadHit(w: W, dist: number, ads: boolean): number {

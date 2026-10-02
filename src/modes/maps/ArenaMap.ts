@@ -11,6 +11,22 @@ export const TEAM = 250;
 
 export interface Spawn { x: number; y: number; z: number; yaw: number }
 
+/** A capture zone (hardpoint hill / domination point) in world coordinates (the arena is centred on 0, 0). */
+export interface ZoneDef { name: string; x: number; z: number; r: number }
+/** A team's flag base in world coordinates: red on the left (x < 0), blue on the right. */
+export interface FlagDef { team: 'red' | 'blue'; x: number; z: number }
+/** Objective data of a map; a map without `zones` cannot host hardpoint/domination, without `flags` no capture the flag. */
+export interface ObjectiveDef {
+  /** Hardpoint plays them in this order; domination uses every zone with `domination` set (default: all). */
+  zones?: ZoneDef[];
+  /** Indices into `zones` that are domination points (default: all zones). */
+  dominationZones?: number[];
+  flags?: FlagDef[];
+}
+/** A zone with its standing level resolved (y = where a player's feet are). */
+export interface Zone extends ZoneDef { y: number }
+export interface Flag extends FlagDef { y: number }
+
 /** Draws one quadrant: (u, v) = distance from the two centre lines (0 = next to the line). */
 export interface LayoutBuilder {
   /** Inclusive box, heights h0..h1 above the floor (1 = first block). Later calls overwrite earlier ones. */
@@ -40,6 +56,8 @@ export interface ArenaMapDef {
   ffaSpawns: [number, number][];
   /** Quadrant coordinates of elevated spots (roofs, towers, decks) that must be reachable on foot. */
   highGround?: [number, number][];
+  /** Zones and flags for the objective modes. */
+  objectives?: ObjectiveDef;
   build(variant: number, b: LayoutBuilder): void;
 }
 
@@ -78,6 +96,8 @@ export class ArenaMap {
   /** World positions (x, z) of the elevated spots, all four mirrors. */
   readonly highGround: { x: number; z: number }[];
   private readonly layouts: Layout[] = [];
+  private zoneCache: Zone[] | null = null;
+  private flagCache: Flag[] | null = null;
 
   constructor(private readonly def: ArenaMapDef) {
     this.id = def.id;
@@ -97,6 +117,25 @@ export class ArenaMap {
         spawnAt(u, v, -1, -1), spawnAt(u, v, 1, -1), spawnAt(u, v, -1, 1), spawnAt(u, v, 1, 1),
       ]),
     };
+  }
+
+  /** Capture zones with their standing level (the same in every variant: objectives stay off the variable cover). */
+  get zones(): Zone[] {
+    return this.zoneCache ??= (this.def.objectives?.zones ?? []).map((z) => ({ ...z, y: this.heightAt(0, z.x, z.z) + 1 }));
+  }
+
+  /** Indices of the domination points among `zones`. */
+  get dominationZones(): number[] {
+    return this.def.objectives?.dominationZones ?? this.zones.map((_, i) => i);
+  }
+
+  get flags(): Flag[] {
+    return this.flagCache ??= (this.def.objectives?.flags ?? []).map((f) => ({ ...f, y: this.heightAt(0, f.x, f.z) + 1 }));
+  }
+
+  /** Whether the map has the data a game type asks for. */
+  supports(requires: readonly ('zones' | 'flags')[] | undefined): boolean {
+    return (requires ?? []).every((r) => (r === 'zones' ? this.zones.length >= 3 : this.flags.length === 2));
   }
 
   variantFor(seed: number): number {

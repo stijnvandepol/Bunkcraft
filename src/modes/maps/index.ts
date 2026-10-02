@@ -5,7 +5,7 @@ import { DOCKYARD } from './dockyard';
 import { QUARTER } from './quarter';
 import { SUBURB } from './suburb';
 
-export { ARENA_FLOOR_Y, ArenaMap, type Spawn } from './ArenaMap';
+export { ARENA_FLOOR_Y, ArenaMap, type Flag, type Spawn, type Zone } from './ArenaMap';
 
 export type MapId = 'classic' | 'suburb' | 'quarter' | 'dockyard' | 'desert';
 export const DEFAULT_MAP: MapId = 'classic';
@@ -30,9 +30,18 @@ export function getMap(id: unknown): ArenaMap {
   return MAPS.find((m) => m.id === id) ?? MAPS[0];
 }
 
-/** The map after `id` in rotation order. */
-export function nextMap(id: MapId): MapId {
-  return MAP_IDS[(MAP_IDS.indexOf(id) + 1) % MAP_IDS.length];
+/** The map after `id` in rotation order that has the data the game type needs (all maps when it needs none). */
+export function nextMap(id: MapId, requires?: readonly ('zones' | 'flags')[]): MapId {
+  for (let i = 1; i <= MAPS.length; i++) {
+    const m = MAPS[(MAP_IDS.indexOf(id) + i) % MAPS.length];
+    if (m.supports(requires)) return m.id as MapId;
+  }
+  return id;
+}
+
+/** The first map that has the data a game type needs; `preferred` when it qualifies. */
+export function mapFor(preferred: MapId, requires?: readonly ('zones' | 'flags')[]): MapId {
+  return getMap(preferred).supports(requires) ? preferred : (MAPS.find((m) => m.supports(requires))?.id as MapId | undefined) ?? preferred;
 }
 
 export function mapName(setting: MapSetting): string {
