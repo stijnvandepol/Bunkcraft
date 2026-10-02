@@ -7,5 +7,7 @@ export default defineConfig({
   test: {
     include: ['tests/**/*.test.ts'],
     environment: 'node',
+    // Generous: world generation and zip tests take a few seconds alone and several times that on a busy CI box or laptop.
+    testTimeout: 30_000,
   },
 });
