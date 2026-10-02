@@ -96,8 +96,8 @@ export class Mob extends Entity {
     const dx = this.x - fromX, dz = this.z - fromZ;
     const d = Math.hypot(dx, dz) || 1;
     if (knockback > 0) {
-      this.vx += (dx / d) * 8 * knockback;
-      this.vz += (dz / d) * 8 * knockback;
+      this.vx += (dx / d) * 6 * knockback;
+      this.vz += (dz / d) * 6 * knockback;
       this.vy = 6;
     }
     if (!this.type.hostile) this.panic = 100;

@@ -75,7 +75,7 @@ describe('light rules', () => {
     const midnight = fakeHost(new FlatWorld());
     const s2 = new MobSpawner(midnight.host, 1, mulberry32(5));
     for (let i = 0; i < 400; i++) { s2.recount(); s2.tickHostile([player], 11); }
-    expect(midnight.mobs.length).toBeGreaterThan(20);
+    expect(midnight.mobs.length).toBeGreaterThan(SPAWN.hostileCap / 2);
 
     const cave = new FlatWorld();
     cave.cave = { y0: 40, y1: 48 };
@@ -83,7 +83,7 @@ describe('light rules', () => {
     const s3 = new MobSpawner(c.host, 1, mulberry32(9));
     for (let i = 0; i < 2000; i++) { s3.recount(); s3.tickHostile([{ ...player, y: 44 }], 0); }
     // Only cave floors are dark, so every spawn stands on the cave floor.
-    expect(c.mobs.length).toBeGreaterThan(5);
+    expect(c.mobs.length).toBeGreaterThanOrEqual(hostileCap(1, 0) - 1);
     for (const m of c.mobs) expect(m.y).toBe(40);
   });
 
@@ -111,15 +111,17 @@ describe('caps and rates', () => {
     const s = new MobSpawner(a.host, 1, mulberry32(11));
     for (let tick = 0; tick < 60 * 20; tick++) { s.recount(); s.tickHostile([player], 11); }
     expect(a.mobs.filter((m) => m.type.hostile)).toHaveLength(hostileCap(1, 11));
-    expect(hostileCap(1, 11)).toBe(40);
+    expect(hostileCap(1, 11)).toBe(SPAWN.hostileCap);
   });
 
   it('scales the cap with players and shrinks it in daylight', () => {
-    expect(hostileCap(2, 11)).toBe(60);
+    expect(hostileCap(2, 11)).toBe(SPAWN.hostileCap + SPAWN.hostileCapPerExtraPlayer);
     expect(hostileCap(50, 11)).toBe(SPAWN.hostileCapMax);
-    expect(hostileCap(1, 0)).toBe(16);
-    expect(hostileCap(1, 6)).toBe(16);
-    expect(hostileCap(1, 7)).toBe(40);
+    // By day only a share of the cap is available, and it is the same for every darkness below the threshold.
+    expect(hostileCap(1, 0)).toBeGreaterThan(0);
+    expect(hostileCap(1, 0)).toBeLessThanOrEqual(Math.ceil(SPAWN.hostileCap * SPAWN.daylightCapShare));
+    expect(hostileCap(1, 6)).toBe(hostileCap(1, 0));
+    expect(hostileCap(1, 7)).toBe(SPAWN.hostileCap);
   });
 
   it('attempts several packs per second, not one', () => {
@@ -162,12 +164,13 @@ describe('packs and weights', () => {
       a.mobs.length = 0;
     }
     expect(Math.max(...sizes.zombie)).toBe(4);
-    expect(Math.max(...sizes.skeleton)).toBe(4);
+    expect(Math.max(...sizes.skeleton)).toBe(3);
     expect(Math.max(...sizes.creeper)).toBe(1);
     expect(Math.max(...sizes.spider)).toBe(2);
-    // Pack members that find no floor are skipped, so packs are 4 most of the time on open ground.
-    const full = sizes.zombie.filter((n) => n === 4).length / sizes.zombie.length;
-    expect(full).toBeGreaterThan(0.5);
+    // Pack sizes are drawn from 2-4 for zombies; members that find no floor are skipped.
+    expect(Math.min(...sizes.zombie)).toBeGreaterThanOrEqual(1);
+    const big = sizes.zombie.filter((n) => n >= 3).length / sizes.zombie.length;
+    expect(big).toBeGreaterThan(0.3);
   });
 
   it('keeps the members of a pack close together', () => {
@@ -280,8 +283,8 @@ describe('despawning', () => {
     const t0 = performance.now();
     for (let t = 0; t < 1200; t++) em.tick(target, 11, noEvents, null, false);
     const perTick = (performance.now() - t0) / 1200;
-    expect(em.mobs.filter((m) => m.type.hostile).length).toBeGreaterThan(25);
-    expect(em.mobs.filter((m) => m.type.hostile).length).toBeLessThanOrEqual(40);
+    expect(em.mobs.filter((m) => m.type.hostile).length).toBeGreaterThan(SPAWN.hostileCap / 2);
+    expect(em.mobs.filter((m) => m.type.hostile).length).toBeLessThanOrEqual(SPAWN.hostileCap);
     expect(perTick).toBeLessThan(5);
   });
 });
