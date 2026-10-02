@@ -156,10 +156,11 @@ regenereert, respawns en een scoreboard. Beschrijving, besturing en wapentabel: 
 ## 8. Distributie
 
 - **Eigen server:** Docker of Node; zie `docs/SERVER.md`.
-- **PWA (S):** installeerbaar en offline speelbaar in singleplayer.
-- **itch.io (S):** een zip met `index.html`, alleen singleplayer.
+- **PWA (S): klaar.** Manifest, handgeschreven service worker (versioned precache, runtime-cache voor texturepacks, `index.html` network-first, update-toast), installknoppen, iOS-meta, offline singleplayer getest met Playwright. Zie `docs/DISTRIBUTION.md`.
+- **itch.io (S): klaar.** `npm run build:static` geeft `dist-static/` + `bunkcraft-static.zip` (relatieve base, werkt onder een submap, multiplayer vraagt om serveradres).
 - **CrazyGames en Poki (M–L):** pas na touchbediening. Verberg daarvoor de Minecraft-jar-import en zwak de 1-op-1 Minecraft-styling af (risico op IP-problemen).
-- **Delen:** seed in de URL, F2-screenshots, en export/import van werelden als zip (fflate is al aanwezig).
+- **Delen: klaar.** `?seed=&mode=` opent Create World ingevuld, F2-screenshot, Copy Seed in het pauzemenu, `.bunkworld` export/import met zipbom-bescherming, Backup All, Edit en Re-Create in Select World.
+- **Nog open:** `og:image` met absolute URL per deployment (scrapers negeren relatieve URL's), Lighthouse-PWA-categorie bestaat niet meer (v13: alleen installability via Chrome), Esc-vergrendeling in fullscreen is alleen op code getest (headless Chrome ondersteunt geen Keyboard Lock), HUD in screenshots (nu alleen canvas), export van multiplayer-werelden (server-kant), menu-orbit en andere gameplay-animaties bij `prefers-reduced-motion` (hoort bij toegankelijkheid), CrazyGames/Poki.
 
 ## Plan vanaf oktober 2026 (op basis van het onderzoek)
 

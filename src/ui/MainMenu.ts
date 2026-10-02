@@ -31,6 +31,9 @@ export interface MenuActions {
 
 export const VERSION = 'BunkCraft 1.0';
 
+/** `npm run build:static`: hosted without a game server (itch.io, GitHub Pages ...). */
+const STATIC_BUILD = import.meta.env.VITE_STATIC === '1';
+
 /** Short tag for lists: "TDM", "FFA"; nothing for the Minecraft sandbox. */
 const GAME_TYPE_TAGS: Record<GameType, string> = { minecraft: '', tdm: 'TDM', ffa: 'FFA' };
 
@@ -284,12 +287,16 @@ export class MainMenu {
   /** Join any BunkCraft server by address (the page's own server when left empty). */
   showDirectConnect(): void {
     const name = h('input', { class: 'mc-input', value: load('bunkcraft.name', ''), maxLength: 16, placeholder: 'Your name (3–16 letters)' });
-    const address = h('input', { class: 'mc-input', value: load('bunkcraft.server', ''), maxLength: 120, placeholder: location.host });
+    const address = h('input', { class: 'mc-input', value: load('bunkcraft.server', ''), maxLength: 120, placeholder: STATIC_BUILD ? 'play.example.com' : location.host });
     const error = h('div', { class: 'error' });
     const join = () => {
       const n = name.value.trim();
       if (!NAME_PATTERN.test(n)) {
         error.textContent = 'Name must be 3–16 letters, digits or _';
+        return;
+      }
+      if (STATIC_BUILD && !address.value.trim()) {
+        error.textContent = 'Enter the address of a BunkCraft server';
         return;
       }
       store('bunkcraft.name', n);
@@ -302,7 +309,7 @@ export class MainMenu {
       h('div', { style: column },
         h('div', { class: 'field-label', text: 'Player Name' }), name,
         h('div', { class: 'field-label', text: 'Server Address' }), address,
-        h('div', { class: 'hint', text: 'Host name or ip:port of a BunkCraft server. Leave empty for the server this page came from.' }),
+        h('div', { class: 'hint', text: STATIC_BUILD ? 'Host name or ip:port of a BunkCraft server. This copy of the game has no server of its own.' : 'Host name or ip:port of a BunkCraft server. Leave empty for the server this page came from.' }),
         error,
       ),
     ], [

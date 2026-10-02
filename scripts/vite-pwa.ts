@@ -4,7 +4,7 @@ import { join, relative, sep } from 'node:path';
 import type { Plugin } from 'vite';
 
 /** Files that are not worth precaching: runtime-cached on first use instead. */
-const SKIP = [/^sw\.js$/, /\.map$/, /^texturepacks\//, /\.DS_Store$/, /^robots\.txt$/];
+const SKIP = [/^sw\.js$/, /^404\.html$/, /\.map$/, /^texturepacks\//, /\.DS_Store$/, /^robots\.txt$/];
 
 function walk(dir: string, root: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {

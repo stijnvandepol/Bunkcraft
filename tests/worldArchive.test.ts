@@ -1,5 +1,5 @@
 import { IDBFactory, IDBKeyRange } from 'fake-indexeddb';
-import { strToU8, zipSync } from 'fflate';
+import { deflateSync, strToU8, zipSync } from 'fflate';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SAVE_VERSION, SaveSystem, type WorldMeta, encodeEdit, newWorldId } from '../src/save/SaveSystem';
 import {
@@ -142,12 +142,42 @@ describe('malicious archives', () => {
   });
 
   it('stops a bomb that uses many allowed-size entries', () => {
-    const files: Record<string, Uint8Array> = { 'level.json': level() };
-    const zeros = new Uint8Array(ARCHIVE_LIMITS.chunkBytes);
-    for (let i = 0; i < 1600; i++) files[`chunks/${i}.v2.bin`] = zeros; // 200 MB uncompressed
-    const bomb = zipSync(files, { level: 1 });
+    // 1600 entries of 128 KiB zeros = 200 MB unpacked. Written by hand (one shared deflate stream,
+    // CRC unchecked by fflate) so building the fixture costs almost nothing.
+    const deflated = deflateSync(new Uint8Array(ARCHIVE_LIMITS.chunkBytes), { level: 9 });
+    const entries: { name: Uint8Array; data: Uint8Array; size: number }[] = [{ name: strToU8('level.json'), data: level(), size: level().length }];
+    for (let i = 0; i < 1600; i++) entries.push({ name: strToU8(`chunks/${i}.v2.bin`), data: deflated, size: ARCHIVE_LIMITS.chunkBytes });
+    const parts: Uint8Array[] = [];
+    const central: Uint8Array[] = [];
+    let offset = 0;
+    for (const e of entries) {
+      const method = e.data === deflated ? 8 : 0;
+      const local = new Uint8Array(30 + e.name.length);
+      const lv = new DataView(local.buffer);
+      lv.setUint32(0, 0x04034b50, true); lv.setUint16(4, 20, true); lv.setUint16(8, method, true);
+      lv.setUint32(18, e.data.length, true); lv.setUint32(22, e.size, true); lv.setUint16(26, e.name.length, true);
+      local.set(e.name, 30);
+      const cd = new Uint8Array(46 + e.name.length);
+      const cv = new DataView(cd.buffer);
+      cv.setUint32(0, 0x02014b50, true); cv.setUint16(4, 20, true); cv.setUint16(6, 20, true); cv.setUint16(10, method, true);
+      cv.setUint32(20, e.data.length, true); cv.setUint32(24, e.size, true); cv.setUint16(28, e.name.length, true);
+      cv.setUint32(42, offset, true);
+      cd.set(e.name, 46);
+      parts.push(local, e.data);
+      central.push(cd);
+      offset += local.length + e.data.length;
+    }
+    const cdSize = central.reduce((n, c) => n + c.length, 0);
+    const end = new Uint8Array(22);
+    const ev = new DataView(end.buffer);
+    ev.setUint32(0, 0x06054b50, true); ev.setUint16(8, entries.length, true); ev.setUint16(10, entries.length, true);
+    ev.setUint32(12, cdSize, true); ev.setUint32(16, offset, true);
+    const bomb = new Uint8Array(offset + cdSize + 22);
+    let pos = 0;
+    for (const part of [...parts, ...central, end]) { bomb.set(part, pos); pos += part.length; }
+    expect(bomb.length).toBeLessThan(ARCHIVE_LIMITS.fileBytes);
     expect(() => parseArchive(bomb)).toThrow(/too large when unpacked/);
-  }, 30_000);
+  });
 
   it('limits the number of entries', () => {
     const files: Record<string, Uint8Array> = { 'level.json': level() };
