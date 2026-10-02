@@ -129,17 +129,23 @@ regenereert, respawns en een scoreboard. Beschrijving, besturing en wapentabel: 
 - Always-sprint, bunny hop-luchtbesturing, geen valschade, honger of blokinteractie (`Interaction.arcade`).
 - Arcade-toetsen in het Key Binds-scherm; toetsen mogen gedeeld worden tussen sandbox-only en arcade-only acties.
 - Dev-preview met nep-server (`game.arcadePreview()`), Vitest voor de pure logica.
+- **Kaarten: Gedaan.** Vijf kaarten (Classic, Maple Court, Old Quarter, Harbor Yard, Dust Bazaar) met een Map-knop bij het
+  aanmaken en optioneel `rotate`; de kaart zit in `world.json`, `welcome`/`match` (`MatchInfo.map`) en het worldType.
+- **Naamtags: Gedaan.** Nooit door muren, met zichtlijn-raycast en fade.
+- **Spectaten na je dood: Gedaan.** Moordenaar eerst, daarna bladeren met de muis.
+- **Teambalans: Gedaan.** Late joiners naar het kleinste team; bij vertrek wisselt de laatste joiner bij de volgende respawn.
 
 **Open:**
 
 1. **Integratie met de serverbranch** verifiëren: zie de checklist in de overdracht (arena-wereld via `worldType`,
    snelheidscontrole voor 1,3× sprint, `damaged.dx/dz`-richting, `holds` bij joinen).
-2. **Arena-kaarten** (meerdere kaarten, kiezen bij het aanmaken) en spawnpunten per team.
+2. **Meer kaarten en varianten:** per kaart meerdere dekkingsindelingen via de seed (nu alleen Classic), een stemronde voor de
+   volgende kaart in plaats van vast `rotate`, en bij een kaartwissel de wereld ter plekke herbouwen (nu een korte
+   herverbinding met laadscherm).
 3. **Meer wapens en perks**, scorestreaks, kill cam, headshot-statistieken, teamchat.
 4. **Lag compensation** voor hitscan (server) en client-side tracer-voorspelling tegen spelers.
 5. **Bots** voor lege servers, en een snelle "Quick Play"-knop die een open arcade-game zoekt.
 6. **Mobiel:** touchbediening voor schieten en richten (hoort bij de touch-taak in 6).
-7. Naamtags voor vijanden alleen met zichtlijn (nu zijn ze zichtbaar door muren).
 
 ## 8. Distributie
 

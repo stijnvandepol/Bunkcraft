@@ -15,10 +15,28 @@ de server (match, hitscan, health, respawn) staat in `docs/SERVER.md`.
 | Free For All | `ffa` | Iedereen voor zichzelf. De eerste speler op de score limit wint. |
 
 Bij een arcade-game stel je **Score Limit** (10, 20, 30 of 50 kills) en **Time Limit** (5, 10 of 15 minuten)
-in. Wie bij het eindsignaal de meeste kills heeft wint. Het menu stuurt
-`{ name, gameMode, seed, gameType, scoreLimit, timeLimitSec }` naar `POST /api/rooms`;
-`GET /api/rooms/:code` geeft dezelfde velden terug, zodat het joinscherm en de lijst met recente games
-het type tonen.
+in, en een **Map** (kaart; zie hieronder). Wie bij het eindsignaal de meeste kills heeft wint. Het menu stuurt
+`{ name, gameMode, seed, gameType, scoreLimit, timeLimitSec, mapId }` naar `POST /api/rooms`;
+`GET /api/rooms/:code` geeft dezelfde velden terug (`map` voor `mapId`), zodat het joinscherm en de lijst met recente games
+het type en de kaart tonen.
+
+## Kaarten
+
+De knop **Map** in *Create Game* wisselt tussen de kaarten en toont onder de knop een regel uitleg. De kaarten
+staan in `src/modes/maps/` en zijn eigen, originele indelingen in de geest van bekende shooterkaarten: elk met een eigen
+kleurenpalet, spiegelsymmetrisch voor tdm, omheind en met spawns die ver uit elkaar liggen en elkaar niet kunnen zien
+(spawnkillen is moeilijk).
+
+| Kaart | Id | Wat |
+|---|---|---|
+| Classic | `classic` | De oorspronkelijke arena (96 × 96): middenplatform, corridors, dekking. Steen en hout. |
+| Maple Court | `suburb` | Klein en snel (64 × 40): twee bakstenen huizen met tuin tegenover elkaar, een straat met auto's en een bestelbus, garages op de hoeken, trappen naar de platte daken. Close quarters. |
+| Old Quarter | `quarter` | Stedelijk (80 × 64): een binnenplaats met fontein, een poortgebouw, hoge bakstenen blokken met balkons en dakstairs, steegjes van 4 breed als flanken, een omheind plein per team. |
+| Harbor Yard | `dockyard` | Industrieel (88 × 64): containerstapels van gekleurde wol (teamkleuren aan de eigen kant), een grote loods in het midden, een kraandek op houten pilaren en een schip met een brug om vanaf te snipen. |
+| Dust Bazaar | `desert` | Lange zichtlijnen (96 × 64): zand en zandsteen, een markt met gestreepte kramen, platte daken langs een lange open baan en een sluipschuttertoren aan elk uiteinde, achter de ommuurde teambasis. |
+
+Met **Rotate** speelt elke volgende match op de volgende kaart; de client voegt zich dan automatisch opnieuw bij de
+game (even het laadscherm). Tijdens een match valt er niets aan de kaart te kiezen.
 
 ## Wat anders is dan in de sandbox
 
@@ -63,6 +81,10 @@ de match loopt op de server gewoon door.
 - **Scoreboard** op Tab, gesorteerd op kills (dan minder deaths, dan naam), met teamkleuren, K/D en ping.
 - Spawn-bescherming (2 s), "Warm-up: match starts in N", het doodscherm
   ("You were eliminated by X" met aftelling) en het eindscherm (winnaar, eindstand, "Next match in N").
+- **Spectaten na je dood:** de camera volgt je moordenaar de eerste seconde en laat je daarna met de linker- of rechtermuisknop
+  door je levende teamgenoten (tdm) of alle andere spelers (ffa) bladeren; onderin staat "Spectating NAAM". De camera hangt achter
+  het hoofd van de gevolgde speler (en komt dichterbij als er blokken in de weg zitten). Het gebruikt de posities uit `snap`;
+  er is geen servercode voor nodig.
 
 ## Wapens
 
@@ -101,14 +123,17 @@ Server → client: `match`, `roster`, `spawn`, `hp`, `ammo`, `shot`, `hit`, `dam
   geluid met afstandsdemping. De eigen `shot` wordt genegeerd: je eigen tracer en effecten komen direct.
 - `damaged.dx/dz` wijzen **van jou naar de schutter** (wereldrichting); de indicator draait met je blik mee.
 - Andere spelers dragen een shirt en haarband in teamkleur, hun naamtag heeft de teamkleur en ze houden het wapen uit
-  `holds` vast met opgeheven armen. Na een kill ligt het lichaam kort op de grond en verdwijnt tot de respawn.
+  `holds` vast met opgeheven armen. **Naamtags** worden nooit door muren heen getekend: een tag verschijnt alleen als er een
+  vrij blokpad is van de camera naar het hoofd (raycast, per speler om de 100 ms, binnen 60 blokken) en vervaagt in en uit;
+  dat geldt voor teamgenoten en tegenstanders. Na een kill ligt het lichaam kort op de grond en verdwijnt tot de respawn.
 
 ## Ontwikkelen en testen zonder server
 
 In een dev-build (`npm run dev`) start `window.game.arcadePreview('tdm' | 'ffa')` een lokale testarena met een nep-server
 (`src/core/ArcadePreview.ts`): bots lopen rond en schieten, jouw schoten leveren `ammo`, `shot`, `hit` en `kill` op en je
 respawnt echt. Via `game.previewServer` kun je gebeurtenissen forceren (`damage`, `killSelf`, `killBot`, `botKill`,
-`fillScores`, `endMatch`). Zet voor automatische tests `game.input.locked = true; game.state = 'playing'` en stuur
+`fillScores`, `endMatch`). Met een derde argument (`arcadePreview('tdm', 'You', 'dockyard')`) speel je op de echte kaart
+in plaats van de nep-arena. Zet voor automatische tests `game.input.locked = true; game.state = 'playing'` en stuur
 invoer via `game.input.down.add('Mouse0')` (zie de gotchas in `CLAUDE.md`). In een productiebuild bestaat de preview niet.
 
 ## Een nieuw game type toevoegen

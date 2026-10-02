@@ -147,22 +147,40 @@ en een scorebord.
 | Team Deathmatch | `tdm` | Rood tegen blauw; het team met de meeste kills wint |
 | Free For All | `ffa` | Ieder voor zich; wie de scorelimiet haalt (of aan het eind de meeste kills heeft) wint |
 
-Een game aanmaken (`POST /api/rooms`) accepteert `{ name, gameMode, seed, gameType?, scoreLimit?, timeLimitSec? }`:
+Een game aanmaken (`POST /api/rooms`) accepteert `{ name, gameMode, seed, gameType?, scoreLimit?, timeLimitSec?, mapId? }`:
 
 | Veld | Standaard (tdm / ffa) | Grenzen |
 |---|---|---|
 | `gameType` | `minecraft` | `minecraft`, `tdm`, `ffa` (onbekend = `minecraft`) |
 | `scoreLimit` | 30 / 20 | 5 tot 100 (kills van het team in tdm, kills van de speler in ffa) |
 | `timeLimitSec` | 600 / 600 | 120 tot 1800 seconden |
+| `mapId` | `classic` | `classic`, `suburb`, `quarter`, `dockyard`, `desert` of `rotate` (onbekend = `classic`) |
 
-`GET /api/rooms/<CODE>` geeft ook `gameType`, `scoreLimit` en `timeLimitSec` terug (0 bij Minecraft). De
-instellingen staan in `world.json` van de game. De spelmodus (`gameMode`) en de seed zijn voor een arcade-game
-niet van belang: de seed kiest alleen een van drie indelingen van de dekking op de arena. De limieten voor
+`GET /api/rooms/<CODE>` geeft ook `gameType`, `scoreLimit` en `timeLimitSec` terug (0 bij Minecraft) en bij arcade-games
+`map` (de instelling: een kaart of `rotate`). De instellingen staan in `world.json` van de game (`mapId`). De spelmodus
+(`gameMode`) en de seed zijn voor een arcade-game niet van belang: de seed kiest alleen een van drie indelingen van de
+dekking op de Classic-kaart. De limieten voor
 het aanmaken van games (`ROOM_CREATE_LIMIT`, `MAX_ROOMS`) gelden ongewijzigd.
 
-**De arena** is 96 × 96 blokken, spiegelsymmetrisch (rood links, blauw rechts), met een verhoogd middenplatform,
-corridors, dekking, glazen ramen en een muur van 12 blokken om de rand. Alleen bestaande blokken, op een
-vlakke vloer. De server houdt spelers binnen de muur.
+**De kaarten** staan in `src/modes/maps/` (een bestand per kaart, gedeeld door workers, server en client). Elke kaart is
+deterministisch, spiegelsymmetrisch (rood links, blauw rechts), omheind door een muur en gebouwd uit bestaande blokken; de
+rode en blauwe wol markeert de teamzones. Elke kaart heeft eigen spawns die ver uit elkaar liggen en elkaar niet kunnen zien.
+
+| `mapId` | Naam | Grootte | Stijl |
+|---|---|---|---|
+| `classic` | Classic | 96 × 96 | Middenplatform, corridors en dekking (drie indelingen via de seed) |
+| `suburb` | Maple Court | 64 × 40 | Klein en snel: twee huizen tegenover elkaar, straat, garages en tuinen |
+| `quarter` | Old Quarter | 80 × 64 | Stedelijk: binnenplaats, balkons, dakstairs en steegjes |
+| `dockyard` | Harbor Yard | 88 × 64 | Industrieel: containerstapels, centrale loods, kraandek en een schip |
+| `desert` | Dust Bazaar | 96 × 64 | Lange zichtlijnen: markt, daken en sluipschuttertorens aan beide uiteinden |
+
+De instelling `rotate` speelt elke volgende match op de volgende kaart (in de volgorde hierboven). Bij een nieuwe
+kaart vervangt de server zijn kogelwereld en stuurt hij `match` met `info.map`; de client ziet dat dit niet zijn kaart
+is en **voegt zich opnieuw bij de game** (nieuw `welcome`, nieuwe wereld). De kaart reist als `worldType`
+`arena:<mapId>` (`arena` = classic) door de workers en `ServerWorld`; in het protocol staat hij als optionele
+`MatchInfo.map` (zonder protocolversie te verhogen: oude clients negeren het veld).
+
+Alleen bestaande blokken, op een vlakke vloer. De server houdt spelers binnen de muur van de gekozen kaart.
 
 **Het matchverloop:**
 
@@ -175,7 +193,10 @@ vlakke vloer. De server houdt spelers binnen de muur.
 **Spelers en wapens (server-authoritative):**
 
 - Health 100, na 5 seconden zonder schade komt er 25 per seconde bij. Dood = 3 seconden respawn, 2 seconden
-  bescherming na elke spawn. Nieuwe spelers komen bij het kleinste team (tdm).
+  bescherming na elke spawn. Nieuwe spelers komen bij het kleinste team (tdm; bij gelijke grootte bij het team dat
+  achterstaat) en spawnen direct, ook in een lopende match. Als er spelers vertrekken en de teams twee of meer
+  verschillen, wisselt de laatst gejoinde speler van het grotere team bij zijn volgende respawn van team
+  (systeembericht in de chat: "X moved to the red team to even the teams"); nooit midden in een leven.
 - Spawnpunten: tdm in de eigen basis, het punt het verst van levende tegenstanders; ffa het punt het verst van
   alle anderen.
 - Wapens (`src/modes/Weapons.ts`): rifle, smg, shotgun en sniper als primair, pistool en mes altijd. De keuze
@@ -196,9 +217,13 @@ Kosten: met 16 gesimuleerde spelers die continu op elkaar schieten kost een tick
 minder dan 0,5 % van het budget van 50 ms. Uitgaand verkeer: ~20 KiB/s per speler.
 
 **Testen met bots:** `ROOM_CREATE_LIMIT=1000 npm run server` in de ene terminal, en in de andere
-`npx tsx scripts/arena-bots.ts tdm` (of `ffa`; optioneel een serveradres erachter). Het script maakt een
+`npx tsx scripts/arena-bots.ts tdm` (of `ffa`; optioneel een kaart en een serveradres erachter, bijvoorbeeld
+`npx tsx scripts/arena-bots.ts tdm dockyard http://localhost:3000`). Het script maakt een
 game aan, laat twee bots over WebSocket joinen, wacht op `live`, laat de ene bot de andere doodschieten en
-controleert alle berichten. Duurt zo'n 25 seconden.
+controleert alle berichten, inclusief de kaart in `welcome` en het terugvallen op `classic` bij een onbekende `mapId`.
+Duurt zo'n 25 seconden. Hulpscripts voor kaarten: `scripts/ascii-map.ts` (bovenaanzicht in tekst), `scripts/spawn-los.ts`
+(zien spawns elkaar?), `scripts/bench-maps.ts` (generatietijd per chunk, rond 0,1 ms) en `scripts/shots.py` (screenshots via
+Playwright en de dev-preview).
 
 ## Bekende beperkingen
 
