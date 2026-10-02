@@ -108,10 +108,38 @@ spelers, chat, tijd en per speler opgeslagen data. Zie `docs/SERVER.md`.
 Volgende stappen:
 
 1. **Mobs op de server simuleren: Gedaan** (zie `docs/SERVER.md`). Mob-AI, items, pijlen en TNT draaien op de server met een eigen `ServerWorld`.
-2. **Gedeelde item-drops: Gedaan.** PvP staat nog open.
+2. **Gedeelde item-drops: Gedaan.** PvP in de Minecraft-sandbox staat nog open; PvP bestaat wel in de arcade-game types (zie 7b).
 3. **Server-authoritative inventory** (anti-cheat): breken en craften door de server laten bevestigen.
 4. **Wachtwoord, whitelist en ops**, en accounts of tokens per naam.
 5. **Binair protocol** voor snapshots, als er veel spelers zijn.
+
+## 7b. Arcade-game types (Krunker-stijl)
+
+Naast de sandbox: **Team Deathmatch** en **Free For All** op een vaste arena, met hitscan-wapens, health die
+regenereert, respawns en een scoreboard. Beschrijving, besturing en wapentabel: [`GAMEMODES.md`](GAMEMODES.md).
+
+**Gedaan (client):**
+
+- Menu: Game Type, Score Limit en Time Limit bij *Create Game*; het type staat in het joinscherm en in de recente games.
+- `ArcadeSession` (match, roster, health, munitie, killfeed, fire control) en `ArcadeHud` (health, munitie, richtkruis met
+  spreiding, hit markers, schade-indicatoren, killfeed, timer en scores, scoreboard, warm-up, doodscherm, eindscherm,
+  loadout-menu); `Game.ts` delegeert alleen.
+- Wapens als boxmodellen (first person met sway, terugslag, mondingsvuur, herladen, ADS en scope; third person met
+  teamshirt, haarband en naamtag in teamkleur), tracers, inslagdeeltjes en procedurele geluiden per wapen.
+- Always-sprint, bunny hop-luchtbesturing, geen valschade, honger of blokinteractie (`Interaction.arcade`).
+- Arcade-toetsen in het Key Binds-scherm; toetsen mogen gedeeld worden tussen sandbox-only en arcade-only acties.
+- Dev-preview met nep-server (`game.arcadePreview()`), Vitest voor de pure logica.
+
+**Open:**
+
+1. **Integratie met de serverbranch** verifiëren: zie de checklist in de overdracht (arena-wereld via `worldType`,
+   snelheidscontrole voor 1,3× sprint, `damaged.dx/dz`-richting, `holds` bij joinen).
+2. **Arena-kaarten** (meerdere kaarten, kiezen bij het aanmaken) en spawnpunten per team.
+3. **Meer wapens en perks**, scorestreaks, kill cam, headshot-statistieken, teamchat.
+4. **Lag compensation** voor hitscan (server) en client-side tracer-voorspelling tegen spelers.
+5. **Bots** voor lege servers, en een snelle "Quick Play"-knop die een open arcade-game zoekt.
+6. **Mobiel:** touchbediening voor schieten en richten (hoort bij de touch-taak in 6).
+7. Naamtags voor vijanden alleen met zichtlijn (nu zijn ze zichtbaar door muren).
 
 ## 8. Distributie
 
