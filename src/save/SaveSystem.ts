@@ -33,6 +33,8 @@ export interface WorldMeta {
   stats?: number[];
   /** Earned advancements: id → timestamp. */
   advancements?: Record<string, number>;
+  /** Chest contents: "x,y,z" → one saved stack record per slot. */
+  containers?: Record<string, number[][]>;
   /** World spawn / respawn point. */
   spawn?: { x: number; y: number; z: number };
   /** Multiplayer arcade games use the fixed arena map; absent = generated terrain. */

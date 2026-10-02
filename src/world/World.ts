@@ -1,10 +1,12 @@
 import type { WorkerPool } from '../workers/WorkerPool';
 import { tintColor } from './BiomeColors';
-import { BLOCK, SHAPE, SHAPE_CROSS, SHAPE_DOOR, SHAPE_MODEL, SOLID, TINT } from './BlockRegistry';
+import { ContainerStore } from './Containers';
+import { BLOCK, BOX_KIND, SHAPE, SHAPE_CROSS, SHAPE_DOOR, SHAPE_MODEL, SOLID, TINT } from './BlockRegistry';
 import { CHUNK_READY, type Chunk } from './Chunk';
 import { ChunkManager, type ChunkMaterials } from './ChunkManager';
 import { CHUNK_HEIGHT, CHUNK_VOLUME, SEA_LEVEL, blockIndex, chunkKey } from './constants';
 import { DOOR_OPEN_BIT, isDoorUpper, packState, stateId, stateMeta } from './BlockStates';
+import { BOX_BED, BOX_GATE, BOX_TRAPDOOR, GATE_OPEN_BIT, TRAPDOOR_OPEN_BIT, bedPartner } from './BoxShapes';
 import { BIOME } from './TerrainGenerator';
 import { LAVA_TICK_DELAY, LiquidSim, WATER_TICK_DELAY, isLiquid } from './Liquids';
 import { type WorldGenerator, type WorldType, arenaMapOf, createGenerator, isArenaWorld } from './WorldGenerator';
@@ -18,6 +20,8 @@ export class World {
   readonly generator: WorldGenerator;
   readonly edits: EditMap;
   readonly dirtyEditChunks = new Set<number>();
+  /** Chest contents (singleplayer; saved with the world). */
+  readonly containers = new ContainerStore();
   /**
    * Water and lava flow (singleplayer only: on a multiplayer server the server simulates and the client mirrors
    * its block changes). Null until enableLiquids().
@@ -316,6 +320,11 @@ export class World {
       const oy = isDoorUpper(meta) ? y - 1 : y + 1;
       if (this.getBlock(x, oy, z) === id) this.setBlock(x, oy, z, BLOCK.AIR);
     }
+    if (BOX_KIND[id] === BOX_BED) {
+      // Both halves of a bed go at once.
+      const other = bedPartner(x, z, meta);
+      if (this.getBlock(other.x, y, other.z) === id) this.setBlock(other.x, y, other.z, BLOCK.AIR);
+    }
     const above = this.getBlock(x, y + 1, z);
     if (SHAPE[above] === SHAPE_CROSS || SHAPE[above] === SHAPE_MODEL) this.setBlock(x, y + 1, z, BLOCK.AIR);
     else if (SHAPE[above] === SHAPE_DOOR && SHAPE[id] !== SHAPE_DOOR) {
@@ -340,6 +349,17 @@ export class World {
     const oy = isDoorUpper(meta) ? y - 1 : y + 1;
     if (this.getBlock(x, oy, z) === id) this.setBlock(x, oy, z, id, withOpen(this.getMeta(x, oy, z)));
     return open;
+  }
+
+  /** Opens or closes the trapdoor or fence gate at (x, y, z); the new state (true = open), or null for any other block. */
+  toggleBox(x: number, y: number, z: number): boolean | null {
+    const id = this.getBlock(x, y, z);
+    const kind = BOX_KIND[id];
+    const bit = kind === BOX_TRAPDOOR ? TRAPDOOR_OPEN_BIT : kind === BOX_GATE ? GATE_OPEN_BIT : 0;
+    if (!bit) return null;
+    const meta = this.getMeta(x, y, z) ^ bit;
+    this.setBlock(x, y, z, id, meta);
+    return (meta & bit) !== 0;
   }
 
   dispose(): void {

@@ -1,5 +1,6 @@
 import { TINT_BIRCH, TINT_FOLIAGE, TINT_GRASS, TINT_NONE, TINT_SPRUCE } from './BiomeColors';
-import { CUBES, CUBE_FIRST, DYES, type MineTool, WOODS, titleCase } from './Content';
+import { BOX_BED, BOX_CARPET, BOX_FENCE, BOX_GATE, BOX_LADDER, BOX_NONE, BOX_PANE, BOX_TRAPDOOR, BOX_WALL, isTall } from './BoxShapes';
+import { CUBES, CUBE_FIRST, DYES, type MineTool, PARTIAL_EXT, WALL_MATERIALS, WOODS, titleCase } from './Content';
 
 /**
  * Data-driven block definitions. Everything the mesher, lighting, physics and UI need
@@ -13,7 +14,7 @@ import { CUBES, CUBE_FIRST, DYES, type MineTool, WOODS, titleCase } from './Cont
  * "slab" and "stairs" are unions of octants (see BlockStates), "door" a thin box; all three depend on the
  * block's state byte and are collectively the "partial" blocks (not a full cube, but they collide).
  */
-export type RenderShape = 'none' | 'cube' | 'cross' | 'liquid' | 'model' | 'slab' | 'stairs' | 'door';
+export type RenderShape = 'none' | 'cube' | 'cross' | 'liquid' | 'model' | 'slab' | 'stairs' | 'door' | 'box';
 export type BlockSound = 'stone' | 'wood' | 'grass' | 'gravel' | 'sand' | 'glass' | 'wool' | 'snow';
 
 export interface BlockTextures {
@@ -32,6 +33,10 @@ export interface VariantSpec {
   /** Display name per variant (used for the item names). */
   names: string[];
   textures?: BlockTextures[];
+  /** Sound per variant (default: the block's). */
+  sounds?: BlockSound[];
+  /** Hardness and tool per variant (default: the block's). */
+  mining?: { hardness: number; tool?: MineTool; minTier?: number }[];
 }
 
 export interface BlockDef {
@@ -69,6 +74,8 @@ export interface BlockDef {
   dye?: boolean;
   /** The 4th texture slot ("front") is on the side the block faces: state bits 0-1 (furnace, chest, pumpkin). */
   facing?: boolean;
+  /** Shape kind of a `box` block (see BoxShapes). */
+  boxKind?: number;
   /** Mining: the tool that is fastest and the lowest pickaxe tier that still gets the drop. */
   tool?: MineTool;
   minTier?: number;
@@ -156,7 +163,9 @@ export const BLOCK = {
   BIRCH_STAIRS: 64,
   SPRUCE_STAIRS: 65,
   /** Both halves of a door are this block; the state byte says which half (see BlockStates). */
+  /** Doors of every wood: the wood is bits 5-7 of the state (see BlockStates, oak = 0). */
   OAK_DOOR: 66,
+  DOOR: 66,
   /** Slabs and stairs of every material not in PARTIAL_MATERIALS: the material is in the state byte (see PartialMaterials). */
   SLAB_X: 67,
   STAIRS_X: 68,
@@ -164,7 +173,19 @@ export const BLOCK = {
   STAINED_TERRACOTTA: 70,
   GLAZED_TERRACOTTA: 71,
   STAINED_GLASS: 72,
+  CARPET: 73,
+  STAINED_GLASS_PANE: 74,
+  BED: 75,
+  GLASS_PANE: 76,
+  TRAPDOOR: 77,
+  FENCE: 78,
+  FENCE_GATE: 79,
+  WALL: 80,
+  LADDER: 81,
+  CHEST: 82,
+  LANTERN: 83,
   SAPLING: 84,
+  IRON_BARS: 85,
   /** Sentinel returned for blocks in chunks that are not loaded (treated as solid). */
   UNLOADED: 255,
 } as const;
@@ -274,10 +295,14 @@ export const BLOCK_DEFS: BlockDef[] = [
   cube(B.TNT, 'tnt', 'TNT', { top: 'tnt_top', bottom: 'tnt_bottom', side: 'tnt_side' }, 0, 'grass'),
 ];
 
-// Oak door: the lower half uses the "side" texture slot and the upper half the "top" slot.
+// Doors: the lower half uses the "side" texture slot and the upper half the "top" slot; the wood is the variant.
 BLOCK_DEFS.push({
   id: B.OAK_DOOR, name: 'oak_door', displayName: 'Oak Door', shape: 'door', solid: true, transparent: true, hardness: 3, sound: 'wood',
-  inInventory: true, textures: { side: 'oak_door_lower', top: 'oak_door_upper' }, metaMask: 31,
+  inInventory: true, textures: { side: 'oak_door_lower', top: 'oak_door_upper' }, metaMask: 255, tool: 'axe',
+  variant: {
+    shift: 5, count: WOODS.length, names: WOODS.map((w) => `${w.display} Door`),
+    textures: WOODS.map((w) => ({ side: `${w.name}_door_lower`, top: `${w.name}_door_upper` })),
+  },
 });
 
 // Slabs and stairs reuse the textures and sounds of the block they are made of.
@@ -343,6 +368,76 @@ BLOCK_DEFS.push({
   },
 });
 
+// ---- Slabs and stairs of the other materials: one block id each, the material is in the state ----
+const baseDefOf = (name: string): BlockDef => {
+  const d = BLOCK_DEFS.find((x) => x.name === name);
+  if (!d) throw new Error(`Unknown partial base ${name}`);
+  return d;
+};
+BLOCK_DEFS.push(
+  extPartial(B.SLAB_X, 'slab', 'Slab', 'slab', 2, 2, 3, 0x7f),
+  extPartial(B.STAIRS_X, 'stairs', 'Stairs', 'stairs', 3, 0, 7, 0xff),
+);
+function extPartial(id: number, name: string, noun: string, shape: RenderShape, shift: number, slabHardness: number, stateBits: number, metaMask: number): BlockDef {
+  const bases = PARTIAL_EXT.map((m) => baseDefOf(m.base));
+  return {
+    id, name, displayName: noun, shape, solid: true, transparent: true, hardness: 2, sound: 'stone', inInventory: true,
+    textures: bases[0].textures, lightStop: true, metaMask: metaMask | stateBits,
+    variant: {
+      shift, count: PARTIAL_EXT.length, names: PARTIAL_EXT.map((m) => `${m.display} ${noun}`),
+      textures: bases.map((b) => b.textures),
+      sounds: bases.map((b) => b.sound),
+      // A slab is 2.0 hard whatever it is made of; stairs are as hard as the block.
+      mining: bases.map((b) => ({ hardness: slabHardness || b.hardness, tool: b.tool, minTier: b.minTier })),
+    },
+  };
+}
+void CUBE_FIRST;
+
+// ---- Thin and connecting blocks (BoxShapes) and the other functional blocks ----
+const woodVariant = (shift: number, noun: string): VariantSpec => ({
+  shift, count: WOODS.length, names: WOODS.map((w) => `${w.display} ${noun}`),
+  textures: WOODS.map((w) => ({ all: `${w.name}_planks` })),
+  sounds: WOODS.map(() => 'wood' as BlockSound),
+});
+const wallBases = WALL_MATERIALS.map((m) => baseDefOf(m.base));
+const box = (id: number, name: string, display: string, kind: number, textures: BlockTextures, extra: Partial<BlockDef> = {}): BlockDef => ({
+  id, name, displayName: display, shape: 'box', boxKind: kind, solid: true, transparent: true, hardness: 0.5, sound: 'wood', inInventory: true,
+  textures, ...extra,
+});
+BLOCK_DEFS.push(
+  box(B.CARPET, 'carpet', 'Carpet', BOX_CARPET, { all: 'white_wool' }, { dye: true, variant: dyeVariant('Carpet'), sound: 'wool', hardness: 0.1 }),
+  box(B.BED, 'bed', 'Bed', BOX_BED, { top: 'bed_foot_top', bottom: 'bed_head_top', side: 'bed_side' }, {
+    dye: true, variant: { shift: 3, count: 16, names: DYES.map((d) => `${d.display} Bed`) }, hardness: 0.2, metaMask: 0x7f,
+  }),
+  box(B.GLASS_PANE, 'glass_pane', 'Glass Pane', BOX_PANE, { all: 'glass' }, { sound: 'glass', hardness: 0.3 }),
+  box(B.STAINED_GLASS_PANE, 'stained_glass_pane', 'Stained Glass Pane', BOX_PANE, { all: 'white_stained_glass' }, {
+    dye: true, variant: dyeVariant('Stained Glass Pane'), sound: 'glass', hardness: 0.3,
+  }),
+  box(B.IRON_BARS, 'iron_bars', 'Iron Bars', BOX_PANE, { all: 'iron_bars' }, { sound: 'stone', hardness: 5, tool: 'pickaxe', minTier: 0 }),
+  box(B.TRAPDOOR, 'trapdoor', 'Trapdoor', BOX_TRAPDOOR, { all: 'oak_planks' }, {
+    variant: woodVariant(4, 'Trapdoor'), hardness: 3, tool: 'axe', metaMask: 0xff,
+  }),
+  box(B.FENCE, 'fence', 'Fence', BOX_FENCE, { all: 'oak_planks' }, { variant: woodVariant(0, 'Fence'), hardness: 2, tool: 'axe' }),
+  box(B.FENCE_GATE, 'fence_gate', 'Fence Gate', BOX_GATE, { all: 'oak_planks' }, {
+    variant: woodVariant(3, 'Fence Gate'), hardness: 2, tool: 'axe', metaMask: 0x3f,
+  }),
+  box(B.WALL, 'wall', 'Wall', BOX_WALL, wallBases[0].textures, {
+    variant: {
+      shift: 0, count: WALL_MATERIALS.length, names: WALL_MATERIALS.map((m) => `${m.display} Wall`),
+      textures: wallBases.map((b) => b.textures), sounds: wallBases.map((b) => b.sound),
+      mining: wallBases.map(() => ({ hardness: 2, tool: 'pickaxe' as MineTool, minTier: 0 })),
+    },
+    sound: 'stone', hardness: 2, tool: 'pickaxe', minTier: 0,
+  }),
+  box(B.LADDER, 'ladder', 'Ladder', BOX_LADDER, { all: 'ladder' }, { solid: false, hardness: 0.4, metaMask: 3 }),
+  cube(B.CHEST, 'chest', 'Chest', { top: 'chest_top', bottom: 'chest_top', side: 'chest_side', front: 'chest_front' }, 2.5, 'wood', { facing: true, tool: 'axe' }),
+  {
+    id: B.LANTERN, name: 'lantern', displayName: 'Lantern', shape: 'model', solid: false, transparent: true, hardness: 3.5, sound: 'stone',
+    light: 15, inInventory: true, textures: { all: 'lantern' }, model: [[5, 0, 5, 11, 7, 11], [6, 7, 6, 10, 9, 10]], tool: 'pickaxe', minTier: 0,
+  },
+);
+
 BLOCK_DEFS.sort((a, b) => a.id - b.id);
 
 /** Extra texture layers that are not tied to a block face (crack overlay stages). */
@@ -379,6 +474,7 @@ export const SHAPE_MODEL = 4;
 export const SHAPE_SLAB = 5;
 export const SHAPE_STAIRS = 6;
 export const SHAPE_DOOR = 7;
+export const SHAPE_BOX = 8;
 
 export const SHAPE = new Uint8Array(256);
 export const SOLID = new Uint8Array(256);
@@ -404,6 +500,9 @@ export const DYE_RGB = new Int32Array(16);
 DYES.forEach((d, i) => { DYE_RGB[i] = d.rgb; });
 /** Blocks whose "front" texture turns with state bits 0-1; FRONT_FACE[meta & 3] is the face index it is on. */
 export const FACING = new Uint8Array(256);
+/** Box kind per block (BOX_* in BoxShapes; 0 = not a box block) and which of them are taller than one block. */
+export const BOX_KIND = new Uint8Array(256);
+export const TALL = new Uint8Array(256);
 export const FRONT_FACE = [4, 5, 0, 1] as const;
 /**
  * State bits that belong to the item of a block (colour, wood, material): the item of a placed block keeps them,
@@ -424,7 +523,7 @@ for (const def of BLOCK_DEFS) {
   blockById[id] = def;
   SHAPE[id] = def.shape === 'cube' ? SHAPE_CUBE : def.shape === 'cross' ? SHAPE_CROSS : def.shape === 'liquid' ? SHAPE_LIQUID
     : def.shape === 'model' ? SHAPE_MODEL : def.shape === 'slab' ? SHAPE_SLAB : def.shape === 'stairs' ? SHAPE_STAIRS
-    : def.shape === 'door' ? SHAPE_DOOR : SHAPE_NONE;
+    : def.shape === 'door' ? SHAPE_DOOR : def.shape === 'box' ? SHAPE_BOX : SHAPE_NONE;
   PARTIAL[id] = SHAPE[id] >= SHAPE_SLAB ? 1 : 0;
   SOLID[id] = def.solid ? 1 : 0;
   OPAQUE[id] = def.shape === 'cube' && !def.transparent ? 1 : 0;
@@ -434,6 +533,8 @@ for (const def of BLOCK_DEFS) {
   LIGHT_STOP[id] = def.lightStop ? 1 : 0;
   SWAY[id] = def.sway ? 1 : 0;
   DYE[id] = def.dye ? 1 : 0;
+  BOX_KIND[id] = def.boxKind ?? BOX_NONE;
+  TALL[id] = def.boxKind && isTall(def.boxKind) ? 1 : 0;
   FACING[id] = def.facing ? 1 : 0;
   const v = def.variant;
   const variantBits = v ? ((1 << Math.ceil(Math.log2(Math.max(2, v.count)))) - 1) << v.shift : 0;
@@ -507,6 +608,12 @@ for (const def of BLOCK_DEFS) if (def.model) MODELS[def.id] = def.model;
 export function stateTextures(def: BlockDef, meta: number): BlockTextures {
   const v = def.variant;
   return v?.textures?.[(meta >> v.shift) & 31] ?? def.textures;
+}
+
+/** Sound of a block in a given state (a wooden slab sounds like wood even though slabs share one id). */
+export function stateSound(def: BlockDef, meta: number): BlockSound {
+  const v = def.variant;
+  return v?.sounds?.[(meta >> v.shift) & 31] ?? def.sound;
 }
 
 export function getBlockDef(id: number): BlockDef | undefined {

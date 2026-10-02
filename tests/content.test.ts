@@ -31,6 +31,7 @@ describe('block ids', () => {
     expect(CUBE_ID.copper_ore).toBe(CUBE_FIRST + CUBES.findIndex((c) => c.name === 'copper_ore'));
     expect(CUBES[0].name).toBe('granite');
     expect(CUBES[CUBES.length - 1].name).toBe('stripped_birch_log');
+    expect(CUBES.some((c) => c.name === 'packed_mud')).toBe(true);
   });
 
   it('leaves room for what comes next', () => {

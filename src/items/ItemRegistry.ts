@@ -242,8 +242,14 @@ function addSpec(id: number, spec: ItemSpec): void {
 export const ITEM_ID: Record<string, number> = {};
 FOODS.forEach((f, i) => { addSpec(FOOD_FIRST + i, f); ITEM_ID[f.name] = FOOD_FIRST + i; });
 MATERIALS.forEach((m, i) => { addSpec(MATERIAL_FIRST + i, m); ITEM_ID[m.name] = MATERIAL_FIRST + i; });
+let blockNames: Map<string, number> | null = null;
+/** Id of a block or item by its registry name ('cobblestone', 'granite', 'copper_ingot', 'stick'). */
 export function itemId(name: string): number {
-  const id = ITEM_ID[name] ?? CUBE_ID[name];
+  if (!blockNames) {
+    blockNames = new Map();
+    for (const d of BLOCK_DEFS) blockNames.set(d.name, d.id);
+  }
+  const id = ITEM_ID[name] ?? CUBE_ID[name] ?? blockNames.get(name);
   if (id === undefined) throw new Error(`Unknown item ${name}`);
   return id;
 }
@@ -426,16 +432,33 @@ PARTIAL_MATERIALS.forEach((m, i) => {
   MINING[STAIRS_FIRST + i] = { ...MINING[m.base] };
 });
 
-export function miningInfo(blockId: number): Readonly<Mining> | undefined {
-  return MINING[blockId];
+const variantMining = new Map<number, Mining>();
+
+/** Mining data of a block in a given state: variants (slabs of different materials) can differ from the block's own. */
+function miningOf(blockId: number, meta: number): Mining | undefined {
+  const v = getBlockDef(blockId)?.variant;
+  const idx = v?.mining ? (meta >> v.shift) & 31 : -1;
+  if (!v?.mining || !v.mining[idx]) return MINING[blockId];
+  const key = blockId * 32 + idx;
+  let m = variantMining.get(key);
+  if (!m) {
+    const vm = v.mining[idx];
+    m = { hardness: vm.hardness, tool: vm.tool, minTier: vm.minTier };
+    variantMining.set(key, m);
+  }
+  return m;
+}
+
+export function miningInfo(blockId: number, meta = 0): Readonly<Mining> | undefined {
+  return miningOf(blockId, meta);
 }
 
 /**
  * Survival break time in seconds (Minecraft formula): damage per tick is
  * speed / hardness / (canHarvest ? 30 : 100); ×5 slower in the air or under water.
  */
-export function breakSeconds(blockId: number, held: number, onGround: boolean, inWater: boolean): number {
-  const m = MINING[blockId];
+export function breakSeconds(blockId: number, held: number, onGround: boolean, inWater: boolean, meta = 0): number {
+  const m = miningOf(blockId, meta);
   const hardness = m?.hardness ?? Math.max(0, getBlockDef(blockId)?.hardness ?? 1);
   if (hardness <= 0) return 0;
   const tool = getItemDef(held)?.tool;
@@ -446,12 +469,12 @@ export function breakSeconds(blockId: number, held: number, onGround: boolean, i
   }
   if (!onGround) speed /= 5;
   if (inWater) speed /= 5;
-  const perTick = speed / hardness / (canHarvest(blockId, held) ? 30 : 100);
+  const perTick = speed / hardness / (canHarvest(blockId, held, meta) ? 30 : 100);
   return Math.ceil(1 / perTick) / 20;
 }
 
-export function canHarvest(blockId: number, held: number): boolean {
-  const m = MINING[blockId];
+export function canHarvest(blockId: number, held: number, meta = 0): boolean {
+  const m = miningOf(blockId, meta);
   if (!m) return true;
   const tool = getItemDef(held)?.tool;
   if (m.needs) return !!tool && m.needs.includes(tool.kind);
@@ -507,9 +530,10 @@ const WITH_SHEARS_ONLY = new Set([B.TALL_GRASS, CUBE_ID.fern, B.DEAD_BUSH]);
 
 /** What a block drops when mined in survival (null = nothing). `meta` is the state it had (a double slab drops two, wool keeps its colour). */
 export function blockDrop(blockId: number, held: number, meta = 0): ItemStack | null {
-  if (!canHarvest(blockId, held)) return null;
+  if (!canHarvest(blockId, held, meta)) return null;
   const heldTool = getItemDef(held)?.tool?.kind;
   if (blockId >= SLAB_FIRST && blockId < STAIRS_FIRST) return { id: blockId, count: meta === SLAB_DOUBLE ? 2 : 1 };
+  if (blockId === B.SLAB_X) return { id: itemFromState(blockId, meta), count: (meta & 3) === SLAB_DOUBLE ? 2 : 1 };
   const ore = ORE_DROPS[blockId];
   if (ore) {
     // Snow needs a shovel (the table is shared with other drops that do not).

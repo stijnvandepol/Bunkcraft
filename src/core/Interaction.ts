@@ -1,15 +1,17 @@
 import * as THREE from 'three';
 import type { EntityManager } from '../entities/EntityManager';
 import type { PlayerInventory } from '../items/Inventory';
-import { ITEM, blockDrop, breakSeconds, getItemDef, isBlockItem, itemBlock, itemFromState, itemMeta } from '../items/ItemRegistry';
+import { ITEM, blockDrop, breakSeconds, getItemDef, isBlockItem, itemBlock, itemFromState, itemId, itemMeta } from '../items/ItemRegistry';
+import { toolUse } from '../items/ToolUse';
 import { type GameMode, hasSurvivalRules } from '../player/GameMode';
 import { PHYSICS } from '../player/Physics';
 import type { Player } from '../player/Player';
 import type { PlayerStats } from '../player/PlayerStats';
 import type { HandRenderer } from '../rendering/HandRenderer';
 import type { Hotbar } from '../ui/Hotbar';
-import { BLOCK, PARTIAL, SHAPE, SHAPE_CROSS, SHAPE_DOOR, SHAPE_MODEL, SOLID, getBlockDef } from '../world/BlockRegistry';
+import { BLOCK, BOX_KIND, PARTIAL, SHAPE, SHAPE_BOX, SHAPE_CROSS, SHAPE_DOOR, SHAPE_MODEL, SOLID, getBlockDef, stateSound } from '../world/BlockRegistry';
 import { collisionBoxes } from '../world/BlockShapes';
+import { BOX_BED, BOX_CARPET, BOX_GATE, BOX_TRAPDOOR } from '../world/BoxShapes';
 import { isLiquid } from '../world/Liquids';
 import { resolveBucketTarget, resolvePlacement } from '../world/Placement';
 import { type RayHit, createRayHit, raycast } from '../world/Raycast';
@@ -20,6 +22,13 @@ import { KB } from './Keybinds';
 import type { Renderer } from './Renderer';
 
 const EAT_TIME = 1.6;
+
+/** Blocks a right click does something to (instead of placing against them). */
+function isUsable(id: number): boolean {
+  if (SHAPE[id] === SHAPE_DOOR || id === BLOCK.CHEST) return true;
+  const kind = SHAPE[id] === SHAPE_BOX ? BOX_KIND[id] : 0;
+  return kind === BOX_TRAPDOOR || kind === BOX_GATE || kind === BOX_BED;
+}
 
 export interface InteractionDeps {
   world: World;
@@ -38,6 +47,12 @@ export interface InteractionDeps {
   igniteTnt(x: number, y: number, z: number): boolean;
   /** Fires an arrow from the eye along the view direction (power 0..1). */
   shootArrow(power: number, pickup: boolean): void;
+  /** Whether chests may be placed (singleplayer only: the server does not store containers). */
+  chestsAllowed?(): boolean;
+  /** Opens the chest at a position (its container screen). */
+  openChest?(x: number, y: number, z: number): void;
+  /** Right click on a bed: sets the spawn point and sleeps through the night. */
+  useBed?(x: number, y: number, z: number): void;
 }
 
 /**
@@ -72,7 +87,7 @@ export class Interaction {
 
   private readonly getBlock = (x: number, y: number, z: number): number => this.d.world.getBlock(x, y, z);
   private readonly getMeta = (x: number, y: number, z: number): number => this.d.world.getMeta(x, y, z);
-  private readonly shapeBoxes = new Float64Array(24);
+  private readonly shapeBoxes = new Float64Array(64);
   private readonly liquidRay: RayHit = createRayHit();
 
   reset(): void {
@@ -141,6 +156,7 @@ export class Interaction {
         this.d.stats.eat(food.hunger, food.saturation);
         if (food.poison) this.d.stats.poison = Math.max(this.d.stats.poison, food.poison);
         this.d.inventory.consumeSlot(this.d.hotbar.selected);
+        if (food.returns) this.d.inventory.add({ id: itemId(food.returns), count: 1 });
         this.d.audio.playBurp();
         this.eatTime = 0;
       }
@@ -154,10 +170,10 @@ export class Interaction {
       this.eating = false;
       this.bowDraw = this.bowPull = 0;
       this.placeCooldown -= dt;
-      if (hit.hit && !mobHit && SHAPE[hit.id] === SHAPE_DOOR && input.rightClicked
+      if (hit.hit && !mobHit && isUsable(hit.id) && input.rightClicked
         && !(input.actionDown(KB.SNEAK) && isBlockItem(held.id))) {
-        // Use a door (sneaking with a block in hand places against it instead).
-        this.useDoor(hit);
+        // Use a door, trapdoor, gate, chest or bed (sneaking with a block in hand places against it instead).
+        this.useBlock(hit);
       } else if (hit.hit && !mobHit && (input.rightClicked || (input.rightDown && this.placeCooldown <= 0))) {
         this.placeCooldown = 0.22;
         this.place(mode);
@@ -211,6 +227,18 @@ export class Interaction {
     hand.swingHand();
     // Creative keeps the full bucket; survival gets the empty one back.
     if (hasSurvivalRules(mode)) { inventory.set(slot, { id: ITEM.BUCKET, count: 1 }); hotbar.refresh(); }
+  }
+
+  private useBlock(hit: RayHit): void {
+    const kind = SHAPE[hit.id] === SHAPE_BOX ? BOX_KIND[hit.id] : 0;
+    if (SHAPE[hit.id] === SHAPE_DOOR) this.useDoor(hit);
+    else if (kind === BOX_TRAPDOOR || kind === BOX_GATE) {
+      const open = this.d.world.toggleBox(hit.x, hit.y, hit.z);
+      if (open === null) return;
+      this.d.audio.playDoor(open);
+      this.d.hand.swingHand();
+    } else if (kind === BOX_BED) this.d.useBed?.(hit.x, hit.y, hit.z);
+    else if (hit.id === BLOCK.CHEST) this.d.openChest?.(hit.x, hit.y, hit.z);
   }
 
   private useDoor(hit: RayHit): void {
@@ -285,7 +313,8 @@ export class Interaction {
     }
     const survival = hasSurvivalRules(mode);
     const held = hotbar.selectedBlock;
-    const seconds = survival ? breakSeconds(hit.id, held, player.onGround, player.headInWater) : 0;
+    const hitMeta = this.getMeta(hit.x, hit.y, hit.z);
+    const seconds = survival ? breakSeconds(hit.id, held, player.onGround, player.headInWater, hitMeta) : 0;
     this.breakProgress = seconds <= 0 ? 1 : this.breakProgress + dt / seconds;
 
     // Arm swings continuously while mining.
@@ -297,7 +326,7 @@ export class Interaction {
     this.hitSoundTimer -= dt;
     if (this.hitSoundTimer <= 0 && this.breakProgress < 1) {
       this.hitSoundTimer = 0.22;
-      audio.play('hit', def.sound);
+      audio.play('hit', stateSound(def, hitMeta));
       renderer.particles.spawnFace(hit.x, hit.y, hit.z, hit.nx, hit.ny, hit.nz, hit.id,
         world.getLight(hit.x + hit.nx, hit.y + hit.ny, hit.z + hit.nz), 2, world.tintAt(hit.x, hit.z, hit.id));
     }
@@ -309,10 +338,11 @@ export class Interaction {
     const broken = world.breakBlock(hit.x, hit.y, hit.z);
     if (broken) {
       renderer.particles.spawnBreak(hit.x, hit.y, hit.z, broken, light, world.tintAt(hit.x, hit.z, broken));
-      audio.play('break', def.sound);
+      audio.play('break', stateSound(def, brokenMeta));
       if (survival) {
         const drop = blockDrop(broken, held, brokenMeta);
         if (drop) entities.dropItem(drop, hit.x + 0.5, hit.y + 0.3, hit.z + 0.5);
+        if (broken === BLOCK.CHEST) for (const s of world.containers.take(hit.x, hit.y, hit.z)) entities.dropItem(s, hit.x + 0.5, hit.y + 0.5, hit.z + 0.5);
         // A plant or torch on top breaks with its support and drops too.
         // (the upper half of a door that went with the lower one is no extra drop)
         if (above !== world.getBlock(hit.x, hit.y + 1, hit.z) && !(SHAPE[broken] === SHAPE_DOOR && above === broken)) {
@@ -336,7 +366,15 @@ export class Interaction {
       this.useFlintAndSteel(mode);
       return;
     }
+    if (getItemDef(item)?.armor) {
+      // Right click with armor wears it (swapping what was worn).
+      if (this.d.inventory.equipFromSlot(hotbar.selected)) hand.swingHand();
+      return;
+    }
+    const toolKind = getItemDef(item)?.tool?.kind;
+    if (toolKind && this.useToolOnBlock(toolKind, mode)) return;
     if (!item || !isBlockItem(item)) return;
+    if (itemBlock(item) === BLOCK.CHEST && this.d.chestsAllowed && !this.d.chestsAllowed()) return;
     // A block item is a block id plus the variant bits of its state (colour, wood, material).
     const id = itemBlock(item), baseMeta = itemMeta(item);
     // Where the click landed inside the block decides the half of a slab or stair.
@@ -344,26 +382,41 @@ export class Interaction {
     const hx = cam.x + this.dir.x * hit.distance, hz = cam.z + this.dir.z * hit.distance;
     const fracY = Math.min(1, Math.max(0, cam.y + this.dir.y * hit.distance - hit.y));
     const placed = resolvePlacement({
-      id, hitX: hit.x, hitY: hit.y, hitZ: hit.z, nx: hit.nx, ny: hit.ny, nz: hit.nz, fracY, yaw: player.yaw,
+      id, variant: baseMeta, hitX: hit.x, hitY: hit.y, hitZ: hit.z, nx: hit.nx, ny: hit.ny, nz: hit.nz, fracY, yaw: player.yaw,
       fracX: hx - Math.floor(hx), fracZ: hz - Math.floor(hz),
       getBlock: this.getBlock, getMeta: this.getMeta,
     });
     if (!placed) return;
     const { x, y, z } = placed;
-    if (SOLID[id] && player.intersectsBlock(x, y, z)) return;
-    if (SOLID[id] && this.d.entities.mobs.some((m) => !m.dead && m.x + m.width / 2 > x && m.x - m.width / 2 < x + 1
+    const blocking = SOLID[id] && BOX_KIND[id] !== BOX_CARPET;
+    if (blocking && player.intersectsBlock(x, y, z)) return;
+    if (blocking && this.d.entities.mobs.some((m) => !m.dead && m.x + m.width / 2 > x && m.x - m.width / 2 < x + 1
       && m.y + m.height > y && m.y < y + 1 && m.z + m.width / 2 > z && m.z - m.width / 2 < z + 1)) return;
     // Plants and torches need a solid block underneath.
     if ((SHAPE[id] === SHAPE_CROSS || SHAPE[id] === SHAPE_MODEL) && !SOLID[world.getBlock(x, y - 1, z)]) return;
-    if (placed.upper && SOLID[id] && player.intersectsBlock(x, y + 1, z)) return;
+    if (placed.upper && SHAPE[id] === SHAPE_DOOR && player.intersectsBlock(x, y + 1, z)) return;
+    if (placed.upper && BOX_KIND[id] === BOX_BED && player.intersectsBlock(placed.upper.x, placed.upper.y, placed.upper.z)) return;
     if (!world.setBlock(x, y, z, id, placed.meta | baseMeta)) return;
+    if (id === BLOCK.CHEST) world.containers.clear(x, y, z);
     if (placed.upper) world.setBlock(placed.upper.x, placed.upper.y, placed.upper.z, id, placed.upper.meta | baseMeta);
     const def = getBlockDef(id)!;
-    audio.play('place', def.sound);
+    audio.play('place', stateSound(def, baseMeta));
     hand.swingHand();
     renderer.particles.spawnFace(x - hit.nx, y - hit.ny, z - hit.nz, hit.nx, hit.ny, hit.nz, id, world.getLight(x, y, z), 3, world.tintAt(x, z, id));
     if (hasSurvivalRules(mode)) inventory.consumeSlot(hotbar.selected);
     this.breakProgress = 0;
+  }
+
+  /** Hoe, shovel and axe change the block they are used on (see items/ToolUse). */
+  private useToolOnBlock(kind: import('../items/ItemRegistry').ToolKind, mode: GameMode): boolean {
+    const { world, hotbar, inventory, audio, hand } = this.d;
+    const hit = this.ray;
+    const use = toolUse(kind, hit.id, world.getBlock(hit.x, hit.y + 1, hit.z));
+    if (!use || !world.setBlock(hit.x, hit.y, hit.z, use.to, 0)) return false;
+    audio.play('place', use.sound);
+    hand.swingHand();
+    if (hasSurvivalRules(mode)) inventory.damageTool(hotbar.selected);
+    return true;
   }
 
   /**

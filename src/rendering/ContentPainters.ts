@@ -429,6 +429,34 @@ for (const w of WOODS) {
   put(`stripped_${n}_log_top`, (i, r) => strippedTop(i, r, p.stripped, p.ring, p.ringDark));
   put(`${n}_leaves`, (i, r) => paintLeaves(i, r, P(...p.leaves)));
 }
+/** One half of a wooden door: vertical boards in a darker frame with two recessed panels and a knob on the lower half. */
+function paintWoodDoor(img: Img, r: Rand, p: WoodPalette, half: 'upper' | 'lower'): void {
+  const boards = P(...p.planks), gap = hex(p.gap);
+  each(img, (x, y) => {
+    const board = Math.floor(x / 4);
+    const c = shade(boards[board % boards.length], 0.92 + r() * 0.16);
+    img.set(x, y, c);
+  });
+  for (let k = 0; k < 16; k++) { img.set(0, k, gap); img.set(15, k, gap); }
+  for (let x = 0; x < 16; x++) img.set(x, half === 'upper' ? 0 : 15, gap);
+  const pane = (x0: number, y0: number, x1: number, y1: number): void => {
+    for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) {
+      const edge = x === x0 || y === y0;
+      const c = shade(boards[(Math.floor(x / 4) + 1) % boards.length], edge ? 0.78 : 1.05);
+      img.set(x, y, c);
+    }
+  };
+  if (half === 'upper') { pane(3, 3, 12, 6); pane(3, 9, 12, 12); }
+  else { pane(3, 2, 12, 6); pane(3, 9, 12, 13); }
+  if (half === 'lower') { img.set(12, 8, hex('#c8c8c8')); img.set(12, 9, hex('#8a8a8a')); }
+}
+for (const w of WOODS) {
+  if (w.name === 'oak') continue;
+  const p = WOOD_PALETTES[w.name];
+  put(`${w.name}_door_upper`, (i, r) => paintWoodDoor(i, r, p, 'upper'));
+  put(`${w.name}_door_lower`, (i, r) => paintWoodDoor(i, r, p, 'lower'));
+}
+
 // The three woods with legacy ids keep their original painters in TextureAtlas; only the stripped logs are new.
 for (const w of OLD_WOODS) {
   delete CONTENT_PAINTERS[`${w.name}_planks`];
@@ -464,6 +492,74 @@ put('white_stained_glass', (i) => {
   // Faint colour wash so a stained pane reads as coloured and not only framed.
   for (let y = 2; y < 14; y++) for (let x = 2; x < 14; x++) if ((x + y) % 4 === 0) i.set(x, y, dim);
 });
+// ---------------------------------------------------------------- thin and functional blocks
+
+put('packed_mud', (i, r) => noisy(i, r, P('#8c6a4c', '#96745a', '#a07e62', '#aa886c'), 0.5, 3));
+
+put('bed_foot_top', (i, r) => {
+  noisy(i, r, P('#dcdcdc', '#e2e2e2', '#e8e8e8'), 0.5, 3);
+  for (let k = 0; k < 16; k++) { i.set(k, 15, hex('#b8b8b8')); i.set(0, k, hex('#c4c4c4')); i.set(15, k, hex('#c4c4c4')); }
+  for (let x = 0; x < 16; x++) i.set(x, 2, hex('#c8c8c8'));
+});
+put('bed_head_top', (i, r) => {
+  noisy(i, r, P('#dcdcdc', '#e2e2e2', '#e8e8e8'), 0.5, 3);
+  for (let k = 0; k < 16; k++) { i.set(k, 0, hex('#c4c4c4')); i.set(0, k, hex('#c4c4c4')); i.set(15, k, hex('#c4c4c4')); }
+  // The pillow: lighter, with a soft edge.
+  for (let y = 2; y < 8; y++) for (let x = 2; x < 14; x++) i.set(x, y, shade(hex('#f6f6f6'), 0.97 + r() * 0.05));
+  for (let x = 2; x < 14; x++) i.set(x, 8, hex('#d0d0d0'));
+});
+put('bed_side', (i, r) => {
+  each(i, (x, y) => i.set(x, y, y < 8 ? shade(pick(P('#d8d8d8', '#e0e0e0', '#e8e8e8'), r()), x % 4 === 0 ? 0.96 : 1) : shade(hex('#b8b8b8'), 0.95 + r() * 0.08)));
+  for (let x = 0; x < 16; x++) i.set(x, 8, hex('#a8a8a8'));
+});
+
+put('iron_bars', (i) => {
+  i.clear();
+  const bar = hex('#8e9094'), hi = hex('#c8cacd'), lo = hex('#5a5c60');
+  for (let x = 1; x < 16; x += 3) for (let y = 0; y < 16; y++) { i.set(x, y, hi); i.set(x + 1, y, bar); }
+  for (const y of [1, 14]) for (let x = 0; x < 16; x++) { i.set(x, y, bar); i.set(x, y + 1 > 15 ? 15 : y + 1, lo); }
+  for (let y = 0; y < 16; y++) { i.set(7, y, hi); i.set(8, y, bar); }
+});
+
+put('ladder', (i, r) => {
+  i.clear();
+  const wood = P('#8a6a3a', '#9a7a46', '#7a5a2c');
+  for (let y = 0; y < 16; y++) for (const x of [2, 3, 12, 13]) i.set(x, y, shade(pick(wood, r()), x % 2 === 0 ? 1 : 0.85));
+  for (const y of [2, 3, 7, 8, 12, 13]) for (let x = 4; x < 12; x++) i.set(x, y, shade(pick(wood, r()), y % 5 === 2 || y === 7 || y === 12 ? 1.08 : 0.82));
+});
+
+put('chest_top', (i, r) => {
+  noisy(i, r, P('#a06f2f', '#ac7a36', '#b8853e'), 0.4, 3);
+  const edge = hex('#5a3c14');
+  for (let k = 0; k < 16; k++) { i.set(k, 0, edge); i.set(k, 15, edge); i.set(0, k, edge); i.set(15, k, edge); }
+  for (let k = 1; k < 15; k++) { i.set(k, 1, shade(i.get(k, 1), 1.15)); i.set(1, k, shade(i.get(1, k), 1.1)); }
+});
+function chestSide(img: Img, r: Rand, front: boolean): void {
+  each(img, (x, y) => img.set(x, y, shade(pick(P('#a06f2f', '#ac7a36', '#b8853e'), r()), y % 8 === 7 ? 0.8 : 1)));
+  const dark = hex('#5a3c14');
+  for (let k = 0; k < 16; k++) { img.set(k, 15, dark); img.set(k, 0, dark); img.set(k, 6, hex('#7a5220')); img.set(0, k, dark); img.set(15, k, dark); }
+  for (let k = 7; k < 15; k++) { img.set(1, k, shade(dark, 1.2)); img.set(14, k, shade(dark, 1.2)); }
+  if (front) {
+    // The latch: a small iron plate with a hook over the lid seam.
+    for (let y = 4; y < 9; y++) for (let x = 7; x < 9; x++) img.set(x, y, y === 4 ? hex('#e2e2e2') : hex('#9a9a9a'));
+    img.set(7, 8, hex('#6a6a6a')); img.set(8, 8, hex('#6a6a6a'));
+  }
+}
+put('chest_side', (i, r) => chestSide(i, r, false));
+put('chest_front', (i, r) => chestSide(i, r, true));
+
+put('lantern', (i) => {
+  i.clear();
+  const frame = hex('#3c3c40'), frameHi = hex('#5a5a60'), glow = P('#ffb83a', '#ffd85a', '#fff2a8');
+  // Lower box: block y 0..6 → image rows 15..9, x 5..10.
+  for (let y = 9; y <= 15; y++) for (let x = 5; x <= 10; x++) {
+    const edge = x === 5 || x === 10 || y === 15 || y === 9;
+    i.set(x, y, edge ? (x === 5 || y === 9 ? frameHi : frame) : glow[(x + y) % 3]);
+  }
+  // Upper box (cap and ring): block y 7..8 → rows 8..7, x 6..9.
+  for (let y = 7; y <= 8; y++) for (let x = 6; x <= 9; x++) i.set(x, y, x === 6 || x === 9 || y === 7 ? frame : frameHi);
+});
+
 void PX;
 void paintCobble;
 void paintWool;

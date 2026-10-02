@@ -111,7 +111,8 @@ describe('Recipes', () => {
   });
 
   it('a single log cannot be both the ingredient and the fuel', () => {
-    const coal = recipeFor(ITEM.COAL, 'furnace');
+    // Smelting a log gives charcoal (vanilla); coal comes from coal ore.
+    const coal = recipeFor(itemId('charcoal'), 'furnace');
     const inv = new PlayerInventory();
     inv.add({ id: BLOCK.OAK_LOG, count: 1 });
     expect(canCraft(inv, coal, FURNACE)).toBe(false);
@@ -119,7 +120,7 @@ describe('Recipes', () => {
     expect(canCraft(inv, coal, FURNACE)).toBe(true);
     expect(craft(inv, coal, FURNACE)).toBe(0);
     expect(inv.count(BLOCK.OAK_LOG)).toBe(0);
-    expect(inv.count(ITEM.COAL)).toBe(1);
+    expect(inv.count(itemId('charcoal'))).toBe(1);
   });
 
   it('crafts tools with vanilla ingredient counts', () => {

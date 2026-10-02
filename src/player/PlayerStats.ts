@@ -2,6 +2,7 @@ import { BLOCK, OPAQUE, SOLID } from '../world/BlockRegistry';
 import type { BlockGetter } from './Collision';
 import { type GameMode, hasSurvivalRules } from './GameMode';
 import { PHYSICS } from './Physics';
+import { ARMOR_CAUSES, armorWear, reduceDamage } from './Armor';
 import type { Player } from './Player';
 
 export type DamageCause =
@@ -55,6 +56,11 @@ export class PlayerStats {
   private hazardTimer = 0;
   /** Fired on every successful hit (sound). */
   onHurt: ((cause: DamageCause) => void) | null = null;
+  /** Worn armor points and toughness (set by the game from the armor slots). */
+  armorPoints = 0;
+  armorToughness = 0;
+  /** Fired when armor took a hit: every worn piece loses this much durability. */
+  onArmorHit: ((wear: number) => void) | null = null;
 
   reset(): void {
     this.health = MAX_HEALTH;
@@ -75,6 +81,11 @@ export class PlayerStats {
     if (this.dead || amount <= 0) return false;
     if (!hasSurvivalRules(mode) && cause !== 'void') return false;
     if (mode === 'spectator') return false;
+    if (this.armorPoints > 0 && ARMOR_CAUSES.has(cause)) {
+      const raw = amount;
+      amount = reduceDamage(amount, this.armorPoints, this.armorToughness);
+      this.onArmorHit?.(armorWear(raw));
+    }
     let dealt = amount;
     if (this.invulnerable > 0) {
       if (amount <= this.lastDamage) return false;

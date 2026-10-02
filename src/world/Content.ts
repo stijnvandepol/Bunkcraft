@@ -179,6 +179,7 @@ export const CUBES: CubeSpec[] = [
     { name: `stripped_${w.name}_log`, display: `Stripped ${w.display} Log`, hardness: 2, tool: 'axe', sound: W, tex: [`stripped_${w.name}_log_top`, `stripped_${w.name}_log`, `stripped_${w.name}_log_top`] },
     { name: `${w.name}_leaves`, display: `${w.display} Leaves`, hardness: 0.2, sound: 'grass', kind: w.name === 'cherry' ? 'cherry_leaves' : 'leaves' },
   ]),
+  { name: 'packed_mud', hardness: 1, tool: 'pickaxe', minTier: 0, sound: 'gravel' },
   ...OLD_WOODS.map((w): CubeSpec => ({
     name: `stripped_${w.name}_log`, display: `Stripped ${w.display} Log`, hardness: 2, tool: 'axe', sound: W,
     tex: [`stripped_${w.name}_log_top`, `stripped_${w.name}_log`, `stripped_${w.name}_log_top`],
@@ -188,3 +189,65 @@ export const CUBES: CubeSpec[] = [
 export function titleCase(name: string): string {
   return name.split('_').map((w) => w[0].toUpperCase() + w.slice(1)).join(' ');
 }
+
+// ---------------------------------------------------------------- wall materials
+
+/** Materials of walls: the index is the state of the wall block. APPEND-ONLY, at most 32. */
+export const WALL_MATERIALS: PartialMaterial[] = [
+  { base: 'cobblestone', display: 'Cobblestone' },
+  { base: 'mossy_cobblestone', display: 'Mossy Cobblestone' },
+  { base: 'stone_bricks', display: 'Stone Brick' },
+  { base: 'mossy_stone_bricks', display: 'Mossy Stone Brick' },
+  { base: 'sandstone', display: 'Sandstone' },
+  { base: 'red_sandstone', display: 'Red Sandstone' },
+  { base: 'bricks', display: 'Brick' },
+  { base: 'granite', display: 'Granite' },
+  { base: 'diorite', display: 'Diorite' },
+  { base: 'andesite', display: 'Andesite' },
+  { base: 'mud_bricks', display: 'Mud Brick' },
+  { base: 'cobbled_deepslate', display: 'Cobbled Deepslate' },
+  { base: 'polished_deepslate', display: 'Polished Deepslate' },
+  { base: 'deepslate_bricks', display: 'Deepslate Brick' },
+  { base: 'deepslate_tiles', display: 'Deepslate Tile' },
+  { base: 'tuff', display: 'Tuff' },
+];
+
+// ---------------------------------------------------------------- slab and stair materials
+
+export interface PartialMaterial {
+  /** Name of the full block it is made of (a name from BLOCK_DEFS: plain blocks and the tables above). */
+  base: string;
+  display: string;
+}
+
+/**
+ * Materials of the generic slab and stairs blocks (SLAB_X, STAIRS_X): the index is stored in the state byte
+ * (slabs: bits 2-6, stairs: bits 3-7). The nine materials with their own ids (PARTIAL_MATERIALS) are not listed.
+ * APPEND-ONLY, at most 32.
+ */
+export const PARTIAL_EXT: PartialMaterial[] = [
+  { base: 'granite', display: 'Granite' },
+  { base: 'diorite', display: 'Diorite' },
+  { base: 'andesite', display: 'Andesite' },
+  { base: 'polished_granite', display: 'Polished Granite' },
+  { base: 'polished_diorite', display: 'Polished Diorite' },
+  { base: 'polished_andesite', display: 'Polished Andesite' },
+  { base: 'smooth_stone', display: 'Smooth Stone' },
+  { base: 'jungle_planks', display: 'Jungle' },
+  { base: 'acacia_planks', display: 'Acacia' },
+  { base: 'dark_oak_planks', display: 'Dark Oak' },
+  { base: 'mangrove_planks', display: 'Mangrove' },
+  { base: 'cherry_planks', display: 'Cherry' },
+  { base: 'mud_bricks', display: 'Mud Brick' },
+  { base: 'red_sandstone', display: 'Red Sandstone' },
+  { base: 'cut_sandstone', display: 'Cut Sandstone' },
+  { base: 'smooth_sandstone', display: 'Smooth Sandstone' },
+  { base: 'mossy_stone_bricks', display: 'Mossy Stone Brick' },
+  { base: 'cobbled_deepslate', display: 'Cobbled Deepslate' },
+  { base: 'polished_deepslate', display: 'Polished Deepslate' },
+  { base: 'deepslate_bricks', display: 'Deepslate Brick' },
+  { base: 'deepslate_tiles', display: 'Deepslate Tile' },
+  { base: 'tuff', display: 'Tuff' },
+  { base: 'cut_red_sandstone', display: 'Cut Red Sandstone' },
+  { base: 'smooth_red_sandstone', display: 'Smooth Red Sandstone' },
+];

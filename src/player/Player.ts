@@ -124,8 +124,15 @@ export class Player {
     this.vx = approach(this.vx, tx, accel, dt);
     this.vz = approach(this.vz, tz, accel, dt);
 
+    // Ladders: climb while holding jump or pushing into the wall, hold still while sneaking, otherwise slide down.
+    const onLadder = !this.flying && !this.inWater && !this.noclip
+      && (getBlock(Math.floor(this.x), Math.floor(this.y + 0.1), Math.floor(this.z)) === BLOCK.LADDER
+        || getBlock(Math.floor(this.x), Math.floor(this.y + 1), Math.floor(this.z)) === BLOCK.LADDER);
     // Vertical.
-    if (this.flying) {
+    if (onLadder) {
+      this.vy = input.jump || this.horizontalCollision ? 3.5 : input.descend ? 0 : -3;
+      this.fallDistance = 0;
+    } else if (this.flying) {
       const target = ((input.jump ? 1 : 0) - (input.descend ? 1 : 0)) * PHYSICS.FLY_VERTICAL;
       this.vy = approach(this.vy, target, 10, dt);
     } else if (this.inWater) {

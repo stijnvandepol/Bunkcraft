@@ -47,7 +47,6 @@ export function buildCreativeTabs(): CreativeTab[] {
     ...PARTIAL_MATERIALS.map((_, i) => SLAB_FIRST + i),
     ...PARTIAL_MATERIALS.map((_, i) => STAIRS_FIRST + i),
   ];
-  const partialsExtra = BLOCK_DEFS.filter((d) => d.shape === 'slab' || d.shape === 'stairs').filter((d) => !slabsAndStairs.includes(d.id));
 
   const building = ids([
     B.STONE, blk('granite'), blk('polished_granite'), blk('diorite'), blk('polished_diorite'), blk('andesite'), blk('polished_andesite'),
@@ -62,14 +61,14 @@ export function buildCreativeTabs(): CreativeTab[] {
     blk('coal_block'), blk('iron_block'), blk('copper_block'), blk('gold_block'), blk('redstone_block'), blk('lapis_block'),
     blk('emerald_block'), blk('diamond_block'), blk('raw_iron_block'), blk('raw_copper_block'), blk('raw_gold_block'),
     B.GLASS,
-    ...slabsAndStairs, ...partialsExtra.map((d) => d.id),
-    B.OAK_DOOR,
+    ...slabsAndStairs, ...variants(B.SLAB_X), ...variants(B.STAIRS_X),
+    ...variants(B.OAK_DOOR),
     ...['trapdoor', 'fence', 'fence_gate', 'wall'].map(byName),
   ]);
 
   const colored = ids([
     ...dyed(B.WOOL), ...dyed(byName('carpet')), blk('terracotta'), ...dyed(B.STAINED_TERRACOTTA), ...dyed(B.GLAZED_TERRACOTTA),
-    ...dyed(B.CONCRETE), ...dyed(B.STAINED_GLASS), ...dyed(byName('stained_glass_pane')), ...dyed(byName('bed')),
+    ...dyed(B.CONCRETE), ...dyed(B.STAINED_GLASS), ...dyed(byName('stained_glass_pane')), ...variants(B.BED),
   ]);
 
   const natural = ids([

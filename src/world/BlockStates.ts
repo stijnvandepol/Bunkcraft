@@ -50,8 +50,12 @@ export const SLAB_BOTTOM = 0;
 export const SLAB_TOP = 1;
 export const SLAB_DOUBLE = 2;
 
+/** Slab state bits 0-1 are the half; the bits above are the material of a generic slab (see PartialMaterials). */
+export const SLAB_HALF_MASK = 3;
+
 export function validSlabMeta(meta: number): boolean {
-  return meta >= 0 && meta <= SLAB_DOUBLE;
+  const half = meta & SLAB_HALF_MASK;
+  return half >= 0 && half <= SLAB_DOUBLE;
 }
 
 // ---------------------------------------------------------------- stairs
@@ -130,7 +134,8 @@ export function octant(hx: number, hy: number, hz: number): number {
 export const FACE_OCTANTS = [0xaa, 0x55, 0xf0, 0x0f, 0xcc, 0x33] as const;
 
 export function slabOctants(meta: number): number {
-  return meta === SLAB_BOTTOM ? OCT_BOTTOM : meta === SLAB_TOP ? OCT_TOP : OCT_ALL;
+  const half = meta & SLAB_HALF_MASK;
+  return half === SLAB_BOTTOM ? OCT_BOTTOM : half === SLAB_TOP ? OCT_TOP : OCT_ALL;
 }
 
 /** Upper-layer footprint (4 bits, bit = x | z << 1) of a stair facing north, per shape. */

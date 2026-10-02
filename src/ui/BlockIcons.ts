@@ -1,6 +1,7 @@
 import type { TextureSet } from '../rendering/TextureAtlas';
 import { VARIANT_ITEM_BASE, getItemDef, itemBlock, itemMeta } from '../items/ItemRegistry';
 import { DYE_RGB, getBlockDef, stateTextures } from '../world/BlockRegistry';
+import { BOX_FENCE, BOX_LADDER, BOX_PANE, BOX_WALL, SIDE_BIT, visualBoxes } from '../world/BoxShapes';
 import { EAST, OCT_BOTTOM, STAIR_STRAIGHT, octantBoxes, stairMeta, stairOctants } from '../world/BlockStates';
 import { paintItemSprite } from './ItemSprites';
 
@@ -116,6 +117,18 @@ export class BlockIcons {
       // A bottom slab, or a straight stair whose tall back is on the far side.
       const boxes: number[] = [];
       const n = octantBoxes(def.shape === 'slab' ? OCT_BOTTOM : stairOctants(stairMeta(EAST, false), STAIR_STRAIGHT), boxes);
+      this.drawBoxes(ctx, top, side, boxes, n);
+      return;
+    }
+    if (def.shape === 'box') {
+      if (def.boxKind === BOX_LADDER) {
+        ctx.drawImage(this.textures.canvas(t.all!), 4, 4, 56, 56);
+        return;
+      }
+      // Fences, walls and panes are shown joined to a neighbour on each side along x, like Minecraft's item.
+      const joins = def.boxKind === BOX_FENCE || def.boxKind === BOX_WALL || def.boxKind === BOX_PANE ? SIDE_BIT[2] | SIDE_BIT[3] : 0;
+      const boxes: number[] = [];
+      const n = visualBoxes(def.boxKind!, meta & ((def.variant ? (1 << 8) - 1 : 0)), joins, boxes);
       this.drawBoxes(ctx, top, side, boxes, n);
       return;
     }
