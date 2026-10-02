@@ -10,7 +10,8 @@ import type { HandRenderer } from '../rendering/HandRenderer';
 import type { Hotbar } from '../ui/Hotbar';
 import { BLOCK, PARTIAL, SHAPE, SHAPE_CROSS, SHAPE_DOOR, SHAPE_MODEL, SOLID, getBlockDef } from '../world/BlockRegistry';
 import { collisionBoxes } from '../world/BlockShapes';
-import { resolvePlacement } from '../world/Placement';
+import { isLiquid } from '../world/Liquids';
+import { resolveBucketTarget, resolvePlacement } from '../world/Placement';
 import { type RayHit, createRayHit, raycast } from '../world/Raycast';
 import type { World } from '../world/World';
 import type { AudioEngine } from './Audio';
@@ -72,6 +73,7 @@ export class Interaction {
   private readonly getBlock = (x: number, y: number, z: number): number => this.d.world.getBlock(x, y, z);
   private readonly getMeta = (x: number, y: number, z: number): number => this.d.world.getMeta(x, y, z);
   private readonly shapeBoxes = new Float64Array(24);
+  private readonly liquidRay: RayHit = createRayHit();
 
   reset(): void {
     this.breakProgress = 0;
@@ -142,6 +144,11 @@ export class Interaction {
         this.d.audio.playBurp();
         this.eatTime = 0;
       }
+    } else if (held.id === ITEM.BUCKET || held.id === ITEM.WATER_BUCKET || held.id === ITEM.LAVA_BUCKET) {
+      this.eatTime = 0;
+      this.eating = false;
+      this.bowDraw = this.bowPull = 0;
+      if (input.rightClicked) this.useBucket(held.id, hit, mode);
     } else {
       this.eatTime = 0;
       this.eating = false;
@@ -165,6 +172,44 @@ export class Interaction {
       if (slot >= 0) this.d.hotbar.select(slot);
       else this.d.hotbar.setSlot(this.d.hotbar.selected, hit.id);
     }
+  }
+
+  /**
+   * Buckets (Minecraft 1.21): an empty one scoops up the liquid source it points at, a full one pours a source into the
+   * block in front of the clicked face (replacing plants and flowing liquid). A bucket is never poured into a solid block.
+   */
+  private useBucket(id: number, hit: RayHit, mode: GameMode): void {
+    const { world, hotbar, inventory, audio, hand, camera, entities, player } = this.d;
+    const slot = hotbar.selected;
+    if (id === ITEM.BUCKET) {
+      const p = camera.position;
+      const lh = raycast(this.getBlock, p.x, p.y, p.z, this.dir.x, this.dir.y, this.dir.z, PHYSICS.REACH, this.liquidRay, this.getMeta, true);
+      // A solid block in the way (hit earlier than the liquid) means the liquid is out of sight.
+      if (!lh.hit || !isLiquid(lh.id) || world.getMeta(lh.x, lh.y, lh.z) !== 0) return;
+      if (hit.hit && hit.distance < lh.distance) return;
+      const filled = lh.id === BLOCK.LAVA ? ITEM.LAVA_BUCKET : ITEM.WATER_BUCKET;
+      if (!world.setBlock(lh.x, lh.y, lh.z, BLOCK.AIR)) return;
+      audio.playBucket(lh.id === BLOCK.LAVA);
+      hand.swingHand();
+      const stack = inventory.get(slot);
+      if (stack.count <= 1) inventory.set(slot, { id: filled, count: 1 });
+      else {
+        inventory.consumeSlot(slot);
+        if (inventory.add({ id: filled, count: 1 }) > 0) entities.dropItem({ id: filled, count: 1 }, player.x, player.y + 1, player.z, 40);
+      }
+      hotbar.refresh();
+      return;
+    }
+    if (!hit.hit) return;
+    const kind = id === ITEM.LAVA_BUCKET ? BLOCK.LAVA : BLOCK.WATER;
+    const target = resolveBucketTarget({
+      hitX: hit.x, hitY: hit.y, hitZ: hit.z, nx: hit.nx, ny: hit.ny, nz: hit.nz, getBlock: this.getBlock, getMeta: this.getMeta,
+    }, kind);
+    if (!target || !world.setBlock(target.x, target.y, target.z, kind, 0)) return;
+    audio.playBucket(kind === BLOCK.LAVA);
+    hand.swingHand();
+    // Creative keeps the full bucket; survival gets the empty one back.
+    if (hasSurvivalRules(mode)) { inventory.set(slot, { id: ITEM.BUCKET, count: 1 }); hotbar.refresh(); }
   }
 
   private useDoor(hit: RayHit): void {

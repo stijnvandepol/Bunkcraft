@@ -53,6 +53,9 @@ export const RECIPES: Recipe[] = [
   { result: { id: ITEM.COOKED_CHICKEN, count: 1 }, ingredients: [one(ITEM.CHICKEN), any(FUEL, 1)], station: 'furnace' },
 ];
 
+// Bucket: 3 iron ingots in a V.
+RECIPES.push({ result: { id: ITEM.BUCKET, count: 1 }, ingredients: [one(ITEM.IRON_INGOT, 3)], station: 'table' });
+
 // Doors: 6 planks → 3 doors (the oak door needs oak planks).
 RECIPES.push({ result: { id: B.OAK_DOOR, count: 3 }, ingredients: [one(B.OAK_PLANKS, 6)], station: 'table' });
 

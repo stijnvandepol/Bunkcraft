@@ -1,4 +1,4 @@
-import { getItemDef } from '../items/ItemRegistry';
+import { ITEM, getItemDef } from '../items/ItemRegistry';
 import { BLOCK, PARTIAL_MATERIALS, SLAB_FIRST, STAIRS_FIRST } from '../world/BlockRegistry';
 import type { BlockIcons } from './BlockIcons';
 import { h } from './dom';
@@ -25,6 +25,7 @@ const TABS: { name: string; icon: number; blocks: number[] }[] = [
       B.DANDELION, B.POPPY, B.DEAD_BUSH],
   },
   { name: 'Functional Blocks', icon: B.BOOKSHELF, blocks: [B.GLOWSTONE, B.BOOKSHELF] },
+  { name: 'Tools & Utilities', icon: ITEM.WATER_BUCKET, blocks: [ITEM.BUCKET, ITEM.WATER_BUCKET, ITEM.LAVA_BUCKET] },
 ];
 
 const GRID_SLOTS = 9 * 5;

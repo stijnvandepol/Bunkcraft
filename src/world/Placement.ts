@@ -74,6 +74,21 @@ export function doorHingeRight(c: PlaceContext, x: number, y: number, z: number,
   return true;
 }
 
+/**
+ * Where a full bucket pours its liquid (Minecraft BucketItem): into the cell in front of the clicked face, or into the
+ * plant that was clicked. Never into a solid block, and not into a source of the same liquid. `kind` is BLOCK.WATER or LAVA.
+ */
+export function resolveBucketTarget(
+  c: Pick<PlaceContext, 'hitX' | 'hitY' | 'hitZ' | 'nx' | 'ny' | 'nz' | 'getBlock' | 'getMeta'>, kind: number,
+): { x: number; y: number; z: number } | null {
+  let x = c.hitX + c.nx, y = c.hitY + c.ny, z = c.hitZ + c.nz;
+  if (SHAPE[c.getBlock(c.hitX, c.hitY, c.hitZ)] === SHAPE_CROSS) { x = c.hitX; y = c.hitY; z = c.hitZ; }
+  const existing = c.getBlock(x, y, z);
+  if (existing === BLOCK.UNLOADED || !isReplaceable(existing)) return null;
+  if (existing === kind && c.getMeta(x, y, z) === 0) return null;
+  return { x, y, z };
+}
+
 /** Blocks that give way to whatever is placed into them. */
 export function isReplaceable(id: number): boolean {
   const s = SHAPE[id];

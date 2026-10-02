@@ -409,6 +409,19 @@ export class Game {
     world.onChunkReady = (c) => entities.onChunkReady(c);
     world.onChunkUnloaded = (k) => entities.onChunkUnloaded(k);
     this.entities = entities;
+    // Water and lava flow in singleplayer; on a server the server simulates and sends the changes.
+    if (!this.net) {
+      const sim = world.enableLiquids();
+      sim.onDestroyed = (x, y, z, id) => {
+        // Plants and torches washed away drop themselves (survival).
+        const drop = hasSurvivalRules(this.mode) ? blockDrop(id, 0) : null;
+        if (drop) entities.dropItem(drop, x + 0.5, y + 0.3, z + 0.5);
+      };
+      sim.onFizz = (x, y, z) => {
+        const p = this.player;
+        this.audio.playFizz(Math.max(0, 1 - Math.hypot(x - p.x, y - p.y, z - p.z) / 20));
+      };
+    }
     this.interaction = new Interaction({
       world, player: this.player, stats: this.stats, inventory: this.playerInventory, hotbar: this.hotbar,
       entities, renderer: this.renderer, hand: this.hand, audio: this.audio, camera: this.cam.camera,
@@ -740,6 +753,12 @@ export class Game {
         break;
       }
       case 'block': world?.applyRemoteEdit(msg.x, msg.y, msg.z, msg.id, msg.meta ?? 0); break;
+      case 'blocks':
+        for (let i = 0; i + 4 < msg.edits.length; i += 5) {
+          const e = msg.edits;
+          world?.applyRemoteEdit(e[i], e[i + 1], e[i + 2], e[i + 3], e[i + 4]);
+        }
+        break;
       case 'join':
         if (this.arcade) this.arcade.addPlayer(msg.id, msg.name, '');
         else this.remote.add(msg.id, msg.name);
@@ -1248,6 +1267,7 @@ export class Game {
     }
     p.sprintDistance = p.swimDistance = 0;
     p.jumps = 0;
+    this.world?.tickLiquids();
     stats.tick(p, this.getBlock, this.mode);
     p.canSprint = !hasSurvivalRules(this.mode) || stats.canSprint;
 

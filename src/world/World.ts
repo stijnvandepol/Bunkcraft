@@ -7,6 +7,7 @@ import { CHUNK_HEIGHT, CHUNK_VOLUME, SEA_LEVEL, blockIndex, chunkKey } from './c
 import { DOOR_OPEN_BIT, isDoorUpper, packState, stateId, stateMeta } from './BlockStates';
 import { ARENA_SPAWNS } from '../modes/arena';
 import { BIOME } from './TerrainGenerator';
+import { LAVA_TICK_DELAY, LiquidSim, WATER_TICK_DELAY, isLiquid } from './Liquids';
 import { type WorldGenerator, type WorldType, createGenerator } from './WorldGenerator';
 
 /** Sparse player edits per chunk: block index → packed state (id | meta << 8, see BlockStates). */
@@ -18,6 +19,11 @@ export class World {
   readonly generator: WorldGenerator;
   readonly edits: EditMap;
   readonly dirtyEditChunks = new Set<number>();
+  /**
+   * Water and lava flow (singleplayer only: on a multiplayer server the server simulates and the client mirrors
+   * its block changes). Null until enableLiquids().
+   */
+  liquids: LiquidSim | null = null;
   /** Entity hooks: a chunk finished generating / was unloaded. */
   onChunkReady: ((chunk: Chunk) => void) | null = null;
   onChunkUnloaded: ((key: number) => void) | null = null;
@@ -30,10 +36,33 @@ export class World {
     this.chunks = new ChunkManager(seed, pool, materials, worldType);
     this.chunks.onGenerated = (chunk) => {
       const e = this.edits.get(chunk.key);
-      if (e && chunk.blocks) for (const [i, state] of e) writeState(chunk, i, stateId(state), stateMeta(state));
+      if (e && chunk.blocks) {
+        for (const [i, state] of e) {
+          writeState(chunk, i, stateId(state), stateMeta(state));
+          // Liquid that was still flowing when the world was saved carries on.
+          if (this.liquids && isLiquid(stateId(state)) && stateMeta(state) !== 0) {
+            this.liquids.schedule(chunk.cx * 16 + (i & 15), i >> 8, chunk.cz * 16 + ((i >> 4) & 15), stateId(state) === BLOCK.LAVA ? LAVA_TICK_DELAY : WATER_TICK_DELAY);
+          }
+        }
+      }
       this.onChunkReady?.(chunk);
     };
     this.chunks.onUnloaded = (key) => this.onChunkUnloaded?.(key);
+  }
+
+  /** Turns on the liquid simulation; the caller ticks it with tickLiquids() at 20 Hz. */
+  enableLiquids(): LiquidSim {
+    const sim = new LiquidSim({
+      getBlock: (x, y, z) => this.getBlock(x, y, z),
+      getMeta: (x, y, z) => this.getMeta(x, y, z),
+      setState: (x, y, z, id, meta) => { this.setBlock(x, y, z, id, meta); },
+    });
+    this.liquids = sim;
+    return sim;
+  }
+
+  tickLiquids(): void {
+    this.liquids?.tick();
   }
 
   // chunkKey exceeds the Smi range, so every Map lookup boxes a heap number. Entities, particles and
@@ -125,6 +154,7 @@ export class World {
       }
     }
     this.chunks.markDirty();
+    this.liquids?.notify(x, y, z);
     return true;
   }
 
@@ -193,6 +223,7 @@ export class World {
       if (touched.has(c)) this.chunks.requestMeshUrgent(c);
     }
     this.chunks.markDirty();
+    if (this.liquids) for (let k = 0; k < cleared.length; k += 3) this.liquids.notify(cleared[k], cleared[k + 1], cleared[k + 2]);
     return destroyed;
   }
 

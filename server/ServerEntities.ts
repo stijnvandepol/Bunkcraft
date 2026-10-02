@@ -31,6 +31,8 @@ export interface EntityHost {
   broadcast(msg: ServerMessage): void;
   /** A server-made block change that every client must see (the player edit path has its own). */
   broadcastBlock(x: number, y: number, z: number, id: number, meta?: number): void;
+  /** Many block changes at once (x, y, z, id, meta tuples), e.g. flowing water. */
+  broadcastBlocks(edits: number[]): void;
   /** Persist a block change. */
   recordEdit(x: number, y: number, z: number, id: number, meta: number): void;
 }
@@ -66,6 +68,11 @@ export class ServerEntities {
   ) {
     this.world = new ServerWorld(seed, edits);
     this.world.onEdit = (x, y, z, id, meta) => host.recordEdit(x, y, z, id, meta);
+    this.world.liquids.onDestroyed = (x, y, z, id) => {
+      // Plants and torches washed away drop themselves, like in survival Minecraft.
+      const drop = hasSurvivalRules(this.mode) ? blockDrop(id, 0) : null;
+      if (drop) this.manager.dropItem(drop, x + 0.5, y + 0.3, z + 0.5);
+    };
     this.manager = new EntityManager(this.world, seed);
     this.world.onChunkReady = (c) => this.manager.onChunkReady(c);
     this.world.onChunkUnloaded = (k) => this.manager.onChunkUnloaded(k);
@@ -91,6 +98,10 @@ export class ServerEntities {
     const attackable = hasSurvivalRules(this.mode);
     const targets: MobTarget[] = active.map((p) => ({ x: p.x, y: p.y, z: p.z, attackable, id: p.id }));
     this.world.update(targets);
+    // Water and lava flow (budgeted per tick); what changed goes out as one batch.
+    this.world.tickLiquids();
+    const flowed = this.world.drainSimEdits();
+    if (flowed.length > 0) this.host.broadcastBlocks(flowed);
     this.manager.targets = targets;
     const day = dayFactorAt(this.getTime());
     this.manager.tick(targets[0], Math.round((1 - day) * 11), this.events, null, day > 0.6);

@@ -46,9 +46,10 @@ export class TestWorld {
  * A World whose 3×3 chunks around (0, 0) are installed by hand, without workers: mesh requests are
  * collected in `requests` instead of being run.
  */
-export function makeTestWorld(edits = new Map<number, Map<number, number>>(), requests: WorkerRequest[] = []): World {
+export function makeTestWorld(edits = new Map<number, Map<number, number>>(), requests: WorkerRequest[] = [], liquids = false): World {
   const pool = { size: 1, submit: (req: WorkerRequest) => { requests.push(req); } } as unknown as WorkerPool;
   const world = new World(1, pool, {} as ChunkMaterials, edits);
+  if (liquids) world.enableLiquids();
   for (let cz = -1; cz <= 1; cz++) {
     for (let cx = -1; cx <= 1; cx++) {
       const c = new Chunk(cx, cz, chunkKey(cx, cz));

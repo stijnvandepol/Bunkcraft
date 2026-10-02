@@ -24,6 +24,8 @@ const REACH = 8; // lenient server-side reach check (client uses 5)
 const MAX_SPEED = 26; // blocks/second (fast flying + slack)
 const ARENA_MAX_SPEED = 40; // arcade: sprint + jump + slack
 const PING_INTERVAL_TICKS = 60; // arcade: measure the round trip every 3 s
+/** Block changes per 'blocks' message (flowing water). */
+const BLOCKS_PER_MESSAGE = 100;
 const ARENA_DAY = 0.25; // arcade games are always noon
 
 interface WorldData {
@@ -143,6 +145,10 @@ export class GameServer {
       send: (id, msg) => { const s = this.sessions.get(id); if (s) this.send(s, msg); },
       broadcast: (msg) => this.broadcast(msg),
       broadcastBlock: (x, y, z, id, meta) => this.broadcast(blockMessage(x, y, z, id, meta ?? 0)),
+      broadcastBlocks: (edits) => {
+        // At most 200 changes per tick come out of the simulation; split anyway to keep messages small.
+        for (let i = 0; i < edits.length; i += 5 * BLOCKS_PER_MESSAGE) this.broadcast({ t: 'blocks', edits: edits.slice(i, i + 5 * BLOCKS_PER_MESSAGE) });
+      },
       recordEdit: (x, y, z, id, meta) => { this.world.edits[`${x},${y},${z}`] = packState(id, meta); this.dirty = true; },
     }, () => this.world.time);
     this.timers.push(setInterval(() => this.tick(), TICK_MS));

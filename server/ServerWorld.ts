@@ -3,6 +3,7 @@ import {
   BLOCK, LIGHT_EMIT, OPAQUE, SHAPE, SHAPE_CROSS, SHAPE_DOOR, SHAPE_MODEL,
 } from '../src/world/BlockRegistry';
 import { packState, stateId, stateMeta } from '../src/world/BlockStates';
+import { LAVA_TICK_DELAY, LiquidSim, WATER_TICK_DELAY, isLiquid } from '../src/world/Liquids';
 import { CHUNK_HEIGHT, CHUNK_VOLUME, blockIndex, chunkKey } from '../src/world/constants';
 import { type WorldGenerator, type WorldType, createGenerator } from '../src/world/WorldGenerator';
 
@@ -37,11 +38,26 @@ export class ServerWorld implements EntityWorld {
   private readonly wanted = new Set<number>();
   /** Fired for every block change (including explosions) so the server can persist it. */
   onEdit: ((x: number, y: number, z: number, id: number, meta: number) => void) | null = null;
+  /**
+   * Water and lava flow. Chunks only simulate while loaded around a player; a liquid that still flows when a chunk
+   * unloads simply carries on when it loads again (see generate()).
+   */
+  readonly liquids: LiquidSim;
+  /** Block changes made by the liquid simulation since the last drain, as x, y, z, id, meta tuples (to broadcast). */
+  private readonly simEdits: number[] = [];
   onChunkReady: ((chunk: ChunkLike) => void) | null = null;
   onChunkUnloaded: ((key: number) => void) | null = null;
 
   constructor(readonly seed: number, edits: Record<string, number>, readonly worldType: WorldType = 'terrain') {
     this.generator = createGenerator(worldType, seed);
+    this.liquids = new LiquidSim({
+      getBlock: (x, y, z) => this.getBlock(x, y, z),
+      getMeta: (x, y, z) => this.getMeta(x, y, z),
+      setState: (x, y, z, id, meta) => {
+        // Only loaded cells change (the simulation treats unloaded ones as solid).
+        if (this.setBlock(x, y, z, id, meta) >= 0) this.simEdits.push(x, y, z, id, meta);
+      },
+    });
     // Packed states (id | meta << 8); worlds saved before block states hold plain ids, which read as meta 0.
     for (const [k, state] of Object.entries(edits)) {
       const [x, y, z] = k.split(',').map(Number);
@@ -154,7 +170,18 @@ export class ServerWorld implements EntityWorld {
       c.tops[col] = topOf(c.blocks, col);
     }
     this.onEdit?.(x, y, z, id, meta);
+    this.liquids.notify(x, y, z);
     return prev;
+  }
+
+  /** One game tick of liquid flow; returns how many blocks changed. */
+  tickLiquids(): number {
+    return this.liquids.tick();
+  }
+
+  /** The changes the liquid simulation made since the last call (x, y, z, id, meta tuples); clears the list. */
+  drainSimEdits(): number[] {
+    return this.simEdits.splice(0, this.simEdits.length);
   }
 
   /**
@@ -251,6 +278,14 @@ export class ServerWorld implements EntityWorld {
     for (let i = 0; i < CHUNK_VOLUME; i++) if (LIGHT_EMIT[blocks[i]] > 0) emitters.add(i);
     const chunk: ServerChunk = { key, cx, cz, blocks, meta, tops, emitters };
     this.chunks.set(key, chunk);
+    // Liquid that was still flowing when the chunk went away carries on.
+    if (edits) {
+      for (const [i, state] of edits) {
+        if (isLiquid(stateId(state)) && stateMeta(state) !== 0) {
+          this.liquids.schedule((cx << 4) + (i & 15), i >> 8, (cz << 4) + ((i >> 4) & 15), stateId(state) === BLOCK.LAVA ? LAVA_TICK_DELAY : WATER_TICK_DELAY);
+        }
+      }
+    }
     this.onChunkReady?.(chunk);
   }
 }

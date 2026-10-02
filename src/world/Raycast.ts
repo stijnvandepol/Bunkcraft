@@ -67,6 +67,8 @@ export function raycast(
   maxDist: number,
   out: RayHit,
   getMeta?: (x: number, y: number, z: number) => number,
+  /** Also stop at liquid source blocks (what an empty bucket aims at); flowing liquid is still passed through. */
+  hitLiquidSource = false,
 ): RayHit {
   let x = Math.floor(ox), y = Math.floor(oy), z = Math.floor(oz);
   const stepX = dx > 0 ? 1 : -1, stepY = dy > 0 ? 1 : -1, stepZ = dz > 0 ? 1 : -1;
@@ -83,7 +85,7 @@ export function raycast(
     const id = getBlock(x, y, z);
     if (id === BLOCK.UNLOADED) return out;
     const shape = SHAPE[id];
-    if (shape !== SHAPE_NONE && shape !== SHAPE_LIQUID) {
+    if (shape !== SHAPE_NONE && (shape !== SHAPE_LIQUID || (hitLiquidSource && !!getMeta && getMeta(x, y, z) === 0))) {
       if (PARTIAL[id] && getMeta) {
         // Slabs, stairs and doors are only hit where their boxes are, so the ray passes over a bottom slab's empty half.
         const th = hitPartial(getBlock, getMeta, id, x, y, z, ox, oy, oz, dx, dy, dz);

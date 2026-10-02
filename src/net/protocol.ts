@@ -112,6 +112,8 @@ export type ServerMessage =
   | { t: 'leave'; id: number; name: string }
   | { t: 'snap'; players: SnapshotEntry[] }
   | { t: 'block'; x: number; y: number; z: number; id: number; meta?: number }
+  /** Many block changes at once (flowing water and lava): x, y, z, id, meta, x, y, z, id, meta, … */
+  | { t: 'blocks'; edits: number[] }
   /** The edit was refused (echoes the request; the client restores the block it remembers). */
   | { t: 'reject'; seq: number; x: number; y: number; z: number; id: number; meta?: number }
   | { t: 'chat'; from: string; text: string; system?: boolean }

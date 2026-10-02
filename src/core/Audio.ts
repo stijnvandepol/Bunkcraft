@@ -271,6 +271,19 @@ export class AudioEngine {
     }
   }
 
+  /** Lava meeting water: a short hiss. */
+  playFizz(volume: number): void {
+    if (volume <= 0.02) return;
+    this.noiseBurst(4200, 0.5, 0.5, 0.35 * volume, 'highpass');
+    this.noiseBurst(1200, 0.8, 0.25, 0.2 * volume);
+  }
+
+  /** A bucket filled from or emptied into a liquid. */
+  playBucket(lava: boolean): void {
+    this.noiseBurst(lava ? 500 : 1400, 0.7, 0.3, 0.4, 'bandpass');
+    this.voice('sine', lava ? 140 : 260, lava ? 90 : 150, 0.2, 0.15);
+  }
+
   playPop(): void {
     this.voice('sine', 900 + Math.random() * 400, 1800, 0.08, 0.25);
   }

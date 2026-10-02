@@ -191,7 +191,7 @@ export const BLOCK_DEFS: BlockDef[] = [
   cube(B.GLASS, 'glass', 'Glass', { all: 'glass' }, 0.3, 'glass', { transparent: true, cullSelf: true }),
   {
     id: B.WATER, name: 'water', displayName: 'Water', shape: 'liquid', solid: false, transparent: true,
-    cullSelf: true, lightFilter: 2, hardness: -1, sound: 'stone', textures: { all: 'water' },
+    cullSelf: true, lightFilter: 2, hardness: -1, sound: 'stone', textures: { all: 'water' }, metaMask: 15,
   },
   cube(B.COAL_ORE, 'coal_ore', 'Coal Ore', { all: 'coal_ore' }, 1.4, 'stone'),
   cube(B.IRON_ORE, 'iron_ore', 'Iron Ore', { all: 'iron_ore' }, 1.5, 'stone'),
@@ -230,7 +230,7 @@ export const BLOCK_DEFS: BlockDef[] = [
   },
   {
     id: B.LAVA, name: 'lava', displayName: 'Lava', shape: 'liquid', solid: false, transparent: true,
-    cullSelf: true, lightFilter: 2, light: 15, hardness: -1, sound: 'stone', contactDamage: 8, textures: { all: 'lava' },
+    cullSelf: true, lightFilter: 2, light: 15, hardness: -1, sound: 'stone', contactDamage: 8, textures: { all: 'lava' }, metaMask: 15,
   },
   cube(B.CRAFTING_TABLE, 'crafting_table', 'Crafting Table', { top: 'crafting_table_top', bottom: 'oak_planks', side: 'crafting_table_side' }, 0.8, 'wood'),
   cube(B.FURNACE, 'furnace', 'Furnace', { top: 'furnace_top', bottom: 'furnace_top', side: 'furnace_side', front: 'furnace_front' }, 1.2, 'stone'),
