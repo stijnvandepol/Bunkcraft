@@ -82,6 +82,8 @@ export class ArcadeHud {
 
   private lastHealth = -1;
   private lastGap = -1;
+  private crosshairVisible = true;
+  private scopeOn = false;
   private lastRespawnPending = '';
   private lastMag = -1;
   private lastAmmoDef: WeaponDef | null = null;
@@ -241,7 +243,10 @@ export class ArcadeHud {
 
   /** Crosshair gap (pixels from the centre to the inner end of each line); hidden while scoped. */
   setCrosshair(gap: number, visible: boolean): void {
-    this.crosshair.classList.toggle('hidden', !visible);
+    if (visible !== this.crosshairVisible) {
+      this.crosshairVisible = visible;
+      this.crosshair.classList.toggle('hidden', !visible);
+    }
     const g = Math.round(gap * 2) / 2;
     if (g === this.lastGap) return;
     this.lastGap = g;
@@ -249,6 +254,8 @@ export class ArcadeHud {
   }
 
   setScope(on: boolean): void {
+    if (on === this.scopeOn) return;
+    this.scopeOn = on;
     this.scope.classList.toggle('hidden', !on);
   }
 
@@ -424,6 +431,8 @@ export class ArcadeHud {
       m.el.classList.add('hidden');
     }
     this.lastHealth = this.lastGap = this.lastProtect = -1;
+    this.crosshairVisible = true;
+    this.scopeOn = false;
     this.lastMag = -1;
     this.lastAmmoDef = null;
     this.lastRespawnPending = '';
