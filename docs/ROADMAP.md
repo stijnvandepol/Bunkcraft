@@ -115,9 +115,18 @@ Volgende stappen:
 
 1. **Mobs op de server simuleren: Gedaan** (zie `docs/SERVER.md`). Mob-AI, items, pijlen en TNT draaien op de server met een eigen `ServerWorld`.
 2. **Gedeelde item-drops: Gedaan.** PvP in de Minecraft-sandbox staat nog open; PvP bestaat wel in de arcade-game types (zie 7b).
-3. **Server-authoritative inventory** (anti-cheat): breken en craften door de server laten bevestigen.
-4. **Wachtwoord, whitelist en ops**, en accounts of tokens per naam.
-5. **Binair protocol** voor snapshots, als er veel spelers zijn.
+3. **Server-authoritative inventory: Gedaan (gedeeltelijk).** Survival-inventories worden door de server gecontroleerd
+   (pickups, recepten, drops die een blokbreuk of voorraad nodig hebben); stationcontrole, kisten en health/honger staan
+   nog open. Precies wat wel en niet: `docs/SERVER.md`.
+4. **Wachtwoord, whitelist, ops en tokens: Gedaan.** Wachtwoord per game (scrypt), eigenaarstoken, namen gebonden aan een
+   browsersleutel, `/kick /ban /unban /op /deop /whitelist /say /tp /gamemode /time /weather /give`, opt-in serverlijst
+   (*Browse Games*), `/admin` met `ADMIN_TOKEN`. Open: echte accounts (e-mail of passkey) en een herstelroute voor een
+   verloren naam of eigenaarstoken.
+5. **Binair protocol: Gedaan voor `snap` en `ent`** (-54 % en -44 %, minder CPU), onderhandeld in `hello`. Client-naar-server
+   (`pos`) en de overige berichten zijn nog JSON; delta-compressie van `snap` (alleen wat bewoog) is de volgende stap.
+6. **Observability en beheer: Gedaan.** JSON-logs, `/metrics`, `/health`, back-ups, verbindingslimieten, `ALLOWED_ORIGINS`,
+   gracieus afsluiten met reconnect-hint. Open: Grafana-dashboard als voorbeeld, rate limits per game in `/admin`, alerting.
+7. **Weer in multiplayer** (`/weather` is een stub tot het weersysteem op de server draait) en inventory-controle voor kisten.
 
 ## 7b. Arcade-game types (Krunker-stijl)
 

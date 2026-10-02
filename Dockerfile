@@ -9,4 +9,5 @@ ENV PORT=3000 DATA_DIR=/app/data
 EXPOSE 3000
 # The world (edits, players, time) is stored here; mount a volume to keep it.
 VOLUME ["/app/data"]
-CMD ["npm", "start"]
+# Run node directly (not through npm): SIGTERM must reach the server so it can save and notify players.
+CMD ["node", "--import", "tsx", "server/index.ts"]
