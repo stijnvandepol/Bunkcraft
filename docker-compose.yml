@@ -9,6 +9,16 @@ services:
   bunkcraft:
     build: .
     restart: unless-stopped
+    # Hardening: read-only image, no capabilities, no privilege escalation, bounded resources.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 1g
+    cpus: 2
+    pids_limit: 256
     environment:
       TRUST_PROXY: "1"
       MAIN_WORLD: ${MAIN_WORLD:-on}
@@ -33,6 +43,10 @@ services:
     restart: unless-stopped
     depends_on:
       - bunkcraft
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 256m
+    pids_limit: 256
     ports:
       - "80:80"
       - "443:443"

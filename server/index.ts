@@ -17,6 +17,7 @@ import { extname, join, normalize, resolve, sep } from 'node:path';
 import { type WebSocket, WebSocketServer } from 'ws';
 import { GameServer, parseGameMode } from './GameServer';
 import { RateLimiter, Rooms } from './Rooms';
+import { SECURITY_HEADERS, clientAddress } from './security';
 
 const PORT = Number(process.env.PORT ?? 3000);
 const ROOT = resolve(process.env.STATIC_DIR ?? 'dist');
@@ -70,12 +71,7 @@ setInterval(() => { createLimit.prune(); lookupLimit.prune(); }, 600_000).unref(
 
 /** Client address; X-Forwarded-For only when a trusted reverse proxy sets it. */
 function clientIp(req: IncomingMessage): string {
-  if (TRUST_PROXY) {
-    const fwd = req.headers['x-forwarded-for'];
-    const first = (Array.isArray(fwd) ? fwd[0] : fwd)?.split(',')[0]?.trim();
-    if (first) return first;
-  }
-  return req.socket.remoteAddress ?? 'unknown';
+  return clientAddress(req.headers['x-forwarded-for'], req.socket.remoteAddress, TRUST_PROXY);
 }
 
 function json(res: ServerResponse, status: number, body: unknown): void {
@@ -126,8 +122,20 @@ async function api(req: IncomingMessage, res: ServerResponse, path: string): Pro
   return json(res, 404, { error: 'Not found' });
 }
 
-const http = createServer((req, res) => {
-  const url = new URL(req.url ?? '/', 'http://localhost');
+// connectionsCheckingInterval: Node only checks the timeouts below every 30 s by default.
+const http = createServer({ maxHeaderSize: 16 * 1024, connectionsCheckingInterval: 5_000 }, (req, res) => {
+  for (const [k, v] of Object.entries(SECURITY_HEADERS)) res.setHeader(k, v);
+  let url: URL;
+  try {
+    url = new URL(req.url ?? '/', 'http://localhost');
+  } catch {
+    res.writeHead(400).end();
+    return;
+  }
+  if (req.method !== 'GET' && req.method !== 'HEAD' && !url.pathname.startsWith('/api/')) {
+    res.writeHead(405, { allow: 'GET, HEAD' }).end();
+    return;
+  }
   if (url.pathname === '/health') {
     return json(res, 200, { ok: true, players: (main?.playerCount ?? 0) + (rooms?.playerCount ?? 0), rooms: rooms?.count ?? 0 });
   }
@@ -163,19 +171,32 @@ const http = createServer((req, res) => {
     'content-type': MIME[extname(file)] ?? 'application/octet-stream',
     'cache-control': hashed ? 'public, max-age=31536000, immutable' : 'no-cache',
   });
-  createReadStream(file).pipe(res);
+  if (req.method === 'HEAD') { res.end(); return; }
+  createReadStream(file).on('error', () => res.destroy()).pipe(res);
 });
+
+// Slowloris and header floods: a request must arrive quickly and small; idle keep-alive sockets go early.
+http.headersTimeout = 15_000;
+http.requestTimeout = 30_000;
+http.keepAliveTimeout = 5_000;
+http.maxHeadersCount = 64;
 
 // WebSocket on the same port: /ws (main world) and /ws/<CODE> (a room).
 const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
 http.on('upgrade', (req, socket, head) => {
+  socket.on('error', () => socket.destroy());
   const path = new URL(req.url ?? '/', 'http://localhost').pathname;
   let target: GameServer | null = null;
   if (path === '/ws') {
     target = main;
   } else {
     const m = /^\/ws\/([^/]+)$/.exec(path);
-    if (m && rooms && lookupLimit.take(clientIp(req))) target = rooms.get(m[1])?.server ?? null;
+    try {
+      if (m && rooms && lookupLimit.take(clientIp(req))) target = rooms.get(m[1])?.server ?? null;
+    } catch (err) {
+      // A room whose world file cannot be loaded must not take the whole server down.
+      console.error('[room] load failed:', err instanceof Error ? err.message : err);
+    }
   }
   if (!target) {
     socket.write('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n');

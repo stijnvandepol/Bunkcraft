@@ -20,6 +20,7 @@
   "dependencies": {
     "fflate": "^0.8.3",
     "three": "^0.186.1",
+    "tsx": "^4.23.15",
     "ws": "^8.22.0"
   },
   "devDependencies": {
@@ -27,7 +28,6 @@
     "@types/three": "^0.186.0",
     "@types/ws": "^8.18.2",
     "fake-indexeddb": "^6.2.5",
-    "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vite": "^8.3.2",
     "vitest": "^4.1.11"

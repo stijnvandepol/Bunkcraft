@@ -16,6 +16,8 @@ const ATTACK_REACH = 6.5;
 const IGNITE_REACH = 8;
 const TAKE_REACH = 2.6;
 const SOUND_RADIUS = 24;
+/** Player drops bypass the manager's item cap (death drops must not vanish), so the server caps them itself. */
+const MAX_DROPPED_ITEMS = 400;
 
 /** What the server needs to know about a connected player. */
 export interface EntityPlayer {
@@ -159,9 +161,11 @@ export class ServerEntities {
   drop(p: EntityPlayer, stack: ItemStack, x: number, y: number, z: number, yaw: number | undefined, delay: number | undefined): void {
     if (!p.hasPos || !Number.isInteger(stack.id) || !Number.isInteger(stack.count)) return;
     if (stack.count < 1 || stack.count > 64 || !getItemDef(stack.id)) return;
+    if (this.manager.items.length >= MAX_DROPPED_ITEMS) return;
+    const damage = typeof stack.damage === 'number' && Number.isInteger(stack.damage) && stack.damage >= 0 && stack.damage <= 100_000 ? stack.damage : undefined;
     if (![x, y, z].every(Number.isFinite) || Math.hypot(x - p.x, y - (p.y + 1), z - p.z) > 10) return;
     const pickupDelay = Number.isFinite(delay) ? Math.min(100, Math.max(0, delay as number)) : 10;
-    this.manager.dropItem({ id: stack.id, count: stack.count, damage: stack.damage }, x, y, z, pickupDelay,
+    this.manager.dropItem({ id: stack.id, count: stack.count, damage }, x, y, z, pickupDelay,
       Number.isFinite(yaw) ? yaw : undefined, true);
   }
 

@@ -1,5 +1,24 @@
 # Caddy terminates HTTPS and forwards everything (game, API and WebSockets) to BunkCraft.
+# The Node server already sets the security headers below; Caddy repeats them so they also apply to
+# error pages and stay in place if the backend is replaced. Keep the CSP in sync with server/security.ts
+# (a test checks this). See docs/SECURITY.md.
 {$DOMAIN} {
 	encode zstd gzip
-	reverse_proxy bunkcraft:3000
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' ws: wss:; worker-src 'self' blob:; media-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		X-Frame-Options DENY
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), interest-cohort=()"
+		Cross-Origin-Opener-Policy same-origin
+		Cross-Origin-Resource-Policy same-origin
+		-Server
+	}
+
+	# Caddy sets X-Forwarded-For itself (the client address); the backend only trusts it with TRUST_PROXY=1.
+	reverse_proxy bunkcraft:3000 {
+		header_up X-Forwarded-For {remote_host}
+	}
 }

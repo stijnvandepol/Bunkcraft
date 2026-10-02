@@ -140,10 +140,17 @@ export class Rooms {
     }
     const dir = join(this.opts.dataDir, code);
     if (!existsSync(join(dir, 'world.json'))) return null;
-    const server = new GameServer({
-      dataDir: dir, worldName: 'BunkCraft Game', gameMode: 'survival',
-      motd: this.opts.motd, maxPlayers: this.opts.maxPlayers, quiet: true,
-    });
+    let server: GameServer;
+    try {
+      server = new GameServer({
+        dataDir: dir, worldName: 'BunkCraft Game', gameMode: 'survival',
+        motd: this.opts.motd, maxPlayers: this.opts.maxPlayers, quiet: true,
+      });
+    } catch (err) {
+      // A damaged world file makes that one game unavailable, nothing more.
+      console.error(`[room] ${code} could not be loaded:`, err instanceof Error ? err.message : err);
+      return null;
+    }
     this.loaded.set(code, { server, lastActive: Date.now() });
     return { code, server };
   }

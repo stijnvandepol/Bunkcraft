@@ -305,6 +305,29 @@ export interface ImportedPack {
   created: number;
 }
 
+/** Limits for user-supplied archives (zip bombs, decompression bombs and oversized images). */
+export const PACK_LIMITS = {
+  /** Archive size; a Minecraft client jar is about 25 MB. */
+  archiveBytes: 512 * 1024 * 1024,
+  /** Uncompressed size of one texture (a 1024x1024 PNG is well below this). */
+  fileBytes: 4 * 1024 * 1024,
+  /** Uncompressed size of everything extracted. */
+  totalBytes: 48 * 1024 * 1024,
+  /** Width and height of one texture in pixels (decoded RGBA size is bounded by this). */
+  imageSize: 2048,
+};
+
+/** True for a PNG whose header (signature, IHDR) says it is at most PACK_LIMITS.imageSize pixels square-ish. */
+export function isSafePng(bytes: Uint8Array): boolean {
+  if (bytes.length < 33) return false;
+  const sig = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  if (sig.some((b, i) => bytes[i] !== b)) return false;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (view.getUint32(12) !== 0x49484452) return false; // "IHDR"
+  const w = view.getUint32(16), h = view.getUint32(20);
+  return w > 0 && h > 0 && w <= PACK_LIMITS.imageSize && h <= PACK_LIMITS.imageSize * 64;
+}
+
 const BLOCK_DIR = /^assets\/minecraft\/textures\/block\/([a-z0-9_]+)\.png$/;
 
 /**
@@ -313,17 +336,24 @@ const BLOCK_DIR = /^assets\/minecraft\/textures\/block\/([a-z0-9_]+)\.png$/;
  */
 export async function importMinecraftArchive(file: File): Promise<ImportedPack> {
   const wanted = layoutFiles(MINECRAFT_LAYOUT);
+  if (file.size > PACK_LIMITS.archiveBytes) throw new Error('This file is too large to be a Minecraft jar or resource pack.');
+  let budget = PACK_LIMITS.totalBytes;
   const buffer = new Uint8Array(await file.arrayBuffer());
   const files = await new Promise<Record<string, Uint8Array>>((resolve, reject) => {
     unzip(buffer, {
       filter: (f) => {
         const m = BLOCK_DIR.exec(f.name);
-        return !!m && wanted.has(m[1]);
+        if (!m || !wanted.has(m[1])) return false;
+        // Check the declared sizes before anything is inflated (a zip bomb inflates a tiny entry to gigabytes).
+        if (f.originalSize > PACK_LIMITS.fileBytes || (budget -= f.originalSize) < 0) return false;
+        return true;
       },
     }, (err, data) => (err ? reject(err) : resolve(data)));
   });
   const out: Record<string, Uint8Array> = {};
-  for (const [path, bytes] of Object.entries(files)) out[BLOCK_DIR.exec(path)![1]] = bytes;
+  for (const [path, bytes] of Object.entries(files)) {
+    if (bytes.length <= PACK_LIMITS.fileBytes && isSafePng(bytes)) out[BLOCK_DIR.exec(path)![1]] = bytes;
+  }
   if (Object.keys(out).length < 10) {
     throw new Error('No Minecraft 1.13+ block textures found in this file (expected assets/minecraft/textures/block/*.png).');
   }

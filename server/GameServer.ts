@@ -29,6 +29,10 @@ const PING_INTERVAL_TICKS = 60; // arcade: measure the round trip every 3 s
 /** Block changes per 'blocks' message (flowing water). */
 const BLOCKS_PER_MESSAGE = 100;
 const ARENA_DAY = 0.25; // arcade games are always noon
+/** Horizontal limit for positions a client may report (Minecraft's world border). */
+const WORLD_LIMIT = 29_999_984;
+/** A client that lets this much outgoing data pile up is not reading: drop it instead of buffering without bound. */
+const MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
 
 interface WorldData {
   name: string;
@@ -294,13 +298,21 @@ export class GameServer {
         ws.close(1003, 'Bad message');
         return;
       }
-      if (!session) {
-        if (msg.t !== 'hello') return;
-        clearTimeout(timeout);
-        session = this.login(ws, msg.name, msg.v);
-        return;
+      // JSON.parse also yields null, numbers, strings and arrays: only objects with a string type are messages.
+      if (typeof msg !== 'object' || msg === null || Array.isArray(msg) || typeof msg.t !== 'string') return;
+      try {
+        if (!session) {
+          if (msg.t !== 'hello') return;
+          clearTimeout(timeout);
+          session = this.login(ws, msg.name, msg.v);
+          return;
+        }
+        this.handle(session, msg);
+      } catch (err) {
+        // A malformed message must never take the whole server (and every other game) down.
+        console.error('[net] message handler failed:', err instanceof Error ? err.message : err);
+        ws.close(1011, 'Server error');
       }
-      this.handle(session, msg);
     });
     ws.on('pong', () => {
       if (session && session.pingSentAt > 0) {
@@ -335,7 +347,7 @@ export class GameServer {
     }
     if (this.sessions.size >= this.opts.maxPlayers) return kick('The server is full');
 
-    const record = this.match ? null : this.world.players[name] ?? null;
+    const record = this.match ? null : this.playerRecord(name);
     const start = record ?? this.world.spawn;
     const session: Session = {
       id: this.nextId++, name, ws,
@@ -381,10 +393,19 @@ export class GameServer {
     this.log(`[leave] ${s.name} (${this.sessions.size} online)`);
   }
 
+  /** Own-property lookup: names like "constructor" or "__proto__" are valid names but must not hit Object.prototype. */
+  private playerRecord(name: string): PlayerRecord | null {
+    return Object.hasOwn(this.world.players, name) ? this.world.players[name] : null;
+  }
+
+  private setPlayerRecord(name: string, record: PlayerRecord): void {
+    Object.defineProperty(this.world.players, name, { value: record, enumerable: true, writable: true, configurable: true });
+  }
+
   private storePlayer(s: Session): void {
     if (!s.hasPos || this.match) return;
-    const prev = this.world.players[s.name];
-    this.world.players[s.name] = { ...prev, x: s.x, y: s.y, z: s.z, yaw: s.yaw, pitch: s.pitch };
+    const prev = this.playerRecord(s.name) ?? undefined;
+    this.setPlayerRecord(s.name, { ...prev, x: s.x, y: s.y, z: s.z, yaw: s.yaw, pitch: s.pitch });
     this.dirty = true;
   }
 
@@ -406,8 +427,10 @@ export class GameServer {
         return void (s.drops.take() && entities.drop(s, { id: msg.id, count: msg.count, damage: msg.damage }, msg.x, msg.y, msg.z, msg.yaw, msg.delay));
       case 'state':
         if (Array.isArray(msg.inventory) && msg.inventory.length <= 64 && Array.isArray(msg.stats) && msg.stats.length <= 8) {
-          const prev = this.world.players[s.name] ?? { x: s.x, y: s.y, z: s.z, yaw: s.yaw, pitch: s.pitch };
-          this.world.players[s.name] = { ...prev, inventory: msg.inventory, stats: msg.stats };
+          const inventory = cleanInventory(msg.inventory);
+          const stats = msg.stats.map((n) => (typeof n === 'number' && Number.isFinite(n) ? n : 0));
+          const prev = this.playerRecord(s.name) ?? { x: s.x, y: s.y, z: s.z, yaw: s.yaw, pitch: s.pitch };
+          this.setPlayerRecord(s.name, { ...prev, inventory, stats });
           this.dirty = true;
         }
         return;
@@ -434,6 +457,8 @@ export class GameServer {
     if (!s.moves.take()) return;
     const nums = [m.x, m.y, m.z, m.yaw, m.pitch];
     if (nums.some((n) => typeof n !== 'number' || !Number.isFinite(n))) return;
+    // Inside Minecraft's world border; far-away positions would make the server generate chunks there.
+    if (Math.abs(m.x) > WORLD_LIMIT || Math.abs(m.z) > WORLD_LIMIT || m.y < -512 || m.y > 1024) return;
     const now = Date.now();
     if (s.awaiting) {
       // We moved this player (spawn): ignore positions from before the client got the message.
@@ -459,7 +484,7 @@ export class GameServer {
       // Movement sanity check: reject impossible speeds and snap the player back.
       const dt = Math.max(0.05, (now - s.lastPosTime) / 1000);
       const dist = Math.hypot(m.x - s.x, m.z - s.z);
-      if (dist > (this.match ? ARENA_MAX_SPEED : MAX_SPEED) * dt + 4 && m.y > -60) {
+      if (dist > (this.match ? ARENA_MAX_SPEED : MAX_SPEED) * dt + 4) {
         if (++s.violations > 3) this.send(s, { t: 'teleport', x: s.x, y: s.y, z: s.z });
         return;
       }
@@ -564,15 +589,34 @@ export class GameServer {
   }
 
   private send(s: Session, msg: ServerMessage): void {
-    if (s.ws.readyState === s.ws.OPEN) s.ws.send(JSON.stringify(msg));
+    this.sendRaw(s, JSON.stringify(msg));
+  }
+
+  private sendRaw(s: Session, data: string): void {
+    if (s.ws.readyState !== s.ws.OPEN) return;
+    if (s.ws.bufferedAmount > MAX_BUFFERED_BYTES) {
+      s.ws.terminate(); // slow reader: the 'close' handler logs the player out
+      return;
+    }
+    s.ws.send(data);
   }
 
   private broadcast(msg: ServerMessage, except = -1): void {
     const data = JSON.stringify(msg);
     for (const s of this.sessions.values()) {
-      if (s.id !== except && s.ws.readyState === s.ws.OPEN) s.ws.send(data);
+      if (s.id !== except) this.sendRaw(s, data);
     }
   }
+}
+
+/** Saved inventory: at most 64 rows of at most 8 finite numbers; anything else is dropped. */
+export function cleanInventory(raw: unknown[]): number[][] {
+  const out: number[][] = [];
+  for (const row of raw) {
+    if (!Array.isArray(row) || row.length > 8) { out.push([]); continue; }
+    out.push(row.map((n) => (typeof n === 'number' && Number.isFinite(n) ? n : 0)));
+  }
+  return out;
 }
 
 function round(v: number): number {
