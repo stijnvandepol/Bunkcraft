@@ -19,7 +19,7 @@ import { type GameMode, GAME_MODE_NAMES, canFly, hasSurvivalRules } from '../pla
 import { PHYSICS } from '../player/Physics';
 import { type MoveInput, Player } from '../player/Player';
 import { MAX_AIR, PlayerStats } from '../player/PlayerStats';
-import { DayCycle } from '../rendering/DayCycle';
+import { DayCycle, MOON_PHASE_NAMES } from '../rendering/DayCycle';
 import { HandRenderer } from '../rendering/HandRenderer';
 import {
   IMPORTED_PREFIX, MINECRAFT_LAYOUT, type PackImage, builtinResolver, findBuiltinPack, importMinecraftArchive, importedResolver, loadPack,
@@ -59,6 +59,7 @@ import { CameraController } from './Camera';
 import { Input } from './Input';
 import { Interaction } from './Interaction';
 import { Renderer } from './Renderer';
+import { WeatherSystem } from './WeatherSystem';
 import { DynamicResolution, suggestPreset } from './AdaptiveQuality';
 import { SettingsStore } from './Settings';
 
@@ -88,6 +89,8 @@ export class Game {
   private readonly save = new SaveSystem();
   private readonly pool: WorkerPool;
   private readonly cycle = new DayCycle();
+  /** Weather: simulation (singleplayer) or server follower (multiplayer), rendering inputs and lightning. */
+  private readonly weatherSys: WeatherSystem;
   readonly player = new Player();
   private readonly stats = new PlayerStats();
   private readonly advancements = new AdvancementTracker();
@@ -192,7 +195,18 @@ export class Game {
     };
     this.stack = new ScreenStack(root.querySelector<HTMLElement>('#screens')!);
     root.append(this.toasts.el, this.remote.el, this.chat.el, this.hud.el, this.debug.el, this.inventory.el, this.survivalInventory.el);
-    this.chat.onSend = (text) => this.net?.sendChat(text);
+    this.weatherSys = new WeatherSystem({
+      cycle: this.cycle, renderer: this.renderer, audio: this.audio, player: this.player, stats: this.stats,
+      world: () => this.world, mode: () => this.mode, entities: () => this.entities,
+      multiplayer: () => this.net !== null, arcade: () => this.arcade !== null || this.meta?.worldType === 'arena',
+    });
+    this.chat.onSend = (text) => {
+      if (this.net) return this.net.sendChat(text);
+      // Singleplayer has no server: the slash commands run locally.
+      if (!text.startsWith('/')) return;
+      const lines = this.weatherSys.localCommand(text) ?? [`Unknown command: ${text.split(/\s+/)[0]}. Type /help for help.`];
+      for (const line of lines) this.chat.add(line, true);
+    };
     this.chat.onClose = () => {
       if (this.state === 'chat') void this.resumeGame();
     };
@@ -462,6 +476,7 @@ export class Game {
     this.stopArcade();
     this.state = 'menu';
     this.meta = null;
+    this.weatherSys.stop();
     this.hud.setVisible(false);
     this.inventory.close();
     this.survivalInventory.close();
@@ -503,6 +518,7 @@ export class Game {
     const worldType: WorldType | undefined = meta.worldType === 'arena' ? arenaWorldType(parseMapId(this.arenaMap) ?? DEFAULT_MAP) : meta.worldType;
     const world = this.createWorldInstance(meta.seed, edits, worldType);
     this.cycle.time = meta.time;
+    this.weatherSys.start(meta, this.net !== null);
     const mode = meta.gameMode ?? 'creative';
     // Inventory: saved stacks, else creative gets the default hotbar and survival starts empty.
     if (meta.inventory) this.playerInventory.load(meta.inventory);
@@ -599,6 +615,7 @@ export class Game {
     meta.gameMode = this.mode;
     meta.selectedSlot = this.hotbar.selected;
     meta.time = this.cycle.time;
+    this.weatherSys.save(meta);
     meta.lastPlayed = Date.now();
     if (thumbnail || !meta.icon) this.wantThumbnail = true;
     try {
@@ -660,7 +677,7 @@ export class Game {
     const meta: WorldMeta = {
       id: 'mp:' + address + (room ?? ''), name: welcome.worldName, seed: welcome.seed, seedText: '', created: 0, lastPlayed: Date.now(),
       player: rec ? { x: rec.x, y: rec.y, z: rec.z, yaw: rec.yaw, pitch: rec.pitch, flying: false } : null,
-      hotbar: [...DEFAULT_HOTBAR], selectedSlot: 0, time: welcome.time, gameMode: welcome.gameMode,
+      hotbar: [...DEFAULT_HOTBAR], selectedSlot: 0, time: welcome.time, day: welcome.day, gameMode: welcome.gameMode,
       inventory: rec?.inventory, stats: rec?.stats, spawn: welcome.spawn, worldType: welcome.worldType,
     };
     this.loadingProgress = progress;
@@ -814,9 +831,12 @@ export class Game {
         else this.remote.remove(msg.id);
         break;
       case 'chat': this.chat.add(msg.system ? msg.text : '<' + msg.from + '> ' + msg.text, msg.system); break;
-      case 'time': this.cycle.time = msg.time; break;
+      case 'time':
+        this.cycle.time = msg.time;
+        if (msg.day !== undefined) this.cycle.day = msg.day;
+        break;
       case 'teleport': this.player.setPosition(msg.x, msg.y, msg.z); break;
-      default: this.arcade?.handle(msg, performance.now() / 1000); break;
+      default: if (!this.weatherSys.onServerMessage(msg)) this.arcade?.handle(msg, performance.now() / 1000); break;
     }
   }
 
@@ -1327,6 +1347,7 @@ export class Game {
     }
     p.sprintDistance = p.swimDistance = 0;
     p.jumps = 0;
+    this.weatherSys.gameTick();
     this.world?.tickLiquids();
     stats.tick(p, this.getBlock, this.mode);
     p.canSprint = !hasSurvivalRules(this.mode) || stats.canSprint;
@@ -1337,7 +1358,8 @@ export class Game {
     target.attackable = alive && hasSurvivalRules(this.mode);
     this.entities?.tick(
       target,
-      Math.round((1 - this.cycle.dayFactor) * 11),
+      // Rain and thunder count as extra darkness for the spawn rules.
+      Math.round((1 - this.cycle.dayFactor) * 11 + this.weatherSys.weather.skyDarkness),
       this.mobEvents,
       alive && this.mode !== 'spectator' ? this.pickupItem : null,
       this.cycle.dayFactor > 0.6,
@@ -1387,6 +1409,7 @@ export class Game {
         if (++this.stepCount % STEPS_PER_TICK === 0) this.gameTick();
       }
       this.cycle.update(dt);
+      this.weatherSys.update(dt);
       this.autosave += dt;
       if (this.autosave > AUTOSAVE_INTERVAL) {
         this.autosave = 0;
@@ -1472,7 +1495,7 @@ export class Game {
       `Chunks: ${stats.loaded} loaded · ${stats.meshed} meshed · ${visible} rendered`,
       `Draw calls: ${r.drawCalls} (+${r.shadowCalls} shadow) · Triangles: ${(r.triangles / 1000).toFixed(1)}k`,
       `Workers: ${this.pool.size} · queue ${this.pool.queued} · gen ${this.pool.genMs.toFixed(1)} ms · mesh ${this.pool.meshMs.toFixed(1)} ms`,
-      `Entities: ${e?.mobs.length ?? 0} mobs · ${e?.items.length ?? 0} items · Particles: ${this.renderer.particles.active}`,
+      `Entities: ${e?.mobs.length ?? 0} mobs · ${e?.items.length ?? 0} items · Particles: ${this.renderer.particles.active}${this.renderer.precipitation.count > 0 ? ` · Precipitation: ${this.renderer.precipitation.count}` : ''}`,
       '',
       `XYZ: ${p.x.toFixed(3)} / ${p.y.toFixed(3)} / ${p.z.toFixed(3)}`,
       `Block: ${bx} ${by} ${bz}`,
@@ -1480,7 +1503,9 @@ export class Game {
       `Facing: ${facing} (${yawDeg.toFixed(1)} / ${((-p.pitch * 180) / Math.PI).toFixed(1)})`,
       `Biome: ${BIOME_NAMES[world.biomeName(bx, bz)]}`,
       `Light: ${light >> 4} sky, ${light & 15} block`,
-      `Time: ${this.cycle.clock()} · Render distance: ${world.chunks.renderDistance} chunks`,
+      `Time: ${this.cycle.clock()} · Day ${this.cycle.day + 1} · Moon: ${MOON_PHASE_NAMES[this.cycle.moonPhase]}`,
+      this.weatherSys.debugLine(),
+      `Render distance: ${world.chunks.renderDistance} chunks`,
       `${GAME_MODE_NAMES[this.mode]} · ${p.flying ? 'Flying' : p.onGround ? 'On ground' : 'Airborne'}${p.sprinting ? ' · Sprinting' : ''}${p.inWater ? ' · In water' : ''}`,
       `Health ${this.stats.health} · Food ${this.stats.hunger} (sat ${this.stats.saturation.toFixed(1)}) · Air ${this.stats.air}`,
     ], [

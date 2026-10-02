@@ -228,6 +228,16 @@ export class AudioEngine {
     this.noiseBurst(600, 1, 0.1, 0.3);
   }
 
+  /** Thunder after a lightning strike: a sharp crack that rolls off into a long low rumble. */
+  playThunderRumble(volume: number): void {
+    const v = Math.min(1, Math.max(0, volume));
+    if (v <= 0.02) return;
+    this.noiseBurst(2200, 0.6, 0.18, v * 0.7, 'bandpass');
+    this.noiseBurst(180, 0.5, 2.8, v * 1.1, 'lowpass', 0.05);
+    this.noiseBurst(90, 0.5, 3.6, v * 0.9, 'lowpass', 0.45);
+    this.voice('sine', 62, 28, 2.2, v * 0.7, 0.1);
+  }
+
   playExplosion(volume: number): void {
     this.noiseBurst(120, 0.5, 1.6, Math.min(1, volume) * 1.2, 'lowpass');
     this.noiseBurst(900, 0.7, 0.5, Math.min(1, volume) * 0.6);

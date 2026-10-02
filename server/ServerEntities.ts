@@ -35,6 +35,8 @@ export interface EntityHost {
   broadcastBlocks(edits: number[]): void;
   /** Persist a block change. */
   recordEdit(x: number, y: number, z: number, id: number, meta: number): void;
+  /** Sky light levels the weather takes away (rain and thunder count as darkness for spawning). */
+  skyDarkness?(): number;
 }
 
 const r2 = (v: number) => Math.round(v * 100) / 100;
@@ -107,7 +109,7 @@ export class ServerEntities {
     if (flowed.length > 0) this.host.broadcastBlocks(flowed);
     this.manager.targets = targets;
     const day = dayFactorAt(this.getTime());
-    this.manager.tick(targets[0], Math.round((1 - day) * 11), this.events, null, day > 0.6);
+    this.manager.tick(targets[0], Math.round((1 - day) * 11 + (this.host.skyDarkness?.() ?? 0)), this.events, null, day > 0.6);
     if (++this.tickCount % 2 === 0) this.sendSnapshots(active);
   }
 
@@ -225,6 +227,17 @@ export class ServerEntities {
       if (!m.removed && md < reach) m.hurt(Math.floor((1 - md / reach) * 7 * power), x, z, 1.5);
     }
     this.host.broadcast({ t: 'boom', x: r2(x), y: r2(y), z: r2(z), power, by, water: inWater, blocks: positions });
+  }
+
+  /** A lightning strike: mobs within 3 blocks take 5 damage and burn (players handle their own damage on receipt). */
+  lightning(x: number, y: number, z: number): void {
+    for (const m of this.manager.mobs) {
+      if (m.removed || m.dead) continue;
+      if (Math.hypot(m.x - x, m.z - z) <= 3 && Math.abs(m.y - y) < 4) {
+        m.hurt(5, x, z, 0.3);
+        m.burning = Math.max(m.burning, 160);
+      }
+    }
   }
 
   // ---------------------------------------------------------------- snapshots

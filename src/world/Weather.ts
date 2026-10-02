@@ -46,6 +46,18 @@ export function parseWeatherKind(s: string | undefined): WeatherKind | null {
   return k === 'clear' || k === 'rain' || k === 'thunder' ? k : null;
 }
 
+export const WEATHER_USAGE = 'Usage: /weather clear|rain|thunder [seconds]';
+
+/** Parses the arguments of `/weather <kind> [seconds]`; the duration comes back in ticks. Null = bad usage. */
+export function parseWeatherCommand(args: string[]): { kind: WeatherKind; ticks?: number } | null {
+  const kind = parseWeatherKind(args[0]);
+  if (!kind) return null;
+  if (args.length < 2) return { kind };
+  if (!/^\d{1,7}$/.test(args[1])) return null;
+  const seconds = Number(args[1]);
+  return seconds > 0 ? { kind, ticks: seconds * WEATHER_TPS } : null;
+}
+
 export class Weather {
   raining = false;
   thundering = false;

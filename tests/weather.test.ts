@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { BIOME } from '../src/world/Biomes';
 import { BLOCK } from '../src/world/BlockRegistry';
 import {
-  CLEAR_TICKS, Precip, RAIN_TICKS, THUNDER_TICKS, Weather, type WeatherWorld, blocksPrecipitation, isExposed, parseWeatherKind,
+  CLEAR_TICKS, Precip, RAIN_TICKS, THUNDER_TICKS, Weather, type WeatherWorld, blocksPrecipitation, isExposed, parseWeatherCommand, parseWeatherKind,
   precipitationFor,
 } from '../src/world/Weather';
 
@@ -204,6 +204,22 @@ describe('Weather state machine', () => {
     expect(parseWeatherKind('Rain')).toBe('rain');
     expect(parseWeatherKind('storm')).toBeNull();
     expect(parseWeatherKind(undefined)).toBeNull();
+  });
+});
+
+describe('/weather command parsing', () => {
+  it('accepts a kind with an optional duration in seconds', () => {
+    expect(parseWeatherCommand(['rain'])).toEqual({ kind: 'rain' });
+    expect(parseWeatherCommand(['thunder', '60'])).toEqual({ kind: 'thunder', ticks: 1200 });
+    expect(parseWeatherCommand(['clear', '600'])).toEqual({ kind: 'clear', ticks: 12000 });
+  });
+  it('rejects nonsense', () => {
+    expect(parseWeatherCommand([])).toBeNull();
+    expect(parseWeatherCommand(['snow'])).toBeNull();
+    expect(parseWeatherCommand(['rain', 'abc'])).toBeNull();
+    expect(parseWeatherCommand(['rain', '-5'])).toBeNull();
+    expect(parseWeatherCommand(['rain', '0'])).toBeNull();
+    expect(parseWeatherCommand(['rain', '99999999'])).toBeNull();
   });
 });
 

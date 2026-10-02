@@ -5,7 +5,7 @@ import { PHYSICS } from './Physics';
 import type { Player } from './Player';
 
 export type DamageCause =
-  | 'fall' | 'drown' | 'lava' | 'fire' | 'cactus' | 'void' | 'suffocate' | 'starve' | 'mob' | 'explosion' | 'arrow' | 'poison';
+  | 'fall' | 'drown' | 'lava' | 'fire' | 'cactus' | 'void' | 'suffocate' | 'starve' | 'mob' | 'explosion' | 'arrow' | 'poison' | 'lightning';
 
 const DEATH_MESSAGES: Record<DamageCause, string> = {
   fall: 'fell from a high place',
@@ -20,6 +20,7 @@ const DEATH_MESSAGES: Record<DamageCause, string> = {
   explosion: 'blew up',
   arrow: 'was shot',
   poison: 'was killed by magic',
+  lightning: 'was struck by lightning',
 };
 
 export const MAX_HEALTH = 20;
