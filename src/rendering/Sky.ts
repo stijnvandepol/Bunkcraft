@@ -95,9 +95,9 @@ export class Sky {
             vec3 sp2 = uStarRot * dir * 64.0;
             vec3 cell2 = floor(sp2);
             float r2 = hash(cell2 + 11.0);
-            if (r2 > 0.9965) {
+            if (r2 > 0.9975) {
               vec3 f = fract(sp2);
-              float inside = step(abs(f.x - 0.5), 0.4) * step(abs(f.y - 0.5), 0.4) * step(abs(f.z - 0.5), 0.4);
+              float inside = step(abs(f.x - 0.5), 0.3) * step(abs(f.y - 0.5), 0.3) * step(abs(f.z - 0.5), 0.3);
               float tw = 0.6 + 0.4 * sin(uTime * (0.8 + r2 * 2.0) + r2 * 900.0);
               vec3 tint = mix(vec3(1.0, 0.85, 0.65), vec3(0.7, 0.8, 1.0), hash(cell2 + 5.0));
               col += tint * inside * fade * tw * 1.1;
@@ -116,7 +116,8 @@ export class Sky {
               core = mix(core, vec3(1.0, 0.6, 0.28), uSunsetAmount * 0.55);
               col = mix(col, core, cover);
             } else {
-              float halo = exp(-(m - SUN_SIZE) * 7.5) * 0.3 + exp(-m * 3.0) * 0.07;
+              float rr = length(q);
+              float halo = exp(-(rr - SUN_SIZE) * 7.5) * 0.3 + exp(-rr * 3.0) * 0.07;
               col += mix(vec3(1.0, 0.85, 0.6), vec3(1.0, 0.62, 0.38), uSunsetAmount) * halo * (1.0 - uStars * 0.8) * cover;
             }
           }
@@ -131,14 +132,14 @@ export class Sky {
             if (max(abs(q.x), abs(q.y)) < 1.0 && r2 < 1.0) {
               vec3 n = vec3(c, sqrt(1.0 - r2));
               float lit = dot(n, vec3(-sin(a), 0.0, cos(a)));
-              float crater = step(0.74, hash(vec3(floor(q * 8.0), 7.0)));
-              vec3 lightSide = mix(vec3(0.9, 0.92, 0.98), vec3(0.62, 0.65, 0.76), crater);
+              float crater = step(0.84, hash(vec3(floor(q * 8.0), 7.0))) * 0.8 + step(0.7, hash(vec3(floor(q * 4.0), 3.0))) * 0.35;
+              vec3 lightSide = mix(vec3(0.92, 0.94, 1.0), vec3(0.62, 0.65, 0.76), clamp(crater, 0.0, 1.0));
               vec3 darkSide = vec3(0.035, 0.05, 0.1);
               vec3 moon = mix(darkSide, lightSide, step(0.0, lit));
               col = mix(col, moon, cover * (0.55 + 0.45 * step(0.0, lit)));
             } else {
               float illum = 0.5 + 0.5 * cos(a);
-              col += vec3(0.5, 0.6, 0.9) * 0.16 * exp(-max(abs(q.x), abs(q.y)) * 1.6) * uStars * illum * cover;
+              col += vec3(0.5, 0.6, 0.9) * 0.16 * exp(-length(q) * 1.6) * uStars * illum * cover;
             }
           }
           col = mix(col, vec3(0.78, 0.82, 1.0), uFlash * 0.7);

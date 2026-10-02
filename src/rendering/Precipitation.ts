@@ -150,7 +150,7 @@ export class Precipitation {
             vAge = 0.0;
           }
           // Fade at the edge of the volume and very close to the camera.
-          vAlpha = alpha * (1.0 - smoothstep(0.7, 1.0, edge));
+          vAlpha = alpha * (1.0 - smoothstep(0.7, 1.0, edge)) * smoothstep(1.0, 3.5, length(cameraPosition - pos));
           vUv = uv;
           vWorldPos = pos;
           gl_Position = projectionMatrix * viewMatrix * vec4(pos, 1.0);

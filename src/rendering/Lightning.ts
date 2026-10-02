@@ -62,7 +62,7 @@ export class Lightning {
           float sl = length(side);
           side = sl > 1e-5 ? side / sl : vec3(1.0, 0.0, 0.0);
           // At least ~2 px wide at any distance so far bolts do not shimmer away.
-          float width = max(iInfo.y, length(toCam) * 0.0035);
+          float width = max(iInfo.y, length(toCam) * 0.007);
           vec3 pos = mix(a, b, position.y) + side * position.x * width;
           vSide = position.x;
           vPower = power;
@@ -113,7 +113,7 @@ export class Lightning {
       oz = oz * 0.55 + (Math.random() - 0.5) * 3.2;
       const nx = x + ox * pull, nz = z + oz * pull;
       const ny = TOP + (groundY - TOP) * t;
-      put(px, py, pz, nx, ny, nz, 0.16);
+      put(px, py, pz, nx, ny, nz, 0.3);
       if (i > 4 && i < K - 2 && mids.length < 9) mids.push(nx, ny, nz);
       px = nx; py = ny; pz = nz;
     }
@@ -128,7 +128,7 @@ export class Lightning {
         const nx = qx + dx + (Math.random() - 0.5) * 2.4;
         const ny = qy - 2.4 - Math.random() * 3;
         const nz = qz + dz + (Math.random() - 0.5) * 2.4;
-        put(qx, qy, qz, nx, ny, nz, 0.08);
+        put(qx, qy, qz, nx, ny, nz, 0.15);
         qx = nx; qy = ny; qz = nz;
       }
     }

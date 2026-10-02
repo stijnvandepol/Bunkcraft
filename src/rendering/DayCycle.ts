@@ -83,10 +83,10 @@ export class DayCycle {
     const w = this.rain, th = this.thunder;
     if (w > 0.001) {
       // Overcast: grey, darker sky and fog; the sun, stars and sunset colours vanish behind the clouds.
-      desaturate(this.zenith, 0.85 * w);
-      desaturate(this.horizon, 0.8 * w);
-      this.zenith.multiplyScalar(1 - 0.48 * w - 0.3 * th);
-      this.horizon.multiplyScalar(1 - 0.35 * w - 0.25 * th);
+      desaturate(this.zenith, w);
+      desaturate(this.horizon, w);
+      this.zenith.multiplyScalar(1 - 0.12 * w - 0.35 * th);
+      this.horizon.multiplyScalar(1 - 0.1 * w - 0.3 * th);
       desaturate(this.skyLight, 0.4 * w);
       // Minecraft: sky brightness × (1 − 5/16 rain) × (1 − 5/16 thunder).
       this.daylight *= (1 - 0.3125 * w) * (1 - 0.3125 * th);
