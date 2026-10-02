@@ -10,7 +10,11 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage && tsx scripts/coverage-areas.ts",
+    "test:e2e": "playwright test -c tests/e2e/playwright.config.ts",
+    "test:perf": "tsx scripts/perf-smoke.ts",
+    "size:check": "tsx scripts/bundle-size.ts"
   },
   "keywords": [],
   "author": "",
@@ -22,10 +26,13 @@
     "ws": "^8.22.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@types/node": "^26.6.4",
     "@types/three": "^0.186.0",
     "@types/ws": "^8.18.2",
+    "@vitest/coverage-v8": "^4.1.11",
     "fake-indexeddb": "^6.2.5",
+    "fast-check": "^4.10.2",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vite": "^8.3.2",
