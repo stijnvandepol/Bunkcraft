@@ -18,6 +18,8 @@ wat al is doorgevoerd.
 | 8 | Death-drops verdwenen bij de entity-limiet | **Gedaan** |
 | 9 | In het water springen terwijl je brandt gaf 1 schade | **Gedaan** |
 | 10 | Brandende zombies huppelden elke seconde | **Gedaan** |
+| 11 | Mobs met één oog (schaap: pupillen samengesmolten, kip: één oog overschreven) en koppen die zijwaarts bleven staan | **Gedaan:** ogen per gezichtsbreedte, kop-blikken blijven binnen 20° en zakken terug |
+| 12 | Te weinig dieren en monsters: één spawnpoging per seconde, plafond 16, planten telden als geblokkeerd | **Gedaan:** `MobSpawner` met pakken, plafond 40 en groepjes dieren; zie `docs/GAMEPLAY.md` |
 | 11 | Zombies sloegen en creepers ontploften door muren heen | **Gedaan:** line-of-sight-check |
 | 12 | Gedropte items voegden samen voorbij hun stackgrootte | **Gedaan** |
 | 13 | Explosies lieten erts- en glasblokken als zichzelf vallen | **Gedaan:** normale drop-regels |
@@ -113,7 +115,7 @@ spelers, chat, tijd en per speler opgeslagen data. Zie `docs/SERVER.md`.
 
 Volgende stappen:
 
-1. **Mobs op de server simuleren: Gedaan** (zie `docs/SERVER.md`). Mob-AI, items, pijlen en TNT draaien op de server met een eigen `ServerWorld`.
+1. **Mobs op de server simuleren: Gedaan** (zie `docs/SERVER.md`). Mob-AI, items, pijlen en TNT draaien op de server met een eigen `ServerWorld`. Spawnen en despawnen delen `MobSpawner` met singleplayer; de server-sky-light is open-lucht of niet, genoeg voor de spawnregels.
 2. **Gedeelde item-drops: Gedaan.** PvP in de Minecraft-sandbox staat nog open; PvP bestaat wel in de arcade-game types (zie 7b).
 3. **Server-authoritative inventory** (anti-cheat): breken en craften door de server laten bevestigen.
 4. **Wachtwoord, whitelist en ops**, en accounts of tokens per naam.
