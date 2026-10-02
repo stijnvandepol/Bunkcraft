@@ -65,8 +65,9 @@ export class ServerEntities {
     private readonly mode: GameMode,
     private readonly host: EntityHost,
     private readonly getTime: () => number,
+    genVersion?: number,
   ) {
-    this.world = new ServerWorld(seed, edits);
+    this.world = new ServerWorld(seed, edits, 'terrain', genVersion);
     this.world.onEdit = (x, y, z, id, meta) => host.recordEdit(x, y, z, id, meta);
     this.world.liquids.onDestroyed = (x, y, z, id) => {
       // Plants and torches washed away drop themselves, like in survival Minecraft.

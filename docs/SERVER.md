@@ -73,6 +73,8 @@ limieten per bezoeker werken in plaats van per proxy.
 | `ROOM_CREATE_LIMIT` | `6` | Games die één bezoeker per uur mag aanmaken |
 | `ROOM_EXPIRE_DAYS` | `60` | Games zonder bezoek worden na zoveel dagen verwijderd (`0` = nooit) |
 
+`world.json` bevat ook `genVersion`, de versie van de terreingenerator (zie RESEARCH.md §4). Een nieuw bestand krijgt de huidige versie, een bestand zonder het veld (van voor versies) is versie 1 en blijft dat: zijn terrein blijft hetzelfde.
+
 Voorbeeld: `SEED=bunk GAMEMODE=creative WORLD_NAME="Bouwserver" npm start`
 
 ## Docker

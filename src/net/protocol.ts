@@ -97,6 +97,8 @@ export type ClientMessage =
 export type ServerMessage =
   | {
     t: 'welcome'; id: number; worldName: string; seed: number; gameMode: GameMode; time: number;
+    /** Terrain generator version of the world (see src/world/GenVersion.ts). Absent (old servers) = 1. */
+    genVersion?: number;
     /** Game type of this game; "minecraft" unless it is an arcade game. */
     gameType: GameType;
     /** "terrain" = generated landscape, "arena" = the fixed arcade map. */
