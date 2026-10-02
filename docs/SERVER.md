@@ -135,9 +135,75 @@ sturen de verwijderde blokken mee. Een lege game geeft zijn geheugen vrij.
 Kosten: ongeveer 0,03 ms CPU per tick in rust en ~0,3 ms terwijl chunks genereren, plus een paar MB per
 geladen game.
 
+## Speltypes: Minecraft, Team Deathmatch en Free For All
+
+Een game heeft een speltype. **Minecraft** (standaard) is de sandbox hierboven. De twee arcade-types zijn
+rondes op één vaste arena, in de geest van Krunker: snelle beweging, hitscan-wapens, health die terugkomt
+en een scorebord.
+
+| Speltype | `gameType` | Wat |
+|---|---|---|
+| Minecraft | `minecraft` | Bouwen, mijnen, mobs, spelmodus naar keuze |
+| Team Deathmatch | `tdm` | Rood tegen blauw; het team met de meeste kills wint |
+| Free For All | `ffa` | Ieder voor zich; wie de scorelimiet haalt (of aan het eind de meeste kills heeft) wint |
+
+Een game aanmaken (`POST /api/rooms`) accepteert `{ name, gameMode, seed, gameType?, scoreLimit?, timeLimitSec? }`:
+
+| Veld | Standaard (tdm / ffa) | Grenzen |
+|---|---|---|
+| `gameType` | `minecraft` | `minecraft`, `tdm`, `ffa` (onbekend = `minecraft`) |
+| `scoreLimit` | 30 / 20 | 5 tot 100 (kills van het team in tdm, kills van de speler in ffa) |
+| `timeLimitSec` | 600 / 600 | 120 tot 1800 seconden |
+
+`GET /api/rooms/<CODE>` geeft ook `gameType`, `scoreLimit` en `timeLimitSec` terug (0 bij Minecraft). De
+instellingen staan in `world.json` van de game. De spelmodus (`gameMode`) en de seed zijn voor een arcade-game
+niet van belang: de seed kiest alleen een van drie indelingen van de dekking op de arena. De limieten voor
+het aanmaken van games (`ROOM_CREATE_LIMIT`, `MAX_ROOMS`) gelden ongewijzigd.
+
+**De arena** is 96 × 96 blokken, spiegelsymmetrisch (rood links, blauw rechts), met een verhoogd middenplatform,
+corridors, dekking, glazen ramen en een muur van 12 blokken om de rand. Alleen bestaande blokken, op een
+vlakke vloer. De server houdt spelers binnen de muur.
+
+**Het matchverloop:**
+
+1. **Warm-up:** zodra er twee spelers zijn telt 10 seconden af (met één speler blijft het wachten). Bewegen en
+   schieten mag, maar er is geen schade. Daarna begint de wedstrijd en spawnt iedereen opnieuw.
+2. **Live:** tot de scorelimiet of de tijdlimiet. Bij gelijke stand is het gelijkspel.
+3. **Ended:** 12 seconden resultaat, daarna begint de volgende wedstrijd: scores op nul, teams
+   herbalanceerd, iedereen spawnt opnieuw.
+
+**Spelers en wapens (server-authoritative):**
+
+- Health 100, na 5 seconden zonder schade komt er 25 per seconde bij. Dood = 3 seconden respawn, 2 seconden
+  bescherming na elke spawn. Nieuwe spelers komen bij het kleinste team (tdm).
+- Spawnpunten: tdm in de eigen basis, het punt het verst van levende tegenstanders; ffa het punt het verst van
+  alle anderen.
+- Wapens (`src/modes/Weapons.ts`): rifle, smg, shotgun en sniper als primair, pistool en mes altijd. De keuze
+  (`loadout`) geldt vanaf de volgende spawn. De server houdt per slot het magazijn bij, begrenst het vuurtempo
+  (`rpm`), de herlaadtijd en de wisselvertraging (0,25 s).
+- Schot: de server controleert dat de oorsprong dicht bij het oog staat (anders gebruikt hij zijn eigen oog),
+  rolt de kogels binnen de spreiding (kleiner bij `ads`), volgt de straal door de blokken (muren en glas
+  stoppen hem) en toetst hem aan de hitbox van levende spelers (0,6 × 1,8; de bovenste 0,4 is het hoofd).
+  Schade volgt de afstand (`damageAt`) × headshot-factor. Geen friendly fire in tdm.
+- Lag compensation: de server bewaart 1 seconde positiegeschiedenis per speler en toetst tegenstanders op de
+  positie van `ping + 0,1 s` geleden (maximaal 0,35 s). Ping komt uit WebSocket-ping/pong, elke 3 seconden;
+  de client hoeft daar niets voor te doen.
+- Geen bouwen of breken (`block` wordt teruggedraaid), geen mobs, items, TNT of valschade; het is altijd middag.
+  De snelheidslimiet is hoger (40 blokken per seconde incl. marge).
+
+Kosten: met 16 gesimuleerde spelers die continu op elkaar schieten kost een tick gemiddeld 0,05 ms
+(`npx tsx scripts/bench-arena.ts`), plus ongeveer 0,1 ms voor de berichten van alle spelers in dat tick; samen
+minder dan 0,5 % van het budget van 50 ms. Uitgaand verkeer: ~20 KiB/s per speler.
+
+**Testen met bots:** `ROOM_CREATE_LIMIT=1000 npm run server` in de ene terminal, en in de andere
+`npx tsx scripts/arena-bots.ts tdm` (of `ffa`; optioneel een serveradres erachter). Het script maakt een
+game aan, laat twee bots over WebSocket joinen, wacht op `live`, laat de ene bot de andere doodschieten en
+controleert alle berichten. Duurt zo'n 25 seconden.
+
 ## Bekende beperkingen
 
-- **Geen PvP en geen schade tussen spelers:** pijlen en explosies raken wel mobs en de speler die in de buurt is.
+- **Geen PvP in Minecraft-games:** pijlen en explosies raken wel mobs en de speler die in de buurt is. PvP bestaat alleen in de arcade-speltypes.
+- **Arcade-games vertrouwen de positie van de client** (alleen snelheid en arena-grenzen worden gecontroleerd): er is geen botsingscontrole tegen de blokken en geen server-side beweging.
 - **Inventory en health worden door de client opgegeven:** valsspelen met de inventory is mogelijk. Plaats de server daarom niet publiek zonder vertrouwde spelers, of voeg wachtwoorden en whitelisting toe (roadmap).
 - **Items:** blokdrops, Q en doodsdrops gaan via de server en zijn voor iedereen zichtbaar; wie het eerst bij een item komt, krijgt het.
 - **Geen accounts:** spelersnamen zijn niet beveiligd. Wie dezelfde naam gebruikt in dezelfde game, neemt die speler over. Een game is alleen toegankelijk met de code (zes tekens uit 31, met een limiet op het aantal pogingen per bezoeker), dus deel hem alleen met vrienden.

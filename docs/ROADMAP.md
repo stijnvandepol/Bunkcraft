@@ -109,9 +109,13 @@ Volgende stappen:
 
 1. **Mobs op de server simuleren: Gedaan** (zie `docs/SERVER.md`). Mob-AI, items, pijlen en TNT draaien op de server met een eigen `ServerWorld`.
 2. **Gedeelde item-drops: Gedaan.** PvP staat nog open.
-3. **Server-authoritative inventory** (anti-cheat): breken en craften door de server laten bevestigen.
-4. **Wachtwoord, whitelist en ops**, en accounts of tokens per naam.
-5. **Binair protocol** voor snapshots, als er veel spelers zijn.
+3. **Arcade-speltypes (Krunker-stijl): server Gedaan.** Team Deathmatch en Free For All op een vaste arena
+   (`src/modes/arena.ts`), met server-authoritative hitscan, lag compensation, respawns en een matchverloop
+   (`server/Match.ts`, `server/Combat.ts`); zie `docs/SERVER.md`. De client (HUD, wapens, scorebord) volgt apart.
+   Open: dichtbij-mobs/bots, kaartkeuze, meer wapens, spectate na de dood, rematch-stemmen.
+4. **Server-authoritative inventory** (anti-cheat): breken en craften door de server laten bevestigen.
+5. **Wachtwoord, whitelist en ops**, en accounts of tokens per naam.
+6. **Binair protocol** voor snapshots, als er veel spelers zijn.
 
 ## 8. Distributie
 
