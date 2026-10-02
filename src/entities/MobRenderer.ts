@@ -20,6 +20,7 @@ function packRegions(boxes: ModelBox[]): Region[] {
     const r = { u, v, w, h, d };
     u += rw;
     rowH = Math.max(rowH, rh);
+    if (v + rowH > TEX_H) console.warn('Mob texture overflow: a box does not fit in the atlas');
     return r;
   });
 }
