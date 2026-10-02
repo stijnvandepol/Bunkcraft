@@ -44,6 +44,7 @@ import { CameraController } from './Camera';
 import { Input } from './Input';
 import { Interaction } from './Interaction';
 import { Renderer } from './Renderer';
+import { DynamicResolution, suggestPreset } from './AdaptiveQuality';
 import { SettingsStore } from './Settings';
 
 type GameState = 'menu' | 'loading' | 'playing' | 'paused' | 'inventory' | 'dead' | 'chat';
@@ -64,6 +65,7 @@ const STEPS_PER_TICK = 3;
  */
 export class Game {
   private readonly settings = new SettingsStore();
+  private readonly dynamicResolution = new DynamicResolution();
   private readonly renderer: Renderer;
   private readonly input: Input;
   private readonly cam = new CameraController();
@@ -208,10 +210,16 @@ export class Game {
     const gl = this.renderer.three.getContext();
     const info = gl.getExtension('WEBGL_debug_renderer_info');
     this.gpuName = info ? String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL)) : 'WebGL2';
+    if (this.settings.fresh) {
+      const memory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
+      this.settings.setMany(suggestPreset(this.gpuName, navigator.hardwareConcurrency || 0, memory).values);
+    }
   }
 
   async start(): Promise<void> {
     await this.save.open();
+    // Safari otherwise evicts IndexedDB (the saved worlds) after 7 days without a visit.
+    void navigator.storage?.persist?.().catch(() => false);
     await this.applyTexturePack();
     this.enterMenu();
     this.last = performance.now();
@@ -292,6 +300,9 @@ export class Game {
     if (key === 'texturePack') void this.applyTexturePack();
     const s = this.settings.values;
     this.renderer.applySettings(s);
+    this.dynamicResolution.enabled = s.dynamicResolution;
+    if (!s.dynamicResolution) this.renderer.setDynamicScale(1);
+    this.updateMenuBlur();
     this.cam.baseFov = s.fov;
     this.cam.viewBobbing = s.viewBobbing;
     this.audio.setVolumes((s.soundVolume * s.masterVolume) / 100, (s.musicVolume * s.masterVolume) / 100);
@@ -305,6 +316,12 @@ export class Game {
         this.world.chunks.remeshAll();
       }
     }
+  }
+
+  /** Menu backdrop blur only when the GPU has headroom (Fancy, full dynamic resolution). */
+  private updateMenuBlur(): void {
+    const weak = this.settings.values.graphics === 'fast' || this.dynamicResolution.scale < 1;
+    document.body.classList.toggle('no-blur', weak);
   }
 
   // ---------------------------------------------------------------- game modes
@@ -735,7 +752,8 @@ export class Game {
 
   private readonly frame = (now: number): void => {
     requestAnimationFrame(this.frame);
-    const dt = Math.min((now - this.last) / 1000, 0.1);
+    const rawDt = (now - this.last) / 1000;
+    const dt = Math.min(rawDt, 0.1);
     this.last = now;
     const cpuStart = performance.now();
     this.time += dt;
@@ -748,6 +766,10 @@ export class Game {
     this.updateEntitiesRender();
 
     this.renderer.render(this.cam.camera, this.cycle, this.time, this.underwater);
+    if (this.state === 'playing' && !document.hidden && this.dynamicResolution.update(rawDt, this.renderer.basePixelRatio)) {
+      this.renderer.setDynamicScale(this.dynamicResolution.scale);
+      this.updateMenuBlur();
+    }
     if (this.wantThumbnail) this.captureThumbnail();
     this.world?.chunks.afterRender();
     this.audio.update(dt);
@@ -1010,7 +1032,8 @@ export class Game {
       `Edited chunks: ${world.edits.size}`,
       `Upload queue: ${stats.uploadQueue} · in flight ${stats.genInFlight}g/${stats.meshInFlight}m`,
       '',
-      `Display: ${window.innerWidth}×${window.innerHeight} @ ${this.renderer.three.getPixelRatio().toFixed(2)}x`,
+      `Display: ${window.innerWidth}×${window.innerHeight} @ ${this.renderer.three.getPixelRatio().toFixed(2)}x`
+        + (this.dynamicResolution.enabled ? ` (dynamic ${Math.round(this.dynamicResolution.scale * 100)}%)` : ''),
       `GPU: ${this.gpuName.replace(/^ANGLE \(|\)$/g, '').split(',').slice(0, 2).join(',')}`,
       '',
       `Targeted: ${target}`,

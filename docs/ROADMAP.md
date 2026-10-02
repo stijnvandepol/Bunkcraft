@@ -42,7 +42,11 @@ wat al is doorgevoerd.
 | `Game.ts` (~1000 regels) opsplitsen: GameStateMachine, WorldSession, SimulationLoop, Combat, DebugInfo | M |
 | Save-formaatversie en migraties, nodig vóór block states | S |
 | Instellingen valideren (min/max/enum) uit `localStorage` | S |
-| Standaardpreset kiezen op basis van `navigator.deviceMemory`; shadow map begrenzen op `maxTextureSize` | S |
+| Standaardpreset kiezen op basis van de hardware | **Gedaan:** GPU-naam, cores en `deviceMemory` bij de eerste start (software-GPU, Intel HD/UHD, Mali, Adreno → Low) |
+| Dynamische resolutie voor zwakke GPU's en Retina | **Gedaan:** interne resolutie zakt bij < 48 FPS tot 0,5 px per CSS-pixel, en stijgt weer bij headroom. Software-GPU op Medium: 11–16 → 26–28 FPS |
+| Menu-blur (`backdrop-filter`) kostte zwakke GPU's het grootste deel van de frame | **Gedaan:** uit bij Fast of verlaagde resolutie (pauzemenu op een software-GPU: 14 → 45 FPS); `-webkit-`-prefix voor Safari < 18 |
+| Shadow map begrenzen op `maxTextureSize` | S |
+| Bij minimale resolutie en nog steeds traag: render distance tijdelijk verlagen | S |
 
 ## 3. Testen en tooling
 
@@ -87,7 +91,7 @@ wat al is doorgevoerd.
 - **Werkende keybind-remapping (S):** het scherm bestaat al, maar de knoppen doen nog niets.
 - **Contexthints en ontdekken van recepten (S):** voor nieuwe spelers.
 - **Toegankelijkheid (S–M):** ondertitels voor geluiden, reduced motion (hurt cam, bobbing en FOV-kick uit) en kleurenblind-veilige balken.
-- **`navigator.storage.persist()` (S):** Safari wist anders werelden na 7 dagen zonder bezoek.
+- **`navigator.storage.persist()`:** **Gedaan.** Safari wist anders werelden na 7 dagen zonder bezoek.
 - **Gamepad (M)** via de Gamepad API.
 - **Touchbediening (L):** joystick, slepen om te kijken en knoppen. Vereist voor mobiele portals.
 

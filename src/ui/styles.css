@@ -75,7 +75,15 @@ html, body {
 /* Sub-menus: blurred, darkened panorama/world behind them (1.20.5+ style). */
 .screen.menu-bg {
   background: rgba(0, 0, 0, 0.45);
+  -webkit-backdrop-filter: blur(5px); /* Safari before 18 */
   backdrop-filter: blur(5px);
+}
+
+/* A full-screen blur costs weak GPUs most of their frame: darken instead. */
+.no-blur .screen.menu-bg {
+  background: rgba(0, 0, 0, 0.6);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 
 .screen-header {

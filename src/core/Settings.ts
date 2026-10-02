@@ -6,6 +6,8 @@ export interface Settings {
   renderDistance: number;
   /** Internal resolution in % of the display resolution (supersampling above 100). */
   renderScale: number;
+  /** Lower the resolution automatically when the frame rate drops (weak GPUs, Retina screens). */
+  dynamicResolution: boolean;
   graphics: GraphicsQuality;
   shadows: ShadowQuality;
   particles: ParticleLevel;
@@ -28,6 +30,7 @@ export interface Settings {
 export const DEFAULT_SETTINGS: Settings = {
   renderDistance: 8,
   renderScale: 100,
+  dynamicResolution: true,
   graphics: 'fancy',
   shadows: 'low',
   particles: 'all',
@@ -91,15 +94,19 @@ const STORAGE_KEY = 'bunkcraft.settings';
 /** Settings persisted in localStorage, with change listeners. */
 export class SettingsStore {
   readonly values: Settings;
+  /** True on a first launch (nothing stored yet): the game then picks a preset for the hardware. */
+  readonly fresh: boolean;
   private readonly listeners: ((s: Settings, key: keyof Settings) => void)[] = [];
 
   constructor() {
-    let stored: Partial<Settings> = {};
+    let stored: Partial<Settings> | null = null;
     try {
-      stored = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}') as Partial<Settings>;
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) stored = JSON.parse(raw) as Partial<Settings>;
     } catch {
-      stored = {};
+      stored = null;
     }
+    this.fresh = stored === null;
     this.values = { ...DEFAULT_SETTINGS, ...stored };
   }
 

@@ -46,6 +46,9 @@ export class Renderer {
   private readonly shadowHidden: THREE.Object3D[] = [];
   private readonly shadowVisible: boolean[] = [];
   private renderScale = 1;
+  /** Multiplier from dynamic resolution (1 = the user's render scale). */
+  private dynamicScale = 1;
+  private readonly maxAnisotropy: number;
   private renderDistance = 8;
   private cloudsEnabled = true;
 
@@ -60,7 +63,8 @@ export class Renderer {
     this.three.outputColorSpace = THREE.LinearSRGBColorSpace; // shaders output display-ready colours
     this.three.setClearColor(0x000000, 1);
 
-    this.textures = buildTextures(this.three.capabilities.getMaxAnisotropy());
+    this.maxAnisotropy = this.three.capabilities.getMaxAnisotropy();
+    this.textures = buildTextures(this.maxAnisotropy);
     this.uniforms = createWorldUniforms(this.textures.texture);
     this.chunkMaterial = createChunkMaterial(this.uniforms, false);
     this.cutoutMaterial = createChunkMaterial(this.uniforms, true);
@@ -91,6 +95,12 @@ export class Renderer {
     this.renderScale = s.renderScale / 100;
     this.uniforms.uSway.value = fancy ? 1 : 0;
     this.uniforms.uWaterFancy.value = fancy ? 1 : 0;
+    // Anisotropic filtering costs texture bandwidth that weak GPUs lack; Fast turns it off.
+    const anisotropy = fancy ? Math.min(4, this.maxAnisotropy) : 1;
+    if (this.textures.texture.anisotropy !== anisotropy) {
+      this.textures.texture.anisotropy = anisotropy;
+      this.textures.texture.needsUpdate = true;
+    }
     this.cloudsEnabled = s.clouds !== 'off';
     this.uniforms.uBrightness.value = s.brightness / 100;
     this.renderDistance = s.renderDistance;
@@ -102,14 +112,24 @@ export class Renderer {
     this.resize();
   }
 
+  /** Device pixel ratio (capped at 2) times the user render scale, before dynamic resolution. */
+  get basePixelRatio(): number {
+    return Math.min(window.devicePixelRatio || 1, 2) * this.renderScale;
+  }
+
+  setDynamicScale(scale: number): void {
+    if (scale === this.dynamicScale) return;
+    this.dynamicScale = scale;
+    this.resize();
+  }
+
   resize(): void {
     const w = window.innerWidth, h = window.innerHeight;
-    // Device pixel ratio (capped at 2) times the user render scale: below 100% renders
-    // fewer pixels on weak GPUs, above 100% supersamples for smooth edges.
-    const ratio = Math.min(window.devicePixelRatio || 1, 2) * this.renderScale;
+    // Below 100% renders fewer pixels on weak GPUs, above 100% supersamples for smooth edges.
+    const ratio = this.basePixelRatio * this.dynamicScale;
     this.three.setPixelRatio(Math.max(0.25, Math.min(4, ratio)));
     // Supersampled frames must be filtered when scaled down; upscaled ones stay pixel-crisp.
-    this.three.domElement.style.imageRendering = this.renderScale > 1 ? 'auto' : 'pixelated';
+    this.three.domElement.style.imageRendering = this.renderScale * this.dynamicScale > 1 ? 'auto' : 'pixelated';
     this.three.setSize(w, h, false);
   }
 

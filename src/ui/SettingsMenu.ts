@@ -79,6 +79,7 @@ export function videoSettingsScreen(store: SettingsStore, nav: OptionsNav): HTML
       slider(2, MAX_RENDER_DISTANCE, 1, s.renderDistance, (v) => `Render Distance: ${v} chunks`, tracked((v) => store.set('renderDistance', v))),
       cycleButton<ShadowQuality>('Shadows', ['off', 'low', 'high', 'ultra'], { off: 'OFF', low: 'Low', high: 'High', ultra: 'Ultra' }, s.shadows, tracked((v) => store.set('shadows', v))),
       slider(50, 200, 25, s.renderScale, (v) => `Render Scale: ${v}%`, tracked((v) => store.set('renderScale', v))),
+      cycleButton<'on' | 'off'>('Dynamic Resolution', ['on', 'off'], { on: 'ON', off: 'OFF' }, s.dynamicResolution ? 'on' : 'off', (v) => store.set('dynamicResolution', v === 'on')),
       cycleButton<ParticleLevel>('Particles', ['all', 'decreased', 'minimal'], { all: 'All', decreased: 'Decreased', minimal: 'Minimal' }, s.particles, tracked((v) => store.set('particles', v))),
       cycleButton<'fancy' | 'off'>('Clouds', ['fancy', 'off'], { fancy: 'Fancy', off: 'OFF' }, s.clouds, (v) => store.set('clouds', v)),
       slider(0, 100, 1, s.brightness, (v) => `Brightness: ${v === 0 ? 'Moody' : v === 100 ? 'Bright' : `${v}%`}`, (v) => store.set('brightness', v)),
