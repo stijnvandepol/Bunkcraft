@@ -24,6 +24,12 @@ export class CameraController {
   /** Walk phase and bob strength, exposed for the first-person hand. */
   bobPhase = 0;
   bobStrength = 0;
+  /** Arcade: vertical recoil kick in radians (visual only, aim is unaffected). */
+  kick = 0;
+  /** Arcade: field-of-view multiplier while aiming down the sights (1 = none). */
+  zoom = 1;
+  /** Sprinting widens the field of view; arcade games sprint all the time and turn this off. */
+  sprintFov = true;
 
   constructor() {
     this.camera = new THREE.PerspectiveCamera(70, 1, 0.1, 1200);
@@ -60,15 +66,16 @@ export class CameraController {
     this.bobStrength = amt;
 
     const cam = this.camera;
-    cam.rotation.set(p.pitch, p.yaw, roll, 'YXZ');
+    cam.rotation.set(p.pitch + this.kick, p.yaw, roll, 'YXZ');
     const cos = Math.cos(p.yaw), sin = Math.sin(p.yaw);
     cam.position.set(x + cos * bobSide, y + PHYSICS.EYE_HEIGHT + bobY - this.landDip, z - sin * bobSide);
 
     let fovTarget = this.baseFov;
-    if (p.sprinting) fovTarget *= p.flying ? 1.18 : 1.12;
+    if (p.sprinting && this.sprintFov) fovTarget *= p.flying ? 1.18 : 1.12;
     if (p.headInWater) fovTarget *= 0.9;
     // Drawing a bow zooms in (Minecraft: up to 15% at full draw).
     if (this.bowPull > 0) fovTarget *= 1 - this.bowPull * this.bowPull * 0.15;
+    fovTarget *= this.zoom;
     this.fov = approach(this.fov, fovTarget, 8, dt);
     if (Math.abs(cam.fov - this.fov) > 0.01) {
       cam.fov = this.fov;

@@ -58,6 +58,11 @@ export class Interaction {
   private bowDraw = 0;
   /** Bow draw 0..1 for the FOV zoom. */
   bowPull = 0;
+  /**
+   * Arcade game types: the world is fixed and nothing is mined, built or hit by hand. Nothing here
+   * may touch blocks or mobs while this is set, whatever the caller does.
+   */
+  arcade = false;
 
   constructor(private readonly d: InteractionDeps) {}
 
@@ -75,6 +80,10 @@ export class Interaction {
   }
 
   update(dt: number, active: boolean, input: Input, mode: GameMode): void {
+    if (this.arcade) {
+      this.reset();
+      return;
+    }
     const { player, renderer, camera } = this.d;
     const highlight = renderer.highlight;
     const pos = camera.position;

@@ -36,6 +36,11 @@ export class HUD {
     this.survival.setVisible(showSurvival);
   }
 
+  /** Arcade game types replace the crosshair and hotbar with their own HUD. */
+  setArcade(on: boolean): void {
+    this.el.classList.toggle('arcade', on);
+  }
+
   setUnderwater(v: boolean): void {
     if (v === this.underwater) return;
     this.underwater = v;

@@ -752,3 +752,134 @@ html, body {
 .adv-tip-title { color: #fff; }
 .adv-tip-title.done { color: #ff5; }
 .adv-tip-desc { color: #aaa; }
+
+/* ---------------------------------------------------------------- arcade (team deathmatch, free for all) */
+
+/* The Minecraft crosshair and hotbar make way for the arcade HUD. */
+.hud.arcade .crosshair, .hud.arcade .hotbar-wrap { display: none; }
+
+.arc-hud { position: absolute; inset: 0; pointer-events: none; z-index: 6; text-shadow: var(--shadow); }
+
+.arc-health {
+  position: absolute; left: calc(var(--s) * 8); bottom: calc(var(--s) * 8); width: calc(var(--s) * 96);
+  display: flex; flex-direction: column; gap: calc(var(--s) * 2);
+}
+.arc-health-row { display: flex; align-items: baseline; justify-content: space-between; }
+.arc-health-label { color: #c0c0c0; }
+.arc-health-num { font-size: calc(var(--fs) * 2.5); line-height: 1; }
+.arc-health-bar { height: calc(var(--s) * 7); background: rgba(0, 0, 0, 0.55); border: var(--s) solid #000; box-shadow: inset 0 0 0 var(--s) #5a5a5a; padding: var(--s); }
+.arc-health-fill { height: 100%; width: 100%; background: linear-gradient(#7be25b, #3fae2a); transition: width 0.12s linear; }
+.arc-health.low .arc-health-num { color: #ff5555; animation: arc-flash 0.5s steps(2, jump-none) infinite; }
+.arc-health.low .arc-health-fill { background: linear-gradient(#ff6a5a, #c42d22); animation: arc-flash 0.5s steps(2, jump-none) infinite; }
+@keyframes arc-flash { 50% { opacity: 0.35; } }
+
+.arc-ammo {
+  position: absolute; right: calc(var(--s) * 8); bottom: calc(var(--s) * 8);
+  display: flex; flex-direction: column; align-items: flex-end; gap: calc(var(--s) * 2);
+}
+.arc-slots { display: flex; gap: calc(var(--s) * 2); margin-bottom: calc(var(--s) * 3); }
+.arc-slot { padding: calc(var(--s) * 1) calc(var(--s) * 3); background: rgba(0, 0, 0, 0.45); color: #a0a0a0; border: var(--s) solid transparent; }
+.arc-slot b { color: #ffff55; font-weight: 400; }
+.arc-slot.selected { color: #fff; border-color: #fff; background: rgba(0, 0, 0, 0.65); }
+.arc-weapon-name { color: #c0c0c0; }
+.arc-ammo-row { line-height: 1; }
+.arc-ammo-mag { font-size: calc(var(--fs) * 3); }
+.arc-ammo-mag.empty { color: #ff5555; }
+.arc-ammo-reserve { font-size: calc(var(--fs) * 1.5); color: #a0a0a0; }
+.arc-reload { width: calc(var(--s) * 70); height: calc(var(--s) * 4); background: rgba(0, 0, 0, 0.6); border: var(--s) solid #000; }
+.arc-reload-fill { height: 100%; width: 0; background: #ffff55; }
+
+/* Crosshair: four lines that open with the spread (--g = gap in pixels). */
+.arc-xh { position: absolute; left: 50%; top: 50%; width: 0; height: 0; --g: 8px; }
+.arc-xh i { position: absolute; background: #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.75); }
+.arc-xh .t, .arc-xh .b { width: 2px; height: calc(var(--s) * 4); left: -1px; }
+.arc-xh .l, .arc-xh .r { height: 2px; width: calc(var(--s) * 4); top: -1px; }
+.arc-xh .t { bottom: var(--g); }
+.arc-xh .b { top: var(--g); }
+.arc-xh .l { right: var(--g); }
+.arc-xh .r { left: var(--g); }
+.arc-xh .dot { width: 2px; height: 2px; left: -1px; top: -1px; }
+
+/* Hit marker: four diagonal ticks. */
+.arc-hit { position: absolute; left: 50%; top: 50%; width: 0; height: 0; opacity: 0; }
+.arc-hit i { position: absolute; width: calc(var(--s) * 6); height: calc(var(--s) * 1.5); background: #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.7); }
+.arc-hit i:nth-child(1) { transform: translate(calc(var(--s) * 3), calc(var(--s) * 3)) rotate(45deg); }
+.arc-hit i:nth-child(2) { transform: translate(calc(var(--s) * -8), calc(var(--s) * 3)) rotate(-45deg); }
+.arc-hit i:nth-child(3) { transform: translate(calc(var(--s) * 3), calc(var(--s) * -4)) rotate(-45deg); }
+.arc-hit i:nth-child(4) { transform: translate(calc(var(--s) * -8), calc(var(--s) * -4)) rotate(45deg); }
+.arc-hit.head i { background: #ffd23f; }
+.arc-hit.kill i { background: #ff3b30; width: calc(var(--s) * 8); height: calc(var(--s) * 2); }
+.arc-hit.show { animation: arc-hit 0.28s ease-out; }
+@keyframes arc-hit { 0% { opacity: 1; transform: scale(1.35); } 100% { opacity: 0; transform: scale(1); } }
+
+/* Damage indicators: red wedges around the crosshair pointing at the shooter. */
+.arc-damage { position: absolute; left: 50%; top: 50%; width: 0; height: 0; }
+.arc-dmg {
+  position: absolute; left: calc(var(--s) * -22); top: calc(var(--s) * -3); width: calc(var(--s) * 44); height: calc(var(--s) * 6);
+  background: linear-gradient(90deg, rgba(255, 40, 30, 0), rgba(255, 40, 30, 0.9) 50%, rgba(255, 40, 30, 0));
+  border-radius: 50%;
+}
+
+.arc-feed { position: absolute; top: calc(var(--s) * 8); right: calc(var(--s) * 8); display: flex; flex-direction: column; align-items: flex-end; gap: calc(var(--s) * 1); }
+.arc-feed-row { display: flex; gap: calc(var(--s) * 4); padding: calc(var(--s) * 1) calc(var(--s) * 4); background: rgba(0, 0, 0, 0.45); border: var(--s) solid transparent; }
+.arc-feed-row.self { border-color: rgba(255, 255, 255, 0.7); background: rgba(0, 0, 0, 0.6); }
+.arc-feed-weapon { color: #c0c0c0; }
+.arc-feed-head { color: #ffd23f; }
+
+.arc-top { position: absolute; top: calc(var(--s) * 6); left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: calc(var(--s) * 2); }
+.arc-top-row { display: flex; align-items: stretch; gap: 0; }
+.arc-score { min-width: calc(var(--s) * 34); padding: calc(var(--s) * 3) calc(var(--s) * 6); text-align: center; font-size: calc(var(--fs) * 1.5); border: var(--s) solid #000; }
+.arc-clock { min-width: calc(var(--s) * 50); padding: calc(var(--s) * 3) calc(var(--s) * 6); text-align: center; font-size: calc(var(--fs) * 1.5); background: rgba(0, 0, 0, 0.6); border: var(--s) solid #000; }
+.arc-subline { color: #c0c0c0; }
+.arc-banner { position: absolute; top: calc(var(--s) * 44); left: 50%; transform: translateX(-50%); font-size: calc(var(--fs) * 2); color: #ffff55; white-space: nowrap; }
+.arc-protect { position: absolute; top: calc(var(--s) * 70); left: 50%; transform: translateX(-50%); color: #7ec8ff; background: rgba(20, 60, 120, 0.5); padding: calc(var(--s) * 2) calc(var(--s) * 6); border: var(--s) solid #7ec8ff; white-space: nowrap; }
+
+/* Sniper scope: black ring, thin crosshair lines. */
+.arc-scope { position: absolute; inset: 0; background: radial-gradient(circle at center, rgba(0, 0, 0, 0) 0, rgba(0, 0, 0, 0) 38vh, #000 38.4vh); }
+.arc-scope i { position: absolute; background: #000; }
+.arc-scope .h { left: calc(50% - 38vh); right: calc(50% - 38vh); top: calc(50% - 1px); height: 2px; }
+.arc-scope .v { top: calc(50% - 38vh); bottom: calc(50% - 38vh); left: calc(50% - 1px); width: 2px; }
+
+.arc-board, .arc-end-board { display: flex; flex-direction: column; gap: calc(var(--s) * 1); }
+.arc-board {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(calc(var(--s) * 300), 94vw); max-height: 80vh; overflow: hidden;
+  padding: calc(var(--s) * 6); background: rgba(0, 0, 0, 0.7); border: var(--s) solid #000; box-shadow: inset 0 0 0 var(--s) #5a5a5a;
+}
+.arc-board-scores { text-align: center; font-size: calc(var(--fs) * 2); margin-bottom: calc(var(--s) * 4); }
+.arc-row { display: grid; grid-template-columns: calc(var(--s) * 16) 1fr calc(var(--s) * 30) calc(var(--s) * 34) calc(var(--s) * 30) calc(var(--s) * 30); gap: calc(var(--s) * 4); padding: calc(var(--s) * 1) calc(var(--s) * 3); background: rgba(255, 255, 255, 0.05); }
+.arc-row.head { color: #a0a0a0; background: transparent; }
+.arc-row.self { background: rgba(255, 255, 255, 0.2); }
+.arc-row span { text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.arc-row .name, .arc-row .rank { text-align: left; }
+
+.arc-death {
+  position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: calc(var(--s) * 6);
+  background: radial-gradient(ellipse at center, rgba(90, 0, 0, 0.15), rgba(120, 0, 0, 0.6));
+}
+.arc-death-title { font-size: calc(var(--fs) * 2.5); }
+.arc-death-detail { color: #c0c0c0; }
+.arc-death-count { font-size: calc(var(--fs) * 2); color: #ffff55; }
+.arc-death-hint { color: #a0a0a0; text-align: center; margin-bottom: calc(var(--s) * 2); }
+.arc-death-weapons { display: flex; gap: calc(var(--s) * 6); justify-content: center; }
+.arc-death-weapons span { padding: calc(var(--s) * 2) calc(var(--s) * 4); background: rgba(0, 0, 0, 0.5); border: var(--s) solid transparent; }
+.arc-death-weapons span.sel { border-color: #fff; }
+
+.arc-end { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: calc(var(--s) * 8); background: rgba(0, 0, 0, 0.65); }
+.arc-end-title { font-size: calc(var(--fs) * 3); }
+.arc-end-board { width: min(calc(var(--s) * 300), 94vw); max-height: 55vh; overflow: hidden; }
+.arc-end-count { font-size: calc(var(--fs) * 1.5); color: #ffff55; }
+
+/* Loadout menu (clickable, above the HUD). */
+.arc-loadout { position: absolute; inset: 0; z-index: 11; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.55); text-shadow: var(--shadow); }
+.arc-loadout-panel { display: flex; flex-direction: column; align-items: center; gap: calc(var(--s) * 6); }
+.arc-loadout-title { font-size: calc(var(--fs) * 2); }
+.arc-loadout-cards { display: flex; gap: calc(var(--s) * 5); flex-wrap: wrap; justify-content: center; max-width: 94vw; }
+.arc-card { width: calc(var(--s) * 84); padding: calc(var(--s) * 5); display: flex; flex-direction: column; gap: calc(var(--s) * 3); background: rgba(20, 20, 20, 0.85); border: var(--s) solid #000; box-shadow: inset 0 0 0 var(--s) #5a5a5a; cursor: pointer; }
+.arc-card:hover { box-shadow: inset 0 0 0 var(--s) #a8a8a8; }
+.arc-card.selected { box-shadow: inset 0 0 0 calc(var(--s) * 2) #fff; background: rgba(60, 60, 60, 0.9); }
+.arc-card-name { color: #fff; text-align: center; margin-bottom: calc(var(--s) * 2); }
+.arc-card-desc { color: #a0a0a0; text-align: center; }
+.arc-stat { display: flex; flex-direction: column; gap: calc(var(--s) * 1); color: #c0c0c0; }
+.arc-stat-bar { height: calc(var(--s) * 3); background: #000; }
+.arc-stat-bar i { display: block; height: 100%; background: #ffff55; }
+.arc-loadout-note { color: #a0a0a0; }
