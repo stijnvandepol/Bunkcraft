@@ -1,10 +1,11 @@
 import {
-  BLOCK, OPAQUE, SHAPE, SHAPE_CROSS, SHAPE_CUBE, SHAPE_DOOR, SHAPE_LIQUID, SHAPE_NONE, SHAPE_SLAB, SHAPE_STAIRS, SOLID,
+  BLOCK, BOX_KIND, FACING, OPAQUE, SHAPE, VARIANT_MASK, SHAPE_CROSS, SHAPE_CUBE, SHAPE_DOOR, SHAPE_LIQUID, SHAPE_NONE, SHAPE_SLAB, SHAPE_STAIRS, SOLID,
 } from './BlockRegistry';
 import {
-  FACING_CCW, FACING_CW, FACING_DX, FACING_DZ, SLAB_BOTTOM, SLAB_DOUBLE, SLAB_TOP, STAIR_TOP_BIT, canCombineSlab, doorMeta, facingFromYaw,
+  FACING_CCW, FACING_CW, FACING_DX, FACING_DZ, SLAB_BOTTOM, SLAB_DOUBLE, SLAB_HALF_MASK, SLAB_TOP, STAIR_TOP_BIT, canCombineSlab, doorMeta, facingFromYaw,
   isDoorUpper, placedOnUpperHalf, stairMeta,
 } from './BlockStates';
+import { BED_HEAD_BIT, BOX_BED, BOX_CARPET, BOX_GATE, BOX_LADDER, BOX_TRAPDOOR, TRAPDOOR_TOP_BIT, ladderSide } from './BoxShapes';
 import { CHUNK_HEIGHT } from './constants';
 
 /** What the player is aiming at and holding when they press Use. */
@@ -19,6 +20,8 @@ export interface PlaceContext {
   /** Where along x and z the click landed inside the block (0..1), used for the hinge side of a door. */
   fracX?: number;
   fracZ?: number;
+  /** Variant bits of the item (wood, material, colour): slabs only combine with slabs of the same material. */
+  variant?: number;
   /** Player yaw (see Player): decides which way stairs and doors face. */
   yaw: number;
   getBlock(x: number, y: number, z: number): number;
@@ -37,7 +40,7 @@ export interface Placement {
 export function topFaceSturdy(id: number, meta: number): boolean {
   if (OPAQUE[id]) return true;
   const s = SHAPE[id];
-  if (s === SHAPE_SLAB) return meta !== SLAB_BOTTOM;
+  if (s === SHAPE_SLAB) return (meta & SLAB_HALF_MASK) !== SLAB_BOTTOM;
   if (s === SHAPE_STAIRS) return (meta & STAIR_TOP_BIT) !== 0;
   return false;
 }
@@ -106,8 +109,10 @@ export function resolvePlacement(c: PlaceContext): Placement | null {
   const { id } = c;
   const shape = SHAPE[id];
   // Slab on the slab that was clicked.
-  if (shape === SHAPE_SLAB && c.getBlock(c.hitX, c.hitY, c.hitZ) === id
-    && canCombineSlab(c.getMeta(c.hitX, c.hitY, c.hitZ), true, c.ny, c.nx, c.nz, c.fracY)) {
+  const mask = VARIANT_MASK[id];
+  const sameMaterial = (x: number, y: number, z: number): boolean => (c.getMeta(x, y, z) & mask) === ((c.variant ?? 0) & mask);
+  if (shape === SHAPE_SLAB && c.getBlock(c.hitX, c.hitY, c.hitZ) === id && sameMaterial(c.hitX, c.hitY, c.hitZ)
+    && canCombineSlab(c.getMeta(c.hitX, c.hitY, c.hitZ) & SLAB_HALF_MASK, true, c.ny, c.nx, c.nz, c.fracY)) {
     return { x: c.hitX, y: c.hitY, z: c.hitZ, id, meta: SLAB_DOUBLE };
   }
   let x = c.hitX + c.nx, y = c.hitY + c.ny, z = c.hitZ + c.nz;
@@ -115,8 +120,8 @@ export function resolvePlacement(c: PlaceContext): Placement | null {
   if (SHAPE[c.getBlock(c.hitX, c.hitY, c.hitZ)] === SHAPE_CROSS) { x = c.hitX; y = c.hitY; z = c.hitZ; }
   const existing = c.getBlock(x, y, z);
   if (existing === BLOCK.UNLOADED) return null;
-  if (shape === SHAPE_SLAB && existing === id && canCombineSlab(c.getMeta(x, y, z), false, c.ny, c.nx, c.nz, c.fracY)
-    && c.getMeta(x, y, z) !== SLAB_DOUBLE) {
+  if (shape === SHAPE_SLAB && existing === id && sameMaterial(x, y, z) && canCombineSlab(c.getMeta(x, y, z) & SLAB_HALF_MASK, false, c.ny, c.nx, c.nz, c.fracY)
+    && (c.getMeta(x, y, z) & SLAB_HALF_MASK) !== SLAB_DOUBLE) {
     return { x, y, z, id, meta: SLAB_DOUBLE };
   }
   if (!isReplaceable(existing)) return null;
@@ -133,7 +138,36 @@ export function resolvePlacement(c: PlaceContext): Placement | null {
     };
   }
   const upper = placedOnUpperHalf(c.ny, c.fracY);
+  const kind = BOX_KIND[id];
+  if (kind) {
+    const below = c.getBlock(x, y - 1, z);
+    switch (kind) {
+      case BOX_CARPET:
+        return !isReplaceable(below) && below !== BLOCK.UNLOADED ? { x, y, z, id, meta: 0 } : null;
+      case BOX_TRAPDOOR:
+        return { x, y, z, id, meta: facingFromYaw(c.yaw) | (upper ? TRAPDOOR_TOP_BIT : 0) };
+      case BOX_GATE:
+        return { x, y, z, id, meta: facingFromYaw(c.yaw) };
+      case BOX_LADDER: {
+        // Fixed to the side of a solid block that was clicked.
+        if (c.ny !== 0 || !OPAQUE[c.getBlock(c.hitX, c.hitY, c.hitZ)]) return null;
+        return { x, y, z, id, meta: ladderSide(c.nx, c.nz) };
+      }
+      case BOX_BED: {
+        // Two blocks: the foot here and the head one step further the way the player looks.
+        const facing = facingFromYaw(c.yaw);
+        const hx = x + FACING_DX[facing], hz = z + FACING_DZ[facing];
+        const headCell = c.getBlock(hx, y, hz);
+        if (headCell === BLOCK.UNLOADED || !isReplaceable(headCell)) return null;
+        if (!topFaceSturdy(below, c.getMeta(x, y - 1, z)) || !topFaceSturdy(c.getBlock(hx, y - 1, hz), c.getMeta(hx, y - 1, hz))) return null;
+        return { x, y, z, id, meta: facing, upper: { x: hx, y, z: hz, id, meta: facing | BED_HEAD_BIT } };
+      }
+      default:
+        return { x, y, z, id, meta: 0 };
+    }
+  }
   if (shape === SHAPE_SLAB) return { x, y, z, id, meta: upper ? SLAB_TOP : SLAB_BOTTOM };
   if (shape === SHAPE_STAIRS) return { x, y, z, id, meta: stairMeta(facingFromYaw(c.yaw), upper) };
-  return { x, y, z, id, meta: 0 };
+  // Furnaces, chests and pumpkins show their front to the player.
+  return { x, y, z, id, meta: FACING[id] ? facingFromYaw(c.yaw) : 0 };
 }

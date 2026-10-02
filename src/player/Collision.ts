@@ -1,4 +1,4 @@
-import { PARTIAL, SOLID } from '../world/BlockRegistry';
+import { PARTIAL, SOLID, TALL } from '../world/BlockRegistry';
 import { collisionBoxes } from '../world/BlockShapes';
 
 export type BlockGetter = (x: number, y: number, z: number) => number;
@@ -11,7 +11,7 @@ export interface AABB {
 
 const EPS = 1e-4;
 /** Scratch for the boxes of one slab, stair or door (no allocation per query). */
-const partialBoxes = new Float64Array(24);
+const partialBoxes = new Float64Array(64);
 
 /**
  * Clips a movement `delta` along one axis against solid blocks near the box
@@ -31,11 +31,13 @@ export function clipAxis(box: AABB, axis: 0 | 1 | 2, delta: number, getBlock: Bl
   const maxZ = Math.floor(box.maxZ + (axis === 2 && delta > 0 ? delta : 0) - EPS);
   const boxMin = axis === 0 ? box.minX : axis === 1 ? box.minY : box.minZ;
   const boxMax = axis === 0 ? box.maxX : axis === 1 ? box.maxY : box.maxZ;
-  for (let y = minY; y <= maxY; y++) {
+  // One cell lower too: fences and walls reach 1.5 blocks up.
+  for (let y = minY - 1; y <= maxY; y++) {
     for (let z = minZ; z <= maxZ; z++) {
       for (let x = minX; x <= maxX; x++) {
         const id = getBlock(x, y, z);
         if (!SOLID[id]) continue;
+        if (y < minY && !TALL[id]) continue;
         if (PARTIAL[id] && getMeta) {
           const n = collisionBoxes(id, getMeta(x, y, z), getBlock, getMeta, x, y, z, partialBoxes);
           for (let k = 0; k < n; k++) {
@@ -75,11 +77,13 @@ export function clipAxis(box: AABB, axis: 0 | 1 | 2, delta: number, getBlock: Bl
 }
 
 export function boxIntersectsSolid(box: AABB, getBlock: BlockGetter, getMeta?: BlockGetter): boolean {
-  for (let y = Math.floor(box.minY + EPS); y <= Math.floor(box.maxY - EPS); y++) {
+  const minY = Math.floor(box.minY + EPS);
+  for (let y = minY - 1; y <= Math.floor(box.maxY - EPS); y++) {
     for (let z = Math.floor(box.minZ + EPS); z <= Math.floor(box.maxZ - EPS); z++) {
       for (let x = Math.floor(box.minX + EPS); x <= Math.floor(box.maxX - EPS); x++) {
         const id = getBlock(x, y, z);
         if (!SOLID[id]) continue;
+        if (y < minY && !TALL[id]) continue;
         if (PARTIAL[id] && getMeta) {
           const n = collisionBoxes(id, getMeta(x, y, z), getBlock, getMeta, x, y, z, partialBoxes);
           for (let k = 0; k < n; k++) {

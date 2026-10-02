@@ -84,9 +84,24 @@ wat al is doorgevoerd.
    - Nog te doen op deze basis: **ladders, muurfakkels, gewassen** (groeifase in `meta`), **oven met een richting** (en een brandende staat), **bed** (2 blokken), vallend zand en grind, waterlogged slabs, stroming die entities meeduwt, lava-fakkels/vuur, trapdoors en hekken (zelfde `partial`-machinerie).
    - Bewust anders dan Minecraft: de trapvorm wordt afgeleid uit de buren (niet opgeslagen) en lava vertraagt niet willekeurig (`random.nextInt(4)`).
 5. **Landbouw (M):** saplings, tarwe, brood en een schoffel. Hernieuwbaar hout en voedsel.
-6. **Meer survival-inhoud (M):** harnas met een armor-bar, XP-orbs met een XP-balk. Skeleton (schiet elke 2 s, verbrandt in daglicht; drops botten en pijlen) en spin (klimt, springt, neutraal in fel licht; drops draad en spinnenoog met Poison) zijn **Gedaan**.
+6. **Meer survival-inhoud (M):** harnas met een armor-bar: **Gedaan** (zie §4b). XP-orbs met een XP-balk. Skeleton (schiet elke 2 s, verbrandt in daglicht; drops botten en pijlen) en spin (klimt, springt, neutraal in fel licht; drops draad en spinnenoog met Poison) zijn **Gedaan**.
 7. **Structuren (M per stuk):** dungeon met spawner en kisten, mijnschachten, later dorpen.
 8. **Eindspel (L):** een "Underworld"-dimensie of een stronghold met een eindbaas en credits.
+
+## 4b. Inhoud van Minecraft 1.21 (creative inventory en wat je ermee kunt)
+
+Ontwerp, tellingen en tier-lijst: [`CONTENT.md`](CONTENT.md). **Gedaan:**
+
+- **Item-identiteit voor varianten:** item-id's ≥ 1024 zijn `blok + variantbits`, kleuren en materialen zitten in de `meta`-byte (geen nieuwe
+  blok-id's per kleur). Dyed blokken gebruiken één grijze textuur met een tint per hoekpunt in de mesher (0 extra lagen, meshtijd gelijk:
+  3,5-3,8 ms per chunk tegen 3,5-3,7 ms ervoor). Slabs, trappen, deuren, hekken, luiken, poorten en muren hebben het materiaal in de state.
+- **`ItemStack.data`** (enchants en dergelijke) is er, wordt opgeslagen en over het netwerk meegestuurd; stapels met verschillende data voegen nooit samen.
+- Harnas (armor-balk, schadeformule, slijtage), schoffel, schaar, tooluse (akkergrond, paden, strippen, pompoen snijden), kist (27 slots), bed, ladder.
+- Creative inventory met tabs, scrollen, zoeken en tooltips; receptenboek met tabs en zoeken; ~420 recepten.
+- **Nog te doen (tier 2):** landbouw (tarwe, wortels en aardappels, hoofdreden dat brood, koekjes en modderstenen nog niet te maken zijn), enchanting, brouwen, smithing en
+  netherite, anvil, grindstone, blast furnace, smoker, schild, hengel, kaarsen, banners, koraal, ruitjes met doorzichtigheid (gekleurd glas is alpha-getest),
+  kisten in multiplayer, een echte kist-animatie, kisten met richting-afhankelijke dubbele variant, vallend zand en grind, en dat de worldgen de nieuwe blokken
+  (graniet, diorite, andesiet, tuff, calciet, deepslate, nieuwe ertsen, bloemen, junglebomen) nog moet plaatsen.
 
 ## 5. Sfeer
 

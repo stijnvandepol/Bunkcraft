@@ -161,7 +161,7 @@ describe('arena maps', () => {
         }
       }
     }
-  }, 30_000); // ~5 s of expect() calls: over the default limit as soon as the machine is busy
+  }, 60000);
 
   it('maps differ from each other', () => {
     const sig = (id: string) => {

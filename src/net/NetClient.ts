@@ -156,8 +156,8 @@ export class NetClient {
     this.send({ t: 'take', id });
   }
 
-  sendDrop(id: number, count: number, damage: number | undefined, x: number, y: number, z: number, yaw: number | undefined, delay: number): void {
-    this.send({ t: 'drop', id, count, damage, x, y, z, yaw, delay });
+  sendDrop(id: number, count: number, damage: number | undefined, x: number, y: number, z: number, yaw: number | undefined, delay: number, data?: number[]): void {
+    this.send({ t: 'drop', id, count, damage, data, x, y, z, yaw, delay });
   }
 
   sendChat(text: string): void {

@@ -1,11 +1,14 @@
-import { type ItemStack, getItemDef, maxDurability } from './ItemRegistry';
+import { type ItemStack, cloneStack, getItemDef, maxDurability, sameItem, stackFromArray, stackToArray } from './ItemRegistry';
 
 export const HOTBAR_SLOTS = 9;
 export const INVENTORY_SLOTS = 36; // 0–8 hotbar, 9–35 main inventory
+export const ARMOR_SLOTS = 4; // helmet, chestplate, leggings, boots
 
 /** Player inventory as plain stacks; empty slots have id 0. */
 export class PlayerInventory {
   readonly slots: ItemStack[] = Array.from({ length: INVENTORY_SLOTS }, () => ({ id: 0, count: 0 }));
+  /** Worn armor: helmet, chestplate, leggings, boots. Saved as slots 36-39 of the inventory record. */
+  readonly armor: ItemStack[] = Array.from({ length: ARMOR_SLOTS }, () => ({ id: 0, count: 0 }));
   /** Fired after any change (UI refresh, autosave). */
   onChange: (() => void) | null = null;
   /** Fired with the item id whenever `add` stored something (pickup, crafting, smelting). */
@@ -20,11 +23,65 @@ export class PlayerInventory {
   }
 
   set(i: number, stack: ItemStack): void {
-    this.slots[i] = stack.count > 0 && stack.id > 0 ? { ...stack } : { id: 0, count: 0 };
+    this.slots[i] = stack.count > 0 && stack.id > 0 ? cloneStack(stack) : { id: 0, count: 0 };
     this.onChange?.();
   }
 
+  /** Total armor points and toughness of what is worn. */
+  armorTotals(): { points: number; toughness: number } {
+    let points = 0, toughness = 0;
+    for (const s of this.armor) {
+      const a = s.id ? getItemDef(s.id)?.armor : undefined;
+      if (a) { points += a.points; toughness += a.toughness; }
+    }
+    return { points, toughness };
+  }
+
+  setArmor(slot: number, stack: ItemStack): void {
+    this.armor[slot] = stack.count > 0 && stack.id > 0 ? cloneStack(stack) : { id: 0, count: 0 };
+    this.onChange?.();
+  }
+
+  /**
+   * Wears the armor piece in an inventory slot (right click with it in hand): it goes to its armor slot and
+   * whatever was worn there takes its place. Returns false when the item is not armor.
+   */
+  equipFromSlot(i: number): boolean {
+    const stack = this.slots[i];
+    const a = stack.id ? getItemDef(stack.id)?.armor : undefined;
+    if (!a) return false;
+    const worn = this.armor[a.slot];
+    this.armor[a.slot] = cloneStack(stack);
+    this.armor[a.slot].count = 1;
+    if (stack.count > 1) {
+      stack.count--;
+      if (worn.id) this.add(worn);
+    } else {
+      this.slots[i] = worn.id ? worn : { id: 0, count: 0 };
+    }
+    this.onChange?.();
+    return true;
+  }
+
+  /** Every worn piece loses `wear` durability (a hit that armor applied to); returns the pieces that broke. */
+  wearArmor(wear: number): number {
+    let broke = 0;
+    for (let k = 0; k < ARMOR_SLOTS; k++) {
+      const s = this.armor[k];
+      const max = s.id ? maxDurability(s.id) : 0;
+      if (!max) continue;
+      s.damage = (s.damage ?? 0) + wear;
+      if (s.damage >= max) {
+        this.armor[k] = { id: 0, count: 0 };
+        broke++;
+      }
+    }
+    this.onChange?.();
+    return broke;
+  }
+
   clear(): void {
+    for (let k = 0; k < ARMOR_SLOTS; k++) this.armor[k] = { id: 0, count: 0 };
     for (let i = 0; i < INVENTORY_SLOTS; i++) this.slots[i] = { id: 0, count: 0 };
     this.onChange?.();
   }
@@ -35,7 +92,7 @@ export class PlayerInventory {
     const max = PlayerInventory.maxStack(stack.id);
     for (const s of this.slots) {
       if (s.id === 0) left -= max;
-      else if (max > 1 && s.id === stack.id && s.count < max) left -= max - s.count;
+      else if (max > 1 && sameItem(s, stack) && s.count < max) left -= max - s.count;
       if (left <= 0) return true;
     }
     return false;
@@ -48,7 +105,7 @@ export class PlayerInventory {
     if (max > 1) {
       for (const s of this.slots) {
         if (left === 0) break;
-        if (s.id === stack.id && s.count < max) {
+        if (sameItem(s, stack) && s.count < max) {
           const n = Math.min(left, max - s.count);
           s.count += n;
           left -= n;
@@ -59,7 +116,7 @@ export class PlayerInventory {
       const s = this.slots[i];
       if (s.id === 0) {
         const n = Math.min(left, max);
-        this.slots[i] = { id: stack.id, count: n, damage: stack.damage };
+        this.slots[i] = { ...cloneStack(stack), count: n };
         left -= n;
       }
     }
@@ -113,13 +170,18 @@ export class PlayerInventory {
   }
 
   serialize(): number[][] {
-    return this.slots.map((s) => [s.id, s.count, s.damage ?? 0]);
+    return [...this.slots, ...this.armor].map((s) => stackToArray(s));
   }
 
   load(data: number[][] | undefined): void {
     for (let i = 0; i < INVENTORY_SLOTS; i++) {
       const d = data?.[i];
-      this.slots[i] = d && d[0] > 0 && d[1] > 0 ? { id: d[0], count: d[1], damage: d[2] || undefined } : { id: 0, count: 0 };
+      this.slots[i] = stackFromArray(d) ?? { id: 0, count: 0 };
+    }
+    // Old saves have 36 records: no armor.
+    for (let k = 0; k < ARMOR_SLOTS; k++) {
+      const s = stackFromArray(data?.[INVENTORY_SLOTS + k]);
+      this.armor[k] = s && getItemDef(s.id)?.armor?.slot === k ? s : { id: 0, count: 0 };
     }
     this.onChange?.();
   }

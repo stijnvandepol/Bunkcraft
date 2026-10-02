@@ -35,6 +35,8 @@ export interface WorldMeta {
   stats?: number[];
   /** Earned advancements: id → timestamp. */
   advancements?: Record<string, number>;
+  /** Chest contents: "x,y,z" → one saved stack record per slot. */
+  containers?: Record<string, number[][]>;
   /** World spawn / respawn point. */
   spawn?: { x: number; y: number; z: number };
   /** Terrain generator version the world was created with (src/world/GenVersion.ts); absent = 1. */

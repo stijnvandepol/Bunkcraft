@@ -56,6 +56,10 @@ export const SOUND_PROFILES = {
   dirt: { noise: { type: 'bandpass', freq: 950, q: 0.7, gain: 0.85 }, body: { freq: 300, q: 1.5, gain: 0.5 }, thump: 95, grains: 2, pitch: p(0.85, 1.15), gain: 0.85 },
   wetgrass: { noise: { type: 'bandpass', freq: 1600, q: 0.8, gain: 0.7 }, body: { freq: 500, q: 1.4, gain: 0.5 }, grains: 3, pitch: p(0.8, 1.1), gain: 0.75 },
   water: { noise: { type: 'bandpass', freq: 1200, q: 0.9, gain: 0.7 }, body: { freq: 380, q: 3, gain: 0.5 }, grains: 4, pitch: p(0.8, 1.25), gain: 0.7, length: 1.2 },
+  // Deepslate: stone with less crack and more weight (Minecraft's deepslate sounds darker and duller).
+  deepslate: { noise: { type: 'bandpass', freq: 1100, q: 0.9, gain: 0.8 }, body: { freq: 300, q: 4, gain: 0.6 }, thump: 85, pitch: p(0.85, 1.05), gain: 0.95 },
+  // Mud: a wet squelch, slower and lower than dirt.
+  mud: { noise: { type: 'bandpass', freq: 700, q: 0.8, gain: 0.8 }, body: { freq: 220, q: 1.8, gain: 0.55 }, thump: 70, grains: 3, pitch: p(0.75, 1.05), gain: 0.85, length: 1.1 },
 } as const satisfies Record<string, SoundProfile>;
 
 /** Every sound type a block can declare. Extend {@link SOUND_PROFILES} to add one. */

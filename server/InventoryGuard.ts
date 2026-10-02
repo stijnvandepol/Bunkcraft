@@ -1,4 +1,4 @@
-import { INVENTORY_SLOTS } from '../src/items/Inventory';
+import { ARMOR_SLOTS, INVENTORY_SLOTS } from '../src/items/Inventory';
 import { ITEM, blockDrop, getItemDef, maxDurability } from '../src/items/ItemRegistry';
 import { RECIPES } from '../src/items/Recipes';
 import { BLOCK, SLAB_FIRST, STAIRS_FIRST } from '../src/world/BlockRegistry';
@@ -20,7 +20,16 @@ import { BLOCK, SLAB_FIRST, STAIRS_FIRST } from '../src/world/BlockRegistry';
  * recipe book decides), items placed as blocks (consumption is trusted: it only lowers the pool),
  * tool damage resets, and moving items between slots (a pure rearrangement is always valid).
  */
-export interface Stack { id: number; count: number; damage?: number }
+export interface Stack {
+  id: number;
+  count: number;
+  damage?: number;
+  /** Per-stack data columns as sent (key index, value pairs: enchantments and such); passed through untouched. */
+  extra?: number[];
+}
+
+/** A row is [id, count, damage, ...data pairs]: room for a handful of enchantments. */
+const MAX_ROW_LENGTH = 16;
 
 export type StateCheck = { ok: true; inventory: number[][] } | { ok: false; reason: string; correction: number[][] };
 
@@ -36,16 +45,19 @@ export function validItem(id: number): boolean {
   return Number.isInteger(id) && id > 0 && !!getItemDef(id);
 }
 
-/** Parses the rows a client sent; returns clean stacks or an error. Extra columns (future `data`) are ignored. */
+/** Parses the rows a client sent; returns clean stacks or an error. Data columns after the damage are validated as integers and kept. */
 export function parseInventory(raw: unknown): { stacks: Stack[]; slots: Stack[]; error?: string } {
   const fail = (error: string) => ({ stacks: [], slots: [], error });
   if (!Array.isArray(raw)) return fail('not a list');
-  if (raw.length > INVENTORY_SLOTS) return fail('too many slots');
+  // 36 inventory slots followed by the 4 worn armor slots.
+  if (raw.length > INVENTORY_SLOTS + ARMOR_SLOTS) return fail('too many slots');
   const stacks: Stack[] = [];
   const slots: Stack[] = [];
   for (const row of raw) {
-    if (!Array.isArray(row) || row.length < 2 || row.length > 8) return fail('bad slot');
+    if (!Array.isArray(row) || row.length < 2 || row.length > MAX_ROW_LENGTH) return fail('bad slot');
     const [id, count, damage] = row as unknown[];
+    const extra = row.length > 3 ? (row.slice(3) as unknown[]) : undefined;
+    if (extra && !extra.every((n) => Number.isInteger(n))) return fail('bad item data');
     if (!Number.isInteger(id) || !Number.isInteger(count)) return fail('bad slot numbers');
     if ((id as number) === 0 && (count as number) === 0) { slots.push({ id: 0, count: 0 }); continue; }
     if (!validItem(id as number)) return fail(`unknown item ${String(id)}`);
@@ -54,7 +66,8 @@ export function parseInventory(raw: unknown): { stacks: Stack[]; slots: Stack[];
     const d = damage === undefined || damage === null ? 0 : damage;
     const max = maxDurability(id as number);
     if (!Number.isInteger(d) || (d as number) < 0 || (d as number) > Math.max(max, 0)) return fail(`bad damage on ${def.name}`);
-    const stack = { id: id as number, count: count as number, damage: (d as number) || undefined };
+    const stack: Stack = { id: id as number, count: count as number, damage: (d as number) || undefined };
+    if (extra && extra.length >= 2) stack.extra = extra as number[];
     stacks.push(stack);
     slots.push(stack);
   }
@@ -62,7 +75,7 @@ export function parseInventory(raw: unknown): { stacks: Stack[]; slots: Stack[];
 }
 
 export function toRows(stacks: Stack[]): number[][] {
-  return stacks.map((s) => [s.id, s.count, s.damage ?? 0]);
+  return stacks.map((s) => (s.extra ? [s.id, s.count, s.damage ?? 0, ...s.extra] : [s.id, s.count, s.damage ?? 0]));
 }
 
 function totals(stacks: Stack[]): Map<number, number> {

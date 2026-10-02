@@ -17,7 +17,7 @@ import { inviteLink, inviteText, rememberGame } from '../net/RoomApi';
 import { RemotePlayers } from '../net/RemotePlayers';
 import { Chat } from '../ui/Chat';
 import { PlayerInventory } from '../items/Inventory';
-import { ITEM, type ItemStack, blockDrop, getItemDef } from '../items/ItemRegistry';
+import { ITEM, type ItemStack, blockDrop, decodeData, encodeData, getItemDef } from '../items/ItemRegistry';
 import type { Station } from '../items/Recipes';
 import { type GameMode, GAME_MODE_NAMES, canFly, hasSurvivalRules } from '../player/GameMode';
 import { PHYSICS } from '../player/Physics';
@@ -207,7 +207,11 @@ export class Game {
     this.playerInventory.onChange = () => {
       this.hotbar.refresh();
       this.survivalInventory.refresh();
+      const armor = this.playerInventory.armorTotals();
+      this.stats.armorPoints = armor.points;
+      this.stats.armorToughness = armor.toughness;
     };
+    this.stats.onArmorHit = (wear) => void this.playerInventory.wearArmor(wear);
     this.stack = new ScreenStack(root.querySelector<HTMLElement>('#screens')!);
     root.append(this.toasts.el, this.remote.el, this.chat.el, this.hud.el, this.debug.el, this.inventory.el, this.survivalInventory.el);
     this.weatherSys = new WeatherSystem({
@@ -256,6 +260,10 @@ export class Game {
     });
 
     this.inventory.onClose = () => void this.resumeGame();
+    this.inventory.onSurvival = () => {
+      this.inventory.close();
+      this.survivalInventory.open(this.nearbyStations());
+    };
     this.stats.onHurt = () => this.audio.playHurt();
     this.initAudioHooks();
     this.input.onKeyDown = (code) => this.onKey(code);
@@ -501,6 +509,9 @@ export class Game {
         entities.primeTnt(x, y, z);
         return true;
       },
+      chestsAllowed: () => !this.net,
+      openChest: (x, y, z) => this.openChest(x, y, z),
+      useBed: (x, y, z) => this.useBed(x, y, z),
       shootArrow: (power, pickup) => {
         const cam = this.cam.camera;
         const dir = cam.getWorldDirection(this.tmpDir);
@@ -563,6 +574,7 @@ export class Game {
     const world = this.createWorldInstance(meta.seed, edits, worldType, normalizeGenVersion(meta.genVersion));
     this.cycle.time = meta.time;
     this.weatherSys.start(meta, this.net !== null);
+    world.containers.load(meta.containers);
     const mode = meta.gameMode ?? 'creative';
     // Inventory: saved stacks, else creative gets the default hotbar and survival starts empty.
     if (meta.inventory) this.playerInventory.load(meta.inventory);
@@ -654,6 +666,7 @@ export class Game {
     meta.player = { x: p.x, y: p.y, z: p.z, yaw: p.yaw, pitch: p.pitch, flying: p.flying };
     meta.hotbar = Array.from({ length: 9 }, (_, i) => this.playerInventory.get(i).id);
     meta.inventory = this.playerInventory.serialize();
+    meta.containers = world.containers.serialize();
     meta.stats = this.stats.serialize();
     meta.advancements = this.advancements.serialize();
     meta.gameMode = this.mode;
@@ -695,6 +708,30 @@ export class Game {
       downloadBlob(blob, name);
       showToast(`Saved screenshot ${name}`);
     }, 'image/png');
+  }
+
+  /** Opens a chest: the container screen with the chest's 27 slots above the inventory. */
+  private openChest(x: number, y: number, z: number): void {
+    const world = this.world;
+    if (!world || this.net || this.state !== 'playing') return;
+    const slots = world.containers.slotsAt(x, y, z);
+    if (!slots) return;
+    this.state = 'inventory';
+    this.suppressPause = this.input.locked;
+    this.input.exitLock();
+    this.survivalInventory.open(this.nearbyStations(), { title: 'Chest', slots });
+  }
+
+  /** A bed sets the respawn point; at night it also sleeps until the morning (singleplayer). */
+  private useBed(x: number, y: number, z: number): void {
+    if (!this.meta || this.arcade) return;
+    this.meta.spawn = { x: x + 0.5, y: y + 0.6, z: z + 0.5 };
+    this.chat.add('Respawn point set', true);
+    if (!this.net && this.cycle.dayFactor < 0.4) {
+      this.cycle.time = 0.02;
+      this.cycle.compute();
+      this.chat.add('You slept through the night', true);
+    }
   }
 
   private async quitToTitle(): Promise<void> {
@@ -764,7 +801,7 @@ export class Game {
     const mirror = new NetEntities(entities);
     this.netEntities = mirror;
     entities.dropHook = (stack, x, y, z, delay, yaw) => {
-      net.sendDrop(stack.id, stack.count, stack.damage, x, y, z, yaw, delay);
+      net.sendDrop(stack.id, stack.count, stack.damage, x, y, z, yaw, delay, encodeData(stack.data));
       return true;
     };
     entities.takeHook = (item) => {
@@ -889,10 +926,11 @@ export class Game {
       }
       case 'taken': {
         this.netEntities?.taken(msg.id);
-        const left = this.playerInventory.add({ id: msg.itemId, count: msg.count, damage: msg.damage });
+        const data = decodeData(msg.data);
+        const left = this.playerInventory.add({ id: msg.itemId, count: msg.count, damage: msg.damage, data });
         if (left < msg.count) this.audio.playPop();
         // A race filled the inventory: hand the rest back to the world.
-        if (left > 0) this.entities?.dropItem({ id: msg.itemId, count: left, damage: msg.damage }, this.player.x, this.player.y + 1, this.player.z, 40, undefined, true);
+        if (left > 0) this.entities?.dropItem({ id: msg.itemId, count: left, damage: msg.damage, data }, this.player.x, this.player.y + 1, this.player.z, 40, undefined, true);
         break;
       }
       case 'block': world?.applyRemoteEdit(msg.x, msg.y, msg.z, msg.id, msg.meta ?? 0); break;
@@ -1034,6 +1072,7 @@ export class Game {
       const s = this.playerInventory.get(i);
       if (s.count > 0) this.entities?.dropItem(s, p.x, p.y + 1, p.z, 40, undefined, true);
     }
+    for (const s of this.playerInventory.armor) if (s.count > 0) this.entities?.dropItem(s, p.x, p.y + 1, p.z, 40, undefined, true);
     this.playerInventory.clear();
     const hardcore = this.mode === 'hardcore';
     // Hardcore: the single life is gone even if the tab is closed now.
@@ -1529,7 +1568,7 @@ export class Game {
     this.audioProbe.update(dt, this.audio.env, eye.x, eye.y, eye.z, this.cycle.dayFactor, this.underwater);
     this.hud.setUnderwater(this.underwater);
     this.hud.setHurt(this.arcade ? this.arcade.hurt * 0.8 : this.stats.hurtTime / 10);
-    if (!this.arcade) this.hud.survival.update({ health: this.stats.health, hunger: this.stats.hunger, air: this.stats.air, maxAir: MAX_AIR }, this.time);
+    if (!this.arcade) this.hud.survival.update({ health: this.stats.health, hunger: this.stats.hunger, air: this.stats.air, maxAir: MAX_AIR, armor: this.stats.armorPoints }, this.time);
 
     if (this.net) {
       const flags = (p.sprinting ? 1 : 0) | (p.flying ? 2 : 0) | (p.onGround ? 4 : 0);

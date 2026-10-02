@@ -8,6 +8,7 @@ import { ARENA_FLOOR_Y, DEFAULT_MAP, type MapId, type MapSetting, getMap, nextMa
 import { type GameType, gameTypeDef } from '../src/modes/GameTypes';
 import { GAME_MODES, type GameMode, hasSurvivalRules } from '../src/player/GameMode';
 import { encodeBinary, encodeSnap } from '../src/net/binary';
+import { decodeData } from '../src/items/ItemRegistry';
 import { BLOCK, getBlockDef } from '../src/world/BlockRegistry';
 import { isValidMeta } from '../src/world/BlockShapes';
 import { packState, stateId, stateMeta } from '../src/world/BlockStates';
@@ -711,7 +712,7 @@ export class GameServer {
       case 'drop':
         if (!s.drops.take()) return;
         if (!this.dropAllowed(s, msg)) return;
-        return entities.drop(s, { id: msg.id, count: msg.count, damage: msg.damage }, msg.x, msg.y, msg.z, msg.yaw, msg.delay);
+        return entities.drop(s, { id: msg.id, count: msg.count, damage: msg.damage, data: decodeData(Array.isArray(msg.data) ? msg.data.slice(0, 16).map(Number) : undefined) }, msg.x, msg.y, msg.z, msg.yaw, msg.delay);
       case 'state': return this.onState(s, msg);
     }
   }
@@ -1065,7 +1066,7 @@ export class GameServer {
 export function cleanInventory(raw: unknown[]): number[][] {
   const out: number[][] = [];
   for (const row of raw) {
-    if (!Array.isArray(row) || row.length > 8) { out.push([]); continue; }
+    if (!Array.isArray(row) || row.length > 16) { out.push([]); continue; }
     out.push(row.map((n) => (typeof n === 'number' && Number.isFinite(n) ? n : 0)));
   }
   return out;
