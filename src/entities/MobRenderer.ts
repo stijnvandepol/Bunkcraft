@@ -239,6 +239,11 @@ export class MobRenderer {
       case 'legB': return tmpEuler.set(-legSwing, 0, 0);
       case 'armL':
       case 'armR': {
+        // Armed arcade players aim: the right arm points along the view, the left supports it.
+        if (m.holding) {
+          const pitch = -m.headPitch; // positive = aiming up
+          return anim === 'armR' ? tmpEuler.set(Math.PI / 2 + pitch, 0, 0, 'YXZ') : tmpEuler.set(Math.PI / 2 + pitch - 0.25, -0.5, 0, 'YXZ');
+        }
         const phase = swing * 0.6662 + (anim === 'armL' ? 0 : Math.PI);
         // Zombies hold their arms forward; players swing them opposite to the legs.
         if (m.type.armsForward) return tmpEuler.set(Math.PI / 2 + Math.cos(phase) * 0.2 * amount, 0, 0);

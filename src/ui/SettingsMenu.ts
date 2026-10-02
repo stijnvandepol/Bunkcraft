@@ -3,7 +3,7 @@ import {
   type SettingsStore, type ShadowQuality, detectPreset,
 } from '../core/Settings';
 import {
-  KEYBINDS, KEYBIND_CATEGORIES, type KeybindMap, conflictingCodes, defaultKeybinds, isValidCode, keyDisplayName,
+  KEYBINDS, KEYBIND_CATEGORIES, type KeybindMap, conflictingActions, defaultKeybinds, isValidCode, keyDisplayName,
 } from '../core/Keybinds';
 import { button, cycleButton, h, menuScreen, slider } from './dom';
 
@@ -134,14 +134,14 @@ function keyBindsScreen(store: SettingsStore, nav: OptionsNav): HTMLDivElement {
 
   const render = () => {
     const map = store.values.keybinds;
-    const conflicts = conflictingCodes(map);
+    const conflicts = conflictingActions(map);
     KEYBINDS.forEach((k, i) => {
       const code = map[k.id] ?? k.defaultCode;
       const btn = keyButtons[i];
       const label = keyDisplayName(code);
       btn.textContent = i === listening ? `> ${label} <` : label;
       btn.classList.toggle('listening', i === listening);
-      btn.classList.toggle('conflict', i !== listening && conflicts.has(code));
+      btn.classList.toggle('conflict', i !== listening && conflicts.has(i));
       resetButtons[i].disabled = code === k.defaultCode;
     });
   };

@@ -1,7 +1,7 @@
 import { ITEM, type ItemStack } from '../items/ItemRegistry';
 import { BLOCK } from '../world/BlockRegistry';
 
-export type MobKind = 'pig' | 'cow' | 'sheep' | 'chicken' | 'zombie' | 'creeper' | 'skeleton' | 'spider' | 'player';
+export type MobKind = 'pig' | 'cow' | 'sheep' | 'chicken' | 'zombie' | 'creeper' | 'skeleton' | 'spider' | 'player' | 'player_red' | 'player_blue';
 
 /** Animation slot a model part follows. */
 export type PartAnim = 'none' | 'head' | 'legA' | 'legB' | 'armL' | 'armR' | 'wingL' | 'wingR' | 'spiderA' | 'spiderB';
@@ -246,31 +246,38 @@ export const MOB_TYPES = {
     ],
     drops: (byPlayer: boolean) => [...stack(ITEM.STRING, rnd(0, 2)), ...(byPlayer && Math.random() < 1 / 3 ? stack(ITEM.SPIDER_EYE, 1) : [])],
   },
-} satisfies Omit<Record<MobKind, MobType>, 'player'> as unknown as Record<MobKind, MobType>;
+} satisfies Omit<Record<MobKind, MobType>, 'player' | 'player_red' | 'player_blue'> as unknown as Record<MobKind, MobType>;
 
 const SKIN = ['#c99a7a', '#bf8f6f', '#d1a585'];
 const SHIRT = ['#2d9fa6', '#268a90', '#33b0b8'];
 const PANTS = ['#3a3f9a', '#323688', '#4248aa'];
 
-MOB_TYPES.player = {
-  kind: 'player', name: 'Player', health: 20, width: 0.6, height: 1.8, walkSpeed: 0, runSpeed: 0, hostile: false, attack: 0,
-  parts: [
-    {
-      anim: 'head', pivot: [0, 24, 0], boxes: [{ from: [-4, 24, -4], to: [4, 32, 4], colors: SKIN, face: (px, w) => {
-        for (let x = 0; x < w; x++) px(x, 0, '#3b2414'), px(x, 1, '#4a2e1a');
-        px(0, 2, '#3b2414'); px(w - 1, 2, '#3b2414');
-        px(1, 4, '#ffffff'); px(2, 4, '#3a5bb0'); px(w - 3, 4, '#3a5bb0'); px(w - 2, 4, '#ffffff');
-        px(3, 6, '#8a5a40'); px(4, 6, '#8a5a40');
-      } }],
-    },
-    { anim: 'none', pivot: [0, 0, 0], boxes: [{ from: [-4, 12, -2], to: [4, 24, 2], colors: SHIRT }] },
-    { anim: 'armL', pivot: [-6, 22, 0], boxes: [{ from: [-8, 12, -2], to: [-4, 24, 2], colors: SKIN }] },
-    { anim: 'armR', pivot: [6, 22, 0], boxes: [{ from: [4, 12, -2], to: [8, 24, 2], colors: SKIN }] },
-    { anim: 'legA', pivot: [-2, 12, 0], boxes: [{ from: [-4, 0, -2], to: [0, 12, 2], colors: PANTS }] },
-    { anim: 'legB', pivot: [2, 12, 0], boxes: [{ from: [0, 0, -2], to: [4, 12, 2], colors: PANTS }] },
-  ],
-  drops: () => [],
-};
+/** The player model; arcade teams get a coloured shirt and a head band (so the team reads from afar). */
+function playerType(kind: MobKind, shirt: string[], band?: string[]): MobType {
+  const headBoxes: ModelBox[] = [{ from: [-4, 24, -4], to: [4, 32, 4], colors: SKIN, face: (px, w) => {
+    for (let x = 0; x < w; x++) px(x, 0, '#3b2414'), px(x, 1, '#4a2e1a');
+    px(0, 2, '#3b2414'); px(w - 1, 2, '#3b2414');
+    px(1, 4, '#ffffff'); px(2, 4, '#3a5bb0'); px(w - 3, 4, '#3a5bb0'); px(w - 2, 4, '#ffffff');
+    px(3, 6, '#8a5a40'); px(4, 6, '#8a5a40');
+  } }];
+  if (band) headBoxes.push({ from: [-4.5, 28, -4.5], to: [4.5, 30.5, 4.5], colors: band });
+  return {
+    kind, name: 'Player', health: 20, width: 0.6, height: 1.8, walkSpeed: 0, runSpeed: 0, hostile: false, attack: 0,
+    parts: [
+      { anim: 'head', pivot: [0, 24, 0], boxes: headBoxes },
+      { anim: 'none', pivot: [0, 0, 0], boxes: [{ from: [-4, 12, -2], to: [4, 24, 2], colors: shirt }] },
+      { anim: 'armL', pivot: [-6, 22, 0], boxes: [{ from: [-8, 12, -2], to: [-4, 24, 2], colors: SKIN }] },
+      { anim: 'armR', pivot: [6, 22, 0], boxes: [{ from: [4, 12, -2], to: [8, 24, 2], colors: SKIN }] },
+      { anim: 'legA', pivot: [-2, 12, 0], boxes: [{ from: [-4, 0, -2], to: [0, 12, 2], colors: PANTS }] },
+      { anim: 'legB', pivot: [2, 12, 0], boxes: [{ from: [0, 0, -2], to: [4, 12, 2], colors: PANTS }] },
+    ],
+    drops: () => [],
+  };
+}
+
+MOB_TYPES.player = playerType('player', SHIRT);
+MOB_TYPES.player_red = playerType('player_red', ['#c8372f', '#b32d26', '#d8443b'], ['#ff4a3d', '#e63a2e']);
+MOB_TYPES.player_blue = playerType('player_blue', ['#2f5fc8', '#2850b0', '#3a6fdc'], ['#4a8bff', '#3a77e8']);
 
 export const PASSIVE_KINDS: MobKind[] = ['pig', 'cow', 'sheep', 'chicken'];
 // Minecraft overworld spawn weights are equal (100 each) for these four.

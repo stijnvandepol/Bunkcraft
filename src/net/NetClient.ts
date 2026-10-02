@@ -99,7 +99,7 @@ export class NetClient {
     });
   }
 
-  private send(msg: ClientMessage): void {
+  send(msg: ClientMessage): void {
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg));
   }
 

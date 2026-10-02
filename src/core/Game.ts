@@ -5,9 +5,10 @@ import { TntRenderer } from '../entities/TntRenderer';
 import { ArrowRenderer } from '../entities/ArrowRenderer';
 import type { Mob, MobEvents } from '../entities/Mob';
 import { MobRenderer } from '../entities/MobRenderer';
-import { NetClient } from '../net/NetClient';
+import { NetClient, type WelcomeMessage } from '../net/NetClient';
 import { NetEntities } from '../net/NetEntities';
-import { type ServerMessage, formatCode, normalizeCode } from '../net/protocol';
+import { type ClientMessage, type ServerMessage, formatCode, normalizeCode } from '../net/protocol';
+import { gameTypeDef } from '../modes/GameTypes';
 import { inviteLink, inviteText, rememberGame } from '../net/RoomApi';
 import { RemotePlayers } from '../net/RemotePlayers';
 import { Chat } from '../ui/Chat';
@@ -47,7 +48,9 @@ import { CHUNK_VOLUME, blockIndex, chunkKey } from '../world/constants';
 import { hashString } from '../world/Noise';
 import { BIOME_NAMES } from '../world/TerrainGenerator';
 import type { WorldType } from '../world/WorldGenerator';
+import { createRayHit, raycast } from '../world/Raycast';
 import { World } from '../world/World';
+import { type ArcadeFrame, ArcadeSession } from './ArcadeSession';
 import { AudioEngine } from './Audio';
 import { CameraController } from './Camera';
 import { Input } from './Input';
@@ -105,6 +108,16 @@ export class Game {
   private readonly renderMobs: Mob[] = [];
   /** Multiplayer connection (null in singleplayer). */
   private net: NetClient | null = null;
+  /** Arcade game types (team deathmatch, free for all): match state, weapons and HUD; null in the Minecraft sandbox. */
+  private arcade: ArcadeSession | null = null;
+  private readonly root: HTMLElement;
+  private arcadeHint = '';
+  /** Reused every frame (no allocations in the frame loop). */
+  private readonly arcadeFrame: ArcadeFrame = { now: 0, dt: 0, controls: false, bobPhase: 0, bobStrength: 0, light: 1, aspect: 1, lookX: 0, lookY: 0 };
+  /** Development: runs once when the world has loaded (arcade preview builds its arena here). */
+  private afterLoad: (() => void) | null = null;
+  /** Development: the in-browser stand-in for the arcade server. */
+  private previewServer: { update(dt: number, p: Player): void } | null = null;
   private readonly stack: ScreenStack;
   private readonly menu: MainMenu;
 
@@ -145,6 +158,7 @@ export class Game {
   private contextLost: HTMLDivElement | null = null;
 
   constructor(root: HTMLElement) {
+    this.root = root;
     const canvas = root.querySelector<HTMLCanvasElement>('#game')!;
     this.renderer = new Renderer(canvas);
     this.input = new Input(canvas);
@@ -182,9 +196,13 @@ export class Game {
     this.tntRenderer = new TntRenderer(this.renderer.uniforms);
     this.arrowRenderer = new ArrowRenderer(this.renderer.uniforms);
     this.renderer.scene.add(this.mobRenderer.group, this.itemRenderer.mesh, this.tntRenderer.mesh, this.arrowRenderer.mesh);
-    this.renderer.shadowExcluded.push(this.mobRenderer.group, this.itemRenderer.mesh, this.tntRenderer.mesh, this.arrowRenderer.mesh);
+    this.renderer.scene.add(this.remote.weapons);
+    this.renderer.shadowExcluded.push(this.mobRenderer.group, this.itemRenderer.mesh, this.tntRenderer.mesh, this.arrowRenderer.mesh, this.remote.weapons);
     this.renderer.afterMain = (three) => {
-      if (this.state === 'playing' || this.state === 'inventory' || this.state === 'paused' || this.state === 'chat') this.hand.render(three);
+      if (this.state === 'playing' || this.state === 'inventory' || this.state === 'paused' || this.state === 'chat') {
+        if (this.arcade) this.arcade.render(three);
+        else this.hand.render(three);
+      }
     };
 
     this.menu = new MainMenu(this.stack, {
@@ -335,7 +353,10 @@ export class Game {
     this.updateMenuBlur();
     this.cam.baseFov = s.fov;
     this.cam.viewBobbing = s.viewBobbing;
-    if (!key || key === 'keybinds') this.input.setBindings(resolveKeybinds(s.keybinds));
+    if (!key || key === 'keybinds') {
+      this.input.setBindings(resolveKeybinds(s.keybinds));
+      this.arcade?.setBindings(this.input);
+    }
     this.audio.setVolumes((s.soundVolume * s.masterVolume) / 100, (s.musicVolume * s.masterVolume) / 100);
     applyGuiScale(s.guiScale);
     if (this.world) {
@@ -416,6 +437,7 @@ export class Game {
   }
 
   private enterMenu(): void {
+    this.stopArcade();
     this.state = 'menu';
     this.meta = null;
     this.hud.setVisible(false);
@@ -504,12 +526,15 @@ export class Game {
     this.loadingProgress = null;
     this.autosave = 0;
     this.advancements.onEnterWorld();
+    const afterLoad = this.afterLoad;
+    this.afterLoad = null;
+    afterLoad?.();
     void this.resumeGame();
   }
 
   private async saveGame(): Promise<void> {
     const world = this.world, meta = this.meta;
-    if (!world || !meta || this.state === 'loading' || this.state === 'menu') return;
+    if (!world || !meta || this.state === 'loading' || this.state === 'menu' || this.arcade) return;
     // Items held on the inventory cursor go back into the inventory before saving.
     this.survivalInventory.flushCursor();
     if (this.net) {
@@ -619,16 +644,72 @@ export class Game {
     };
     this.roomCode = room ?? null;
     if (room) {
-      rememberGame({ code: room, name: welcome.worldName });
+      rememberGame({ code: room, name: welcome.worldName, gameType: welcome.gameType });
       // Invite links stay out of the address bar once you are in the game.
       if (new URLSearchParams(location.search).has('join')) history.replaceState(null, '', location.pathname);
     }
     this.remote.clear();
-    for (const p of welcome.players) this.remote.add(p.id, p.name);
+    if (welcome.gameType === 'minecraft') for (const p of welcome.players) this.remote.add(p.id, p.name);
+    if (welcome.gameType !== 'minecraft') this.startArcade(welcome, (m) => net.send(m), name);
     this.chat.clear();
     this.chat.setVisible(true);
     if (welcome.motd) this.chat.add(welcome.motd, true);
+    if (this.arcade) this.chat.add(this.arcadeHint, true);
     if (room) this.chat.add(`Game code: ${formatCode(room)}. Press Esc, then Invite Friends, to share it.`, true);
+  }
+
+  /** Switches this session to an arcade game type: no building, no survival, weapons and the arcade HUD. */
+  private startArcade(welcome: WelcomeMessage, send: (msg: ClientMessage) => void, name: string): void {
+    this.stopArcade();
+    // Fixed arena: spawn where the server says; the next `spawn` message places us for real.
+    this.setMode('creative');
+    const p = this.player;
+    p.canFly = false;
+    p.flying = false;
+    p.canSprint = true;
+    p.setPosition(welcome.spawn.x, welcome.spawn.y, welcome.spawn.z);
+    this.needsSurface = false;
+    this.hand.visible = false;
+    this.interaction!.arcade = true;
+    this.hud.setArcade(true);
+    this.cam.sprintFov = false;
+    const def = gameTypeDef(welcome.gameType);
+    const info = welcome.match ?? { type: welcome.gameType, scoreLimit: def.scoreLimit, timeLimitSec: def.timeLimitSec };
+    const session = new ArcadeSession({
+      send,
+      audio: this.audio, player: p, cam: this.cam, remote: this.remote, particles: this.renderer.particles,
+      getBlock: this.getBlock,
+      getLight: (x, y, z) => this.world ? this.world.getLight(x, y, z) : 0xf0,
+      selfId: welcome.id, selfName: name, info,
+    });
+    this.arcade = session;
+    session.hud.onLoadoutClose = () => void this.resumeGame();
+    session.setBindings(this.input);
+    this.renderer.scene.add(session.tracers.mesh);
+    this.renderer.shadowExcluded.push(session.tracers.mesh);
+    this.root.append(session.hud.el, session.hud.loadoutEl);
+    session.setHudVisible(false);
+    for (const pl of welcome.players) session.addPlayer(pl.id, pl.name, pl.team ?? '');
+    this.arcadeHint = `${def.name}: first to ${info.scoreLimit} wins. Tab = scoreboard, B = loadout, R = reload.`;
+  }
+
+  private stopArcade(): void {
+    this.previewServer = null;
+    this.afterLoad = null;
+    const session = this.arcade;
+    if (!session) return;
+    this.arcade = null;
+    this.remote.clear();
+    session.dispose();
+    session.tracers.mesh.removeFromParent();
+    const i = this.renderer.shadowExcluded.indexOf(session.tracers.mesh);
+    if (i >= 0) this.renderer.shadowExcluded.splice(i, 1);
+    session.hud.el.remove();
+    session.hud.loadoutEl.remove();
+    this.hud.setArcade(false);
+    this.hand.visible = this.mode !== 'spectator';
+    this.cam.sprintFov = true;
+    if (this.interaction) this.interaction.arcade = false;
   }
 
   private onServerMessage(msg: ServerMessage): void {
@@ -657,16 +738,23 @@ export class Game {
         break;
       }
       case 'block': world?.applyRemoteEdit(msg.x, msg.y, msg.z, msg.id); break;
-      case 'join': this.remote.add(msg.id, msg.name); break;
-      case 'leave': this.remote.remove(msg.id); break;
+      case 'join':
+        if (this.arcade) this.arcade.addPlayer(msg.id, msg.name, '');
+        else this.remote.add(msg.id, msg.name);
+        break;
+      case 'leave':
+        if (this.arcade) this.arcade.removePlayer(msg.id);
+        else this.remote.remove(msg.id);
+        break;
       case 'chat': this.chat.add(msg.system ? msg.text : '<' + msg.from + '> ' + msg.text, msg.system); break;
       case 'time': this.cycle.time = msg.time; break;
       case 'teleport': this.player.setPosition(msg.x, msg.y, msg.z); break;
-      default: break;
+      default: this.arcade?.handle(msg, performance.now() / 1000); break;
     }
   }
 
   private disconnect(): void {
+    this.stopArcade();
     this.roomCode = null;
     this.netEntities?.clear();
     this.netEntities = null;
@@ -677,6 +765,65 @@ export class Game {
     this.remote.clear();
     this.chat.close();
     this.chat.setVisible(false);
+  }
+
+  // ---------------------------------------------------------------- arcade preview (development only)
+
+  /**
+   * Development only (`window.game.arcadePreview('tdm' | 'ffa')`): starts a local test arena in
+   * arcade mode with a fake server (bots, match, hits), to look at the arcade client without the
+   * real server. The fake server is `game.previewServer` (see ArcadePreview.ts for scripted events).
+   */
+  async arcadePreview(type: 'tdm' | 'ffa' = 'tdm', name = 'You'): Promise<void> {
+    if (!import.meta.env.DEV) return;
+    const { ArcadePreviewServer } = await import('./ArcadePreview');
+    this.audio.unlock();
+    this.disconnect();
+    this.loadingProgress = this.menu.showLoading('Loading arena preview');
+    const meta: WorldMeta = {
+      id: 'arcade-preview', name: 'Arcade preview', seed: 4242, seedText: '', created: 0, lastPlayed: Date.now(),
+      player: null, hotbar: [...DEFAULT_HOTBAR], selectedSlot: 0, time: 0.3, gameMode: 'creative', spawn: { x: 8, y: 100, z: 8 },
+    };
+    this.startSession(meta, new Map());
+    const world = this.world!;
+    const ray = createRayHit();
+    const server = new ArcadePreviewServer({
+      deliver: (m) => this.onServerMessage(m),
+      snapshot: (e) => this.remote.snapshot(e, 1, performance.now() / 1000),
+      rayDistance: (ox, oy, oz, dx, dy, dz, max) => {
+        const hit = raycast(this.getBlock, ox, oy, oz, dx, dy, dz, max, ray);
+        return hit.hit ? hit.distance : max;
+      },
+    }, type, name);
+    const welcome = {
+      t: 'welcome', id: server.selfId, worldName: 'Arcade preview', seed: meta.seed, gameMode: 'creative', time: 0.3,
+      gameType: type, worldType: 'arena', match: server.info, spawn: { x: 8, y: 100, z: 8 }, edits: [], player: null,
+      players: server.players(), motd: '',
+    } as WelcomeMessage;
+    this.startArcade(welcome, (m) => server.onClient(m, this.player), name);
+    this.net = null;
+    this.previewServer = server;
+    this.afterLoad = () => {
+      // A flat stone arena with a wall ring and some cover, high above the terrain.
+      const cx = Math.floor(this.player.x), cz = Math.floor(this.player.z);
+      let top = 0;
+      for (let x = -24; x <= 24; x += 4) for (let z = -24; z <= 24; z += 4) top = Math.max(top, world.surfaceY(cx + x, cz + z));
+      const floor = top + 4;
+      for (let x = -24; x <= 24; x++) for (let z = -24; z <= 24; z++) {
+        for (let y = floor + 1; y <= floor + 6; y++) world.setBlock(cx + x, y, cz + z, BLOCK.AIR);
+        world.setBlock(cx + x, floor, cz + z, (x + z) & 1 ? BLOCK.STONE : BLOCK.COBBLESTONE);
+        if (Math.abs(x) === 24 || Math.abs(z) === 24) for (let y = 1; y <= 4; y++) world.setBlock(cx + x, floor + y, cz + z, BLOCK.COBBLESTONE);
+      }
+      for (const [bx, bz, h] of [[6, 0, 2], [-8, 6, 3], [0, -10, 2], [12, 12, 3], [-14, -8, 2], [4, 14, 1]]) {
+        for (let x = 0; x < 3; x++) for (let z = 0; z < 3; z++) for (let y = 1; y <= h; y++) world.setBlock(cx + bx + x, floor + y, cz + bz + z, BLOCK.OAK_PLANKS);
+      }
+      server.centerX = cx;
+      server.centerZ = cz;
+      server.floorY = floor + 1;
+      this.player.setPosition(cx - 18, floor + 1, cz);
+      server.start({ x: cx - 18, y: floor + 1, z: cz });
+      this.player.yaw = -Math.PI / 2;
+    };
   }
 
   // ---------------------------------------------------------------- death
@@ -748,7 +895,9 @@ export class Game {
     this.stack.clear();
     this.suppressPause = false;
     this.state = 'playing';
+    this.arcade?.closeLoadout();
     this.hud.setVisible(!this.hudHidden);
+    this.arcade?.setHudVisible(!this.hudHidden);
     await this.input.requestLock();
     if (!this.input.locked && this.state === 'playing') {
       // The world must not keep running (mobs, hunger) behind the overlay.
@@ -823,8 +972,20 @@ export class Game {
     if (code === 'F1' && this.state === 'playing') {
       this.hudHidden = !this.hudHidden;
       this.hud.setVisible(!this.hudHidden);
+      this.arcade?.setHudVisible(!this.hudHidden);
     }
-    if (code === input.bound(KB.INVENTORY)) {
+    if (this.arcade && code === input.bound(KB.LOADOUT)) {
+      // The loadout menu needs the mouse, like the inventory.
+      if (this.state === 'playing' && this.input.locked) {
+        this.state = 'inventory';
+        this.suppressPause = true;
+        this.input.exitLock();
+        this.arcade.openLoadout();
+      } else if (this.state === 'inventory') {
+        void this.resumeGame();
+      }
+    }
+    if (!this.arcade && code === input.bound(KB.INVENTORY)) {
       if (this.state === 'playing' && this.input.locked && this.mode !== 'spectator') {
         this.state = 'inventory';
         this.suppressPause = this.input.locked;
@@ -835,7 +996,7 @@ export class Game {
         void this.resumeGame();
       }
     }
-    if (code === input.bound(KB.DROP) && this.state === 'playing' && this.input.locked && this.mode !== 'spectator') {
+    if (!this.arcade && code === input.bound(KB.DROP) && this.state === 'playing' && this.input.locked && this.mode !== 'spectator') {
       // Drop one item from the selected slot (Q), like Minecraft.
       const s = this.hotbar.selectedStack;
       if (s.count > 0) {
@@ -1064,6 +1225,13 @@ export class Game {
   /** 20 Hz game tick: health, hunger, entities. */
   private gameTick(): void {
     const p = this.player, stats = this.stats;
+    // Arcade: no fall damage, hunger, mobs or items; the server owns health.
+    if (this.arcade) {
+      p.landedFall = 0;
+      p.sprintDistance = p.swimDistance = 0;
+      p.jumps = 0;
+      return;
+    }
     // Fall damage on landing (distance − 3), not in creative or water.
     if (p.landedFall > 0) {
       const dmg = Math.ceil(p.landedFall - 3);
@@ -1102,26 +1270,34 @@ export class Game {
     const active = this.state === 'playing' && input.locked;
 
     if (active) {
-      const sens = 0.0022 * (this.settings.values.sensitivity / 100);
+      const sens = 0.0022 * (this.settings.values.sensitivity / 100) * (this.arcade ? this.arcade.sensitivityScale : 1);
       p.yaw -= input.mouseDX * sens;
       p.pitch -= input.mouseDY * sens * (this.settings.values.invertMouse ? -1 : 1);
       const limit = Math.PI / 2 - 0.001;
       p.pitch = Math.max(-limit, Math.min(limit, p.pitch));
-      for (let i = 0; i < 9; i++) if (input.actionPressed(KB.HOTBAR_1 + i)) this.hotbar.select(i);
-      if (input.wheel !== 0) this.hotbar.select(this.hotbar.selected + input.wheel);
+      if (!this.arcade) {
+        for (let i = 0; i < 9; i++) if (input.actionPressed(KB.HOTBAR_1 + i)) this.hotbar.select(i);
+        if (input.wheel !== 0) this.hotbar.select(this.hotbar.selected + input.wheel);
+      }
     }
 
     if (this.state !== 'paused') {
       // Fixed-step simulation, rendered with interpolation.
       this.accumulator = Math.min(this.accumulator + dt, 0.25);
       const move = this.move;
-      const control = active && this.state !== 'dead';
+      const arcade = this.arcade;
+      const control = active && this.state !== 'dead' && !arcade?.dead;
       move.forward = control ? (input.actionDown(KB.FORWARD) ? 1 : 0) - (input.actionDown(KB.BACK) ? 1 : 0) : 0;
       move.strafe = control ? (input.actionDown(KB.RIGHT) ? 1 : 0) - (input.actionDown(KB.LEFT) ? 1 : 0) : 0;
       move.jump = control && input.actionDown(KB.JUMP);
       move.jumpPressed = control && input.actionPressed(KB.JUMP);
-      move.sprint = control && input.actionDown(KB.SPRINT);
-      move.descend = control && input.actionDown(KB.SNEAK);
+      // Arcade: always sprinting at the weapon's pace, bunny hop friendly air control, no sneaking.
+      move.sprint = control && (arcade !== null || input.actionDown(KB.SPRINT));
+      move.descend = control && arcade === null && input.actionDown(KB.SNEAK);
+      if (arcade) {
+        p.speedMultiplier = arcade.speedMultiplier;
+        p.airAccel = arcade.airAccel;
+      }
       while (this.accumulator >= PHYSICS.STEP) {
         p.step(move, this.getBlock);
         move.jumpPressed = false;
@@ -1138,7 +1314,10 @@ export class Game {
     this.cycle.compute();
 
     world.chunks.update(p.x, p.z);
-    this.cam.hurt = Math.max(0, (this.stats.hurtTime - this.accumulator / PHYSICS.STEP / STEPS_PER_TICK) / 10);
+    if (this.arcade) {
+      this.cam.hurt = this.arcade.hurt;
+      this.cam.hurtSide = this.arcade.hurtSide;
+    } else this.cam.hurt = Math.max(0, (this.stats.hurtTime - this.accumulator / PHYSICS.STEP / STEPS_PER_TICK) / 10);
     this.cam.bowPull = this.interaction?.bowPull ?? 0;
     this.cam.update(p, this.accumulator / PHYSICS.STEP, dt);
     if (this.cam.stepped && !p.inWater && !p.noclip) {
@@ -1150,18 +1329,33 @@ export class Game {
     const eye = this.cam.camera.position;
     this.underwater = world.getBlock(Math.floor(eye.x), Math.floor(eye.y), Math.floor(eye.z)) === BLOCK.WATER;
     this.hud.setUnderwater(this.underwater);
-    this.hud.setHurt(this.stats.hurtTime / 10);
-    this.hud.survival.update({ health: this.stats.health, hunger: this.stats.hunger, air: this.stats.air, maxAir: MAX_AIR }, this.time);
+    this.hud.setHurt(this.arcade ? this.arcade.hurt * 0.8 : this.stats.hurtTime / 10);
+    if (!this.arcade) this.hud.survival.update({ health: this.stats.health, hunger: this.stats.hunger, air: this.stats.air, maxAir: MAX_AIR }, this.time);
 
     if (this.net) {
       const flags = (p.sprinting ? 1 : 0) | (p.flying ? 2 : 0) | (p.onGround ? 4 : 0);
-      this.net.update(dt, p.x, p.y, p.z, p.yaw, p.pitch, flags, this.hotbar.selectedBlock);
-      this.remote.update(performance.now() / 1000, this.cam.camera, window.innerWidth, window.innerHeight);
+      this.net.update(dt, p.x, p.y, p.z, p.yaw, p.pitch, flags, this.arcade ? 0 : this.hotbar.selectedBlock);
     }
+    if (this.net || this.previewServer) this.remote.update(performance.now() / 1000, this.cam.camera, window.innerWidth, window.innerHeight);
+    this.previewServer?.update(dt, p);
     this.interaction!.update(dt, active, input, this.mode);
-    const held = this.hotbar.selectedBlock;
-    this.hand.update(dt, held, this.cam.bobPhase, this.cam.bobStrength, world.getLight(Math.floor(p.x), Math.floor(p.eyeY), Math.floor(p.z)),
-      this.interaction!.eating, window.innerWidth / Math.max(1, window.innerHeight));
+    const light = world.getLight(Math.floor(p.x), Math.floor(p.eyeY), Math.floor(p.z));
+    if (this.arcade) {
+      const f = this.arcadeFrame;
+      f.now = performance.now() / 1000;
+      f.dt = dt;
+      f.controls = active;
+      f.bobPhase = this.cam.bobPhase;
+      f.bobStrength = this.cam.bobStrength;
+      f.light = Math.max(0.35, Math.min(1, ((light >> 4) / 15) * this.cycle.daylight + (light & 15) / 15));
+      f.aspect = window.innerWidth / Math.max(1, window.innerHeight);
+      f.lookX = input.mouseDX;
+      f.lookY = input.mouseDY;
+      this.arcade.update(f, input);
+    } else {
+      this.hand.update(dt, this.hotbar.selectedBlock, this.cam.bobPhase, this.cam.bobStrength, light,
+        this.interaction!.eating, window.innerWidth / Math.max(1, window.innerHeight));
+    }
     this.renderer.particles.update(dt, world);
     this.renderer.clouds.update(dt, this.cycle);
   }

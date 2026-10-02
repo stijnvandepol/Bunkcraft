@@ -40,6 +40,10 @@ export class Player {
   /** Mode rules, set by the game. */
   canFly = true;
   canSprint = true;
+  /** Arcade: scales walking and sprinting speed on the ground and in the air (1 = Minecraft). */
+  speedMultiplier = 1;
+  /** Horizontal acceleration in the air (arcade raises it for bunny hopping). */
+  airAccel: number = PHYSICS.AIR_ACCEL;
   /** Spectator: fly through blocks. */
   noclip = false;
   /** Distance travelled while sprinting / swimming and jumps since last read (hunger). */
@@ -107,11 +111,11 @@ export class Player {
     let speed: number;
     if (this.flying) speed = this.sprinting ? PHYSICS.FLY_SPRINT_SPEED : PHYSICS.FLY_SPEED;
     else if (this.inWater) speed = this.inLava ? PHYSICS.SWIM_SPEED * 0.5 : PHYSICS.SWIM_SPEED;
-    else speed = this.sprinting ? PHYSICS.SPRINT_SPEED : PHYSICS.WALK_SPEED;
+    else speed = (this.sprinting ? PHYSICS.SPRINT_SPEED : PHYSICS.WALK_SPEED) * this.speedMultiplier;
     const sin = Math.sin(this.yaw), cos = Math.cos(this.yaw);
     const tx = (-sin * f + cos * s) * speed;
     const tz = (-cos * f - sin * s) * speed;
-    const accel = this.flying ? PHYSICS.FLY_ACCEL : this.inWater ? 10 : this.onGround ? PHYSICS.GROUND_ACCEL : PHYSICS.AIR_ACCEL;
+    const accel = this.flying ? PHYSICS.FLY_ACCEL : this.inWater ? 10 : this.onGround ? PHYSICS.GROUND_ACCEL : this.airAccel;
     this.vx = approach(this.vx, tx, accel, dt);
     this.vz = approach(this.vz, tz, accel, dt);
 

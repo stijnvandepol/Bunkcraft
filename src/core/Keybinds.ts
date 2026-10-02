@@ -9,7 +9,7 @@
  * fixed, as in Minecraft.
  */
 
-export type KeybindCategory = 'Movement' | 'Gameplay' | 'Inventory' | 'Multiplayer';
+export type KeybindCategory = 'Movement' | 'Gameplay' | 'Inventory' | 'Multiplayer' | 'Arcade';
 
 export interface KeybindDef {
   /** Minecraft's option id, also the storage key in settings. */
@@ -17,6 +17,11 @@ export interface KeybindDef {
   readonly name: string;
   readonly category: KeybindCategory;
   readonly defaultCode: string;
+  /**
+   * Actions that only exist in one kind of game (the Minecraft sandbox or the arcade shooters).
+   * The same key may be bound to a sandbox-only and an arcade-only action without a conflict.
+   */
+  readonly scope?: 'sandbox' | 'arcade';
 }
 
 /** Action indices into {@link KEYBINDS} and the resolved bindings array. */
@@ -37,10 +42,18 @@ export const KB = {
   HOTBAR_1: 12,
   CHAT: 21,
   COMMAND: 22,
+  /** Arcade game types. Fire and aim reuse ATTACK and USE. */
+  RELOAD: 23,
+  SCOREBOARD: 24,
+  LOADOUT: 25,
+  WEAPON_1: 26,
+  WEAPON_2: 27,
+  WEAPON_3: 28,
+  QUICK_SWITCH: 29,
 } as const;
 
 const hotbar: KeybindDef[] = [];
-for (let i = 1; i <= 9; i++) hotbar.push({ id: `key.hotbar.${i}`, name: `Hotbar Slot ${i}`, category: 'Inventory', defaultCode: `Digit${i}` });
+for (let i = 1; i <= 9; i++) hotbar.push({ id: `key.hotbar.${i}`, name: `Hotbar Slot ${i}`, category: 'Inventory', defaultCode: `Digit${i}`, scope: 'sandbox' });
 
 /**
  * Every rebindable action, in {@link KB} index order. Defaults keep BunkCraft's existing
@@ -56,15 +69,22 @@ export const KEYBINDS: readonly KeybindDef[] = [
   { id: 'key.sprint', name: 'Sprint', category: 'Movement', defaultCode: 'ShiftLeft' },
   { id: 'key.attack', name: 'Attack/Destroy', category: 'Gameplay', defaultCode: 'Mouse0' },
   { id: 'key.use', name: 'Use Item/Place Block', category: 'Gameplay', defaultCode: 'Mouse2' },
-  { id: 'key.pickItem', name: 'Pick Block', category: 'Gameplay', defaultCode: 'Mouse1' },
-  { id: 'key.drop', name: 'Drop Selected Item', category: 'Inventory', defaultCode: 'KeyQ' },
-  { id: 'key.inventory', name: 'Open/Close Inventory', category: 'Inventory', defaultCode: 'KeyE' },
+  { id: 'key.pickItem', name: 'Pick Block', category: 'Gameplay', defaultCode: 'Mouse1', scope: 'sandbox' },
+  { id: 'key.drop', name: 'Drop Selected Item', category: 'Inventory', defaultCode: 'KeyQ', scope: 'sandbox' },
+  { id: 'key.inventory', name: 'Open/Close Inventory', category: 'Inventory', defaultCode: 'KeyE', scope: 'sandbox' },
   ...hotbar,
   { id: 'key.chat', name: 'Open Chat', category: 'Multiplayer', defaultCode: 'KeyT' },
   { id: 'key.command', name: 'Open Command', category: 'Multiplayer', defaultCode: 'Slash' },
+  { id: 'key.arcade.reload', name: 'Reload', category: 'Arcade', defaultCode: 'KeyR', scope: 'arcade' },
+  { id: 'key.arcade.scoreboard', name: 'Scoreboard (Hold)', category: 'Arcade', defaultCode: 'Tab', scope: 'arcade' },
+  { id: 'key.arcade.loadout', name: 'Loadout Menu', category: 'Arcade', defaultCode: 'KeyB', scope: 'arcade' },
+  { id: 'key.arcade.weapon1', name: 'Primary Weapon', category: 'Arcade', defaultCode: 'Digit1', scope: 'arcade' },
+  { id: 'key.arcade.weapon2', name: 'Secondary Weapon', category: 'Arcade', defaultCode: 'Digit2', scope: 'arcade' },
+  { id: 'key.arcade.weapon3', name: 'Melee Weapon', category: 'Arcade', defaultCode: 'Digit3', scope: 'arcade' },
+  { id: 'key.arcade.quickSwitch', name: 'Quick Switch Weapon', category: 'Arcade', defaultCode: 'KeyQ', scope: 'arcade' },
 ];
 
-export const KEYBIND_CATEGORIES: readonly KeybindCategory[] = ['Movement', 'Gameplay', 'Inventory', 'Multiplayer'];
+export const KEYBIND_CATEGORIES: readonly KeybindCategory[] = ['Movement', 'Gameplay', 'Inventory', 'Multiplayer', 'Arcade'];
 
 /** Keys with a fixed meaning that cannot be bound (Escape cancels/unbinds while listening). */
 export const RESERVED_CODES: ReadonlySet<string> = new Set(['Escape', 'F1', 'F3']);
@@ -101,17 +121,25 @@ export function resolveKeybinds(map: KeybindMap): string[] {
   return KEYBINDS.map((k) => map[k.id] ?? k.defaultCode);
 }
 
-/** Codes used by more than one action. */
-export function conflictingCodes(map: KeybindMap): Set<string> {
-  const seen = new Set<string>();
-  const dup = new Set<string>();
-  for (const k of KEYBINDS) {
-    const c = map[k.id];
-    if (!c) continue;
-    if (seen.has(c)) dup.add(c);
-    seen.add(c);
-  }
-  return dup;
+/** Do two actions ever exist in the same game? Sandbox-only and arcade-only actions never do. */
+function sharesGame(a: KeybindDef, b: KeybindDef): boolean {
+  return !a.scope || !b.scope || a.scope === b.scope;
+}
+
+/** Indices (in {@link KB} order) of actions whose code is also used by another action of the same game. */
+export function conflictingActions(map: KeybindMap): Set<number> {
+  const bad = new Set<number>();
+  KEYBINDS.forEach((a, i) => {
+    const code = map[a.id];
+    if (!code) return;
+    for (let j = i + 1; j < KEYBINDS.length; j++) {
+      if (map[KEYBINDS[j].id] === code && sharesGame(a, KEYBINDS[j])) {
+        bad.add(i);
+        bad.add(j);
+      }
+    }
+  });
+  return bad;
 }
 
 const NAMED: Record<string, string> = {

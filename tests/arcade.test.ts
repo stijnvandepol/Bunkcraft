@@ -1,0 +1,204 @@
+import { describe, expect, it } from 'vitest';
+import { KB, KEYBINDS, conflictingActions, defaultKeybinds } from '../src/core/Keybinds';
+import {
+  FireControl, KILL_FEED_LIFETIME, KILL_FEED_MAX, KillFeed, cycleSlot, currentSpread, damageAngle, formatClock, impactNormal, kdRatio,
+  reloadProgress, sortRoster, spreadPixels, teamKills,
+} from '../src/modes/ArcadeLogic';
+import { WEAPONS, fireInterval, weaponDef } from '../src/modes/Weapons';
+import type { RosterEntry } from '../src/net/protocol';
+
+const rifle = weaponDef('rifle')!;
+const sniper = weaponDef('sniper')!;
+
+describe('crosshair size', () => {
+  it('is zero for a perfect weapon and grows with the cone', () => {
+    expect(spreadPixels(0, 70, 720)).toBe(0);
+    expect(spreadPixels(4, 70, 720)).toBeGreaterThan(spreadPixels(2, 70, 720));
+  });
+
+  it('matches the projection of the cone on the screen', () => {
+    // 45° vertical fov: half the screen height (tan 22.5° ↔ 360 px) per tan(spread).
+    const px = spreadPixels(5, 45, 720);
+    expect(px).toBeCloseTo((Math.tan((5 * Math.PI) / 180) / Math.tan((22.5 * Math.PI) / 180)) * 360, 6);
+  });
+
+  it('looks bigger on screen when zoomed in (narrower field of view)', () => {
+    expect(spreadPixels(1, 35, 720)).toBeGreaterThan(spreadPixels(1, 70, 720));
+  });
+
+  it('tightens when aiming and loosens when moving or airborne', () => {
+    expect(currentSpread(rifle, 0, false, false)).toBe(rifle.spread);
+    expect(currentSpread(rifle, 1, false, false)).toBeCloseTo(rifle.adsSpread, 9);
+    expect(currentSpread(rifle, 0.5, false, false)).toBeCloseTo((rifle.spread + rifle.adsSpread) / 2, 9);
+    expect(currentSpread(rifle, 0, true, false)).toBeGreaterThan(rifle.spread);
+    expect(currentSpread(rifle, 0, true, true)).toBeGreaterThan(currentSpread(rifle, 0, true, false));
+    expect(currentSpread(sniper, 1, false, false)).toBeCloseTo(0, 9);
+  });
+});
+
+describe('fire control', () => {
+  /** Shots fired in `seconds` of holding (or clicking every frame) at a frame rate. */
+  function shots(rpm: number, auto: boolean, seconds: number, fps: number, click: boolean): number {
+    const fc = new FireControl();
+    const interval = 60 / rpm;
+    let n = 0;
+    for (let f = 0; f < seconds * fps; f++) {
+      if (fc.tryFire(1 + f / fps, interval, auto, true, click)) n++;
+    }
+    return n;
+  }
+
+  it('holds an automatic weapon to its rate, whatever the frame rate', () => {
+    expect(shots(600, true, 2, 60, false)).toBeGreaterThanOrEqual(19);
+    expect(shots(600, true, 2, 60, false)).toBeLessThanOrEqual(21);
+    expect(shots(600, true, 2, 144, false)).toBeLessThanOrEqual(21);
+    expect(shots(600, true, 2, 20, false)).toBeGreaterThanOrEqual(18);
+  });
+
+  it('semi-automatic weapons need a fresh click per shot and still respect the rate', () => {
+    const fc = new FireControl();
+    expect(fc.tryFire(1, 0.8, false, true, false)).toBe(false);
+    expect(fc.tryFire(1, 0.8, false, true, true)).toBe(true);
+    expect(fc.tryFire(1.2, 0.8, false, true, true)).toBe(false);
+    expect(fc.tryFire(1.9, 0.8, false, true, true)).toBe(true);
+  });
+
+  it('does not fire without the trigger, and does not burst after a pause', () => {
+    const fc = new FireControl();
+    expect(fc.tryFire(5, 0.1, true, false, false)).toBe(false);
+    expect(fc.tryFire(10, 0.1, true, true, true)).toBe(true);
+    expect(fc.tryFire(10.01, 0.1, true, true, false)).toBe(false);
+  });
+
+  it('delay blocks the trigger (weapon switch)', () => {
+    const fc = new FireControl();
+    fc.delay(1, 0.3);
+    expect(fc.tryFire(1.1, 0.1, true, true, true)).toBe(false);
+    expect(fc.tryFire(1.31, 0.1, true, true, true)).toBe(true);
+  });
+
+  it('the fire intervals of the weapon table are in seconds', () => {
+    expect(fireInterval(rifle)).toBeCloseTo(0.1, 9);
+    for (const w of WEAPONS) expect(fireInterval(w)).toBeGreaterThan(0);
+  });
+});
+
+describe('damage direction', () => {
+  const forward = (yaw: number) => ({ x: -Math.sin(yaw), z: -Math.cos(yaw) });
+
+  it('is 0 for an attacker straight ahead, whatever the view', () => {
+    for (const yaw of [0, 1, -2.5, Math.PI]) {
+      const f = forward(yaw);
+      expect(damageAngle(f.x * 7, f.z * 7, yaw)).toBeCloseTo(0, 9);
+    }
+  });
+
+  it('is +90° on the right, -90° on the left and 180° behind', () => {
+    const yaw = 0.7;
+    const f = forward(yaw);
+    const right = { x: Math.cos(yaw), z: -Math.sin(yaw) };
+    expect(damageAngle(right.x, right.z, yaw)).toBeCloseTo(Math.PI / 2, 9);
+    expect(damageAngle(-right.x, -right.z, yaw)).toBeCloseTo(-Math.PI / 2, 9);
+    expect(Math.abs(damageAngle(-f.x, -f.z, yaw))).toBeCloseTo(Math.PI, 9);
+  });
+
+  it('turns with the view', () => {
+    // A source due north (−z) is ahead at yaw 0 and on the right when we turn left by 90°.
+    expect(damageAngle(0, -5, 0)).toBeCloseTo(0, 9);
+    expect(damageAngle(0, -5, Math.PI / 2)).toBeCloseTo(Math.PI / 2, 9);
+  });
+});
+
+describe('scoreboard', () => {
+  const p = (id: number, name: string, kills: number, deaths: number, team: 'red' | 'blue' | '' = ''): RosterEntry => ({ id, name, team, kills, deaths, ping: 0 });
+
+  it('sorts by kills, then fewer deaths, then name, without touching the input', () => {
+    const roster = [p(1, 'delta', 5, 2), p(2, 'alpha', 9, 4), p(3, 'charlie', 5, 1), p(4, 'bravo', 5, 2)];
+    const sorted = sortRoster(roster);
+    expect(sorted.map((r) => r.name)).toEqual(['alpha', 'charlie', 'bravo', 'delta']);
+    expect(roster[0].name).toBe('delta');
+  });
+
+  it('sums team kills and ignores players without a team', () => {
+    expect(teamKills([p(1, 'a', 4, 0, 'red'), p(2, 'b', 3, 0, 'red'), p(3, 'c', 5, 0, 'blue'), p(4, 'd', 9, 0)])).toEqual({ red: 7, blue: 5 });
+  });
+
+  it('formats K/D and the match clock', () => {
+    expect(kdRatio(6, 3)).toBe('2.00');
+    expect(kdRatio(4, 0)).toBe('4.00');
+    expect(formatClock(605)).toBe('10:05');
+    expect(formatClock(59.2)).toBe('1:00');
+    expect(formatClock(-3)).toBe('0:00');
+  });
+});
+
+describe('kill feed', () => {
+  const entry = (born: number) => ({ killer: 'a', victim: 'b', killerTeam: 'red' as const, victimTeam: 'blue' as const, weapon: 'rifle', head: false, born });
+
+  it('expires entries after their lifetime and reports changes', () => {
+    const feed = new KillFeed();
+    feed.add(entry(0));
+    feed.add(entry(4));
+    expect(feed.prune(KILL_FEED_LIFETIME - 0.1)).toBe(false);
+    expect(feed.prune(KILL_FEED_LIFETIME + 0.1)).toBe(true);
+    expect(feed.entries).toHaveLength(1);
+    expect(feed.prune(100)).toBe(true);
+    expect(feed.entries).toHaveLength(0);
+  });
+
+  it('keeps only the newest few', () => {
+    const feed = new KillFeed();
+    for (let i = 0; i < KILL_FEED_MAX + 3; i++) feed.add(entry(i * 0.1));
+    expect(feed.entries).toHaveLength(KILL_FEED_MAX);
+    expect(feed.entries[KILL_FEED_MAX - 1].born).toBeCloseTo((KILL_FEED_MAX + 2) * 0.1, 9);
+  });
+});
+
+describe('bullet impacts', () => {
+  const n = { x: 0, y: 0, z: 0 };
+
+  it('points the normal back against the bullet on the nearest block face', () => {
+    impactNormal(10, 4.5, 3.5, 1, 0, 0, n); // hit the −x face of the block at x = 10
+    expect(n).toEqual({ x: -1, y: 0, z: 0 });
+    impactNormal(3.5, 7, 3.5, 0, -1, 0, n); // hit the top of a block
+    expect(n).toEqual({ x: 0, y: 1, z: 0 });
+    impactNormal(3.5, 4.5, 12, 0, 0, -1, n);
+    expect(n).toEqual({ x: 0, y: 0, z: 1 });
+  });
+});
+
+describe('weapon slots and reload', () => {
+  it('cycles through the three slots in both directions', () => {
+    expect(cycleSlot(0, 1)).toBe(1);
+    expect(cycleSlot(2, 1)).toBe(0);
+    expect(cycleSlot(0, -1)).toBe(2);
+  });
+
+  it('reload progress is clamped to 0..1', () => {
+    expect(reloadProgress(0.8, 1.6)).toBeCloseTo(0.5, 9);
+    expect(reloadProgress(5, 1.6)).toBe(1);
+    expect(reloadProgress(-1, 1.6)).toBe(0);
+    expect(reloadProgress(1, 0)).toBe(1);
+  });
+});
+
+describe('arcade key binds', () => {
+  it('default binds have no conflicts, although sandbox and arcade actions share keys', () => {
+    expect(conflictingActions(defaultKeybinds()).size).toBe(0);
+    // Digit1 is both Hotbar Slot 1 and Primary Weapon.
+    const digit1 = KEYBINDS.filter((k) => k.defaultCode === 'Digit1');
+    expect(digit1.length).toBe(2);
+  });
+
+  it('still flags two actions of the same game on one key', () => {
+    const map = defaultKeybinds();
+    map[KEYBINDS[KB.RELOAD].id] = map[KEYBINDS[KB.SCOREBOARD].id];
+    const bad = conflictingActions(map);
+    expect(bad.has(KB.RELOAD)).toBe(true);
+    expect(bad.has(KB.SCOREBOARD)).toBe(true);
+    // A shared action (Jump) on an arcade key conflicts too.
+    const map2 = defaultKeybinds();
+    map2[KEYBINDS[KB.JUMP].id] = map2[KEYBINDS[KB.RELOAD].id];
+    expect(conflictingActions(map2).has(KB.JUMP)).toBe(true);
+  });
+});
