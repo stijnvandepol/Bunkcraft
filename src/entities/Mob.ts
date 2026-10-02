@@ -56,6 +56,8 @@ export class Mob extends Entity {
   /** Chunk this passive mob was spawned with (unloaded together with it). */
   homeChunk = -1;
   persistent = false;
+  /** Remote arcade player with a gun in the hands (arms raised). */
+  holding = false;
   /** Set each tick by the EntityManager: bright light keeps neutral-in-light mobs calm. */
   calm = false;
   /** Attacked: neutral mobs (spiders) stay hostile. */

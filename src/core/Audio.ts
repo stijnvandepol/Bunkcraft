@@ -271,6 +271,95 @@ export class AudioEngine {
     this.voice('sawtooth', 110, 80, 0.3, 0.3);
   }
 
+  // ---------------------------------------------------------------- arcade weapons
+
+  /**
+   * Gunshot per weapon; `volume` 0..1 already includes the distance falloff for other players'
+   * shots (see {@link gunVolume}). Each weapon gets its own mix of crack, body and thump.
+   */
+  playGun(weapon: string, volume: number): void {
+    if (volume <= 0.02) return;
+    const v = Math.min(1, volume);
+    const p = 0.95 + Math.random() * 0.1;
+    switch (weapon) {
+      case 'rifle':
+        this.noiseBurst(2200 * p, 0.7, 0.09, v * 0.7);
+        this.noiseBurst(500, 0.6, 0.12, v * 0.5, 'lowpass');
+        this.voice('sine', 150 * p, 55, 0.1, v * 0.6);
+        break;
+      case 'smg':
+        this.noiseBurst(3000 * p, 0.8, 0.05, v * 0.55);
+        this.voice('square', 260 * p, 110, 0.05, v * 0.25);
+        this.voice('sine', 170, 70, 0.06, v * 0.4);
+        break;
+      case 'shotgun':
+        this.noiseBurst(1400, 0.5, 0.2, v * 0.9);
+        this.noiseBurst(300, 0.5, 0.35, v * 0.8, 'lowpass');
+        this.voice('sine', 100 * p, 38, 0.3, v * 0.9);
+        // Pump action a moment later.
+        this.noiseBurst(1200, 2, 0.03, v * 0.3, 'bandpass', 0.38);
+        this.noiseBurst(900, 2, 0.04, v * 0.3, 'bandpass', 0.5);
+        break;
+      case 'sniper':
+        this.noiseBurst(3400, 0.5, 0.12, v * 1.0, 'highpass');
+        this.noiseBurst(350, 0.4, 0.55, v * 0.9, 'lowpass');
+        this.voice('sine', 80, 28, 0.45, v * 1.0);
+        this.noiseBurst(600, 0.5, 0.4, v * 0.25, 'lowpass', 0.12);
+        break;
+      case 'pistol':
+        this.noiseBurst(2600 * p, 0.8, 0.06, v * 0.6);
+        this.voice('triangle', 320 * p, 120, 0.07, v * 0.45);
+        this.voice('sine', 130, 60, 0.07, v * 0.35);
+        break;
+      case 'knife':
+        this.noiseBurst(2800, 0.6, 0.11, v * 0.35, 'highpass');
+        this.noiseBurst(1400, 0.8, 0.12, v * 0.25, 'bandpass', 0.03);
+        break;
+      default:
+        this.noiseBurst(2000, 0.7, 0.08, v * 0.5);
+    }
+  }
+
+  /** Reload: magazine out, magazine in, bolt (or pump for the shotgun) as three clicks. */
+  playReload(reloadSec: number): void {
+    const click = (f: number, delay: number, vol: number) => {
+      this.voice('square', f, f * 0.45, 0.025, vol, delay);
+      this.noiseBurst(f * 1.5, 1.5, 0.03, vol * 0.8, 'bandpass', delay);
+    };
+    click(1100, 0.05, 0.22);
+    click(800, Math.max(0.1, reloadSec * 0.55), 0.26);
+    click(1400, Math.max(0.2, reloadSec - 0.15), 0.22);
+  }
+
+  /** Trigger on an empty magazine. */
+  playEmpty(): void {
+    this.voice('square', 900, 400, 0.03, 0.2);
+  }
+
+  /** White tick when your bullet hits a player; higher and doubled for a headshot. */
+  playHitMarker(head: boolean): void {
+    this.voice('sine', head ? 2400 : 1700, head ? 2400 : 1700, 0.05, 0.35);
+    if (head) this.voice('sine', 3200, 3200, 0.06, 0.28, 0.045);
+  }
+
+  /** Kill confirmation: a bright two-note ding. */
+  playKillDing(): void {
+    this.voice('sine', 1318, 1318, 0.28, 0.32);
+    this.voice('sine', 1760, 1760, 0.32, 0.3, 0.08);
+    this.voice('triangle', 2637, 2637, 0.2, 0.12, 0.08);
+  }
+
+  /** Little whoosh when you respawn. */
+  playSpawn(): void {
+    this.voice('sine', 300, 900, 0.25, 0.18);
+  }
+
+  /** Bullet hitting a block somewhere (own or other players' shots). */
+  playBulletImpact(volume: number): void {
+    if (volume <= 0.03) return;
+    this.noiseBurst(1600 + Math.random() * 600, 1.2, 0.05, Math.min(1, volume) * 0.3);
+  }
+
   private note(freq: number, at: number, length: number, velocity: number): void {
     const ctx = this.ctx!;
     const g = ctx.createGain();
@@ -311,4 +400,9 @@ export class AudioEngine {
       t += 0.55 + Math.floor(Math.random() * 3) * 0.35;
     }
   }
+}
+
+/** Volume 0..1 for another player's gunshot: full close by, fading out over 60 blocks. */
+export function gunVolume(distance: number): number {
+  return Math.max(0, 1 - distance / 60) ** 1.5;
 }
