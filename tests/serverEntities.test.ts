@@ -12,6 +12,7 @@ function setup(mode: 'survival' | 'creative' = 'survival', time = 0.25) {
     send: (to: number, msg: ServerMessage) => sent.push({ to, msg }),
     broadcast: (msg: ServerMessage) => sent.push({ to: -1, msg }),
     broadcastBlock: () => undefined,
+    broadcastBlocks: () => undefined,
     recordEdit: (x: number, y: number, z: number, id: number) => { edits[`${x},${y},${z}`] = id; },
   };
   const ents = new ServerEntities(777, edits, mode, host, () => time);

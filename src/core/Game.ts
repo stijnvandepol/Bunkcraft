@@ -44,6 +44,8 @@ import { KB, resolveKeybinds } from './Keybinds';
 import { SurvivalInventory } from '../ui/SurvivalInventory';
 import { WorkerPool } from '../workers/WorkerPool';
 import { BLOCK, SOLID, getBlockDef } from '../world/BlockRegistry';
+import { packState } from '../world/BlockStates';
+import { pointInLiquid } from '../world/Liquids';
 import { CHUNK_VOLUME, blockIndex, chunkKey } from '../world/constants';
 import { hashString } from '../world/Noise';
 import { BIOME_NAMES } from '../world/TerrainGenerator';
@@ -148,6 +150,7 @@ export class Game {
   private readonly move: MoveInput = { forward: 0, strafe: 0, jump: false, jumpPressed: false, sprint: false, descend: false };
   /** Bound once: avoids allocating a closure per frame for physics. */
   private readonly getBlock = (x: number, y: number, z: number): number => this.world ? this.world.getBlock(x, y, z) : BLOCK.UNLOADED;
+  private readonly getMeta = (x: number, y: number, z: number): number => this.world ? this.world.getMeta(x, y, z) : 0;
   private underwater = false;
   private readonly frustum = new THREE.Frustum();
   private readonly projView = new THREE.Matrix4();
@@ -413,6 +416,19 @@ export class Game {
     world.onChunkReady = (c) => entities.onChunkReady(c);
     world.onChunkUnloaded = (k) => entities.onChunkUnloaded(k);
     this.entities = entities;
+    // Water and lava flow in singleplayer; on a server the server simulates and sends the changes.
+    if (!this.net) {
+      const sim = world.enableLiquids();
+      sim.onDestroyed = (x, y, z, id) => {
+        // Plants and torches washed away drop themselves (survival).
+        const drop = hasSurvivalRules(this.mode) ? blockDrop(id, 0) : null;
+        if (drop) entities.dropItem(drop, x + 0.5, y + 0.3, z + 0.5);
+      };
+      sim.onFizz = (x, y, z) => {
+        const p = this.player;
+        this.audio.playFizz(Math.max(0, 1 - Math.hypot(x - p.x, y - p.y, z - p.z) / 20));
+      };
+    }
     this.interaction = new Interaction({
       world, player: this.player, stats: this.stats, inventory: this.playerInventory, hotbar: this.hotbar,
       entities, renderer: this.renderer, hand: this.hand, audio: this.audio, camera: this.cam.camera,
@@ -547,7 +563,7 @@ export class Game {
       const x = Math.floor(this.player.x), z = Math.floor(this.player.z);
       this.player.setPosition(this.player.x, world.surfaceY(x, z) + 1, this.player.z);
     }
-    this.player.unstick((x, y, z) => world.getBlock(x, y, z));
+    this.player.unstick((x, y, z) => world.getBlock(x, y, z), (x, y, z) => world.getMeta(x, y, z));
     if (this.meta && !this.meta.spawn) this.meta.spawn = { x: this.player.x, y: this.player.y, z: this.player.z };
     this.player.fallDistance = 0;
     this.player.landedFall = 0;
@@ -633,12 +649,12 @@ export class Game {
     // Terrain comes from the seed; only the server's edit list is transferred.
     const edits = new Map<number, Map<number, number>>();
     const list = welcome.edits;
-    for (let i = 0; i + 3 < list.length; i += 4) {
-      const x = list[i], y = list[i + 1], z = list[i + 2], id = list[i + 3];
+    for (let i = 0; i + 4 < list.length; i += 5) {
+      const x = list[i], y = list[i + 1], z = list[i + 2], id = list[i + 3], blockMeta = list[i + 4];
       const key = chunkKey(x >> 4, z >> 4);
       let m = edits.get(key);
       if (!m) { m = new Map(); edits.set(key, m); }
-      m.set(blockIndex(x & 15, y, z & 15), id);
+      m.set(blockIndex(x & 15, y, z & 15), packState(id, blockMeta));
     }
     const rec = welcome.player;
     const meta: WorldMeta = {
@@ -666,8 +682,8 @@ export class Game {
       // Only ask when the whole stack fits; the server hands it to the first asker.
       if (this.playerInventory.canFit(item.stack) && mirror.shouldTake(item, performance.now() / 1000)) net.sendTake(item.netId);
     };
-    world.onEdit = (x, y, z, id, prev) => net.sendBlock(x, y, z, id, prev);
-    net.onRevert = (x, y, z, id) => world.applyRemoteEdit(x, y, z, id);
+    world.onEdit = (x, y, z, id, meta, prev, prevMeta) => net.sendBlock(x, y, z, id, meta, prev, prevMeta);
+    net.onRevert = (x, y, z, id, meta) => world.applyRemoteEdit(x, y, z, id, meta);
     net.onMessage = (msg) => this.onServerMessage(msg);
     net.onClose = (reason) => {
       if (this.net !== net) return;
@@ -782,7 +798,13 @@ export class Game {
         if (left > 0) this.entities?.dropItem({ id: msg.itemId, count: left, damage: msg.damage }, this.player.x, this.player.y + 1, this.player.z, 40, undefined, true);
         break;
       }
-      case 'block': world?.applyRemoteEdit(msg.x, msg.y, msg.z, msg.id); break;
+      case 'block': world?.applyRemoteEdit(msg.x, msg.y, msg.z, msg.id, msg.meta ?? 0); break;
+      case 'blocks':
+        for (let i = 0; i + 4 < msg.edits.length; i += 5) {
+          const e = msg.edits;
+          world?.applyRemoteEdit(e[i], e[i + 1], e[i + 2], e[i + 3], e[i + 4]);
+        }
+        break;
       case 'join':
         if (this.arcade) this.arcade.addPlayer(msg.id, msg.name, '');
         else this.remote.add(msg.id, msg.name);
@@ -1305,6 +1327,7 @@ export class Game {
     }
     p.sprintDistance = p.swimDistance = 0;
     p.jumps = 0;
+    this.world?.tickLiquids();
     stats.tick(p, this.getBlock, this.mode);
     p.canSprint = !hasSurvivalRules(this.mode) || stats.canSprint;
 
@@ -1358,7 +1381,7 @@ export class Game {
         p.airAccel = arcade.airAccel;
       }
       while (this.accumulator >= PHYSICS.STEP) {
-        p.step(move, this.getBlock);
+        p.step(move, this.getBlock, this.getMeta);
         move.jumpPressed = false;
         this.accumulator -= PHYSICS.STEP;
         if (++this.stepCount % STEPS_PER_TICK === 0) this.gameTick();
@@ -1386,7 +1409,7 @@ export class Game {
     }
 
     const eye = this.cam.camera.position;
-    this.underwater = world.getBlock(Math.floor(eye.x), Math.floor(eye.y), Math.floor(eye.z)) === BLOCK.WATER;
+    this.underwater = pointInLiquid(this.getBlock, this.getMeta, BLOCK.WATER, eye.x, eye.y, eye.z);
     this.hud.setUnderwater(this.underwater);
     this.hud.setHurt(this.arcade ? this.arcade.hurt * 0.8 : this.stats.hurtTime / 10);
     if (!this.arcade) this.hud.survival.update({ health: this.stats.health, hunger: this.stats.hunger, air: this.stats.air, maxAir: MAX_AIR }, this.time);

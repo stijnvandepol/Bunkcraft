@@ -8,7 +8,11 @@ import { TINT_BIRCH, TINT_FOLIAGE, TINT_GRASS, TINT_NONE, TINT_SPRUCE } from './
  * Face order used everywhere: 0 +X, 1 -X, 2 +Y (top), 3 -Y (bottom), 4 +Z, 5 -Z.
  */
 
-export type RenderShape = 'none' | 'cube' | 'cross' | 'liquid' | 'model';
+/**
+ * "slab" and "stairs" are unions of octants (see BlockStates), "door" a thin box; all three depend on the
+ * block's state byte and are collectively the "partial" blocks (not a full cube, but they collide).
+ */
+export type RenderShape = 'none' | 'cube' | 'cross' | 'liquid' | 'model' | 'slab' | 'stairs' | 'door';
 export type BlockSound = 'stone' | 'wood' | 'grass' | 'gravel' | 'sand' | 'glass' | 'wool' | 'snow';
 
 export interface BlockTextures {
@@ -33,6 +37,11 @@ export interface BlockDef {
   cullSelf?: boolean;
   /** Extra light attenuation when light passes through (leaves, water). */
   lightFilter?: number;
+  /**
+   * The cell receives light but passes none on (slabs and stairs: lit from outside, a roof of them still
+   * darkens what is below). Without it a partial block would have no light of its own to be seen by.
+   */
+  lightStop?: boolean;
   /** Emitted block light 0..15. */
   light?: number;
   /** Seconds to break; -1 = unbreakable. */
@@ -44,6 +53,8 @@ export interface BlockDef {
   inInventory?: boolean;
   /** Biome colour applied to the greyscale tintable texture parts (see BiomeColors). */
   tint?: number;
+  /** Bits of the block state byte this block uses (see BlockStates); 0 = no states. Validated on the server. */
+  metaMask?: number;
   /** For shape "model": boxes in 1/16 block units [x0, y0, z0, x1, y1, z1]. */
   model?: number[][];
   /** Damage per second when touching the block (survival). */
@@ -102,6 +113,26 @@ export const BLOCK = {
   CRAFTING_TABLE: 45,
   FURNACE: 46,
   TNT: 47,
+  STONE_SLAB: 48,
+  COBBLESTONE_SLAB: 49,
+  MOSSY_COBBLESTONE_SLAB: 50,
+  STONE_BRICK_SLAB: 51,
+  BRICK_SLAB: 52,
+  SANDSTONE_SLAB: 53,
+  OAK_SLAB: 54,
+  BIRCH_SLAB: 55,
+  SPRUCE_SLAB: 56,
+  STONE_STAIRS: 57,
+  COBBLESTONE_STAIRS: 58,
+  MOSSY_COBBLESTONE_STAIRS: 59,
+  STONE_BRICK_STAIRS: 60,
+  BRICK_STAIRS: 61,
+  SANDSTONE_STAIRS: 62,
+  OAK_STAIRS: 63,
+  BIRCH_STAIRS: 64,
+  SPRUCE_STAIRS: 65,
+  /** Both halves of a door are this block; the state byte says which half (see BlockStates). */
+  OAK_DOOR: 66,
   /** Sentinel returned for blocks in chunks that are not loaded (treated as solid). */
   UNLOADED: 255,
 } as const;
@@ -127,6 +158,24 @@ function plant(id: number, name: string, displayName: string, texture: string): 
   };
 }
 
+/**
+ * Slab and stairs families: the full block they are made of, Minecraft's names. Slab id = SLAB_FIRST + index,
+ * stairs id = STAIRS_FIRST + index.
+ */
+export const SLAB_FIRST = 48;
+export const STAIRS_FIRST = 57;
+export const PARTIAL_MATERIALS = [
+  { base: B.STONE, name: 'stone', display: 'Stone' },
+  { base: B.COBBLESTONE, name: 'cobblestone', display: 'Cobblestone' },
+  { base: B.MOSSY_COBBLESTONE, name: 'mossy_cobblestone', display: 'Mossy Cobblestone' },
+  { base: B.STONE_BRICKS, name: 'stone_brick', display: 'Stone Brick' },
+  { base: B.BRICKS, name: 'brick', display: 'Brick' },
+  { base: B.SANDSTONE, name: 'sandstone', display: 'Sandstone' },
+  { base: B.OAK_PLANKS, name: 'oak', display: 'Oak' },
+  { base: B.BIRCH_PLANKS, name: 'birch', display: 'Birch' },
+  { base: B.SPRUCE_PLANKS, name: 'spruce', display: 'Spruce' },
+] as const;
+
 export const BLOCK_DEFS: BlockDef[] = [
   { id: B.AIR, name: 'air', displayName: 'Air', shape: 'none', solid: false, transparent: true, hardness: 0, sound: 'stone', textures: {} },
   cube(B.STONE, 'stone', 'Stone', { all: 'stone' }, 1.0, 'stone'),
@@ -142,7 +191,7 @@ export const BLOCK_DEFS: BlockDef[] = [
   cube(B.GLASS, 'glass', 'Glass', { all: 'glass' }, 0.3, 'glass', { transparent: true, cullSelf: true }),
   {
     id: B.WATER, name: 'water', displayName: 'Water', shape: 'liquid', solid: false, transparent: true,
-    cullSelf: true, lightFilter: 2, hardness: -1, sound: 'stone', textures: { all: 'water' },
+    cullSelf: true, lightFilter: 2, hardness: -1, sound: 'stone', textures: { all: 'water' }, metaMask: 15,
   },
   cube(B.COAL_ORE, 'coal_ore', 'Coal Ore', { all: 'coal_ore' }, 1.4, 'stone'),
   cube(B.IRON_ORE, 'iron_ore', 'Iron Ore', { all: 'iron_ore' }, 1.5, 'stone'),
@@ -181,12 +230,30 @@ export const BLOCK_DEFS: BlockDef[] = [
   },
   {
     id: B.LAVA, name: 'lava', displayName: 'Lava', shape: 'liquid', solid: false, transparent: true,
-    cullSelf: true, lightFilter: 2, light: 15, hardness: -1, sound: 'stone', contactDamage: 8, textures: { all: 'lava' },
+    cullSelf: true, lightFilter: 2, light: 15, hardness: -1, sound: 'stone', contactDamage: 8, textures: { all: 'lava' }, metaMask: 15,
   },
   cube(B.CRAFTING_TABLE, 'crafting_table', 'Crafting Table', { top: 'crafting_table_top', bottom: 'oak_planks', side: 'crafting_table_side' }, 0.8, 'wood'),
   cube(B.FURNACE, 'furnace', 'Furnace', { top: 'furnace_top', bottom: 'furnace_top', side: 'furnace_side', front: 'furnace_front' }, 1.2, 'stone'),
   cube(B.TNT, 'tnt', 'TNT', { top: 'tnt_top', bottom: 'tnt_bottom', side: 'tnt_side' }, 0, 'grass'),
 ];
+
+// Oak door: the lower half uses the "side" texture slot and the upper half the "top" slot.
+BLOCK_DEFS.push({
+  id: B.OAK_DOOR, name: 'oak_door', displayName: 'Oak Door', shape: 'door', solid: true, transparent: true, hardness: 3, sound: 'wood',
+  inInventory: true, textures: { side: 'oak_door_lower', top: 'oak_door_upper' }, metaMask: 31,
+});
+
+// Slabs and stairs reuse the textures and sounds of the block they are made of.
+PARTIAL_MATERIALS.forEach((m, i) => {
+  const base = BLOCK_DEFS.find((d) => d.id === m.base)!;
+  const partial = (id: number, name: string, displayName: string, shape: RenderShape, hardness: number, metaMask: number): BlockDef => ({
+    id, name, displayName, shape, solid: true, transparent: true, hardness, sound: base.sound, inInventory: true,
+    textures: base.textures, lightStop: true, metaMask,
+  });
+  BLOCK_DEFS.push(partial(SLAB_FIRST + i, `${m.name}_slab`, `${m.display} Slab`, 'slab', 2, 3));
+  BLOCK_DEFS.push(partial(STAIRS_FIRST + i, `${m.name}_stairs`, `${m.display} Stairs`, 'stairs', base.hardness, 7));
+});
+BLOCK_DEFS.sort((a, b) => a.id - b.id);
 
 /** Extra texture layers that are not tied to a block face (crack overlay stages). */
 export const DESTROY_STAGES = 10;
@@ -218,17 +285,26 @@ export const SHAPE_CUBE = 1;
 export const SHAPE_CROSS = 2;
 export const SHAPE_LIQUID = 3;
 export const SHAPE_MODEL = 4;
+export const SHAPE_SLAB = 5;
+export const SHAPE_STAIRS = 6;
+export const SHAPE_DOOR = 7;
 
 export const SHAPE = new Uint8Array(256);
 export const SOLID = new Uint8Array(256);
+/** Blocks whose geometry depends on their state byte: slabs, stairs and doors (see BlockShapes). */
+export const PARTIAL = new Uint8Array(256);
 /** Fully opaque cube: blocks light, hides neighbour faces, casts AO. */
 export const OPAQUE = new Uint8Array(256);
 export const CULL_SELF = new Uint8Array(256);
 export const LIGHT_FILTER = new Uint8Array(256);
 export const LIGHT_EMIT = new Uint8Array(256);
+/** Cells that receive light but do not pass it on (see BlockDef.lightStop). */
+export const LIGHT_STOP = new Uint8Array(256);
 export const SWAY = new Uint8Array(256);
 /** Biome tint type per block (TINT_* in BiomeColors). */
 export const TINT = new Uint8Array(256);
+/** Allowed state bits per block (0 = the block has no states). */
+export const META_MASK = new Uint8Array(256);
 /** Texture layer per face: FACE_LAYER[id * 6 + face]. */
 export const FACE_LAYER = new Uint8Array(256 * 6);
 
@@ -238,13 +314,17 @@ for (const def of BLOCK_DEFS) {
   const id = def.id;
   blockById[id] = def;
   SHAPE[id] = def.shape === 'cube' ? SHAPE_CUBE : def.shape === 'cross' ? SHAPE_CROSS : def.shape === 'liquid' ? SHAPE_LIQUID
-    : def.shape === 'model' ? SHAPE_MODEL : SHAPE_NONE;
+    : def.shape === 'model' ? SHAPE_MODEL : def.shape === 'slab' ? SHAPE_SLAB : def.shape === 'stairs' ? SHAPE_STAIRS
+    : def.shape === 'door' ? SHAPE_DOOR : SHAPE_NONE;
+  PARTIAL[id] = SHAPE[id] >= SHAPE_SLAB ? 1 : 0;
   SOLID[id] = def.solid ? 1 : 0;
   OPAQUE[id] = def.shape === 'cube' && !def.transparent ? 1 : 0;
   CULL_SELF[id] = def.cullSelf ? 1 : 0;
   LIGHT_FILTER[id] = def.lightFilter ?? 0;
   LIGHT_EMIT[id] = def.light ?? 0;
+  LIGHT_STOP[id] = def.lightStop ? 1 : 0;
   SWAY[id] = def.sway ? 1 : 0;
+  META_MASK[id] = def.metaMask ?? 0;
   TINT[id] = def.tint ?? TINT_NONE;
   const t = def.textures;
   const side = t.side ?? t.all;
@@ -258,6 +338,13 @@ for (const def of BLOCK_DEFS) {
 // Unloaded chunks behave like solid stone so the player never falls into the void.
 SOLID[BLOCK.UNLOADED] = 1;
 OPAQUE[BLOCK.UNLOADED] = 1;
+
+/**
+ * Sky light going down a column, in one lookup per cell: the light filter (0..2), 254 for a cell that receives
+ * light but stops it (slabs, stairs), 255 for opaque blocks.
+ */
+export const LIGHT_COLUMN = new Uint8Array(256);
+for (let id = 0; id < 256; id++) LIGHT_COLUMN[id] = OPAQUE[id] ? 255 : LIGHT_STOP[id] ? 254 : LIGHT_FILTER[id];
 
 /**
  * Textures that are converted to greyscale for biome tinting. "full" tints every pixel,

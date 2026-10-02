@@ -3,6 +3,7 @@ import { BLOCK, OPAQUE, SOLID } from '../world/BlockRegistry';
 import { CHUNK_HEIGHT, blockIndex } from '../world/constants';
 import { hash2, mulberry32 } from '../world/Noise';
 import { Arrow, type ArrowTarget } from './Arrow';
+import { Entity } from './Entity';
 import { ItemEntity } from './ItemEntity';
 import { Mob, type MobEvents, type MobTarget } from './Mob';
 import { HOSTILE_KINDS, MOB_TYPES, type MobKind, PASSIVE_KINDS } from './MobTypes';
@@ -16,6 +17,8 @@ const MAX_ARROWS = 128;
 /** What entities need from a world: the client's World and the server's ServerWorld both fit. */
 export interface EntityWorld {
   getBlock(x: number, y: number, z: number): number;
+  /** Block state byte (slabs, stairs and doors collide with their real shape). */
+  getMeta?(x: number, y: number, z: number): number;
   /** Sky light only (cheaper than getLight where block light needs a search). */
   getSkyLight?(x: number, y: number, z: number): number;
   /** Packed light (sky << 4 | block). */
@@ -67,6 +70,7 @@ export class EntityManager {
   constructor(private readonly world: EntityWorld, private readonly seed: number) {}
 
   private readonly getBlock = (x: number, y: number, z: number) => this.world.getBlock(x, y, z);
+  private readonly getMeta = (x: number, y: number, z: number) => this.world.getMeta!(x, y, z);
 
   clear(): void {
     this.mobs.length = 0;
@@ -215,6 +219,7 @@ export class EntityManager {
   tick(target: MobTarget, darkness: number, events: MobEvents, pickup: PickupHandler | null, dayBright: boolean): void {
     this.tickCount++;
     this.events = events;
+    Entity.metaGetter = this.world.getMeta ? this.getMeta : null;
     const getBlock = this.getBlock;
     let targets = this.targets;
     if (targets.length === 0) {

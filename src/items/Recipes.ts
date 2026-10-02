@@ -1,4 +1,4 @@
-import { BLOCK } from '../world/BlockRegistry';
+import { BLOCK, PARTIAL_MATERIALS, SLAB_FIRST, STAIRS_FIRST } from '../world/BlockRegistry';
 import type { PlayerInventory } from './Inventory';
 import { ITEM, type ItemStack } from './ItemRegistry';
 
@@ -52,6 +52,18 @@ export const RECIPES: Recipe[] = [
   { result: { id: ITEM.COOKED_MUTTON, count: 1 }, ingredients: [one(ITEM.MUTTON), any(FUEL, 1)], station: 'furnace' },
   { result: { id: ITEM.COOKED_CHICKEN, count: 1 }, ingredients: [one(ITEM.CHICKEN), any(FUEL, 1)], station: 'furnace' },
 ];
+
+// Bucket: 3 iron ingots in a V.
+RECIPES.push({ result: { id: ITEM.BUCKET, count: 1 }, ingredients: [one(ITEM.IRON_INGOT, 3)], station: 'table' });
+
+// Doors: 6 planks → 3 doors (the oak door needs oak planks).
+RECIPES.push({ result: { id: B.OAK_DOOR, count: 3 }, ingredients: [one(B.OAK_PLANKS, 6)], station: 'table' });
+
+// Slabs: 3 blocks → 6 slabs; stairs: 6 blocks → 4 stairs (Minecraft's shaped recipes).
+PARTIAL_MATERIALS.forEach((m, i) => {
+  RECIPES.push({ result: { id: SLAB_FIRST + i, count: 6 }, ingredients: [one(m.base, 3)], station: 'table' });
+  RECIPES.push({ result: { id: STAIRS_FIRST + i, count: 4 }, ingredients: [one(m.base, 6)], station: 'table' });
+});
 
 // Tools: pickaxe 3 + 2 sticks, axe 3 + 2, shovel 1 + 2, sword 2 + 1 (vanilla counts).
 const MATERIALS: Ingredient[] = [any(PLANKS, 1), one(B.COBBLESTONE), one(ITEM.IRON_INGOT), one(ITEM.DIAMOND)];

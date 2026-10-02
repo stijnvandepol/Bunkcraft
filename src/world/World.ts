@@ -1,13 +1,15 @@
 import type { WorkerPool } from '../workers/WorkerPool';
 import { tintColor } from './BiomeColors';
-import { BLOCK, SHAPE, SHAPE_CROSS, SHAPE_MODEL, SOLID, TINT } from './BlockRegistry';
+import { BLOCK, SHAPE, SHAPE_CROSS, SHAPE_DOOR, SHAPE_MODEL, SOLID, TINT } from './BlockRegistry';
 import { CHUNK_READY, type Chunk } from './Chunk';
 import { ChunkManager, type ChunkMaterials } from './ChunkManager';
-import { CHUNK_HEIGHT, SEA_LEVEL, blockIndex, chunkKey } from './constants';
+import { CHUNK_HEIGHT, CHUNK_VOLUME, SEA_LEVEL, blockIndex, chunkKey } from './constants';
+import { DOOR_OPEN_BIT, isDoorUpper, packState, stateId, stateMeta } from './BlockStates';
 import { BIOME } from './TerrainGenerator';
+import { LAVA_TICK_DELAY, LiquidSim, WATER_TICK_DELAY, isLiquid } from './Liquids';
 import { type WorldGenerator, type WorldType, arenaMapOf, createGenerator, isArenaWorld } from './WorldGenerator';
 
-/** Sparse player edits per chunk: block index → block id. */
+/** Sparse player edits per chunk: block index → packed state (id | meta << 8, see BlockStates). */
 export type EditMap = Map<number, Map<number, number>>;
 
 export class World {
@@ -16,11 +18,16 @@ export class World {
   readonly generator: WorldGenerator;
   readonly edits: EditMap;
   readonly dirtyEditChunks = new Set<number>();
+  /**
+   * Water and lava flow (singleplayer only: on a multiplayer server the server simulates and the client mirrors
+   * its block changes). Null until enableLiquids().
+   */
+  liquids: LiquidSim | null = null;
   /** Entity hooks: a chunk finished generating / was unloaded. */
   onChunkReady: ((chunk: Chunk) => void) | null = null;
   onChunkUnloaded: ((key: number) => void) | null = null;
-  /** Local (player) edits, for multiplayer sync: position, new id, previous id. */
-  onEdit: ((x: number, y: number, z: number, id: number, prev: number) => void) | null = null;
+  /** Local (player) edits, for multiplayer sync: position, new id and meta, previous id and meta. */
+  onEdit: ((x: number, y: number, z: number, id: number, meta: number, prev: number, prevMeta: number) => void) | null = null;
 
   constructor(readonly seed: number, pool: WorkerPool, materials: ChunkMaterials, edits: EditMap = new Map(), readonly worldType: WorldType = 'terrain') {
     this.generator = createGenerator(worldType, seed);
@@ -28,10 +35,33 @@ export class World {
     this.chunks = new ChunkManager(seed, pool, materials, worldType);
     this.chunks.onGenerated = (chunk) => {
       const e = this.edits.get(chunk.key);
-      if (e && chunk.blocks) for (const [i, id] of e) chunk.blocks[i] = id;
+      if (e && chunk.blocks) {
+        for (const [i, state] of e) {
+          writeState(chunk, i, stateId(state), stateMeta(state));
+          // Liquid that was still flowing when the world was saved carries on.
+          if (this.liquids && isLiquid(stateId(state)) && stateMeta(state) !== 0) {
+            this.liquids.schedule(chunk.cx * 16 + (i & 15), i >> 8, chunk.cz * 16 + ((i >> 4) & 15), stateId(state) === BLOCK.LAVA ? LAVA_TICK_DELAY : WATER_TICK_DELAY);
+          }
+        }
+      }
       this.onChunkReady?.(chunk);
     };
     this.chunks.onUnloaded = (key) => this.onChunkUnloaded?.(key);
+  }
+
+  /** Turns on the liquid simulation; the caller ticks it with tickLiquids() at 20 Hz. */
+  enableLiquids(): LiquidSim {
+    const sim = new LiquidSim({
+      getBlock: (x, y, z) => this.getBlock(x, y, z),
+      getMeta: (x, y, z) => this.getMeta(x, y, z),
+      setState: (x, y, z, id, meta) => { this.setBlock(x, y, z, id, meta); },
+    });
+    this.liquids = sim;
+    return sim;
+  }
+
+  tickLiquids(): void {
+    this.liquids?.tick();
   }
 
   // chunkKey exceeds the Smi range, so every Map lookup boxes a heap number. Entities, particles and
@@ -61,6 +91,14 @@ export class World {
     return c.blocks[blockIndex(x & 15, y, z & 15)];
   }
 
+  /** Block state byte (see BlockStates); 0 where unknown or in chunks without any state. */
+  getMeta(x: number, y: number, z: number): number {
+    if (y < 0 || y >= CHUNK_HEIGHT) return 0;
+    const c = this.chunkAt(x >> 4, z >> 4);
+    if (!c || !c.meta) return 0;
+    return c.meta[blockIndex(x & 15, y, z & 15)];
+  }
+
   /** Packed light (sky << 4 | block); full daylight where unknown. */
   getLight(x: number, y: number, z: number): number {
     if (y >= CHUNK_HEIGHT) return 0xf0;
@@ -80,7 +118,7 @@ export class World {
   }
 
   /** @param remote true when applying an edit received from the server (not re-sent). */
-  setBlock(x: number, y: number, z: number, id: number, remote = false): boolean {
+  setBlock(x: number, y: number, z: number, id: number, meta = 0, remote = false): boolean {
     if (y < 0 || y >= CHUNK_HEIGHT) return false;
     const cx = x >> 4, cz = z >> 4;
     const c = this.chunkAt(cx, cz);
@@ -88,13 +126,14 @@ export class World {
     const lx = x & 15, lz = z & 15;
     const i = blockIndex(lx, y, lz);
     const prev = c.blocks[i];
-    if (prev === id) return false;
-    c.blocks[i] = id;
-    if (!remote) this.onEdit?.(x, y, z, id, prev);
+    const prevMeta = c.meta ? c.meta[i] : 0;
+    if (prev === id && prevMeta === meta) return false;
+    writeState(c, i, id, meta);
+    if (!remote) this.onEdit?.(x, y, z, id, meta, prev, prevMeta);
 
     let e = this.edits.get(c.key);
     if (!e) { e = new Map(); this.edits.set(c.key, e); }
-    e.set(i, id);
+    e.set(i, packState(id, meta));
     this.dirtyEditChunks.add(c.key);
 
     // Faces and AO reach one block into the neighbours: only chunks the edit touches are remeshed
@@ -114,6 +153,7 @@ export class World {
       }
     }
     this.chunks.markDirty();
+    this.liquids?.notify(x, y, z);
     return true;
   }
 
@@ -139,7 +179,7 @@ export class World {
           const i = blockIndex(x & 15, y, z & 15);
           const id = c.blocks[i];
           if (id === BLOCK.AIR || id === BLOCK.BEDROCK || id === BLOCK.OBSIDIAN || id === BLOCK.WATER || id === BLOCK.LAVA) continue;
-          c.blocks[i] = BLOCK.AIR;
+          writeState(c, i, BLOCK.AIR, 0);
           cleared.push(x, y, z);
           let e = this.edits.get(c.key);
           if (!e) { e = new Map(); this.edits.set(c.key, e); }
@@ -151,18 +191,24 @@ export class World {
         }
       }
     }
-    // Plants and torches lose their support.
-    for (let k = 0; k < cleared.length; k += 3) {
-      const x = cleared[k], y = cleared[k + 1] + 1, z = cleared[k + 2];
-      const above = this.getBlock(x, y, z);
-      if (SHAPE[above] !== SHAPE_CROSS && SHAPE[above] !== SHAPE_MODEL) continue;
+    // Plants, torches and doors lose their support (a door loses its other half too); the list grows while we walk it.
+    const clearExtra = (x: number, y: number, z: number): void => {
       const c = this.chunkAt(x >> 4, z >> 4);
-      if (!c || !c.blocks) continue;
+      if (!c || !c.blocks) return;
       const i = blockIndex(x & 15, y, z & 15);
-      c.blocks[i] = BLOCK.AIR;
+      writeState(c, i, BLOCK.AIR, 0);
       this.edits.get(c.key)?.set(i, BLOCK.AIR) ?? this.edits.set(c.key, new Map([[i, BLOCK.AIR]]));
       this.dirtyEditChunks.add(c.key);
       touched.add(c);
+      cleared.push(x, y, z);
+    };
+    for (let k = 0; k < cleared.length; k += 3) {
+      const x = cleared[k], y = cleared[k + 1], z = cleared[k + 2];
+      const above = this.getBlock(x, y + 1, z);
+      if (SHAPE[above] === SHAPE_CROSS || SHAPE[above] === SHAPE_MODEL || SHAPE[above] === SHAPE_DOOR) clearExtra(x, y + 1, z);
+      // A door half whose partner below was cleared (the cleared cell itself held the other half).
+      const below = this.getBlock(x, y - 1, z);
+      if (SHAPE[below] === SHAPE_DOOR && k / 3 < destroyed.length && destroyed[k / 3] === below) clearExtra(x, y - 1, z);
     }
     const remesh = new Set<Chunk>();
     for (const c of touched) {
@@ -176,6 +222,7 @@ export class World {
       if (touched.has(c)) this.chunks.requestMeshUrgent(c);
     }
     this.chunks.markDirty();
+    if (this.liquids) for (let k = 0; k < cleared.length; k += 3) this.liquids.notify(cleared[k], cleared[k + 1], cleared[k + 2]);
     return destroyed;
   }
 
@@ -183,13 +230,13 @@ export class World {
    * Edit received from the server. Unloaded chunks just record it, so it is applied
    * when the chunk generates (the same path as saved edits).
    */
-  applyRemoteEdit(x: number, y: number, z: number, id: number): void {
+  applyRemoteEdit(x: number, y: number, z: number, id: number, meta = 0): void {
     if (y < 0 || y >= CHUNK_HEIGHT) return;
-    if (this.setBlock(x, y, z, id, true)) return;
+    if (this.setBlock(x, y, z, id, meta, true)) return;
     const key = chunkKey(x >> 4, z >> 4);
     let e = this.edits.get(key);
     if (!e) { e = new Map(); this.edits.set(key, e); }
-    e.set(blockIndex(x & 15, y, z & 15), id);
+    e.set(blockIndex(x & 15, y, z & 15), packState(id, meta));
   }
 
   /**
@@ -208,7 +255,7 @@ export class World {
       e.set(i, BLOCK.AIR);
       this.dirtyEditChunks.add(chunkKey(x >> 4, z >> 4));
       if (c?.blocks) {
-        c.blocks[i] = BLOCK.AIR;
+        writeState(c, i, BLOCK.AIR, 0);
         touched.add(c);
       }
     }
@@ -262,13 +309,48 @@ export class World {
   /** Break a block; a plant standing on top drops with it. */
   breakBlock(x: number, y: number, z: number): number {
     const id = this.getBlock(x, y, z);
+    const meta = this.getMeta(x, y, z);
     if (!this.setBlock(x, y, z, BLOCK.AIR)) return 0;
+    if (SHAPE[id] === SHAPE_DOOR) {
+      // Both halves go at once.
+      const oy = isDoorUpper(meta) ? y - 1 : y + 1;
+      if (this.getBlock(x, oy, z) === id) this.setBlock(x, oy, z, BLOCK.AIR);
+    }
     const above = this.getBlock(x, y + 1, z);
     if (SHAPE[above] === SHAPE_CROSS || SHAPE[above] === SHAPE_MODEL) this.setBlock(x, y + 1, z, BLOCK.AIR);
+    else if (SHAPE[above] === SHAPE_DOOR && SHAPE[id] !== SHAPE_DOOR) {
+      // A door standing on the block that was broken falls apart.
+      this.setBlock(x, y + 1, z, BLOCK.AIR);
+      this.setBlock(x, y + 2, z, BLOCK.AIR);
+    }
     return id;
   }
 
+  /**
+   * Opens or closes the door at (x, y, z), both halves together. Returns the new state (true = open), or
+   * null when there is no door.
+   */
+  toggleDoor(x: number, y: number, z: number): boolean | null {
+    const id = this.getBlock(x, y, z);
+    if (SHAPE[id] !== SHAPE_DOOR) return null;
+    const meta = this.getMeta(x, y, z);
+    const open = (meta & DOOR_OPEN_BIT) === 0;
+    const withOpen = (m: number) => (open ? m | DOOR_OPEN_BIT : m & ~DOOR_OPEN_BIT);
+    this.setBlock(x, y, z, id, withOpen(meta));
+    const oy = isDoorUpper(meta) ? y - 1 : y + 1;
+    if (this.getBlock(x, oy, z) === id) this.setBlock(x, oy, z, id, withOpen(this.getMeta(x, oy, z)));
+    return open;
+  }
+
   dispose(): void {
+    this.liquids?.clear();
     this.chunks.dispose();
   }
+}
+
+/** Writes id and state byte into a chunk, allocating its meta array only when a non-zero state first appears. */
+function writeState(c: Chunk, i: number, id: number, meta: number): void {
+  c.blocks![i] = id;
+  if (meta !== 0 && !c.meta) c.meta = new Uint8Array(CHUNK_VOLUME);
+  if (c.meta) c.meta[i] = meta;
 }

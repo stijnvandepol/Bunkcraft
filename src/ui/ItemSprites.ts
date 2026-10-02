@@ -61,6 +61,26 @@ function drawTool(px: Px, kind: string, tier: number): void {
   }
 }
 
+/** Iron bucket: a tapering pail with a rim and a handle; `fill` colours the liquid showing at the top. */
+function drawBucket(px: Px, fill: [string, string] | null): void {
+  const metal = ['#c4c4c4', '#b0b0b0', '#d8d8d8'];
+  for (let y = 4; y <= 13; y++) {
+    const left = 3 + Math.floor((y - 4) / 5), right = 12 - Math.floor((y - 4) / 5);
+    for (let x = left; x <= right; x++) {
+      const edge = x === left || x === right;
+      px(x, y, edge ? '#8a8a8a' : metal[(x + y) % 3]);
+    }
+    px(left, y, '#9a9a9a'); px(right, y, '#707070');
+  }
+  // Rim and handle.
+  for (let x = 2; x <= 13; x++) px(x, 3, x === 2 || x === 13 ? '#8a8a8a' : '#e6e6e6');
+  line(px, [[4, 1], [5, 0], [6, 0], [7, 0], [8, 0], [9, 0], [10, 0], [11, 1]], '#7a7a7a');
+  if (fill) {
+    for (let x = 4; x <= 11; x++) { px(x, 4, fill[0]); px(x, 5, x < 6 ? fill[1] : fill[0]); }
+    px(5, 4, fill[1]); px(8, 4, fill[1]);
+  }
+}
+
 function blob(px: Px, cx: number, cy: number, rx: number, ry: number, fill: (x: number, y: number) => string): void {
   for (let y = 0; y < 16; y++) {
     for (let x = 0; x < 16; x++) {
@@ -157,6 +177,15 @@ export function paintItemSprite(key: string): HTMLCanvasElement {
       line(px, [[3, 3], [4, 3], [5, 3], [6, 3], [2, 4], [2, 5], [2, 6], [3, 7], [7, 4], [7, 5], [6, 6], [5, 7], [4, 7]], '#c4c4c4');
       line(px, [[3, 4], [4, 4], [5, 4], [6, 4], [3, 5], [3, 6], [6, 5], [5, 6], [4, 6]], '#8a8a8a');
       blob(px, 10.5, 10.5, 3.2, 3.2, (x, y) => (x + y < 20 ? '#6a6a6a' : pick(['#2e2e2e', '#3c3c3c'])));
+      break;
+    case 'bucket':
+      drawBucket(px, null);
+      break;
+    case 'bucket_water':
+      drawBucket(px, ['#3a6bd3', '#6f9bf0']);
+      break;
+    case 'bucket_lava':
+      drawBucket(px, ['#ff8a1a', '#ffd23a']);
       break;
     case 'stick':
       for (let i = 0; i < 10; i++) { px(4 + i, 12 - i, '#6e4e2c'); px(5 + i, 12 - i, '#4a3219'); }

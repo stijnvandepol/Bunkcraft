@@ -259,6 +259,31 @@ export class AudioEngine {
     this.voice('sine', 1319, 1319, 0.5, 0.2, 0.24);
   }
 
+  /** A door swinging open (creak) or shut (thud); `volume` 0..1. */
+  playDoor(open: boolean, volume = 1): void {
+    if (!this.ready) return;
+    if (open) {
+      this.voice('triangle', 150, 210, 0.1, 0.1 * volume);
+      this.noiseBurst(520, 1.2, 0.12, 0.28 * volume);
+    } else {
+      this.noiseBurst(230, 1, 0.1, 0.55 * volume, 'lowpass');
+      this.voice('sine', 95, 60, 0.1, 0.3 * volume);
+    }
+  }
+
+  /** Lava meeting water: a short hiss. */
+  playFizz(volume: number): void {
+    if (volume <= 0.02) return;
+    this.noiseBurst(4200, 0.5, 0.5, 0.35 * volume, 'highpass');
+    this.noiseBurst(1200, 0.8, 0.25, 0.2 * volume);
+  }
+
+  /** A bucket filled from or emptied into a liquid. */
+  playBucket(lava: boolean): void {
+    this.noiseBurst(lava ? 500 : 1400, 0.7, 0.3, 0.4, 'bandpass');
+    this.voice('sine', lava ? 140 : 260, lava ? 90 : 150, 0.2, 0.15);
+  }
+
   playPop(): void {
     this.voice('sine', 900 + Math.random() * 400, 1800, 0.08, 0.25);
   }

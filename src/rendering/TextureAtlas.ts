@@ -510,7 +510,42 @@ function paintTnt(img: Img, r: Rand, part: 'top' | 'side' | 'bottom'): void {
   for (const [x, y] of T) img.set(11 + x, 6 + y, ink);
 }
 
+/**
+ * Oak door halves: planks inside a darker frame. The lower half has two raised panels and the knob, the
+ * upper half four window panes.
+ */
+function paintDoor(img: Img, r: Rand, half: 'upper' | 'lower'): void {
+  const pal = P('#8f7040', '#9a7a48', '#a2834f', '#b08f5a');
+  const frame = hex('#5a4326'), inset = hex('#6e5532');
+  for (let y = 0; y < 16; y++) {
+    for (let x = 0; x < 16; x++) {
+      let c = pick(pal, r());
+      if (x === 0 || x === 15) c = shade(frame, 0.9);
+      else if (x === 1 || x === 14) c = frame;
+      else if (half === 'upper' && y === 0) c = frame;
+      else if (half === 'lower' && y === 15) c = shade(frame, 0.9);
+      else if (half === 'lower' && y === 14) c = frame;
+      img.set(x, y, c);
+    }
+  }
+  if (half === 'upper') {
+    // Four panes: dark recesses with a lighter glint, separated by the mullions.
+    for (const [x0, y0] of [[3, 2], [9, 2], [3, 8], [9, 8]]) {
+      for (let y = y0; y < y0 + 4; y++) for (let x = x0; x < x0 + 4; x++) img.set(x, y, y === y0 || x === x0 ? shade(inset, 0.75) : hex('#2a3138'));
+      img.set(x0 + 1, y0 + 1, hex('#5d7585'));
+    }
+  } else {
+    for (const y0 of [1, 8]) {
+      for (let y = y0; y < y0 + 5; y++) for (let x = 3; x < 13; x++) img.set(x, y, y === y0 || x === 3 ? shade(frame, 1.3) : y === y0 + 4 || x === 12 ? shade(frame, 0.8) : shade(pick(pal, r()), 0.9));
+    }
+    // The knob.
+    img.set(13, 7, hex('#d8d8d8')); img.set(12, 7, hex('#9a9a9a')); img.set(13, 8, hex('#7c7c7c')); img.set(12, 8, hex('#6a6a6a'));
+  }
+}
+
 const PAINTERS: Record<string, (img: Img, r: Rand) => void> = {
+  oak_door_upper: (i, r) => paintDoor(i, r, 'upper'),
+  oak_door_lower: (i, r) => paintDoor(i, r, 'lower'),
   tnt_top: (i, r) => paintTnt(i, r, 'top'),
   tnt_side: (i, r) => paintTnt(i, r, 'side'),
   tnt_bottom: (i, r) => paintTnt(i, r, 'bottom'),

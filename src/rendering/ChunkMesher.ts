@@ -1,6 +1,12 @@
 import {
-  CULL_SELF, FACE_LAYER, MODELS, OPAQUE, SHAPE_MODEL, TINT, SHAPE, SHAPE_CROSS, SHAPE_CUBE, SHAPE_LIQUID, SWAY,
+  CULL_SELF, FACE_LAYER, MODELS, OPAQUE, PARTIAL, SHAPE_DOOR, SHAPE_MODEL, SHAPE_SLAB, SHAPE_STAIRS, SOLID, TINT, SHAPE, SHAPE_CROSS, SHAPE_CUBE,
+  SHAPE_LIQUID, SWAY,
 } from '../world/BlockRegistry';
+import { liquidHeight } from '../world/Liquids';
+import { doorBox } from '../world/BlockShapes';
+import {
+  DOOR_UPPER_BIT, FACE_OCTANTS, OCT_ALL, STAIR_META_MASK, slabOctants, stairOctants, stairShape,
+} from '../world/BlockStates';
 import { CHUNK_HEIGHT, CHUNK_SIZE, CHUNK_VOLUME } from '../world/constants';
 import { BLOCK } from '../world/BlockRegistry';
 import { TINT_BIRCH, TINT_FOLIAGE, TINT_GRASS, TINT_SPRUCE, tintColor } from '../world/BiomeColors';
@@ -144,6 +150,12 @@ const MAX_MERGE = 15;
 
 export class ChunkMesher {
   private readonly region = new Uint8Array(REGION_VOLUME);
+  /** 32-bit views of the region arrays: chunk rows (16 bytes, 4-byte aligned) are copied as four words, without allocating. */
+  private readonly region32 = new Uint32Array(this.region.buffer);
+  /** Block state bytes of the same region; only valid (non-zero) while `metaUsed` is set. */
+  private readonly metaRegion = new Uint8Array(REGION_VOLUME);
+  private readonly metaRegion32 = new Uint32Array(this.metaRegion.buffer);
+  private metaUsed = false;
   private readonly lighting = new LightEngine();
   private readonly opaque = new GeometryBuilder();
   private readonly cutout = new GeometryBuilder();
@@ -157,16 +169,18 @@ export class ChunkMesher {
   private readonly cellBlk = new Uint8Array(MASK_SIZE * 4);
   private readonly cellLayer = new Uint8Array(MASK_SIZE);
   private readonly cellFlags = new Uint8Array(MASK_SIZE);
-  private readonly cellLowered = new Uint8Array(MASK_SIZE);
   private readonly cellTarget = new Uint8Array(MASK_SIZE);
   private readonly cellTint = new Int32Array(MASK_SIZE);
   /** Blurred biome colours per centre column (x + z*16), packed 0xRRGGBB. */
   private readonly grassTint = new Int32Array(256);
   private readonly foliageTint = new Int32Array(256);
 
-  /** neighbours[(dz + 1) * 3 + (dx + 1)] = chunk block arrays. */
-  mesh(neighbours: Uint8Array[], biomes: Uint8Array[], fancyLeaves: boolean): MeshResult {
-    this.buildRegion(neighbours);
+  /**
+   * neighbours[(dz + 1) * 3 + (dx + 1)] = chunk block arrays; `metas` the matching block state
+   * arrays (null for chunks without any state, which is the common case).
+   */
+  mesh(neighbours: Uint8Array[], biomes: Uint8Array[], fancyLeaves: boolean, metas?: (Uint8Array | null)[]): MeshResult {
+    this.buildRegion(neighbours, metas);
     this.computeTints(biomes);
     this.lighting.compute(this.region);
     this.opaque.reset();
@@ -182,21 +196,43 @@ export class ChunkMesher {
     };
   }
 
-  private buildRegion(neighbours: Uint8Array[]): void {
+  private buildRegion(neighbours: Uint8Array[], metas?: (Uint8Array | null)[]): void {
     const r = this.region;
+    const mr = this.metaRegion;
+    const anyMeta = !!metas && metas.some((m) => m !== null);
+    if (anyMeta || this.metaUsed) mr.fill(0);
+    this.metaUsed = anyMeta;
     // Layer y = -1 is bedrock (never visible), layer y = 128 is open air.
     r.fill(BLOCK.BEDROCK, 0, REGION_AREA);
     r.fill(0, (REGION_HEIGHT - 1) * REGION_AREA, REGION_VOLUME);
     for (let n = 0; n < 9; n++) {
-      const src = neighbours[n];
       const ox = (n % 3) * CHUNK_SIZE;
       const oz = Math.floor(n / 3) * CHUNK_SIZE;
+      this.copyChunk(neighbours[n], r, this.region32, ox, oz);
+      const m = anyMeta ? metas![n] : null;
+      if (m) this.copyChunk(m, mr, this.metaRegion32, ox, oz);
+    }
+  }
+
+  /** Copies a chunk's 128 layers into the region at (ox, oz), row by row (16 bytes = four 32-bit words per row). */
+  private copyChunk(src: Uint8Array, dst: Uint8Array, dst32: Uint32Array, ox: number, oz: number): void {
+    if (src.byteOffset & 3) {
+      // Unaligned view (never from the workers): the slow, allocating way.
       for (let y = 0; y < CHUNK_HEIGHT; y++) {
-        const ry = (y + 1) * REGION_AREA;
         for (let z = 0; z < CHUNK_SIZE; z++) {
           const s = (y << 8) | (z << 4);
-          r.set(src.subarray(s, s + CHUNK_SIZE), ry + (oz + z) * REGION + ox);
+          dst.set(src.subarray(s, s + CHUNK_SIZE), (y + 1) * REGION_AREA + (oz + z) * REGION + ox);
         }
+      }
+      return;
+    }
+    const s32 = new Uint32Array(src.buffer, src.byteOffset, CHUNK_VOLUME >> 2);
+    for (let y = 0; y < CHUNK_HEIGHT; y++) {
+      const ry = (y + 1) * REGION_AREA;
+      for (let z = 0; z < CHUNK_SIZE; z++) {
+        const s = (y << 6) | (z << 2);
+        const d = (ry + (oz + z) * REGION + ox) >> 2;
+        dst32[d] = s32[s]; dst32[d + 1] = s32[s + 1]; dst32[d + 2] = s32[s + 2]; dst32[d + 3] = s32[s + 3];
       }
     }
   }
@@ -307,13 +343,13 @@ export class ChunkMesher {
           const id = region[i];
           const shape = SHAPE[id];
           mask[n] = 0;
-          if (shape !== SHAPE_CUBE && shape !== SHAPE_LIQUID) continue;
+          if (shape !== SHAPE_CUBE) continue;
           const q = i + nOff;
           const nb = region[q];
           if (OPAQUE[nb]) continue;
+          // A slab or stair that covers the whole touching face hides it, like an opaque block would.
+          if (PARTIAL[nb] && (this.octantsAt(q) & FACE_OCTANTS[f ^ 1]) === FACE_OCTANTS[f ^ 1]) continue;
           if (nb === id && (CULL_SELF[id] || (!fancyLeaves && SWAY[id]))) continue;
-          const liquid = shape === SHAPE_LIQUID;
-          if (liquid && nb === id) continue;
 
           // Per-corner ambient occlusion and smooth light, sampled in the air cell q.
           const c4 = n * 4;
@@ -325,7 +361,7 @@ export class ChunkMesher {
             const s1 = q + du, s2 = q + dv, cc = q + du + dv;
             const o1 = OPAQUE[region[s1]], o2 = OPAQUE[region[s2]];
             const oc = o1 && o2 ? 1 : OPAQUE[region[cc]];
-            let ao = liquid ? 3 : o1 && o2 ? 0 : 3 - (o1 + o2 + oc);
+            let ao = o1 && o2 ? 0 : 3 - (o1 + o2 + oc);
             let ls = sky[q], lb = blk[q], cnt = 1;
             if (!o1) { ls += sky[s1]; lb += blk[s1]; cnt++; }
             if (!o2) { ls += sky[s2]; lb += blk[s2]; cnt++; }
@@ -339,26 +375,12 @@ export class ChunkMesher {
             }
           }
           const layer = FACE_LAYER[id * 6 + f];
-          let flags = 0;
-          let lowered = 0;
-          if (liquid) {
-            // Water surface sits 2/16 lower when there is no water above it.
-            lowered = region[i + SY] !== id ? 1 : 0;
-            if (id === BLOCK.LAVA) flags = FLAG_LAVA;
-            else if (f === 2) flags = FLAG_WAVE;
-            // Never merge water: the surface is displaced per vertex in the shader, and
-            // merged quads would create T-junction cracks with smaller neighbours.
-            uniform = false;
-          } else if (SWAY[id] && fancyLeaves) {
-            flags = FLAG_SWAY;
-          }
+          const flags = SWAY[id] && fancyLeaves ? FLAG_SWAY : 0;
           this.cellLayer[n] = layer;
           this.cellFlags[n] = flags;
-          this.cellLowered[n] = lowered;
-          // Water is blended; lava is drawn opaque (it glows and hides what is under it).
-          this.cellTarget[n] = liquid ? (id === BLOCK.WATER ? 2 : 0) : OPAQUE[id] ? 0 : 1;
+          this.cellTarget[n] = OPAQUE[id] ? 0 : 1;
           mask[n] = uniform
-            ? (1 << 30) | layer | (cellAO[c4] << 8) | (cellSky[c4] << 10) | (cellBlk[c4] << 18) | (flags << 26) | ((liquid ? 1 : 0) << 28) | (lowered << 29)
+            ? (1 << 30) | layer | (cellAO[c4] << 8) | (cellSky[c4] << 10) | (cellBlk[c4] << 18) | (flags << 26)
             : -(n + 1);
         }
       }
@@ -393,7 +415,6 @@ export class ChunkMesher {
     geo.currentTint = this.cellTint[cell];
     const layer = this.cellLayer[cell];
     const flags = this.cellFlags[cell];
-    const lowered = this.cellLowered[cell];
     const c4 = cell * 4;
     const coord = [0, 0, 0];
     const nPlane = s + (face.nSign > 0 ? 1 : 0);
@@ -402,10 +423,8 @@ export class ChunkMesher {
       coord[face.nAxis] = nPlane;
       coord[face.uAxis] = face.uSign > 0 ? a0 + cu * w : a0 + w - cu * w;
       coord[face.vAxis] = face.vSign > 0 ? b0 + cv * h : b0 + h - cv * h;
-      let y16 = coord[1] * 16;
-      if (lowered && (f === 2 || (f !== 3 && cv === 1))) y16 -= 2;
       geo.vertex(
-        coord[0] * 16, y16, coord[2] * 16,
+        coord[0] * 16, coord[1] * 16, coord[2] * 16,
         cu * w, cv * h,
         layer, f | (this.cellAO[c4 + k] << 3) | (flags << 5), this.cellSky[c4 + k], this.cellBlk[c4 + k],
       );
@@ -417,6 +436,246 @@ export class ChunkMesher {
     geo.quad(l0 + l2 < l1 + l3);
   }
 
+  // ---- Liquids: surface height follows the liquid level ----
+
+  /** Heights (0..1) of the four top corners of a liquid cell, indexed xa | za << 1 for the corner (x + xa, z + za). */
+  private readonly liquidCorners = [0, 0, 0, 0];
+  private readonly liquidVerts = [0, 0, 0, 0];
+
+  /**
+   * Height of the liquid surface at one corner of a cell (Minecraft's LiquidBlockRenderer.getHeight): the average
+   * over the four cells around the corner, full height when liquid of the same kind is above any of them, and
+   * counting air as height 0 so the surface slopes down towards open edges.
+   */
+  private cornerHeight(i: number, kind: number, xa: number, za: number): number {
+    const region = this.region;
+    let sum = 0, count = 0;
+    for (let b = za - 1; b <= za; b++) {
+      for (let a = xa - 1; a <= xa; a++) {
+        const j = i + a * SX + b * SZ;
+        if (region[j + SY] === kind) return 1;
+        const id = region[j];
+        if (id === kind) {
+          const h = liquidHeight(this.metaRegion[j]);
+          if (h >= 0.8) { sum += h * 10; count += 10; } else { sum += h; count++; }
+        } else if (!SOLID[id]) count++;
+      }
+    }
+    return sum / count;
+  }
+
+  /** Is this face of a liquid cell hidden by the neighbour at region index q (liquid of the same kind, or something that covers it)? */
+  private liquidFaceHidden(kind: number, q: number, f: number): boolean {
+    const nb = this.region[q];
+    if (nb === kind || OPAQUE[nb]) return true;
+    return PARTIAL[nb] === 1 && (this.octantsAt(q) & FACE_OCTANTS[f ^ 1]) === FACE_OCTANTS[f ^ 1];
+  }
+
+  /**
+   * One water or lava cell: the top follows the liquid level (sloping between neighbours of different level), the
+   * sides reach up to that surface, and columns of liquid join into full-height walls. Lava goes to the opaque
+   * geometry (it glows and hides what is under it), water to the blended one.
+   */
+  private emitLiquid(kind: number, x: number, y: number, z: number, i: number): void {
+    const geo = kind === BLOCK.WATER ? this.water : this.opaque;
+    geo.currentTint = 0xffffff;
+    const hc = this.liquidCorners;
+    hc[0] = this.cornerHeight(i, kind, 0, 0);
+    hc[1] = this.cornerHeight(i, kind, 1, 0);
+    hc[2] = this.cornerHeight(i, kind, 0, 1);
+    hc[3] = this.cornerHeight(i, kind, 1, 1);
+    const ys = this.liquidVerts;
+    for (let f = 0; f < 6; f++) {
+      const face = FACES[f];
+      const q = i + face.nSign * STRIDE[face.nAxis];
+      if (this.liquidFaceHidden(kind, q, f)) continue;
+      const layer = FACE_LAYER[kind * 6 + f];
+      this.cornerSample(f, q);
+      for (let k = 0; k < 4; k++) this.pAO[k] = 3; // liquids take no ambient occlusion
+      const flags = kind === BLOCK.LAVA ? FLAG_LAVA : f === 2 ? FLAG_WAVE : 0;
+      const coord = this.rectCoord;
+      for (let k = 0; k < 4; k++) {
+        const cu = CU[k], cv = CV[k];
+        coord[face.nAxis] = face.nSign > 0 ? 1 : 0;
+        coord[face.uAxis] = face.uSign > 0 ? cu : 1 - cu;
+        coord[face.vAxis] = face.vSign > 0 ? cv : 1 - cv;
+        // Height of this vertex: the surface at the top, the floor of the cell at the bottom.
+        let h = 0;
+        if (f === 2) h = hc[coord[0] | (coord[2] << 1)];
+        else if (f !== 3 && cv === 1) h = hc[coord[0] | (coord[2] << 1)];
+        ys[k] = Math.round(h * 16);
+        const y16 = f === 2 ? ys[k] : f === 3 ? 0 : cv === 1 ? ys[k] : 0;
+        const tv = f === 2 || f === 3 ? (face.vSign > 0 ? coord[face.vAxis] : 1 - coord[face.vAxis]) : y16 / 16;
+        geo.vertex(
+          (x + coord[0]) * 16, y * 16 + y16, (z + coord[2]) * 16,
+          face.uSign > 0 ? coord[face.uAxis] : 1 - coord[face.uAxis], tv,
+          layer, f | (3 << 3) | (flags << 5), Math.round(this.pSky[k] * 17), Math.round(this.pBlk[k] * 17),
+        );
+      }
+      // Split the sloping surface along its ridge (the diagonal between the two higher corners).
+      geo.quad(f === 2 && ys[0] + ys[2] < ys[1] + ys[3]);
+    }
+  }
+
+  // ---- Slabs, stairs and doors: geometry that depends on the block state ----
+
+  /** Stair meta (0-7) of the block at region index j, or −1 when it is not a stairs block. */
+  private stairAt(j: number): number {
+    return SHAPE[this.region[j]] === SHAPE_STAIRS ? this.metaRegion[j] & STAIR_META_MASK : -1;
+  }
+
+  /**
+   * Octants (see BlockStates) a block fills, for hiding faces: opaque blocks fill all of them, slabs and
+   * stairs their own, everything else (air, glass, plants) none.
+   */
+  private octantsAt(i: number): number {
+    const id = this.region[i];
+    if (OPAQUE[id]) return OCT_ALL;
+    const shape = SHAPE[id];
+    if (shape === SHAPE_SLAB) return slabOctants(this.metaRegion[i]);
+    if (shape === SHAPE_STAIRS) {
+      const meta = this.metaRegion[i] & STAIR_META_MASK;
+      return stairOctants(meta, stairShape(meta, this.stairAt(i - SZ), this.stairAt(i + SZ), this.stairAt(i - SX), this.stairAt(i + SX)));
+    }
+    return 0;
+  }
+
+  // Per-corner ambient occlusion and light for the face that looks into cell q (filled by cornerSample).
+  private readonly pAO = [0, 0, 0, 0];
+  private readonly pSky = [0, 0, 0, 0];
+  private readonly pBlk = [0, 0, 0, 0];
+  private readonly rectCoord = [0, 0, 0];
+  private readonly rectAO = [0, 0, 0, 0];
+  private readonly octCoord = [0, 0, 0];
+  private readonly doorScratch = [0, 0, 0, 0, 0, 0];
+
+  /** The same corner sampling the cube faces use (see meshFace), kept as floats so partial faces can interpolate it. */
+  private cornerSample(f: number, q: number): void {
+    const face = FACES[f];
+    const uOff = face.uSign * STRIDE[face.uAxis];
+    const vOff = face.vSign * STRIDE[face.vAxis];
+    const region = this.region, sky = this.lighting.sky, blk = this.lighting.block;
+    for (let k = 0; k < 4; k++) {
+      const du = CU[k] ? uOff : -uOff;
+      const dv = CV[k] ? vOff : -vOff;
+      const s1 = q + du, s2 = q + dv, cc = q + du + dv;
+      const o1 = OPAQUE[region[s1]], o2 = OPAQUE[region[s2]];
+      const oc = o1 && o2 ? 1 : OPAQUE[region[cc]];
+      let ls = sky[q], lb = blk[q], cnt = 1;
+      if (!o1) { ls += sky[s1]; lb += blk[s1]; cnt++; }
+      if (!o2) { ls += sky[s2]; lb += blk[s2]; cnt++; }
+      if (!oc) { ls += sky[cc]; lb += blk[cc]; cnt++; }
+      this.pAO[k] = o1 && o2 ? 0 : 3 - (o1 + o2 + oc);
+      this.pSky[k] = ls / cnt;
+      this.pBlk[k] = lb / cnt;
+    }
+  }
+
+  /**
+   * One rectangle of a partial block's face. (ua, ub) and (va, vb) are the extent along the face's U and V
+   * axes in 1/16 block (absolute coordinates), `plane` the position along the normal. Texture coordinates
+   * follow the block, so a half-height slab shows the matching half of the texture. Light comes from
+   * `cornerSample` (call it first) and is interpolated to each corner.
+   */
+  private emitRect(geo: GeometryBuilder, f: number, plane: number, ua: number, ub: number, va: number, vb: number, layer: number, x: number, y: number, z: number, mirrorU = false): void {
+    const face = FACES[f];
+    const coord = this.rectCoord, ao4 = this.rectAO;
+    for (let k = 0; k < 4; k++) {
+      const cu = CU[k], cv = CV[k];
+      const cuv = face.uSign > 0 ? ua + cu * (ub - ua) : ub - cu * (ub - ua);
+      const cvv = face.vSign > 0 ? va + cv * (vb - va) : vb - cv * (vb - va);
+      coord[face.nAxis] = plane;
+      coord[face.uAxis] = cuv;
+      coord[face.vAxis] = cvv;
+      let tu = face.uSign > 0 ? cuv : 16 - cuv;
+      const tv = face.vSign > 0 ? cvv : 16 - cvv;
+      // Bilinear weights of the four sampled corners.
+      const fu = tu / 16, fv = tv / 16;
+      const w0 = (1 - fu) * (1 - fv), w1 = fu * (1 - fv), w2 = fu * fv, w3 = (1 - fu) * fv;
+      const ao = Math.round(w0 * this.pAO[0] + w1 * this.pAO[1] + w2 * this.pAO[2] + w3 * this.pAO[3]);
+      const sk = Math.round((w0 * this.pSky[0] + w1 * this.pSky[1] + w2 * this.pSky[2] + w3 * this.pSky[3]) * 17);
+      const bk = Math.round((w0 * this.pBlk[0] + w1 * this.pBlk[1] + w2 * this.pBlk[2] + w3 * this.pBlk[3]) * 17);
+      ao4[k] = ao * 16 + sk / 16;
+      if (mirrorU) tu = 16 - tu;
+      geo.vertex(x * 16 + coord[0], y * 16 + coord[1], z * 16 + coord[2], tu / 16, tv / 16, layer, f | (ao << 3), sk, bk);
+    }
+    geo.quad(ao4[0] + ao4[2] < ao4[1] + ao4[3]);
+  }
+
+  /** Slab or stairs: every visible octant face, merged into 16×16, 16×8 or 8×8 rectangles. */
+  private emitOctants(id: number, x: number, y: number, z: number, i: number): void {
+    const mask = this.octantsAt(i);
+    const geo = this.opaque;
+    geo.currentTint = 0xffffff;
+    const hc = this.octCoord;
+    for (let f = 0; f < 6; f++) {
+      const face = FACES[f];
+      const a = face.nAxis, s = face.nSign;
+      const nOff = s * STRIDE[a];
+      const layer = FACE_LAYER[id * 6 + f];
+      let nmask = -1;
+      for (let h = 0; h < 2; h++) {
+        // Octants of layer h along the normal whose face is not hidden by a neighbouring octant.
+        let vis = 0;
+        for (let b = 0; b < 4; b++) {
+          const hu = b & 1, hv = b >> 1;
+          hc[a] = h; hc[face.uAxis] = hu; hc[face.vAxis] = hv;
+          if (!(mask & (1 << (hc[0] | (hc[2] << 1) | (hc[1] << 2))))) continue;
+          const nh = h + s;
+          let covered: boolean;
+          if (nh >= 0 && nh <= 1) {
+            hc[a] = nh;
+            covered = (mask & (1 << (hc[0] | (hc[2] << 1) | (hc[1] << 2)))) !== 0;
+          } else {
+            if (nmask < 0) nmask = this.octantsAt(i + nOff);
+            hc[a] = s > 0 ? 0 : 1;
+            covered = (nmask & (1 << (hc[0] | (hc[2] << 1) | (hc[1] << 2)))) !== 0;
+          }
+          if (!covered) vis |= 1 << b;
+        }
+        if (!vis) continue;
+        const plane = (h + (s > 0 ? 1 : 0)) * 8;
+        // Faces on the block boundary are lit from the neighbouring cell, inner ones from this cell.
+        this.cornerSample(f, plane === 0 || plane === 16 ? i + nOff : i);
+        if (vis === 15) {
+          this.emitRect(geo, f, plane, 0, 16, 0, 16, layer, x, y, z);
+          continue;
+        }
+        for (let hv = 0; hv < 2; hv++) {
+          const row = (vis >> (hv * 2)) & 3;
+          if (row === 3) this.emitRect(geo, f, plane, 0, 16, hv * 8, hv * 8 + 8, layer, x, y, z);
+          else if (row === 1) this.emitRect(geo, f, plane, 0, 8, hv * 8, hv * 8 + 8, layer, x, y, z);
+          else if (row === 2) this.emitRect(geo, f, plane, 8, 16, hv * 8, hv * 8 + 8, layer, x, y, z);
+        }
+      }
+    }
+  }
+
+  /** A door half: one thin box, textured with the lower or upper half of the door texture. */
+  private emitDoor(id: number, x: number, y: number, z: number, i: number): void {
+    const meta = this.metaRegion[i];
+    const box = this.doorScratch;
+    doorBox(meta, box);
+    // The lower half uses the "side" texture slot and the upper half the "top" slot (see the door's BlockDef).
+    const layer = FACE_LAYER[id * 6 + ((meta & DOOR_UPPER_BIT) ? 2 : 0)];
+    const geo = this.cutout;
+    geo.currentTint = 0xffffff;
+    const region = this.region;
+    for (let f = 0; f < 6; f++) {
+      const face = FACES[f];
+      const a = face.nAxis;
+      const plane = Math.round((face.nSign > 0 ? box[3 + a] : box[a]) * 16);
+      const boundary = plane === 0 || plane === 16;
+      const nOff = face.nSign * STRIDE[a];
+      if (boundary && OPAQUE[region[i + nOff]]) continue;
+      this.cornerSample(f, boundary ? i + nOff : i);
+      const ua = Math.round(box[face.uAxis] * 16), ub = Math.round(box[3 + face.uAxis] * 16);
+      const va = Math.round(box[face.vAxis] * 16), vb = Math.round(box[3 + face.vAxis] * 16);
+      // The two big faces mirror with the hinge so the handle is always on the side away from it.
+      this.emitRect(geo, f, plane, ua, ub, va, vb, layer, x, y, z, a !== 1 && (meta & 8) !== 0 && ub - ua > 8);
+    }
+  }
+
   private meshCrosses(): void {
     const region = this.region;
     const sky = this.lighting.sky, blk = this.lighting.block;
@@ -426,7 +685,17 @@ export class ChunkMesher {
         let i = (y + 1) * SY + (z + 16) * SZ + 16;
         for (let x = 0; x < CHUNK_SIZE; x++, i++) {
           const id = region[i];
-          if (SHAPE[id] === SHAPE_MODEL) {
+          const shape = SHAPE[id];
+          if (shape === SHAPE_LIQUID) {
+            this.emitLiquid(id, x, y, z, i);
+            continue;
+          }
+          if (shape >= SHAPE_SLAB) {
+            if (shape === SHAPE_DOOR) this.emitDoor(id, x, y, z, i);
+            else this.emitOctants(id, x, y, z, i);
+            continue;
+          }
+          if (shape === SHAPE_MODEL) {
             this.emitModel(id, x, y, z, i);
             continue;
           }

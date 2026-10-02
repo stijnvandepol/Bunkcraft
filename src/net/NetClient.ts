@@ -7,6 +7,7 @@ interface PendingEdit {
   y: number;
   z: number;
   prev: number;
+  prevMeta: number;
 }
 
 /**
@@ -24,7 +25,7 @@ export class NetClient {
   /** All server messages after the welcome. */
   onMessage: ((msg: ServerMessage) => void) | null = null;
   /** Rollback of a rejected local edit. */
-  onRevert: ((x: number, y: number, z: number, id: number) => void) | null = null;
+  onRevert: ((x: number, y: number, z: number, id: number, meta: number) => void) | null = null;
   onClose: ((reason: string) => void) | null = null;
 
   /**
@@ -77,7 +78,7 @@ export class NetClient {
         if (msg.t === 'reject') {
           const p = this.pending.get(msg.seq);
           this.pending.delete(msg.seq);
-          if (p) this.onRevert?.(p.x, p.y, p.z, p.prev);
+          if (p) this.onRevert?.(p.x, p.y, p.z, p.prev, p.prevMeta);
           return;
         }
         if (msg.t === 'kick') {
@@ -107,12 +108,12 @@ export class NetClient {
     return this.ws?.readyState === WebSocket.OPEN;
   }
 
-  sendBlock(x: number, y: number, z: number, id: number, prev: number): void {
+  sendBlock(x: number, y: number, z: number, id: number, meta: number, prev: number, prevMeta: number): void {
     const seq = this.seq++;
-    this.pending.set(seq, { x, y, z, prev });
+    this.pending.set(seq, { x, y, z, prev, prevMeta });
     // Keep only recent edits around for rollback.
     if (this.pending.size > 256) this.pending.delete(this.pending.keys().next().value!);
-    this.send({ t: 'block', seq, x, y, z, id });
+    this.send(meta ? { t: 'block', seq, x, y, z, id, meta } : { t: 'block', seq, x, y, z, id });
   }
 
   /** Sends the player position at most 20 times per second. */

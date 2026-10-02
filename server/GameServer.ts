@@ -8,6 +8,8 @@ import { ARENA_FLOOR_Y, DEFAULT_MAP, type MapId, type MapSetting, getMap, nextMa
 import { type GameType, gameTypeDef } from '../src/modes/GameTypes';
 import { GAME_MODES, type GameMode } from '../src/player/GameMode';
 import { BLOCK, getBlockDef } from '../src/world/BlockRegistry';
+import { isValidMeta } from '../src/world/BlockShapes';
+import { packState, stateId, stateMeta } from '../src/world/BlockStates';
 import { SEA_LEVEL } from '../src/world/constants';
 import { hashString } from '../src/world/Noise';
 import { arenaWorldType } from '../src/world/WorldGenerator';
@@ -23,6 +25,8 @@ const REACH = 8; // lenient server-side reach check (client uses 5)
 const MAX_SPEED = 26; // blocks/second (fast flying + slack)
 const ARENA_MAX_SPEED = 40; // arcade: sprint + jump + slack
 const PING_INTERVAL_TICKS = 60; // arcade: measure the round trip every 3 s
+/** Block changes per 'blocks' message (flowing water). */
+const BLOCKS_PER_MESSAGE = 100;
 const ARENA_DAY = 0.25; // arcade games are always noon
 
 interface WorldData {
@@ -31,7 +35,7 @@ interface WorldData {
   gameMode: GameMode;
   time: number;
   spawn: { x: number; y: number; z: number };
-  /** "x,y,z" → block id */
+  /** "x,y,z" → packed state (block id | meta << 8); files from before block states hold plain ids. */
   edits: Record<string, number>;
   players: Record<string, PlayerRecord>;
   /** Arcade game type; absent = the Minecraft sandbox. */
@@ -40,6 +44,11 @@ interface WorldData {
   timeLimitSec?: number;
   /** Arcade: a map id, or "rotate" for the next map after every match (absent = the default map). */
   mapId?: MapSetting;
+}
+
+/** Block change message; the meta field is left out for the default state to keep the common case small. */
+function blockMessage(x: number, y: number, z: number, id: number, meta: number): Extract<ServerMessage, { t: 'block' }> {
+  return meta ? { t: 'block', x, y, z, id, meta } : { t: 'block', x, y, z, id };
 }
 
 /** Token bucket rate limiter (per player, per message kind). */
@@ -143,8 +152,12 @@ export class GameServer {
     } else this.entities = new ServerEntities(this.world.seed, this.world.edits, this.world.gameMode, {
       send: (id, msg) => { const s = this.sessions.get(id); if (s) this.send(s, msg); },
       broadcast: (msg) => this.broadcast(msg),
-      broadcastBlock: (x, y, z, id) => this.broadcast({ t: 'block', x, y, z, id }),
-      recordEdit: (x, y, z, id) => { this.world.edits[`${x},${y},${z}`] = id; this.dirty = true; },
+      broadcastBlock: (x, y, z, id, meta) => this.broadcast(blockMessage(x, y, z, id, meta ?? 0)),
+      broadcastBlocks: (edits) => {
+        // At most 200 changes per tick come out of the simulation; split anyway to keep messages small.
+        for (let i = 0; i < edits.length; i += 5 * BLOCKS_PER_MESSAGE) this.broadcast({ t: 'blocks', edits: edits.slice(i, i + 5 * BLOCKS_PER_MESSAGE) });
+      },
+      recordEdit: (x, y, z, id, meta) => { this.world.edits[`${x},${y},${z}`] = packState(id, meta); this.dirty = true; },
     }, () => this.world.time);
     this.timers.push(setInterval(() => this.tick(), TICK_MS));
     this.timers.push(setInterval(() => this.save(), SAVE_INTERVAL_MS));
@@ -330,9 +343,9 @@ export class GameServer {
     const joined = this.match?.join(session.id, name) ?? null;
     if (joined) { session.x = joined.x; session.y = joined.y; session.z = joined.z; session.hasPos = true; }
     const edits: number[] = [];
-    for (const [key, id] of Object.entries(this.world.edits)) {
+    for (const [key, state] of Object.entries(this.world.edits)) {
       const [x, y, z] = key.split(',').map(Number);
-      edits.push(x, y, z, id);
+      edits.push(x, y, z, stateId(state), stateMeta(state));
     }
     this.send(session, {
       t: 'welcome', id: session.id, worldName: this.world.name, seed: this.world.seed, gameMode: this.world.gameMode,
@@ -457,16 +470,18 @@ export class GameServer {
 
   private onBlock(s: Session, m: Extract<ClientMessage, { t: 'block' }>): void {
     const { x, y, z, id, seq } = m;
-    const reject = () => this.send(s, { t: 'reject', seq, x, y, z, id });
-    if (![x, y, z, id].every(Number.isInteger)) return reject();
+    const meta = m.meta ?? 0;
+    const reject = () => this.send(s, { t: 'reject', seq, x, y, z, id, meta });
+    if (![x, y, z, id, meta].every(Number.isInteger)) return reject();
     if (!s.edits.take()) return reject();
     if (y < 1 || y > 127) return reject();
     if (id !== 0 && (!getBlockDef(id) || id === BLOCK.BEDROCK || id === BLOCK.UNLOADED)) return reject();
+    if (!isValidMeta(id, meta)) return reject();
     // Reach: distance from the player's eyes to the block centre.
     const d = Math.hypot(x + 0.5 - s.x, y + 0.5 - (s.y + 1.62), z + 0.5 - s.z);
     if (!s.hasPos || d > REACH) return reject();
-    this.entities?.setBlock(x, y, z, id); // records the edit and updates what the mobs see
-    this.broadcast({ t: 'block', x, y, z, id }, s.id);
+    this.entities?.setBlock(x, y, z, id, meta); // records the edit and updates what the mobs see
+    this.broadcast(blockMessage(x, y, z, id, meta), s.id);
   }
 
   private onChat(s: Session, raw: string): void {
