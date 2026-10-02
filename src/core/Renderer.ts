@@ -5,12 +5,16 @@ import type { DayCycle } from '../rendering/DayCycle';
 import {
   createChunkMaterial, createShadowDepthMaterial, createWaterMaterial, createWorldUniforms, type WorldUniforms,
 } from '../rendering/Materials';
+import { Lightning } from '../rendering/Lightning';
 import { Particles } from '../rendering/Particles';
+import { Precipitation } from '../rendering/Precipitation';
 import { ShadowRenderer } from '../rendering/Shadows';
 import { Sky } from '../rendering/Sky';
 import { type TextureSet, buildTextures } from '../rendering/TextureAtlas';
 import type { World } from '../world/World';
 import type { Settings } from './Settings';
+
+const FLASH_COLOR = new THREE.Color(0.78, 0.82, 1.0);
 
 export interface FrameStats {
   drawCalls: number;
@@ -34,6 +38,13 @@ export class Renderer {
   readonly sky = new Sky();
   readonly clouds = new Clouds();
   readonly particles: Particles;
+  /** Rain and snow around the camera. */
+  readonly precipitation: Precipitation;
+  readonly lightning = new Lightning();
+  /** Current lightning sky flash 0..1 (read by the F3 screen and tests). */
+  flash = 0;
+  private lastTime = 0;
+  private readonly fogColor = new THREE.Color();
   readonly highlight: BlockHighlight;
   readonly stats: FrameStats = { drawCalls: 0, triangles: 0, shadowCalls: 0 };
   readonly shadows: ShadowRenderer;
@@ -73,8 +84,9 @@ export class Renderer {
     this.shadows = new ShadowRenderer(this.uniforms);
     this.particles = new Particles(this.uniforms);
     this.highlight = new BlockHighlight(this.uniforms);
+    this.precipitation = new Precipitation(this.uniforms);
 
-    this.scene.add(this.sky.mesh, this.clouds.mesh, this.particles.mesh, this.highlight.group);
+    this.scene.add(this.sky.mesh, this.clouds.mesh, this.particles.mesh, this.precipitation.mesh, this.lightning.mesh, this.highlight.group);
     this.scene.matrixWorldAutoUpdate = true;
     this.resize();
   }
@@ -110,6 +122,9 @@ export class Renderer {
     else if (s.shadows === 'high') this.shadows.configure(2048, 88, maxShadow);
     else this.shadows.configure(4096, 128, maxShadow);
     this.particles.density = s.particles === 'all' ? 1 : s.particles === 'decreased' ? 0.5 : 0.25;
+    this.precipitation.density = s.particles === 'all' ? 1 : s.particles === 'decreased' ? 0.65 : 0.4;
+    // The accessibility developer adds Settings.reduceFlashes; read it when it exists.
+    this.lightning.reduceFlashes = (s as { reduceFlashes?: boolean }).reduceFlashes === true;
     this.resize();
   }
 
@@ -136,26 +151,36 @@ export class Renderer {
 
   render(camera: THREE.PerspectiveCamera, cycle: DayCycle, time: number, underwater: boolean): void {
     const u = this.uniforms;
+    const dt = Math.min(0.1, Math.max(0, time - this.lastTime));
+    this.lastTime = time;
+    const flash = this.lightning.update(dt, camera.position.x, camera.position.y, camera.position.z);
+    this.flash = flash;
     u.uTime.value = time;
     u.uSunDir.value.copy(cycle.sunDir);
-    u.uDaylight.value = cycle.daylight;
+    // A lightning flash lights the whole world up for a moment, like Minecraft's sky darkening of 2.
+    u.uDaylight.value = cycle.daylight + (1 - cycle.daylight) * flash * 0.85;
     u.uSkyLightColor.value.copy(cycle.skyLight);
-    u.uFogColor.value.copy(cycle.horizon);
+    this.fogColor.copy(cycle.horizon);
+    if (flash > 0.001) this.fogColor.lerp(FLASH_COLOR, flash * 0.7);
+    u.uFogColor.value.copy(this.fogColor);
     u.uSunsetColor.value.copy(cycle.sunset);
     u.uSunsetAmount.value = cycle.sunsetAmount;
     u.uUnderwater.value = underwater ? 1 : 0;
     const fogFar = Math.max(24, (this.renderDistance - 0.6) * 16);
-    u.uFogFar.value = fogFar;
-    u.uFogNear.value = fogFar * 0.6;
+    // Rain and thunder pull the fog in.
+    const fogScale = 1 - 0.3 * cycle.rain - 0.1 * cycle.thunder;
+    u.uFogFar.value = fogFar * fogScale;
+    u.uFogNear.value = fogFar * (0.6 - 0.4 * cycle.rain) * fogScale;
 
     const aspect = window.innerWidth / Math.max(1, window.innerHeight);
     if (Math.abs(camera.aspect - aspect) > 1e-4) {
       camera.aspect = aspect;
       camera.updateProjectionMatrix();
     }
-    this.sky.update(cycle, underwater);
+    this.sky.update(cycle, underwater, time, flash);
+    this.precipitation.update(this.world, camera.position.x, camera.position.z, cycle.rain, underwater);
     this.clouds.mesh.visible = this.cloudsEnabled && !underwater;
-    this.three.setClearColor(cycle.horizon, 1);
+    this.three.setClearColor(this.fogColor, 1);
 
     this.three.info.reset();
     // 1. Shadow pass, faded out when the sun is low (no shadows at night).
@@ -178,7 +203,7 @@ export class Renderer {
     const world = this.world!;
     const hidden = this.shadowHidden;
     hidden.length = 0;
-    hidden.push(this.sky.mesh, this.clouds.mesh, this.particles.mesh, this.highlight.group, world.chunks.waterGroup, ...this.shadowExcluded);
+    hidden.push(this.sky.mesh, this.clouds.mesh, this.particles.mesh, this.precipitation.mesh, this.lightning.mesh, this.highlight.group, world.chunks.waterGroup, ...this.shadowExcluded);
     for (let i = 0; i < hidden.length; i++) {
       this.shadowVisible[i] = hidden[i].visible;
       hidden[i].visible = false;

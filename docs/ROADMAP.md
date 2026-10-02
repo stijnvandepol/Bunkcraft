@@ -93,7 +93,7 @@ wat al is doorgevoerd.
 | ~~Grotgeluiden en muziek die per biome wisselt~~ (klaar, zie hieronder) | S |
 | Vuurvliegjes en vallende bladeren | S |
 | Suikerriet, pompoenen, meloenen, paddenstoelen, waterlelies | S–M |
-| Regen en sneeuw, daarna onweer | M |
+| Weer: regen, sneeuw, onweer, bliksem, maanfasen, sterren met twinkel | **Gedaan** (`Weather.ts`, `Precipitation.ts`, `Lightning.ts`; zie [`GAMEPLAY.md`](GAMEPLAY.md#weer-en-lucht)). Open: regengeluid en donder via `AudioEngine.setWeather`, sneeuwlagen en bevriezend water (block states + random ticks), farmland-hydratatie en vuur-blussen via `Weather.isRainingAt`, geladen creepers, onweer-slapen |
 | Rivieren | M |
 | Nieuwe biomes: moeras, savanne, jungle, badlands | M per stuk |
 

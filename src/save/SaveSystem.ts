@@ -1,3 +1,4 @@
+import type { WeatherState } from '../world/Weather';
 import type { GameMode } from '../player/GameMode';
 import type { ImportedPack } from '../rendering/TexturePacks';
 import { GEN_VERSION_LEGACY } from '../world/GenVersion';
@@ -40,6 +41,10 @@ export interface WorldMeta {
   genVersion?: number;
   /** Multiplayer arcade games use the fixed arena map; absent = generated terrain. */
   worldType?: 'terrain' | 'arena';
+  /** Whole days played (the moon phase follows it); absent = 0. */
+  day?: number;
+  /** Weather timers and flags; absent = a fresh clear cycle. */
+  weather?: WeatherState;
 }
 
 export interface ChunkEditRecord {

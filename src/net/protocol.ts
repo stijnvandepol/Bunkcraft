@@ -104,6 +104,8 @@ export type ServerMessage =
     t: 'welcome'; id: number; worldName: string; seed: number; gameMode: GameMode; time: number;
     /** Terrain generator version of the world (see src/world/GenVersion.ts). Absent (old servers) = 1. */
     genVersion?: number;
+    /** Whole days played (moon phase); absent on servers from before the moon phases. */
+    day?: number;
     /** Game type of this game; "minecraft" unless it is an arcade game. */
     gameType: GameType;
     /** "terrain" = generated landscape, "arena" = the fixed arcade map. */
@@ -130,7 +132,15 @@ export type ServerMessage =
   /** The edit was refused (echoes the request; the client restores the block it remembers). */
   | { t: 'reject'; seq: number; x: number; y: number; z: number; id: number; meta?: number }
   | { t: 'chat'; from: string; text: string; system?: boolean }
-  | { t: 'time'; time: number }
+  /** `day` = whole days played; optional so older servers and clients keep working. */
+  | { t: 'time'; time: number; day?: number }
+  /**
+   * Weather targets: rain and thunder 0 or 1 (the client fades over 5 s); `snap` jumps straight there
+   * (sent on join). `ticksToChange` is informational. Optional message: old clients ignore it.
+   */
+  | { t: 'weather'; rain: number; thunder: number; ticksToChange?: number; snap?: boolean }
+  /** A lightning strike on the ground at this position (everyone renders the same bolt and hears the thunder). */
+  | { t: 'bolt'; x: number; y: number; z: number }
   | { t: 'teleport'; x: number; y: number; z: number }
   /** `reconnect`: the server is restarting; try again after this many milliseconds. `code` tells why for login failures. */
   | { t: 'kick'; reason: string; reconnect?: number; code?: 'password' | 'banned' | 'whitelist' | 'identity' | 'full' }

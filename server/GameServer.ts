@@ -13,6 +13,7 @@ import { isValidMeta } from '../src/world/BlockShapes';
 import { packState, stateId, stateMeta } from '../src/world/BlockStates';
 import { SEA_LEVEL } from '../src/world/constants';
 import { hashString } from '../src/world/Noise';
+import { Weather, type WeatherState, parseWeatherCommand } from '../src/world/Weather';
 import { arenaWorldType } from '../src/world/WorldGenerator';
 import { TerrainGenerator } from '../src/world/TerrainGenerator';
 import { GEN_VERSION_CURRENT, GEN_VERSION_LEGACY } from '../src/world/GenVersion';
@@ -56,6 +57,10 @@ interface WorldData {
   genVersion?: number;
   gameMode: GameMode;
   time: number;
+  /** Whole days played (moon phase); absent in older files = 0. */
+  day?: number;
+  /** Weather timers and flags; absent = a fresh clear cycle. */
+  weather?: WeatherState;
   spawn: { x: number; y: number; z: number };
   /** "x,y,z" → packed state (block id | meta << 8); files from before block states hold plain ids. */
   edits: Record<string, number>;
@@ -196,6 +201,10 @@ export class GameServer {
   private dirty = false;
   private lastTick = Date.now();
   private tickCount = 0;
+  /** Weather of this world (minecraft game types only; arcade rooms are always clear). */
+  private readonly weather = new Weather();
+  private weatherVersion = -1;
+  private readonly strikeRoll = { dx: 0, dz: 0 };
   private timers: NodeJS.Timeout[] = [];
   /** Mobs, items, arrows and TNT for this world. */
   private readonly entities: ServerEntities | null;
@@ -220,6 +229,8 @@ export class GameServer {
     this.world.whitelist ??= { on: false, names: [] };
     this.world.claims ??= {};
     for (const n of opts.ops ?? []) if (!this.world.ops.includes(lc(n))) this.world.ops.push(lc(n));
+    this.weather.restore(this.world.weather);
+    if (gameTypeDef(this.world.gameType ?? 'minecraft').arcade) this.weather.rainTime = this.weather.thunderTime = 0;
     const def = gameTypeDef(this.world.gameType ?? 'minecraft');
     if (def.arcade) {
       this.mapSetting = parseMapSetting(this.world.mapId) ?? DEFAULT_MAP;
@@ -239,6 +250,7 @@ export class GameServer {
         for (let i = 0; i < edits.length; i += 5 * BLOCKS_PER_MESSAGE) this.broadcast({ t: 'blocks', edits: edits.slice(i, i + 5 * BLOCKS_PER_MESSAGE) });
       },
       recordEdit: (x, y, z, id, meta) => { this.world.edits[`${x},${y},${z}`] = packState(id, meta); this.dirty = true; },
+      skyDarkness: () => this.weather.skyDarkness,
     }, () => this.world.time, this.world.genVersion);
     this.timers.push(setInterval(() => this.tick(), TICK_MS));
     this.timers.push(setInterval(() => {
@@ -331,6 +343,8 @@ export class GameServer {
 
   save(): void {
     for (const s of this.sessions.values()) this.storePlayer(s);
+    this.world.day = this.world.day ?? 0;
+    if (!this.match) this.world.weather = this.weather.serialize();
     if (!this.dirty) return;
     const tmp = `${this.file}.tmp`;
     // Write-then-rename so a crash never leaves a half-written world file.
@@ -611,12 +625,13 @@ export class GameServer {
     this.send(session, {
       t: 'welcome', id: session.id, worldName: this.world.name, seed: this.world.seed, genVersion: this.match ? undefined : this.world.genVersion, gameMode: this.world.gameMode,
       gameType: this.match?.info.type ?? 'minecraft', worldType: this.match ? 'arena' : 'terrain', match: this.match?.info,
-      time: this.world.time, spawn: joined ? { x: joined.x, y: joined.y, z: joined.z } : this.world.spawn, edits, player: record,
+      time: this.world.time, day: this.world.day ?? 0, spawn: joined ? { x: joined.x, y: joined.y, z: joined.z } : this.world.spawn, edits, player: record,
       players: [...this.sessions.values()].map((s) => ({ id: s.id, name: s.name, team: this.match?.players.get(s.id)?.team || undefined })),
       motd: this.opts.motd,
       ...(op ? { op: true } : {}),
       ...(session.bin ? { binary: true } : {}),
     });
+    if (!this.match) this.send(session, this.weatherMessage(true));
     this.sessions.set(session.id, session);
     this.broadcast({ t: 'join', id: session.id, name }, session.id);
     if (joined) {
@@ -848,6 +863,12 @@ export class GameServer {
     const host: CommandHost = {
       get mod(): Moderation { return self.world as WorldData & Moderation; },
       get arcade() { return !!self.match; },
+      setWeather: (kind, ticks) => {
+        const parsed = parseWeatherCommand(ticks ? [kind, String(Math.ceil(ticks / 20))] : [kind]);
+        if (self.match || !parsed) return false;
+        self.weather.set(parsed.kind, parsed.ticks);
+        return true;
+      },
       get gameMode() { return self.world.gameMode; },
       get moderated() { return self.isModerated(); },
       online: () => [...self.sessions.values()].map(target),
@@ -938,7 +959,18 @@ export class GameServer {
     const dt = (now - this.lastTick) / 1000;
     this.lastTick = now;
     this.tickCount++;
-    if (this.sessions.size > 0 && !this.match) this.world.time = (this.world.time + dt / DAY_SECONDS) % 1;
+    if (this.sessions.size > 0 && !this.match) {
+      const t = this.world.time + dt / DAY_SECONDS;
+      if (t >= 1) { this.world.day = (this.world.day ?? 0) + Math.floor(t); this.dirty = true; }
+      this.world.time = t % 1;
+      this.weather.advance(dt);
+      if (this.weather.version !== this.weatherVersion) {
+        this.weatherVersion = this.weather.version;
+        this.broadcast(this.weatherMessage(false));
+        this.dirty = true;
+      }
+      this.rollLightning();
+    }
     if (this.sessions.size === 0) {
       // Nobody around: free the chunks and mobs (passive mobs respawn from the seed).
       if (this.entitiesActive) {
@@ -963,7 +995,27 @@ export class GameServer {
       players.push([s.id, round(s.x), round(s.y), round(s.z), round(s.yaw), round(s.pitch), s.flags, s.held]);
     }
     if (players.length > 0) this.broadcast({ t: 'snap', players });
-    if (this.tickCount % 100 === 0 && !this.match) this.broadcast({ t: 'time', time: this.world.time });
+    if (this.tickCount % 100 === 0 && !this.match) this.broadcast({ t: 'time', time: this.world.time, day: this.world.day ?? 0 });
+  }
+
+  /** The weather targets for the clients: flags as 0/1, they fade the level themselves. */
+  private weatherMessage(snap: boolean): ServerMessage {
+    const w = this.weather;
+    return { t: 'weather', rain: w.raining ? 1 : 0, thunder: w.thundering ? 1 : 0, ticksToChange: w.ticksToChange, snap };
+  }
+
+  /** Thunderstorm: lightning near every player; the server picks the spot, everyone renders the same bolt. */
+  private rollLightning(): void {
+    const world = this.entities?.world;
+    if (!world || this.weather.thunder < 0.9) return;
+    for (const s of this.sessions.values()) {
+      if (!s.hasPos || !this.weather.rollLightning(this.strikeRoll)) continue;
+      const x = Math.floor(s.x + this.strikeRoll.dx), z = Math.floor(s.z + this.strikeRoll.dz);
+      const y = world.surfaceY(x, z);
+      if (y < 0) continue;
+      this.entities!.lightning(x + 0.5, y + 1, z + 0.5);
+      this.broadcast({ t: 'bolt', x: x + 0.5, y: y + 1, z: z + 0.5 });
+    }
   }
 
   /** A client that lets too much outgoing data pile up is not reading: drop it instead of buffering without bound. */

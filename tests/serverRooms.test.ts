@@ -234,12 +234,14 @@ describe('names and operators', () => {
     boss.client.close();
   });
 
-  it('/weather is a stub and /time set reaches everybody', async () => {
+  it('an operator can change the weather and /time set reaches everybody', async () => {
     const t = await start();
     const { code, ownerToken } = await createRoom(t.base);
     const boss = await joinRoom(t, code, 'boss', { key: KEY_A, owner: ownerToken });
     boss.client.send({ t: 'chat', text: '/weather rain' });
-    await boss.client.chatContaining('Weather is not available');
+    await boss.client.chatContaining('set the weather to rain');
+    boss.client.send({ t: 'chat', text: '/weather snowstorm' });
+    await boss.client.chatContaining('Usage: /weather');
     boss.client.send({ t: 'chat', text: '/time set night' });
     expect((await boss.client.waitFor('time', (m) => Math.abs(m.time - 0.55) < 1e-9)).time).toBeCloseTo(0.55);
     boss.client.close();

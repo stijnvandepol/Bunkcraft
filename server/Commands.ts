@@ -1,3 +1,4 @@
+import { WEATHER_USAGE, parseWeatherCommand } from '../src/world/Weather';
 import { ALL_ITEMS, getItemDef } from '../src/items/ItemRegistry';
 import { NAME_PATTERN } from '../src/net/protocol';
 import { GAME_MODES, type GameMode } from '../src/player/GameMode';
@@ -45,14 +46,14 @@ export interface CommandHost {
   teleport(name: string, x: number, y: number, z: number): void;
   setGameMode(mode: GameMode): void;
   setTime(time: number): void;
-  setWeather?(kind: string): boolean;
+  /** Changes the weather (optionally for a number of ticks); false when the game type has fixed weather. */
+  setWeather?(kind: string, ticks?: number): boolean;
   give(name: string, itemId: number, count: number): boolean;
   seed(): number;
   spawn(name: string): void;
 }
 
 export const TIME_PRESETS: Record<string, number> = { day: 0.04, noon: 0.25, night: 0.55, midnight: 0.75 };
-const WEATHERS = ['clear', 'rain', 'thunder'];
 
 type Level = 'all' | 'op' | 'owner';
 interface Def { usage: string; level: Level; run(h: CommandHost, a: Actor, args: string[]): void }
@@ -223,11 +224,11 @@ const COMMANDS: Record<string, Def> = {
     },
   },
   weather: {
-    usage: '/weather clear|rain|thunder', level: 'op', run: (h, a, args) => {
-      const kind = (args[0] ?? '').toLowerCase();
-      if (!WEATHERS.includes(kind)) return h.reply(a.name, 'Usage: /weather clear|rain|thunder');
+    usage: '/weather clear|rain|thunder [seconds]', level: 'op', run: (h, a, args) => {
+      const parsed = parseWeatherCommand(args);
+      if (!parsed) return h.reply(a.name, WEATHER_USAGE);
       if (!h.setWeather) return h.reply(a.name, 'Weather is not available on this server yet.');
-      if (h.setWeather(kind)) h.broadcastSystem(`${a.name} set the weather to ${kind}`);
+      if (h.setWeather(parsed.kind, parsed.ticks)) h.broadcastSystem(`${a.name} set the weather to ${parsed.kind}`);
       else h.reply(a.name, 'Weather is not available in this game type.');
     },
   },

@@ -402,6 +402,11 @@ export class AudioEngine {
   }
 
   /** One thunderclap `distance` blocks away (arrives later the further it is). */
+  /** Thunder by loudness (0..1) instead of distance; the weather system works with volumes. */
+  playThunderRumble(volume: number): void {
+    this.playThunder(Math.max(0, 1 - Math.min(1, volume)) * 120);
+  }
+
   playThunder(distance: number): void {
     if (!this.running || this.ambientVolume <= 0) {
       this.emit('weather.thunder', NaN, NaN, NaN, 0.5);
