@@ -182,11 +182,13 @@ export class ChunkManager {
   private requestMesh(chunk: Chunk): void {
     const neighbours: Uint8Array[] = [];
     const biomes: Uint8Array[] = [];
+    const metas: (Uint8Array | null)[] = [];
     for (let dz = -1; dz <= 1; dz++) {
       for (let dx = -1; dx <= 1; dx++) {
         const n = this.chunks.get(chunkKey(chunk.cx + dx, chunk.cz + dz))!;
         neighbours.push(n.blocks!);
         biomes.push(n.biomes!);
+        metas.push(n.meta);
       }
     }
     const version = chunk.version;
@@ -195,7 +197,7 @@ export class ChunkManager {
     chunk.meshing = true;
     this.meshInFlight++;
     // Typed arrays are structured-cloned (copied): the main thread keeps ownership.
-    this.pool.submit({ type: 'mesh', id: 0, neighbours, biomes, fancyLeaves: this.fancyLeaves }, (res) => {
+    this.pool.submit({ type: 'mesh', id: 0, neighbours, metas, biomes, fancyLeaves: this.fancyLeaves }, (res) => {
       this.meshInFlight--;
       chunk.meshing = false;
       if (this.disposed || this.chunks.get(chunk.key) !== chunk) return;
@@ -319,6 +321,7 @@ export class ChunkManager {
     }
     c.opaque = c.cutout = c.water = null;
     c.blocks = null;
+    c.meta = null;
     c.biomes = null;
     c.light = null;
   }

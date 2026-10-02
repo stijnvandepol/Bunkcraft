@@ -9,7 +9,7 @@ import type { GameMode } from '../player/GameMode';
  * the network. Movement is client-predicted and sanity-checked by the server; block
  * edits are applied optimistically and confirmed or rolled back by the server.
  */
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 
 /** Mob kinds in network order (index in entity snapshots). */
 export const NET_MOB_KINDS = ['pig', 'cow', 'sheep', 'chicken', 'zombie', 'creeper', 'skeleton', 'spider'] as const;
@@ -67,7 +67,8 @@ export type TntEntry = [number, number, number, number, number];
 export type ClientMessage =
   | { t: 'hello'; v: number; name: string }
   | { t: 'pos'; x: number; y: number; z: number; yaw: number; pitch: number; flags: number; held: number }
-  | { t: 'block'; seq: number; x: number; y: number; z: number; id: number }
+  /** `meta` is the block state byte (see BlockStates); absent = 0. */
+  | { t: 'block'; seq: number; x: number; y: number; z: number; id: number; meta?: number }
   | { t: 'chat'; text: string }
   | { t: 'state'; inventory: number[][]; stats: number[] }
   /** Melee hit on a server mob (damage comes from the held item the server knows). */
@@ -101,7 +102,7 @@ export type ServerMessage =
     /** Arcade games: match settings. */
     match?: MatchInfo;
     spawn: { x: number; y: number; z: number };
-    /** Flat list of edits: x, y, z, id, x, y, z, id, … */
+    /** Flat list of edits: x, y, z, id, meta, x, y, z, id, meta, … */
     edits: number[];
     player: PlayerRecord | null;
     players: RemotePlayerInfo[];
@@ -110,8 +111,9 @@ export type ServerMessage =
   | { t: 'join'; id: number; name: string }
   | { t: 'leave'; id: number; name: string }
   | { t: 'snap'; players: SnapshotEntry[] }
-  | { t: 'block'; x: number; y: number; z: number; id: number }
-  | { t: 'reject'; seq: number; x: number; y: number; z: number; id: number }
+  | { t: 'block'; x: number; y: number; z: number; id: number; meta?: number }
+  /** The edit was refused (echoes the request; the client restores the block it remembers). */
+  | { t: 'reject'; seq: number; x: number; y: number; z: number; id: number; meta?: number }
   | { t: 'chat'; from: string; text: string; system?: boolean }
   | { t: 'time'; time: number }
   | { t: 'teleport'; x: number; y: number; z: number }

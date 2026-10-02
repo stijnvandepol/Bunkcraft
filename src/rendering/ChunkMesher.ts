@@ -144,6 +144,9 @@ const MAX_MERGE = 15;
 
 export class ChunkMesher {
   private readonly region = new Uint8Array(REGION_VOLUME);
+  /** Block state bytes of the same region; only valid (non-zero) while `metaUsed` is set. */
+  private readonly metaRegion = new Uint8Array(REGION_VOLUME);
+  private metaUsed = false;
   private readonly lighting = new LightEngine();
   private readonly opaque = new GeometryBuilder();
   private readonly cutout = new GeometryBuilder();
@@ -164,9 +167,12 @@ export class ChunkMesher {
   private readonly grassTint = new Int32Array(256);
   private readonly foliageTint = new Int32Array(256);
 
-  /** neighbours[(dz + 1) * 3 + (dx + 1)] = chunk block arrays. */
-  mesh(neighbours: Uint8Array[], biomes: Uint8Array[], fancyLeaves: boolean): MeshResult {
-    this.buildRegion(neighbours);
+  /**
+   * neighbours[(dz + 1) * 3 + (dx + 1)] = chunk block arrays; `metas` the matching block state
+   * arrays (null for chunks without any state, which is the common case).
+   */
+  mesh(neighbours: Uint8Array[], biomes: Uint8Array[], fancyLeaves: boolean, metas?: (Uint8Array | null)[]): MeshResult {
+    this.buildRegion(neighbours, metas);
     this.computeTints(biomes);
     this.lighting.compute(this.region);
     this.opaque.reset();
@@ -182,8 +188,12 @@ export class ChunkMesher {
     };
   }
 
-  private buildRegion(neighbours: Uint8Array[]): void {
+  private buildRegion(neighbours: Uint8Array[], metas?: (Uint8Array | null)[]): void {
     const r = this.region;
+    const mr = this.metaRegion;
+    const anyMeta = !!metas && metas.some((m) => m !== null);
+    if (anyMeta || this.metaUsed) mr.fill(0);
+    this.metaUsed = anyMeta;
     // Layer y = -1 is bedrock (never visible), layer y = 128 is open air.
     r.fill(BLOCK.BEDROCK, 0, REGION_AREA);
     r.fill(0, (REGION_HEIGHT - 1) * REGION_AREA, REGION_VOLUME);
@@ -196,6 +206,8 @@ export class ChunkMesher {
         for (let z = 0; z < CHUNK_SIZE; z++) {
           const s = (y << 8) | (z << 4);
           r.set(src.subarray(s, s + CHUNK_SIZE), ry + (oz + z) * REGION + ox);
+          const m = anyMeta ? metas![n] : null;
+          if (m) mr.set(m.subarray(s, s + CHUNK_SIZE), ry + (oz + z) * REGION + ox);
         }
       }
     }

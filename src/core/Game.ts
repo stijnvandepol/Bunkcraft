@@ -44,6 +44,7 @@ import { KB, resolveKeybinds } from './Keybinds';
 import { SurvivalInventory } from '../ui/SurvivalInventory';
 import { WorkerPool } from '../workers/WorkerPool';
 import { BLOCK, SOLID, getBlockDef } from '../world/BlockRegistry';
+import { packState } from '../world/BlockStates';
 import { CHUNK_VOLUME, blockIndex, chunkKey } from '../world/constants';
 import { hashString } from '../world/Noise';
 import { BIOME_NAMES } from '../world/TerrainGenerator';
@@ -601,12 +602,12 @@ export class Game {
     // Terrain comes from the seed; only the server's edit list is transferred.
     const edits = new Map<number, Map<number, number>>();
     const list = welcome.edits;
-    for (let i = 0; i + 3 < list.length; i += 4) {
-      const x = list[i], y = list[i + 1], z = list[i + 2], id = list[i + 3];
+    for (let i = 0; i + 4 < list.length; i += 5) {
+      const x = list[i], y = list[i + 1], z = list[i + 2], id = list[i + 3], blockMeta = list[i + 4];
       const key = chunkKey(x >> 4, z >> 4);
       let m = edits.get(key);
       if (!m) { m = new Map(); edits.set(key, m); }
-      m.set(blockIndex(x & 15, y, z & 15), id);
+      m.set(blockIndex(x & 15, y, z & 15), packState(id, blockMeta));
     }
     const rec = welcome.player;
     const meta: WorldMeta = {
@@ -632,8 +633,8 @@ export class Game {
       // Only ask when the whole stack fits; the server hands it to the first asker.
       if (this.playerInventory.canFit(item.stack) && mirror.shouldTake(item, performance.now() / 1000)) net.sendTake(item.netId);
     };
-    world.onEdit = (x, y, z, id, prev) => net.sendBlock(x, y, z, id, prev);
-    net.onRevert = (x, y, z, id) => world.applyRemoteEdit(x, y, z, id);
+    world.onEdit = (x, y, z, id, meta, prev, prevMeta) => net.sendBlock(x, y, z, id, meta, prev, prevMeta);
+    net.onRevert = (x, y, z, id, meta) => world.applyRemoteEdit(x, y, z, id, meta);
     net.onMessage = (msg) => this.onServerMessage(msg);
     net.onClose = (reason) => {
       if (this.net !== net) return;
@@ -737,7 +738,7 @@ export class Game {
         if (left > 0) this.entities?.dropItem({ id: msg.itemId, count: left, damage: msg.damage }, this.player.x, this.player.y + 1, this.player.z, 40, undefined, true);
         break;
       }
-      case 'block': world?.applyRemoteEdit(msg.x, msg.y, msg.z, msg.id); break;
+      case 'block': world?.applyRemoteEdit(msg.x, msg.y, msg.z, msg.id, msg.meta ?? 0); break;
       case 'join':
         if (this.arcade) this.arcade.addPlayer(msg.id, msg.name, '');
         else this.remote.add(msg.id, msg.name);

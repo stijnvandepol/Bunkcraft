@@ -1,7 +1,7 @@
 import { IDBFactory, IDBKeyRange } from 'fake-indexeddb';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  EDIT_RECORD_VERSION, SAVE_VERSION, SaveSystem, type WorldMeta, migrateMeta, newWorldId,
+  EDIT_RECORD_VERSION, SAVE_VERSION, SaveSystem, type WorldMeta, decodeEdit, encodeEdit, migrateMeta, newWorldId,
 } from '../src/save/SaveSystem';
 import type { EditMap } from '../src/world/World';
 
@@ -113,6 +113,26 @@ describe('SaveSystem', () => {
     await s.saveWorld(m);
     await putRaw('chunks', { worldId: m.id, chunkKey: 3, data: new Uint32Array([(5 << 8) | 9]) });
     expect([...(await s.loadEdits(m.id)).get(3)!]).toEqual([[5, 9]]);
+  });
+
+  it('reads version 1 records (no state byte) and writes version 2 with meta', async () => {
+    const s = await openSystem();
+    const m = meta();
+    await s.saveWorld(m);
+    // v1: blockIndex << 8 | id, the highest possible index included.
+    await putRaw('chunks', { worldId: m.id, chunkKey: 4, version: 1, data: new Uint32Array([(32767 << 8) | 9]) });
+    expect([...(await s.loadEdits(m.id)).get(4)!]).toEqual([[32767, 9]]);
+
+    const edits: EditMap = new Map([[5, new Map([[32767, 44 | (3 << 8)], [0, 1 | (255 << 8)], [77, 0]])]]);
+    await s.saveEdits(m.id, edits, new Set([5]));
+    const loaded = (await s.loadEdits(m.id)).get(5)!;
+    expect([...loaded.entries()].sort((a, b) => a[0] - b[0])).toEqual([[0, 1 | (255 << 8)], [77, 0], [32767, 44 | (3 << 8)]]);
+  });
+
+  it('encodes and decodes edit entries per record version', () => {
+    expect(decodeEdit(encodeEdit(1234, 12 | (5 << 8)), 2)).toEqual([1234, 12 | (5 << 8)]);
+    expect(decodeEdit((1234 << 8) | 12, 1)).toEqual([1234, 12]);
+    expect(encodeEdit(32767, 0xffff)).toBe(0x7fffffff);
   });
 
   it('skips edit records written by a newer format', async () => {

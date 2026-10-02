@@ -3,12 +3,13 @@ import { tintColor } from './BiomeColors';
 import { BLOCK, SHAPE, SHAPE_CROSS, SHAPE_MODEL, SOLID, TINT } from './BlockRegistry';
 import { CHUNK_READY, type Chunk } from './Chunk';
 import { ChunkManager, type ChunkMaterials } from './ChunkManager';
-import { CHUNK_HEIGHT, SEA_LEVEL, blockIndex, chunkKey } from './constants';
+import { CHUNK_HEIGHT, CHUNK_VOLUME, SEA_LEVEL, blockIndex, chunkKey } from './constants';
+import { packState, stateId, stateMeta } from './BlockStates';
 import { ARENA_SPAWNS } from '../modes/arena';
 import { BIOME } from './TerrainGenerator';
 import { type WorldGenerator, type WorldType, createGenerator } from './WorldGenerator';
 
-/** Sparse player edits per chunk: block index → block id. */
+/** Sparse player edits per chunk: block index → packed state (id | meta << 8, see BlockStates). */
 export type EditMap = Map<number, Map<number, number>>;
 
 export class World {
@@ -20,8 +21,8 @@ export class World {
   /** Entity hooks: a chunk finished generating / was unloaded. */
   onChunkReady: ((chunk: Chunk) => void) | null = null;
   onChunkUnloaded: ((key: number) => void) | null = null;
-  /** Local (player) edits, for multiplayer sync: position, new id, previous id. */
-  onEdit: ((x: number, y: number, z: number, id: number, prev: number) => void) | null = null;
+  /** Local (player) edits, for multiplayer sync: position, new id and meta, previous id and meta. */
+  onEdit: ((x: number, y: number, z: number, id: number, meta: number, prev: number, prevMeta: number) => void) | null = null;
 
   constructor(readonly seed: number, pool: WorkerPool, materials: ChunkMaterials, edits: EditMap = new Map(), readonly worldType: WorldType = 'terrain') {
     this.generator = createGenerator(worldType, seed);
@@ -29,7 +30,7 @@ export class World {
     this.chunks = new ChunkManager(seed, pool, materials, worldType);
     this.chunks.onGenerated = (chunk) => {
       const e = this.edits.get(chunk.key);
-      if (e && chunk.blocks) for (const [i, id] of e) chunk.blocks[i] = id;
+      if (e && chunk.blocks) for (const [i, state] of e) writeState(chunk, i, stateId(state), stateMeta(state));
       this.onChunkReady?.(chunk);
     };
     this.chunks.onUnloaded = (key) => this.onChunkUnloaded?.(key);
@@ -62,6 +63,14 @@ export class World {
     return c.blocks[blockIndex(x & 15, y, z & 15)];
   }
 
+  /** Block state byte (see BlockStates); 0 where unknown or in chunks without any state. */
+  getMeta(x: number, y: number, z: number): number {
+    if (y < 0 || y >= CHUNK_HEIGHT) return 0;
+    const c = this.chunkAt(x >> 4, z >> 4);
+    if (!c || !c.meta) return 0;
+    return c.meta[blockIndex(x & 15, y, z & 15)];
+  }
+
   /** Packed light (sky << 4 | block); full daylight where unknown. */
   getLight(x: number, y: number, z: number): number {
     if (y >= CHUNK_HEIGHT) return 0xf0;
@@ -81,7 +90,7 @@ export class World {
   }
 
   /** @param remote true when applying an edit received from the server (not re-sent). */
-  setBlock(x: number, y: number, z: number, id: number, remote = false): boolean {
+  setBlock(x: number, y: number, z: number, id: number, meta = 0, remote = false): boolean {
     if (y < 0 || y >= CHUNK_HEIGHT) return false;
     const cx = x >> 4, cz = z >> 4;
     const c = this.chunkAt(cx, cz);
@@ -89,13 +98,14 @@ export class World {
     const lx = x & 15, lz = z & 15;
     const i = blockIndex(lx, y, lz);
     const prev = c.blocks[i];
-    if (prev === id) return false;
-    c.blocks[i] = id;
-    if (!remote) this.onEdit?.(x, y, z, id, prev);
+    const prevMeta = c.meta ? c.meta[i] : 0;
+    if (prev === id && prevMeta === meta) return false;
+    writeState(c, i, id, meta);
+    if (!remote) this.onEdit?.(x, y, z, id, meta, prev, prevMeta);
 
     let e = this.edits.get(c.key);
     if (!e) { e = new Map(); this.edits.set(c.key, e); }
-    e.set(i, id);
+    e.set(i, packState(id, meta));
     this.dirtyEditChunks.add(c.key);
 
     // Faces and AO reach one block into the neighbours: only chunks the edit touches are remeshed
@@ -140,7 +150,7 @@ export class World {
           const i = blockIndex(x & 15, y, z & 15);
           const id = c.blocks[i];
           if (id === BLOCK.AIR || id === BLOCK.BEDROCK || id === BLOCK.OBSIDIAN || id === BLOCK.WATER || id === BLOCK.LAVA) continue;
-          c.blocks[i] = BLOCK.AIR;
+          writeState(c, i, BLOCK.AIR, 0);
           cleared.push(x, y, z);
           let e = this.edits.get(c.key);
           if (!e) { e = new Map(); this.edits.set(c.key, e); }
@@ -160,7 +170,7 @@ export class World {
       const c = this.chunkAt(x >> 4, z >> 4);
       if (!c || !c.blocks) continue;
       const i = blockIndex(x & 15, y, z & 15);
-      c.blocks[i] = BLOCK.AIR;
+      writeState(c, i, BLOCK.AIR, 0);
       this.edits.get(c.key)?.set(i, BLOCK.AIR) ?? this.edits.set(c.key, new Map([[i, BLOCK.AIR]]));
       this.dirtyEditChunks.add(c.key);
       touched.add(c);
@@ -184,13 +194,13 @@ export class World {
    * Edit received from the server. Unloaded chunks just record it, so it is applied
    * when the chunk generates (the same path as saved edits).
    */
-  applyRemoteEdit(x: number, y: number, z: number, id: number): void {
+  applyRemoteEdit(x: number, y: number, z: number, id: number, meta = 0): void {
     if (y < 0 || y >= CHUNK_HEIGHT) return;
-    if (this.setBlock(x, y, z, id, true)) return;
+    if (this.setBlock(x, y, z, id, meta, true)) return;
     const key = chunkKey(x >> 4, z >> 4);
     let e = this.edits.get(key);
     if (!e) { e = new Map(); this.edits.set(key, e); }
-    e.set(blockIndex(x & 15, y, z & 15), id);
+    e.set(blockIndex(x & 15, y, z & 15), packState(id, meta));
   }
 
   /**
@@ -209,7 +219,7 @@ export class World {
       e.set(i, BLOCK.AIR);
       this.dirtyEditChunks.add(chunkKey(x >> 4, z >> 4));
       if (c?.blocks) {
-        c.blocks[i] = BLOCK.AIR;
+        writeState(c, i, BLOCK.AIR, 0);
         touched.add(c);
       }
     }
@@ -272,4 +282,11 @@ export class World {
   dispose(): void {
     this.chunks.dispose();
   }
+}
+
+/** Writes id and state byte into a chunk, allocating its meta array only when a non-zero state first appears. */
+function writeState(c: Chunk, i: number, id: number, meta: number): void {
+  c.blocks![i] = id;
+  if (meta !== 0 && !c.meta) c.meta = new Uint8Array(CHUNK_VOLUME);
+  if (c.meta) c.meta[i] = meta;
 }

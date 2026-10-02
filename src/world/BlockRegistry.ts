@@ -44,6 +44,8 @@ export interface BlockDef {
   inInventory?: boolean;
   /** Biome colour applied to the greyscale tintable texture parts (see BiomeColors). */
   tint?: number;
+  /** Bits of the block state byte this block uses (see BlockStates); 0 = no states. Validated on the server. */
+  metaMask?: number;
   /** For shape "model": boxes in 1/16 block units [x0, y0, z0, x1, y1, z1]. */
   model?: number[][];
   /** Damage per second when touching the block (survival). */
@@ -229,6 +231,8 @@ export const LIGHT_EMIT = new Uint8Array(256);
 export const SWAY = new Uint8Array(256);
 /** Biome tint type per block (TINT_* in BiomeColors). */
 export const TINT = new Uint8Array(256);
+/** Allowed state bits per block (0 = the block has no states). */
+export const META_MASK = new Uint8Array(256);
 /** Texture layer per face: FACE_LAYER[id * 6 + face]. */
 export const FACE_LAYER = new Uint8Array(256 * 6);
 
@@ -245,6 +249,7 @@ for (const def of BLOCK_DEFS) {
   LIGHT_FILTER[id] = def.lightFilter ?? 0;
   LIGHT_EMIT[id] = def.light ?? 0;
   SWAY[id] = def.sway ? 1 : 0;
+  META_MASK[id] = def.metaMask ?? 0;
   TINT[id] = def.tint ?? TINT_NONE;
   const t = def.textures;
   const side = t.side ?? t.all;

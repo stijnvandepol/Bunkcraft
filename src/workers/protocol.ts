@@ -16,6 +16,8 @@ export interface MeshRequest {
   id: number;
   /** neighbours[(dz + 1) * 3 + (dx + 1)] */
   neighbours: Uint8Array[];
+  /** Block state bytes for the same 9 chunks; null where a chunk has none. */
+  metas: (Uint8Array | null)[];
   /** Biome per column for the same 9 chunks (biome tinting). */
   biomes: Uint8Array[];
   fancyLeaves: boolean;

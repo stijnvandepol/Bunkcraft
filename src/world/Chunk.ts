@@ -7,6 +7,11 @@ export const CHUNK_READY = 2;
 export class Chunk {
   /** Block ids, index = x + z*16 + y*256. Null until generated. */
   blocks: Uint8Array | null = null;
+  /**
+   * Block state byte per block, same index as `blocks`. Allocated lazily: null while every block
+   * of the chunk has the default state (meta 0), which is true for freshly generated terrain.
+   */
+  meta: Uint8Array | null = null;
   /** Biome id per column (x + z*16). */
   biomes: Uint8Array | null = null;
   /** Packed light (sky << 4 | block) from the last mesh pass. */

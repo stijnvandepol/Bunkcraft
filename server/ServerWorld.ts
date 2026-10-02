@@ -2,6 +2,7 @@ import type { ChunkLike, EntityWorld } from '../src/entities/EntityManager';
 import {
   BLOCK, LIGHT_EMIT, OPAQUE, SHAPE, SHAPE_CROSS, SHAPE_MODEL,
 } from '../src/world/BlockRegistry';
+import { packState, stateId, stateMeta } from '../src/world/BlockStates';
 import { CHUNK_HEIGHT, CHUNK_VOLUME, blockIndex, chunkKey } from '../src/world/constants';
 import { type WorldGenerator, type WorldType, createGenerator } from '../src/world/WorldGenerator';
 
@@ -15,6 +16,8 @@ const EMIT_RADIUS = 14;
 
 interface ServerChunk extends ChunkLike {
   blocks: Uint8Array;
+  /** Block state bytes, allocated on the first non-zero state (null for almost every chunk). */
+  meta: Uint8Array | null;
   /** Highest light-blocking block per column (x + z*16), −1 when open to the sky. */
   tops: Int16Array;
   /** Block indices that emit light (torches, glowstone, lava). */
@@ -29,18 +32,20 @@ interface ServerChunk extends ChunkLike {
 export class ServerWorld implements EntityWorld {
   readonly generator: WorldGenerator;
   private readonly chunks = new Map<number, ServerChunk>();
+  /** Edits per chunk: block index → packed state (id | meta << 8). */
   private readonly editsByChunk = new Map<number, Map<number, number>>();
   private readonly wanted = new Set<number>();
   /** Fired for every block change (including explosions) so the server can persist it. */
-  onEdit: ((x: number, y: number, z: number, id: number) => void) | null = null;
+  onEdit: ((x: number, y: number, z: number, id: number, meta: number) => void) | null = null;
   onChunkReady: ((chunk: ChunkLike) => void) | null = null;
   onChunkUnloaded: ((key: number) => void) | null = null;
 
   constructor(readonly seed: number, edits: Record<string, number>, readonly worldType: WorldType = 'terrain') {
     this.generator = createGenerator(worldType, seed);
-    for (const [k, id] of Object.entries(edits)) {
+    // Packed states (id | meta << 8); worlds saved before block states hold plain ids, which read as meta 0.
+    for (const [k, state] of Object.entries(edits)) {
       const [x, y, z] = k.split(',').map(Number);
-      this.recordEdit(x, y, z, id);
+      this.recordEdit(x, y, z, stateId(state), stateMeta(state));
     }
   }
 
@@ -58,11 +63,11 @@ export class ServerWorld implements EntityWorld {
     return this.chunks.size;
   }
 
-  private recordEdit(x: number, y: number, z: number, id: number): void {
+  private recordEdit(x: number, y: number, z: number, id: number, meta: number): void {
     const key = chunkKey(x >> 4, z >> 4);
     let m = this.editsByChunk.get(key);
     if (!m) { m = new Map(); this.editsByChunk.set(key, m); }
-    m.set(blockIndex(x & 15, y, z & 15), id);
+    m.set(blockIndex(x & 15, y, z & 15), packState(id, meta));
   }
 
   getBlock(x: number, y: number, z: number): number {
@@ -70,6 +75,13 @@ export class ServerWorld implements EntityWorld {
     if (y >= CHUNK_HEIGHT) return BLOCK.AIR;
     const c = this.chunks.get(chunkKey(x >> 4, z >> 4));
     return c ? c.blocks[blockIndex(x & 15, y, z & 15)] : BLOCK.UNLOADED;
+  }
+
+  /** Block state byte; 0 where unknown or in chunks without any state. */
+  getMeta(x: number, y: number, z: number): number {
+    if (y < 0 || y >= CHUNK_HEIGHT) return 0;
+    const c = this.chunks.get(chunkKey(x >> 4, z >> 4));
+    return c?.meta ? c.meta[blockIndex(x & 15, y, z & 15)] : 0;
   }
 
   /** Packed light (sky << 4 | block); full daylight where unknown, like the client. */
@@ -120,18 +132,20 @@ export class ServerWorld implements EntityWorld {
    * Changes one block (a player edit or an explosion). Unloaded chunks only remember it,
    * so it is applied when they generate. Returns the previous block, or −1 if unchanged.
    */
-  setBlock(x: number, y: number, z: number, id: number): number {
+  setBlock(x: number, y: number, z: number, id: number, meta = 0): number {
     if (y < 0 || y >= CHUNK_HEIGHT) return -1;
     const c = this.chunks.get(chunkKey(x >> 4, z >> 4));
     const i = blockIndex(x & 15, y, z & 15);
-    this.recordEdit(x, y, z, id);
+    this.recordEdit(x, y, z, id, meta);
     if (!c) {
-      this.onEdit?.(x, y, z, id);
+      this.onEdit?.(x, y, z, id, meta);
       return BLOCK.UNLOADED;
     }
     const prev = c.blocks[i];
-    if (prev === id) return -1;
+    if (prev === id && (c.meta ? c.meta[i] : 0) === meta) return -1;
     c.blocks[i] = id;
+    if (meta !== 0 && !c.meta) c.meta = new Uint8Array(CHUNK_VOLUME);
+    if (c.meta) c.meta[i] = meta;
     if (LIGHT_EMIT[id] > 0) c.emitters.add(i); else c.emitters.delete(i);
     const col = (x & 15) | ((z & 15) << 4);
     if (OPAQUE[id]) {
@@ -139,7 +153,7 @@ export class ServerWorld implements EntityWorld {
     } else if (y === c.tops[col]) {
       c.tops[col] = topOf(c.blocks, col);
     }
-    this.onEdit?.(x, y, z, id);
+    this.onEdit?.(x, y, z, id, meta);
     return prev;
   }
 
@@ -215,12 +229,19 @@ export class ServerWorld implements EntityWorld {
     const blocks = new Uint8Array(CHUNK_VOLUME);
     this.generator.generate(cx, cz, blocks);
     const edits = this.editsByChunk.get(key);
-    if (edits) for (const [i, id] of edits) blocks[i] = id;
+    let meta: Uint8Array | null = null;
+    if (edits) {
+      for (const [i, state] of edits) {
+        blocks[i] = stateId(state);
+        const m = stateMeta(state);
+        if (m !== 0) { meta ??= new Uint8Array(CHUNK_VOLUME); meta[i] = m; }
+      }
+    }
     const tops = new Int16Array(256);
     for (let col = 0; col < 256; col++) tops[col] = topOf(blocks, col);
     const emitters = new Set<number>();
     for (let i = 0; i < CHUNK_VOLUME; i++) if (LIGHT_EMIT[blocks[i]] > 0) emitters.add(i);
-    const chunk: ServerChunk = { key, cx, cz, blocks, tops, emitters };
+    const chunk: ServerChunk = { key, cx, cz, blocks, meta, tops, emitters };
     this.chunks.set(key, chunk);
     this.onChunkReady?.(chunk);
   }

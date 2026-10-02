@@ -30,7 +30,7 @@ self.onmessage = (e: MessageEvent<WorkerRequest>) => {
     const res: WorkerResponse = { type: 'generate', id: msg.id, blocks, biomes, ms: performance.now() - t0 };
     self.postMessage(res, [blocks.buffer, biomes.buffer]);
   } else {
-    const result = mesher.mesh(msg.neighbours, msg.biomes, msg.fancyLeaves);
+    const result = mesher.mesh(msg.neighbours, msg.biomes, msg.fancyLeaves, msg.metas);
     const transfer: Transferable[] = [result.light.buffer];
     buffersOf(result.opaque, transfer);
     buffersOf(result.cutout, transfer);

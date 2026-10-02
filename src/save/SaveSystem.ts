@@ -9,7 +9,7 @@ export interface PlayerSave {
 }
 
 /** Format version of saved worlds. Bump together with a new entry in MIGRATIONS. */
-export const SAVE_VERSION = 1;
+export const SAVE_VERSION = 2;
 
 export interface WorldMeta {
   /** Save format version; absent on worlds saved before versioning (treated as 0). */
@@ -44,12 +44,12 @@ interface ChunkEditRecord {
   chunkKey: number;
   /** Record format; absent on records saved before versioning (same layout as version 1). */
   version?: number;
-  /** Packed entries: blockIndex << 8 | blockId. */
+  /** Packed entries: v1 blockIndex << 8 | id; v2 blockIndex << 16 | meta << 8 | id. */
   data: Uint32Array;
 }
 
 /** Version of the chunk edit records written by saveEdits(); loadEdits() decodes by record version. */
-export const EDIT_RECORD_VERSION = 1;
+export const EDIT_RECORD_VERSION = 2;
 
 /**
  * Migration hooks: MIGRATIONS[n] upgrades world metadata from version n to n + 1, in place.
@@ -58,7 +58,21 @@ export const EDIT_RECORD_VERSION = 1;
 export const MIGRATIONS: ((meta: WorldMeta) => void)[] = [
   // 0 → 1: worlds saved before versioning have the same layout, they only get stamped.
   () => {},
+  // 1 → 2: block states. The metadata is unchanged; the chunk edit records are upgraded on load
+  // (v1 entries have no state byte, which reads as the default state 0).
+  () => {},
 ];
+
+/** One chunk edit entry as stored in a record of the given version → [blockIndex, packed state]. */
+export function decodeEdit(packed: number, version: number): [number, number] {
+  if (version >= 2) return [packed >>> 16, packed & 0xffff];
+  return [packed >>> 8, packed & 255];
+}
+
+/** Inverse of decodeEdit for the current record version. */
+export function encodeEdit(index: number, state: number): number {
+  return ((index << 16) | (state & 0xffff)) >>> 0;
+}
 
 /** Brings world metadata up to SAVE_VERSION. Worlds from a newer game are left untouched. */
 export function migrateMeta(meta: WorldMeta): WorldMeta {
@@ -158,7 +172,11 @@ export class SaveSystem {
         continue;
       }
       const m = new Map<number, number>();
-      for (const packed of r.data) m.set(packed >>> 8, packed & 255);
+      const version = r.version ?? 1;
+      for (const packed of r.data) {
+        const [index, state] = decodeEdit(packed, version);
+        m.set(index, state);
+      }
       edits.set(r.chunkKey, m);
     }
     return edits;
@@ -178,7 +196,7 @@ export class SaveSystem {
       if (!m) continue;
       const data = new Uint32Array(m.size);
       let i = 0;
-      for (const [idx, id] of m) data[i++] = (idx << 8) | id;
+      for (const [idx, state] of m) data[i++] = encodeEdit(idx, state);
       const record: ChunkEditRecord = { worldId, chunkKey: key, version: EDIT_RECORD_VERSION, data };
       store.put(record);
     }

@@ -30,9 +30,9 @@ export interface EntityHost {
   send(playerId: number, msg: ServerMessage): void;
   broadcast(msg: ServerMessage): void;
   /** A server-made block change that every client must see (the player edit path has its own). */
-  broadcastBlock(x: number, y: number, z: number, id: number): void;
+  broadcastBlock(x: number, y: number, z: number, id: number, meta?: number): void;
   /** Persist a block change. */
-  recordEdit(x: number, y: number, z: number, id: number): void;
+  recordEdit(x: number, y: number, z: number, id: number, meta: number): void;
 }
 
 const r2 = (v: number) => Math.round(v * 100) / 100;
@@ -65,7 +65,7 @@ export class ServerEntities {
     private readonly getTime: () => number,
   ) {
     this.world = new ServerWorld(seed, edits);
-    this.world.onEdit = (x, y, z, id) => host.recordEdit(x, y, z, id);
+    this.world.onEdit = (x, y, z, id, meta) => host.recordEdit(x, y, z, id, meta);
     this.manager = new EntityManager(this.world, seed);
     this.world.onChunkReady = (c) => this.manager.onChunkReady(c);
     this.world.onChunkUnloaded = (k) => this.manager.onChunkUnloaded(k);
@@ -98,8 +98,8 @@ export class ServerEntities {
   }
 
   /** Block edit by a player (already validated by the server). */
-  setBlock(x: number, y: number, z: number, id: number): void {
-    this.world.setBlock(x, y, z, id);
+  setBlock(x: number, y: number, z: number, id: number, meta = 0): void {
+    this.world.setBlock(x, y, z, id, meta);
   }
 
   // ---------------------------------------------------------------- player requests
