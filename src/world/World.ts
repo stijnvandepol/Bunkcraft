@@ -4,7 +4,9 @@ import { BLOCK, SHAPE, SHAPE_CROSS, SHAPE_MODEL, SOLID, TINT } from './BlockRegi
 import { CHUNK_READY, type Chunk } from './Chunk';
 import { ChunkManager, type ChunkMaterials } from './ChunkManager';
 import { CHUNK_HEIGHT, SEA_LEVEL, blockIndex, chunkKey } from './constants';
-import { BIOME, TerrainGenerator } from './TerrainGenerator';
+import { ARENA_SPAWNS } from '../modes/arena';
+import { BIOME } from './TerrainGenerator';
+import { type WorldGenerator, type WorldType, createGenerator } from './WorldGenerator';
 
 /** Sparse player edits per chunk: block index → block id. */
 export type EditMap = Map<number, Map<number, number>>;
@@ -12,7 +14,7 @@ export type EditMap = Map<number, Map<number, number>>;
 export class World {
   readonly chunks: ChunkManager;
   /** Main-thread generator, only used for cheap 2D queries (spawn search, biome name). */
-  readonly generator: TerrainGenerator;
+  readonly generator: WorldGenerator;
   readonly edits: EditMap;
   readonly dirtyEditChunks = new Set<number>();
   /** Entity hooks: a chunk finished generating / was unloaded. */
@@ -21,10 +23,10 @@ export class World {
   /** Local (player) edits, for multiplayer sync: position, new id, previous id. */
   onEdit: ((x: number, y: number, z: number, id: number, prev: number) => void) | null = null;
 
-  constructor(readonly seed: number, pool: WorkerPool, materials: ChunkMaterials, edits: EditMap = new Map()) {
-    this.generator = new TerrainGenerator(seed);
+  constructor(readonly seed: number, pool: WorkerPool, materials: ChunkMaterials, edits: EditMap = new Map(), readonly worldType: WorldType = 'terrain') {
+    this.generator = createGenerator(worldType, seed);
     this.edits = edits;
-    this.chunks = new ChunkManager(seed, pool, materials);
+    this.chunks = new ChunkManager(seed, pool, materials, worldType);
     this.chunks.onGenerated = (chunk) => {
       const e = this.edits.get(chunk.key);
       if (e && chunk.blocks) for (const [i, id] of e) chunk.blocks[i] = id;
@@ -238,6 +240,7 @@ export class World {
 
   /** Spiral search for dry land near the origin using the 2D height function. */
   findSpawn(): { x: number; z: number } {
+    if (this.worldType === 'arena') return ARENA_SPAWNS.ffa[0];
     for (let r = 0; r < 2000; r += 8) {
       const steps = Math.max(1, Math.floor((r * Math.PI * 2) / 16));
       for (let s = 0; s < steps; s++) {

@@ -46,6 +46,7 @@ import { BLOCK, SOLID, getBlockDef } from '../world/BlockRegistry';
 import { CHUNK_VOLUME, blockIndex, chunkKey } from '../world/constants';
 import { hashString } from '../world/Noise';
 import { BIOME_NAMES } from '../world/TerrainGenerator';
+import type { WorldType } from '../world/WorldGenerator';
 import { World } from '../world/World';
 import { AudioEngine } from './Audio';
 import { CameraController } from './Camera';
@@ -373,9 +374,9 @@ export class Game {
 
   // ---------------------------------------------------------------- world lifecycle
 
-  private createWorldInstance(seed: number, edits?: Map<number, Map<number, number>>): World {
+  private createWorldInstance(seed: number, edits?: Map<number, Map<number, number>>, worldType: WorldType = 'terrain'): World {
     this.world?.dispose();
-    const world = new World(seed, this.pool, { opaque: this.renderer.chunkMaterial, cutout: this.renderer.cutoutMaterial, water: this.renderer.waterMaterial }, edits);
+    const world = new World(seed, this.pool, { opaque: this.renderer.chunkMaterial, cutout: this.renderer.cutoutMaterial, water: this.renderer.waterMaterial }, edits, worldType);
     world.chunks.fancyLeaves = this.settings.values.graphics === 'fancy';
     world.chunks.renderDistance = this.settings.values.renderDistance;
     this.world = world;
@@ -455,7 +456,7 @@ export class Game {
   /** Common world setup for singleplayer saves and multiplayer servers. */
   private startSession(meta: WorldMeta, edits: Map<number, Map<number, number>>): void {
     this.meta = meta;
-    const world = this.createWorldInstance(meta.seed, edits);
+    const world = this.createWorldInstance(meta.seed, edits, meta.worldType);
     this.cycle.time = meta.time;
     const mode = meta.gameMode ?? 'creative';
     // Inventory: saved stacks, else creative gets the default hotbar and survival starts empty.
@@ -587,7 +588,7 @@ export class Game {
       id: 'mp:' + address + (room ?? ''), name: welcome.worldName, seed: welcome.seed, seedText: '', created: 0, lastPlayed: Date.now(),
       player: rec ? { x: rec.x, y: rec.y, z: rec.z, yaw: rec.yaw, pitch: rec.pitch, flying: false } : null,
       hotbar: [...DEFAULT_HOTBAR], selectedSlot: 0, time: welcome.time, gameMode: welcome.gameMode,
-      inventory: rec?.inventory, stats: rec?.stats, spawn: welcome.spawn,
+      inventory: rec?.inventory, stats: rec?.stats, spawn: welcome.spawn, worldType: welcome.worldType,
     };
     this.loadingProgress = progress;
     this.startSession(meta, edits);

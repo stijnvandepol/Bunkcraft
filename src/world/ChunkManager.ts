@@ -4,6 +4,7 @@ import type { WorkerPool } from '../workers/WorkerPool';
 import type { GenerateResponse, MeshResponse } from '../workers/protocol';
 import { CHUNK_EMPTY, CHUNK_GENERATING, CHUNK_READY, Chunk } from './Chunk';
 import { CHUNK_HEIGHT, CHUNK_SIZE, chunkKey } from './constants';
+import type { WorldType } from './WorldGenerator';
 
 export interface ChunkMaterials {
   opaque: THREE.Material;
@@ -65,6 +66,7 @@ export class ChunkManager {
     private readonly seed: number,
     private readonly pool: WorkerPool,
     private readonly materials: ChunkMaterials,
+    private readonly worldType: WorldType = 'terrain',
   ) {
     this.opaqueGroup.matrixAutoUpdate = false;
     this.waterGroup.matrixAutoUpdate = false;
@@ -153,7 +155,7 @@ export class ChunkManager {
   private requestGenerate(chunk: Chunk): void {
     chunk.state = CHUNK_GENERATING;
     this.genInFlight++;
-    this.pool.submit({ type: 'generate', id: 0, seed: this.seed, cx: chunk.cx, cz: chunk.cz }, (res) => {
+    this.pool.submit({ type: 'generate', id: 0, seed: this.seed, worldType: this.worldType, cx: chunk.cx, cz: chunk.cz }, (res) => {
       this.genInFlight--;
       if (this.disposed || this.chunks.get(chunk.key) !== chunk) return;
       chunk.blocks = (res as GenerateResponse).blocks;

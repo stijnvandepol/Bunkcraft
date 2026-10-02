@@ -3,7 +3,7 @@ import {
   BLOCK, LIGHT_EMIT, OPAQUE, SHAPE, SHAPE_CROSS, SHAPE_MODEL,
 } from '../src/world/BlockRegistry';
 import { CHUNK_HEIGHT, CHUNK_VOLUME, blockIndex, chunkKey } from '../src/world/constants';
-import { TerrainGenerator } from '../src/world/TerrainGenerator';
+import { type WorldGenerator, type WorldType, createGenerator } from '../src/world/WorldGenerator';
 
 /** Chunks kept loaded around each player (mobs only live where terrain exists). */
 const LOAD_RADIUS = 4;
@@ -27,7 +27,7 @@ interface ServerChunk extends ChunkLike {
  * block light comes from emitters within reach, which is all the spawn and burn rules need.
  */
 export class ServerWorld implements EntityWorld {
-  readonly generator: TerrainGenerator;
+  readonly generator: WorldGenerator;
   private readonly chunks = new Map<number, ServerChunk>();
   private readonly editsByChunk = new Map<number, Map<number, number>>();
   private readonly wanted = new Set<number>();
@@ -36,8 +36,8 @@ export class ServerWorld implements EntityWorld {
   onChunkReady: ((chunk: ChunkLike) => void) | null = null;
   onChunkUnloaded: ((key: number) => void) | null = null;
 
-  constructor(readonly seed: number, edits: Record<string, number>) {
-    this.generator = new TerrainGenerator(seed);
+  constructor(readonly seed: number, edits: Record<string, number>, readonly worldType: WorldType = 'terrain') {
+    this.generator = createGenerator(worldType, seed);
     for (const [k, id] of Object.entries(edits)) {
       const [x, y, z] = k.split(',').map(Number);
       this.recordEdit(x, y, z, id);

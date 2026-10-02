@@ -1,9 +1,12 @@
 import type { MeshResult } from '../rendering/ChunkMesher';
+import type { WorldType } from '../world/WorldGenerator';
 
 export interface GenerateRequest {
   type: 'generate';
   id: number;
   seed: number;
+  /** Absent = terrain. */
+  worldType?: WorldType;
   cx: number;
   cz: number;
 }

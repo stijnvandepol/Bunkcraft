@@ -35,6 +35,8 @@ export interface WorldMeta {
   advancements?: Record<string, number>;
   /** World spawn / respawn point. */
   spawn?: { x: number; y: number; z: number };
+  /** Multiplayer arcade games use the fixed arena map; absent = generated terrain. */
+  worldType?: 'terrain' | 'arena';
 }
 
 interface ChunkEditRecord {
