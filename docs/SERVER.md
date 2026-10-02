@@ -121,7 +121,7 @@ HTTPS en WebSockets automatisch.
 - **Tijd:** de dag/nachtcyclus loopt op de server (alleen als er spelers online zijn) en wordt gesynchroniseerd.
 - **Opslaan:** elke 30 seconden en bij afsluiten (Ctrl+C / SIGTERM), atomisch via
   een tijdelijk bestand, zodat een crash nooit een half geschreven wereld achterlaat.
-- **Commando's in de chat:** `/help`, `/list`, `/seed`, `/spawn`, `/time set day|noon|night|midnight`.
+- **Commando's in de chat:** `/help`, `/list`, `/seed`, `/spawn`, `/time set day|noon|night|midnight`, `/weather clear|rain|thunder [seconden]`.
 
 ## Mobs, items en TNT op de server
 
