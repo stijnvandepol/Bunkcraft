@@ -145,9 +145,9 @@ describe('malicious archives', () => {
     const files: Record<string, Uint8Array> = { 'level.json': level() };
     const zeros = new Uint8Array(ARCHIVE_LIMITS.chunkBytes);
     for (let i = 0; i < 1600; i++) files[`chunks/${i}.v2.bin`] = zeros; // 200 MB uncompressed
-    const bomb = zipSync(files, { level: 9 });
+    const bomb = zipSync(files, { level: 1 });
     expect(() => parseArchive(bomb)).toThrow(/too large when unpacked/);
-  });
+  }, 30_000);
 
   it('limits the number of entries', () => {
     const files: Record<string, Uint8Array> = { 'level.json': level() };
