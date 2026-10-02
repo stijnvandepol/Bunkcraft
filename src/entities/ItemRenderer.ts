@@ -23,6 +23,7 @@ export class ItemRenderer {
   private readonly texture: THREE.CanvasTexture;
   private readonly cells = new Map<number, number>();
   private iconVersion = -1;
+  private frame = 0;
 
   constructor(uniforms: WorldUniforms, private readonly icons: BlockIcons) {
     this.canvas.width = this.canvas.height = ATLAS;
@@ -106,6 +107,7 @@ export class ItemRenderer {
 
   update(items: ItemEntity[], alpha: number, time: number, world: World): void {
     const n = Math.min(items.length, MAX);
+    this.frame++;
     const p = this.iPos.array as Float32Array, d = this.iData.array as Float32Array;
     for (let i = 0; i < n; i++) {
       const it = items[i];
@@ -117,7 +119,7 @@ export class ItemRenderer {
       p[i * 4] = x; p[i * 4 + 1] = y + bob; p[i * 4 + 2] = z;
       p[i * 4 + 3] = it.stack.count > 1 ? 0.42 : 0.36;
       const cell = this.cellFor(it.stack.id);
-      const light = world.getLight(Math.floor(x), Math.floor(y + 0.2), Math.floor(z));
+      const light = it.lightAt(world, this.frame, x, y + 0.2, z);
       d[i * 4] = cell % PER_ROW;
       d[i * 4 + 1] = Math.floor(cell / PER_ROW);
       d[i * 4 + 2] = (light >> 4) / 15;

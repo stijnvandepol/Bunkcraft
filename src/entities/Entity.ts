@@ -3,6 +3,12 @@ import { type AABB, type BlockGetter, clipAxis } from '../player/Collision';
 
 export const ENTITY_TICK = 1 / 20;
 const GRAVITY = 32;
+/** Renderers re-sample an entity's light only every this many frames. */
+const LIGHT_INTERVAL = 6;
+
+interface LightSource {
+  getLight(x: number, y: number, z: number): number;
+}
 
 /**
  * Base entity with Minecraft-style physics at 20 ticks/s: AABB collision against
@@ -20,6 +26,9 @@ export abstract class Entity {
   inLava = false;
   removed = false;
   fallDistance = 0;
+  /** Cached packed light (sky << 4 | block) for rendering, see lightAt(). */
+  private renderLight = 0xf0;
+  private renderLightFrame = -LIGHT_INTERVAL;
   protected readonly box: AABB = { minX: 0, minY: 0, minZ: 0, maxX: 0, maxY: 0, maxZ: 0 };
 
   constructor(readonly width: number, readonly height: number) {}
@@ -36,6 +45,15 @@ export abstract class Entity {
     b.minY = this.y; b.maxY = this.y + this.height;
     b.minZ = this.z - hw; b.maxZ = this.z + hw;
     return b;
+  }
+
+  /** Light for rendering: a world lookup at most every few frames, the cached value in between. */
+  lightAt(world: LightSource, frame: number, x: number, y: number, z: number): number {
+    if (frame - this.renderLightFrame >= LIGHT_INTERVAL) {
+      this.renderLightFrame = frame;
+      this.renderLight = world.getLight(Math.floor(x), Math.floor(y), Math.floor(z));
+    }
+    return this.renderLight;
   }
 
   /** Ray–AABB slab test; returns the distance along the ray or Infinity. */

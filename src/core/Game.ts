@@ -831,7 +831,7 @@ export class Game {
     for (let i = 0; i < e.mobs.length; i++) list.push(e.mobs[i]);
     const remote = this.remote.mobs;
     for (let i = 0; i < remote.length; i++) list.push(remote[i]);
-    this.mobRenderer.update(list, alpha, world);
+    this.mobRenderer.update(list, alpha, world, this.cam.camera.position);
     this.itemRenderer.update(e.items, alpha, this.time, world);
     this.tntRenderer.update(e.tnt, alpha, world);
     this.arrowRenderer.update(e.arrows, alpha, world);

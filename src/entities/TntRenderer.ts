@@ -91,8 +91,11 @@ export class TntRenderer {
     this.mesh.visible = false;
   }
 
+  private frame = 0;
+
   update(list: PrimedTnt[], alpha: number, world: World): void {
     const n = Math.min(list.length, MAX);
+    this.frame++;
     const p = this.iPos.array as Float32Array, d = this.iData.array as Float32Array;
     for (let i = 0; i < n; i++) {
       const t = list[i];
@@ -107,7 +110,7 @@ export class TntRenderer {
         scale = 1 + s * 0.3;
       }
       p[i * 4] = x; p[i * 4 + 1] = y; p[i * 4 + 2] = z; p[i * 4 + 3] = scale;
-      const light = world.getLight(Math.floor(x), Math.floor(y + 0.5), Math.floor(z));
+      const light = t.lightAt(world, this.frame, x, y + 0.5, z);
       d[i * 4] = (light >> 4) / 15;
       d[i * 4 + 1] = (light & 15) / 15;
       d[i * 4 + 2] = Math.floor(t.fuse / 5) % 2 === 0 ? 1 : 0;

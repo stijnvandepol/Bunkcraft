@@ -119,7 +119,12 @@ export class MobRenderer {
   /** Flat list of all part meshes (iterating the map each frame would allocate iterators). */
   private readonly all: PartMesh[] = [];
 
+  private frame = 0;
+  /** Mobs further than the fog end are invisible anyway: skip their posing and instances. */
+  private readonly fogFar: { value: number };
+
   constructor(uniforms: WorldUniforms) {
+    this.fogFar = uniforms.uFogFar;
     for (const type of Object.values(MOB_TYPES)) {
       const boxes = type.parts.flatMap((p) => p.boxes);
       const regions = packRegions(boxes);
@@ -149,11 +154,16 @@ export class MobRenderer {
     }
   }
 
-  update(mobs: Mob[], alpha: number, world: World): void {
+  update(mobs: Mob[], alpha: number, world: World, cam: THREE.Vector3): void {
     const all = this.all;
+    this.frame++;
+    const cullR = this.fogFar.value + 8;
+    const cull2 = cullR * cullR;
     for (let i = 0; i < all.length; i++) all[i].mesh.count = 0;
     for (let mi = 0; mi < mobs.length; mi++) {
       const m = mobs[mi];
+      const cdx = m.x - cam.x, cdz = m.z - cam.z;
+      if (cdx * cdx + cdz * cdz > cull2) continue;
       const parts = this.types.get(m.type.kind)!;
       const index = parts[0].mesh.count;
       if (index >= MAX_PER_TYPE) continue;
@@ -176,7 +186,7 @@ export class MobRenderer {
       tmpQuat.setFromEuler(tmpEuler.set(0, yaw, death, 'YXZ'));
       tmpBase.compose(tmpPos, tmpQuat, tmpScale);
 
-      const light = world.getLight(Math.floor(x), Math.floor(y + m.height * 0.6), Math.floor(z));
+      const light = m.lightAt(world, this.frame, x, y + m.height * 0.6, z);
       const hurt = m.hurtTime > 0 || m.dead ? 1 : m.burning > 0 ? 0.5 : 0;
       const flash = fuse > 0 && Math.floor(fuse * 30 / 4) % 2 === 0 ? fuse : 0;
 
@@ -201,6 +211,8 @@ export class MobRenderer {
     }
     for (let i = 0; i < all.length; i++) {
       const p = all[i];
+      // Types without any mob cost no draw call.
+      p.mesh.visible = p.mesh.count > 0;
       if (p.mesh.count === 0) continue;
       p.mesh.instanceMatrix.needsUpdate = true;
       p.data.needsUpdate = true;
