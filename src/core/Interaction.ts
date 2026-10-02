@@ -54,6 +54,8 @@ export interface InteractionDeps {
   openChest?(x: number, y: number, z: number): void;
   /** Right click on a bed: sets the spawn point and sleeps through the night. */
   useBed?(x: number, y: number, z: number): void;
+  /** Statistics hook: a block was broken or placed. */
+  onStat?(key: 'mined' | 'placed'): void;
 }
 
 /**
@@ -338,6 +340,7 @@ export class Interaction {
     const brokenMeta = world.getMeta(hit.x, hit.y, hit.z);
     const broken = world.breakBlock(hit.x, hit.y, hit.z);
     if (broken) {
+      this.d.onStat?.('mined');
       renderer.particles.spawnBreak(hit.x, hit.y, hit.z, broken, light, world.tintAt(hit.x, hit.z, broken, brokenMeta));
       audio.play('break', stateSound(def, brokenMeta));
       if (survival) {
@@ -400,6 +403,7 @@ export class Interaction {
     if (!world.setBlock(x, y, z, id, placed.meta | baseMeta)) return;
     if (id === BLOCK.CHEST) world.containers.clear(x, y, z);
     if (placed.upper) world.setBlock(placed.upper.x, placed.upper.y, placed.upper.z, id, placed.upper.meta | baseMeta);
+    this.d.onStat?.('placed');
     const def = getBlockDef(id)!;
     audio.play('place', stateSound(def, baseMeta));
     hand.swingHand();

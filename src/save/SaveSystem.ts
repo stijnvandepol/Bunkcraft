@@ -33,6 +33,10 @@ export interface WorldMeta {
   inventory?: number[][];
   /** [health, hunger, saturation, exhaustion, air] */
   stats?: number[];
+  /** Statistics counters (src/player/StatTracker.ts); absent = all zero. */
+  statistics?: Record<string, number>;
+  /** Allow Cheats: gates the slash commands in singleplayer; absent = on in creative, off otherwise. */
+  cheats?: boolean;
   /** Earned advancements: id → timestamp. */
   advancements?: Record<string, number>;
   /** Chest contents: "x,y,z" → one saved stack record per slot. */
@@ -47,6 +51,11 @@ export interface WorldMeta {
   day?: number;
   /** Weather timers and flags; absent = a fresh clear cycle. */
   weather?: WeatherState;
+}
+
+/** Allow Cheats: an explicit choice wins, otherwise cheats are on in Creative worlds only (like Minecraft). */
+export function cheatsAllowed(meta: Pick<WorldMeta, 'cheats' | 'gameMode'>): boolean {
+  return meta.cheats ?? meta.gameMode === 'creative';
 }
 
 export interface ChunkEditRecord {

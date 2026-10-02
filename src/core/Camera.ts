@@ -30,6 +30,8 @@ export class CameraController {
   zoom = 1;
   /** Sprinting widens the field of view; arcade games sprint all the time and turn this off. */
   sprintFov = true;
+  /** Options > FOV Effects: 0 = no sprint/flight zoom, 1 = full (the default). */
+  fovEffects = 1;
 
   constructor() {
     this.camera = new THREE.PerspectiveCamera(70, 1, 0.1, 1200);
@@ -71,7 +73,7 @@ export class CameraController {
     cam.position.set(x + cos * bobSide, y + PHYSICS.EYE_HEIGHT + bobY - this.landDip, z - sin * bobSide);
 
     let fovTarget = this.baseFov;
-    if (p.sprinting && this.sprintFov) fovTarget *= p.flying ? 1.18 : 1.12;
+    if (p.sprinting && this.sprintFov) fovTarget *= 1 + ((p.flying ? 0.18 : 0.12) * this.fovEffects);
     if (p.headInWater) fovTarget *= 0.9;
     // Drawing a bow zooms in (Minecraft: up to 15% at full draw).
     if (this.bowPull > 0) fovTarget *= 1 - this.bowPull * this.bowPull * 0.15;

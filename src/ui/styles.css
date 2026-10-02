@@ -692,18 +692,34 @@ html, body {
   position: absolute;
   left: calc(var(--s) * 2);
   bottom: calc(var(--s) * 40);
-  width: min(calc(var(--s) * 320), 60vw);
+  /* Chat Settings: width 40–100% of Minecraft's 320 GUI px, text size, line spacing and text opacity. */
+  --chat-size: 1;
+  --chat-gap: 0;
+  --chat-width: 1;
+  --chat-opacity: 1;
+  --chat-line: calc(var(--s) * (9 * var(--chat-size) + 4 * var(--chat-gap)));
+  width: min(calc(var(--s) * 320 * var(--chat-width)), 60vw);
+  font-size: calc(var(--fs) * var(--chat-size));
   z-index: 9;
   pointer-events: none;
   text-shadow: var(--shadow);
 }
 
-.chat-log { max-height: calc(var(--s) * 9 * 10); overflow: hidden; display: flex; flex-direction: column; }
-.chat-line { background: rgba(0, 0, 0, 0.5); padding: 0 calc(var(--s) * 2); line-height: calc(var(--s) * 9); white-space: pre-wrap; word-break: break-word; transition: opacity 0.5s; }
-.chat-line.system { color: #ffff55; }
+.chat-log { max-height: calc(var(--chat-line) * 10); overflow: hidden; display: flex; flex-direction: column; }
+.chat-line {
+  background: rgba(0, 0, 0, 0.5);
+  padding: 0 calc(var(--s) * 2);
+  line-height: var(--chat-line);
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: rgba(255, 255, 255, var(--chat-opacity));
+  transition: opacity 1s linear;
+  will-change: opacity;
+}
+.chat-line.system { color: rgba(255, 255, 85, var(--chat-opacity)); }
 .chat-line.faded { opacity: 0; }
-.chat.open .chat-log { overflow-y: auto; pointer-events: auto; max-height: calc(var(--s) * 9 * 20); }
-.chat.open .chat-line.faded { opacity: 1; }
+.chat.open .chat-log { overflow-y: auto; pointer-events: auto; max-height: calc(var(--chat-line) * 20); scrollbar-width: none; }
+.chat.open .chat-line.faded { opacity: 1; transition: none; }
 
 .chat-input {
   pointer-events: auto;
@@ -718,6 +734,20 @@ html, body {
   font-size: var(--fs);
   padding: 0 calc(var(--s) * 2);
 }
+
+/* Command suggestions: a list above the input line, the Tab target highlighted yellow like Minecraft. */
+.chat-suggest {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  margin-top: calc(var(--s) * 2);
+  background: rgba(0, 0, 0, 0.7);
+  padding: calc(var(--s) * 1) calc(var(--s) * 2);
+  width: max-content;
+  max-width: 100%;
+}
+.chat-suggest > div { color: #aaa; line-height: calc(var(--s) * 9); }
+.chat-suggest > div.sel { color: #ffff55; }
 
 .nametags { position: absolute; inset: 0; pointer-events: none; z-index: 4; overflow: hidden; }
 .nametag {

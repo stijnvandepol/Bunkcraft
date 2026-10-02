@@ -34,7 +34,30 @@ export interface Settings {
   texturePack: string;
   /** Action id → key code or "Mouse<n>" ('' = Not Bound); see Keybinds.ts. */
   keybinds: KeybindMap;
+  /** UI language (see src/ui/i18n.ts). */
+  language: 'en' | 'nl';
+  /** Frame limiter in frames per second; MAX_FPS_UNLIMITED (260) = no limit. */
+  maxFps: number;
+  /** Mob render distance in % (Minecraft's Entity Distance, 50–500%). */
+  entityDistance: number;
+  /** Where the attack cooldown indicator is drawn. */
+  attackIndicator: 'crosshair' | 'hotbar' | 'off';
+  /** Raw (unaccelerated) mouse input where the browser supports it. */
+  rawInput: boolean;
+  /** Jump automatically onto one-block ledges while moving. */
+  autoJump: boolean;
+  /** FOV Effects: how much sprinting and flying change the field of view, 0–100%. */
+  fovEffects: number;
+  /** Chat settings (Minecraft's Chat Settings screen). */
+  chatOpacity: number;
+  chatTextSize: number;
+  chatLineSpacing: number;
+  chatWidth: number;
+  chatColors: boolean;
+  chatSuggestions: boolean;
 }
+
+export const MAX_FPS_UNLIMITED = 260;
 
 export const DEFAULT_SETTINGS: Settings = {
   renderDistance: 8,
@@ -58,6 +81,19 @@ export const DEFAULT_SETTINGS: Settings = {
   invertMouse: false,
   texturePack: 'pixel-perfection',
   keybinds: defaultKeybinds(),
+  language: 'en',
+  maxFps: MAX_FPS_UNLIMITED,
+  entityDistance: 100,
+  attackIndicator: 'crosshair',
+  rawInput: true,
+  autoJump: false,
+  fovEffects: 100,
+  chatOpacity: 100,
+  chatTextSize: 100,
+  chatLineSpacing: 0,
+  chatWidth: 100,
+  chatColors: true,
+  chatSuggestions: true,
 };
 
 export const RENDER_DISTANCE_PRESETS: [string, number][] = [['Low', 4], ['Medium', 8], ['High', 12], ['Ultra', 16], ['Extreme', 20]];
@@ -117,6 +153,13 @@ const NUMBER_RANGES = {
   masterVolume: [0, 100],
   brightness: [0, 100],
   guiScale: [0, 4],
+  maxFps: [30, MAX_FPS_UNLIMITED],
+  entityDistance: [50, 500],
+  fovEffects: [0, 100],
+  chatOpacity: [0, 100],
+  chatTextSize: [50, 100],
+  chatLineSpacing: [0, 100],
+  chatWidth: [40, 100],
 } as const satisfies Partial<Record<keyof Settings, readonly [number, number]>>;
 
 const ENUM_VALUES = {
@@ -125,9 +168,11 @@ const ENUM_VALUES = {
   particles: ['all', 'decreased', 'minimal'],
   clouds: ['fancy', 'off'],
   spatialAudio: ['stereo', 'hrtf'],
+  language: ['en', 'nl'],
+  attackIndicator: ['crosshair', 'hotbar', 'off'],
 } as const satisfies Partial<Record<keyof Settings, readonly string[]>>;
 
-const BOOLEAN_KEYS = ['dynamicResolution', 'viewBobbing', 'invertMouse'] as const;
+const BOOLEAN_KEYS = ['dynamicResolution', 'viewBobbing', 'invertMouse', 'rawInput', 'autoJump', 'chatColors', 'chatSuggestions'] as const;
 
 /**
  * A complete, valid Settings object from untrusted stored data: numbers are clamped to the menu's

@@ -1,4 +1,4 @@
-import { BLOCK } from '../world/BlockRegistry';
+import { BLOCK, SOLID } from '../world/BlockRegistry';
 import { pointInLiquid } from '../world/Liquids';
 import { type AABB, type BlockGetter, boxIntersectsSolid, clipAxis } from './Collision';
 import { PHYSICS, approach } from './Physics';
@@ -54,6 +54,8 @@ export class Player {
   sprintDistance = 0;
   swimDistance = 0;
   jumps = 0;
+  /** Options > Auto-Jump: hop onto one-block ledges while walking into them. */
+  autoJump = false;
 
   private time = 0;
   private lastJumpPress = -1;
@@ -142,7 +144,7 @@ export class Player {
       // Climb out onto the shore.
       if (input.jump && this.horizontalCollision) this.vy = Math.max(this.vy, 5.5);
     } else {
-      if (input.jump && this.onGround) {
+      if ((input.jump || (this.autoJump && f > 0 && this.onGround && this.ledgeAhead(tx, tz, getBlock))) && this.onGround) {
         this.vy = PHYSICS.JUMP_VELOCITY;
         this.jumps++;
       }
@@ -204,6 +206,17 @@ export class Player {
       if (this.fallDistance > 0) this.landedFall = this.fallDistance;
       this.fallDistance = 0;
     }
+  }
+
+  /** Auto-Jump: a solid block ahead at foot level with two free blocks above it and headroom here. */
+  private ledgeAhead(dirX: number, dirZ: number, getBlock: BlockGetter): boolean {
+    const len = Math.hypot(dirX, dirZ);
+    if (len < 0.01) return false;
+    const fx = Math.floor(this.x + (dirX / len) * 0.55), fz = Math.floor(this.z + (dirZ / len) * 0.55);
+    const y = Math.floor(this.y + 0.1);
+    const solid = (bx: number, by: number, bz: number) => SOLID[getBlock(bx, by, bz)] === 1;
+    return solid(fx, y, fz) && !solid(fx, y + 1, fz) && !solid(fx, y + 2, fz)
+      && !solid(Math.floor(this.x), y + 2, Math.floor(this.z));
   }
 
   /**

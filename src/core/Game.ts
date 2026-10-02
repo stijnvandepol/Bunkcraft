@@ -28,7 +28,7 @@ import { HandRenderer } from '../rendering/HandRenderer';
 import {
   IMPORTED_PREFIX, MINECRAFT_LAYOUT, type PackImage, builtinResolver, findBuiltinPack, importMinecraftArchive, importedResolver, loadPack,
 } from '../rendering/TexturePacks';
-import { type WorldMeta, SaveSystem, newWorldId } from '../save/SaveSystem';
+import { type WorldMeta, SaveSystem, cheatsAllowed, newWorldId } from '../save/SaveSystem';
 import { BlockIcons } from '../ui/BlockIcons';
 import { DebugOverlay } from '../ui/DebugOverlay';
 import { h } from '../ui/dom';
@@ -71,7 +71,10 @@ import { Interaction } from './Interaction';
 import { Renderer } from './Renderer';
 import { WeatherSystem } from './WeatherSystem';
 import { DynamicResolution, suggestPreset } from './AdaptiveQuality';
-import { SettingsStore } from './Settings';
+import { MAX_FPS_UNLIMITED, SettingsStore } from './Settings';
+import { detectLanguage, setLanguage, t } from '../ui/i18n';
+import { StatTracker } from '../player/StatTracker';
+import { LOCAL_COMMAND_USAGE, SERVER_COMMAND_USAGE } from '../ui/chatLogic';
 
 type GameState = 'menu' | 'loading' | 'playing' | 'paused' | 'inventory' | 'dead' | 'chat';
 
@@ -159,6 +162,11 @@ export class Game {
 
   private last = 0;
   private frameDt = 0;
+  /** Statistics screen counters (saved in WorldMeta.statistics). */
+  readonly statTracker = new StatTracker();
+  private statLast: { x: number; z: number; ground: boolean } | null = null;
+  /** Frame limiter (Options > Max Framerate); 0 = unlimited. */
+  private minFrameMs = 0;
   private time = 0;
   private accumulator = 0;
   private stepCount = 0;
@@ -221,8 +229,9 @@ export class Game {
     });
     this.chat.onSend = (text) => {
       if (this.net) return this.net.sendChat(text);
-      // Singleplayer has no server: the slash commands run locally.
-      if (!text.startsWith('/')) return;
+      // Singleplayer has no server: messages are echoed and the slash commands run locally (with Allow Cheats).
+      if (!text.startsWith('/')) return this.chat.add(`<Player> ${text}`);
+      if (!this.meta || !cheatsAllowed(this.meta)) return this.chat.add(t('chat.noCheats'), true);
       const lines = this.weatherSys.localCommand(text) ?? [`Unknown command: ${text.split(/\s+/)[0]}. Type /help for help.`];
       for (const line of lines) this.chat.add(line, true);
     };
@@ -303,6 +312,7 @@ export class Game {
     const info = gl.getExtension('WEBGL_debug_renderer_info');
     this.gpuName = info ? String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL)) : 'WebGL2';
     if (this.settings.fresh) {
+      this.settings.set('language', detectLanguage());
       const memory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
       this.settings.setMany(suggestPreset(this.gpuName, navigator.hardwareConcurrency || 0, memory).values);
     }
@@ -343,6 +353,12 @@ export class Game {
         'Terrain, mobs, sounds, music, sky and procedural textures: generated in code',
         'Not affiliated with Mojang or Microsoft',
       ],
+      languageChanged: () => {
+        // Rebuild what sits below Options (title or pause menu) in the new language, then reopen Options.
+        if (this.state === 'menu') this.menu.showTitle();
+        else this.showPauseMenu();
+        this.openOptions();
+      },
     }));
   }
 
@@ -407,6 +423,13 @@ export class Game {
     this.updateMenuBlur();
     this.cam.baseFov = s.fov;
     this.cam.viewBobbing = s.viewBobbing;
+    setLanguage(s.language);
+    this.chat.applySettings(s);
+    this.cam.fovEffects = s.fovEffects / 100;
+    this.player.autoJump = s.autoJump;
+    this.input.rawInput = s.rawInput;
+    this.mobRenderer.distanceScale = s.entityDistance / 100;
+    this.minFrameMs = s.maxFps >= MAX_FPS_UNLIMITED ? 0 : 1000 / s.maxFps;
     if (!key || key === 'keybinds') {
       this.input.setBindings(resolveKeybinds(s.keybinds));
       this.arcade?.setBindings(this.input);
@@ -499,6 +522,7 @@ export class Game {
       world, player: this.player, stats: this.stats, inventory: this.playerInventory, hotbar: this.hotbar,
       entities, renderer: this.renderer, hand: this.hand, audio: this.audio, camera: this.cam.camera,
       attackRemote: (id) => this.net?.sendAttack(id),
+      onStat: (key) => this.statTracker.add(key),
       igniteTnt: (x, y, z) => {
         if (this.net) {
           // The server validates, removes the block and simulates the fuse.
@@ -561,8 +585,8 @@ export class Game {
 
   private async enterWorld(meta: WorldMeta): Promise<void> {
     this.audio.unlock();
-    this.loadingProgress = this.menu.showLoading('Loading world');
-    this.loadingProgress('Reading save data...', 0);
+    this.loadingProgress = this.menu.showLoading(t('loading.world'));
+    this.loadingProgress(t('loading.reading'), 0);
     const edits = await this.save.loadEdits(meta.id);
     this.startSession(meta, edits);
   }
@@ -584,6 +608,13 @@ export class Game {
     }
     this.stats.load(meta.stats);
     this.advancements.load(meta.advancements);
+    this.statTracker.load(meta.statistics);
+    this.statLast = null;
+    if (!this.net) {
+      this.chat.clear();
+      this.chat.setCommands(LOCAL_COMMAND_USAGE);
+      this.chat.setVisible(true);
+    }
     this.score = 0;
     // A save made on the death screen: hardcore becomes spectator, others respawn at spawn.
     const diedBeforeSave = this.stats.wasDead;
@@ -669,6 +700,7 @@ export class Game {
     meta.containers = world.containers.serialize();
     meta.stats = this.stats.serialize();
     meta.advancements = this.advancements.serialize();
+    meta.statistics = this.statTracker.serialize();
     meta.gameMode = this.mode;
     meta.selectedSlot = this.hotbar.selected;
     meta.time = this.cycle.time;
@@ -834,6 +866,7 @@ export class Game {
     if (welcome.gameType === 'minecraft') for (const p of welcome.players) this.remote.add(p.id, p.name);
     if (welcome.gameType !== 'minecraft') this.startArcade(welcome, (m) => net.send(m), name);
     this.chat.clear();
+    this.chat.setCommands(SERVER_COMMAND_USAGE);
     this.chat.setVisible(true);
     if (welcome.motd) this.chat.add(welcome.motd, true);
     if (this.arcade) this.chat.add(this.arcadeHint, true);
@@ -1057,6 +1090,7 @@ export class Game {
   // ---------------------------------------------------------------- death
 
   private onDeath(): void {
+    this.statTracker.add('deaths');
     this.inventory.close();
     this.survivalInventory.close();
     this.chat.close();
@@ -1159,6 +1193,10 @@ export class Game {
   private pause(): void {
     this.state = 'paused';
     void this.saveGame(true);
+    this.showPauseMenu();
+  }
+
+  private showPauseMenu(): void {
     this.stack.clear();
     this.stack.push(pauseScreen({
       resume: () => void this.resumeGame(),
@@ -1191,7 +1229,8 @@ export class Game {
     if (this.chat.isOpen) return;
     const input = this.input;
     const command = code === input.bound(KB.COMMAND);
-    if ((command || code === input.bound(KB.CHAT)) && this.net && this.state === 'playing' && this.input.locked) {
+    const chatAvailable = this.net !== null || (this.meta !== null && !this.arcade);
+    if ((command || code === input.bound(KB.CHAT)) && chatAvailable && this.state === 'playing' && this.input.locked) {
       this.state = 'chat';
       this.suppressPause = this.input.locked;
       this.input.exitLock();
@@ -1253,6 +1292,8 @@ export class Game {
 
   private readonly frame = (now: number): void => {
     requestAnimationFrame(this.frame);
+    // Max Framerate: skip this display refresh while the previous frame is too recent.
+    if (this.minFrameMs > 0 && now - this.last < this.minFrameMs - 1.5) return;
     const rawDt = (now - this.last) / 1000;
     this.frameDt = Math.min(rawDt, 0.1);
     const dt = Math.min(rawDt, 0.1);
@@ -1330,7 +1371,7 @@ export class Game {
       }
     }
     const total = (r * 2 + 1) ** 2;
-    this.loadingProgress?.(ready === 0 ? 'Generating terrain...' : 'Building chunk meshes...', ready / total);
+    this.loadingProgress?.(ready === 0 ? t('loading.terrain') : t('loading.meshes'), ready / total);
     // Keep the camera at the spawn so the first frame after loading is correct.
     this.cam.camera.position.set(this.player.x, this.player.y + PHYSICS.EYE_HEIGHT, this.player.z);
     if (world.chunks.isAreaReady(this.player.x, this.player.z, r)) this.finishLoading();
@@ -1358,7 +1399,10 @@ export class Game {
         this.cam.hurtSide = Math.sin(yaw - p.yaw) >= 0 ? 1 : -1;
       }
     },
-    killed: (mob) => this.advancements.onMobKilled(mob.type.hostile),
+    killed: (mob) => {
+      this.statTracker.add('killed');
+      this.advancements.onMobKilled(mob.type.hostile);
+    },
     playerArrowHit: () => this.advancements.onArrowHitMob(),
     explode: (mob) => this.explode(mob, mob.x, mob.y + 0.5, mob.z, 3),
     shoot: (mob) => {
@@ -1503,6 +1547,23 @@ export class Game {
     if (stats.dead && (this.state === 'playing' || this.state === 'inventory' || this.state === 'chat' || this.state === 'paused')) this.onDeath();
   }
 
+  /** Statistics: time played, distance walked (not flying) and jumps, from per-frame position changes. */
+  private trackStats(dt: number): void {
+    const p = this.player, st = this.statTracker;
+    st.add('playMs', dt * 1000);
+    const last = this.statLast;
+    if (last) {
+      if (!p.flying && !p.noclip) st.addWalk(Math.hypot(p.x - last.x, p.z - last.z));
+      if (last.ground && !p.onGround && p.vy > 4) st.add('jumps');
+    }
+    if (!last) this.statLast = { x: p.x, z: p.z, ground: p.onGround };
+    else {
+      last.x = p.x;
+      last.z = p.z;
+      last.ground = p.onGround;
+    }
+  }
+
   private updatePlaying(dt: number): void {
     const world = this.world!;
     const p = this.player;
@@ -1520,6 +1581,8 @@ export class Game {
         if (input.wheel !== 0) this.hotbar.select(this.hotbar.selected + input.wheel);
       }
     }
+
+    if (this.state === 'playing' && !this.arcade) this.trackStats(dt);
 
     if (this.state !== 'paused') {
       // Fixed-step simulation, rendered with interpolation.
