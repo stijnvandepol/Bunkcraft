@@ -123,6 +123,81 @@ describe('team balance and phases', () => {
   });
 });
 
+describe('late joiners and uneven teams', () => {
+  it('a player who joins a live game lands on the smaller team and spawns at once', () => {
+    const { host, match } = liveDuel('tdm');
+    host.clear();
+    const carol = match.join(3, 'carol');
+    const dave = match.join(4, 'dave');
+    expect(carol.team).toBe('red');
+    expect(dave.team).toBe('blue');
+    match.join(5, 'erin');
+    match.ready(5);
+    expect(match.players.get(5)!.team).toBe('red');
+    expect(match.players.get(5)!.alive).toBe(true);
+    expect(host.of('spawn', 5)).toHaveLength(1);
+    expect(host.of('spawn', 5)[0].team).toBe('red');
+    expect(match.phase).toBe('live');
+  });
+
+  it('on equal team sizes a late joiner goes to the team that is behind', () => {
+    const { match, advance } = liveDuel('tdm');
+    for (let i = 0; i < 5; i++) { match.fire(1, aim(match.players.get(1)!, body(10.5))); advance(0.11); }
+    expect(match.teamScore('red')).toBe(1);
+    advance(RESPAWN_SECONDS + 0.2); // bob is back: 1 v 1, red leads
+    expect(match.join(3, 'carol').team).toBe('blue');
+    expect(match.join(4, 'dave').team).toBe('red');
+  });
+
+  it('moves the latest joiner of the larger team over at their next respawn and says so in chat', () => {
+    const { host, match, advance } = setup('tdm');
+    for (const [id, name] of [[1, 'a'], [2, 'b'], [3, 'c'], [4, 'd'], [5, 'e'], [6, 'f']] as const) { match.join(id, name); match.ready(id); }
+    // red: 1, 3, 5   blue: 2, 4, 6
+    advance(WARMUP_SECONDS + 0.2);
+    advance(SPAWN_PROTECTION + 0.2);
+    match.leave(1); match.leave(3); // red: 5, blue: 2, 4, 6
+    host.clear();
+    expect(match.players.get(6)!.team).toBe('blue');
+    // Nothing changes in the middle of a life.
+    advance(1);
+    expect(match.players.get(6)!.team).toBe('blue');
+    expect(host.of('chat').filter((m) => m.system && /moved to/.test(m.text))).toHaveLength(0);
+    // Player 6 (the last to join of blue) dies and respawns on red.
+    match.players.get(6)!.health = 1;
+    match.setPosition(5, 0.5, 65, 0.5);
+    match.setPosition(6, 0.5, 65, 8.5);
+    advance(0.5);
+    match.fire(5, aim({ x: 0.5, y: 65, z: 0.5 }, body(8.5)));
+    advance(RESPAWN_SECONDS + 0.3);
+    expect(match.players.get(6)!.team).toBe('red');
+    expect(host.of('chat').some((m) => m.system && m.text === 'f moved to the red team to even the teams')).toBe(true);
+    expect(host.of('spawn', 6).at(-1)!.team).toBe('red');
+    expect(host.of('roster').at(-1)!.players.find((p) => p.id === 6)!.team).toBe('red');
+    // 2 against 2 now: nobody else moves.
+    expect([...match.players.values()].filter((p) => p.team === 'red')).toHaveLength(2);
+  });
+
+  it('does not move anybody when the teams differ by one, or after a joiner evened them', () => {
+    const { host, match, advance } = setup('tdm');
+    for (const id of [1, 2, 3, 4, 5]) { match.join(id, `p${id}`); match.ready(id); }
+    match.leave(2); // red 1, 3, 5 against blue 4: a difference of two
+    match.join(6, 'p6'); // goes to blue: 3 v 2, the planned move is cancelled by the check at respawn time
+    match.ready(6);
+    host.clear();
+    advance(WARMUP_SECONDS + 0.2);
+    expect([...match.players.values()].map((p) => p.team).sort()).toEqual(['blue', 'blue', 'red', 'red', 'red']);
+    expect(host.of('chat').filter((m) => /moved to/.test(m.text))).toHaveLength(0);
+  });
+
+  it('free for all never moves anybody', () => {
+    const { host, match } = setup('ffa');
+    for (const id of [1, 2, 3]) match.join(id, `p${id}`);
+    match.leave(1);
+    expect(host.of('chat')).toHaveLength(0);
+    expect(match.players.get(2)!.team).toBe('');
+  });
+});
+
 describe('scoring and the match flow', () => {
   it('a kill scores for the killer team, feeds the kill list and the roster', () => {
     const { host, match, advance } = liveDuel();

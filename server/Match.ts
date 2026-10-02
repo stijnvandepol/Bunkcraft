@@ -61,6 +61,8 @@ export interface MatchPlayer {
   team: Team | '';
   kills: number;
   deaths: number;
+  /** Order of joining (higher = joined later); decides who moves when the teams get uneven. */
+  joinSeq: number;
   x: number; y: number; z: number;
   yaw: number; pitch: number;
   alive: boolean;
@@ -97,6 +99,9 @@ export class Match {
   private lastTick = 0;
   private nextMatchMsg = 0;
   private nextRoster = 0;
+  private joinCounter = 0;
+  /** Player who changes team at their next respawn because the other team lost players (0 = nobody). */
+  private moveId = 0;
   private readonly tmpDir: [number, number, number] = [0, 0, 0];
   private readonly tmpPos: [number, number, number] = [0, 0, 0];
 
@@ -134,10 +139,11 @@ export class Match {
     if (this.teams) {
       let red = 0, blue = 0;
       for (const p of this.players.values()) if (p.team === 'red') red++; else if (p.team === 'blue') blue++;
-      team = red <= blue ? 'red' : 'blue';
+      // The smaller team; when they are the same size, the one that is behind on points.
+      team = red !== blue ? (red < blue ? 'red' : 'blue') : this.scores.red <= this.scores.blue ? 'red' : 'blue';
     }
     const p: MatchPlayer = {
-      id, name, team, kills: 0, deaths: 0, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, alive: false, health: PLAYER_MAX_HEALTH,
+      id, name, team, kills: 0, deaths: 0, joinSeq: ++this.joinCounter, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, alive: false, health: PLAYER_MAX_HEALTH,
       lastDamageAt: -1e9, lastHpSent: PLAYER_MAX_HEALTH, respawnAt: 0, protectedUntil: 0,
       primary: DEFAULT_PRIMARY, nextPrimary: DEFAULT_PRIMARY, slots: [newSlot(DEFAULT_PRIMARY), newSlot('pistol'), newSlot('knife')], slot: 0,
       switchReadyAt: 0, history: Array.from({ length: HISTORY_SIZE }, () => ({ t: 0, x: 0, y: 0, z: 0 })), historyHead: 0, historyCount: 0,
@@ -162,6 +168,7 @@ export class Match {
 
   leave(id: number): void {
     if (!this.players.delete(id)) return;
+    if (this.teams) this.planBalance();
     this.broadcastRoster();
     if (this.players.size === 0) this.reset();
   }
@@ -430,6 +437,39 @@ export class Match {
     this.broadcastRoster();
   }
 
+  /** Number of players on a team. */
+  private teamSize(team: Team): number {
+    let n = 0;
+    for (const p of this.players.values()) if (p.team === team) n++;
+    return n;
+  }
+
+  /**
+   * After somebody left: when the teams differ by two or more, the player who joined last on the
+   * larger team switches at their next respawn (never in the middle of a life).
+   */
+  private planBalance(): void {
+    this.moveId = 0;
+    const red = this.teamSize('red'), blue = this.teamSize('blue');
+    if (Math.abs(red - blue) < 2) return;
+    const larger: Team = red > blue ? 'red' : 'blue';
+    let latest: MatchPlayer | null = null;
+    for (const p of this.players.values()) if (p.team === larger && (!latest || p.joinSeq > latest.joinSeq)) latest = p;
+    if (latest) this.moveId = latest.id;
+  }
+
+  /** At a respawn: carries out a planned team switch if the teams are still uneven. */
+  private applyBalance(p: MatchPlayer): void {
+    if (p.id !== this.moveId) return;
+    this.moveId = 0;
+    if (!p.team) return;
+    const own = this.teamSize(p.team), other = this.teamSize(p.team === 'red' ? 'blue' : 'red');
+    if (own - other < 2) return;
+    p.team = p.team === 'red' ? 'blue' : 'red';
+    this.host.broadcast({ t: 'chat', from: '', text: `${p.name} moved to the ${p.team} team to even the teams`, system: true });
+    this.broadcastRoster();
+  }
+
   private rebalance(): void {
     for (;;) {
       const red = [...this.players.values()].filter((p) => p.team === 'red');
@@ -447,6 +487,7 @@ export class Match {
   }
 
   private respawn(p: MatchPlayer, now: number): void {
+    if (this.teams) this.applyBalance(p);
     this.resetLife(p, now);
     this.sendSpawn(p);
     this.host.broadcast({ t: 'holds', id: p.id, weapon: p.primary }, p.id);
