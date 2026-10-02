@@ -104,10 +104,11 @@ export class Renderer {
     this.cloudsEnabled = s.clouds !== 'off';
     this.uniforms.uBrightness.value = s.brightness / 100;
     this.renderDistance = s.renderDistance;
+    const maxShadow = this.three.capabilities.maxTextureSize;
     if (s.shadows === 'off') this.shadows.disable();
-    else if (s.shadows === 'low') this.shadows.configure(1024, 56);
-    else if (s.shadows === 'high') this.shadows.configure(2048, 88);
-    else this.shadows.configure(4096, 128);
+    else if (s.shadows === 'low') this.shadows.configure(1024, 56, maxShadow);
+    else if (s.shadows === 'high') this.shadows.configure(2048, 88, maxShadow);
+    else this.shadows.configure(4096, 128, maxShadow);
     this.particles.density = s.particles === 'all' ? 1 : s.particles === 'decreased' ? 0.5 : 0.25;
     this.resize();
   }
