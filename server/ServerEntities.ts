@@ -82,6 +82,9 @@ export class ServerEntities {
   clear(): void {
     this.manager.clear();
     this.world.update([]);
+    // Flowing liquid resumes from the saved edits when its chunks load again.
+    this.world.liquids.clear();
+    this.world.drainSimEdits();
     this.sentAnything.clear();
     this.tickCount = 0;
   }

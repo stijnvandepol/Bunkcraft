@@ -344,6 +344,7 @@ export class World {
   }
 
   dispose(): void {
+    this.liquids?.clear();
     this.chunks.dispose();
   }
 }
