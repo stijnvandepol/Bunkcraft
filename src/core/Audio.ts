@@ -252,6 +252,13 @@ export class AudioEngine {
     this.noiseBurst(3500, 0.6, 1.4, Math.min(1, volume) * 0.5, 'highpass', 0.05);
   }
 
+  /** Advancement toast: a short rising chime. */
+  playAdvancement(): void {
+    this.voice('sine', 659, 659, 0.3, 0.22);
+    this.voice('sine', 880, 880, 0.3, 0.22, 0.12);
+    this.voice('sine', 1319, 1319, 0.5, 0.2, 0.24);
+  }
+
   playPop(): void {
     this.voice('sine', 900 + Math.random() * 400, 1800, 0.08, 0.25);
   }

@@ -358,13 +358,13 @@ export function deathScreen(opts: {
 }
 
 /** "Game Menu" laid out like Minecraft's pause screen. */
-export function pauseScreen(actions: { resume(): void; options(): void; quit(): void; multiplayer?: boolean; invite?: () => void }): HTMLDivElement {
+export function pauseScreen(actions: { resume(): void; options(): void; quit(): void; multiplayer?: boolean; advancements?: () => void; invite?: () => void }): HTMLDivElement {
   const off = () => undefined;
   return screen('menu-bg pause',
     h('div', { class: 'screen-header', style: 'flex-basis: calc(var(--s) * 50)' }, h('h2', { class: 'screen-title', text: 'Game Menu' })),
     h('div', { class: 'title-buttons', style: 'top: calc(25% + var(--s) * 8)' },
       button('Back to Game', actions.resume),
-      h('div', { class: 'row' }, button('Advancements', off, { cls: 'half', disabled: true }), button('Statistics', off, { cls: 'half', disabled: true })),
+      h('div', { class: 'row' }, button('Advancements', actions.advancements ?? off, { cls: 'half', disabled: !actions.advancements }), button('Statistics', off, { cls: 'half', disabled: true })),
       h('div', { class: 'row' }, button('Give Feedback', off, { cls: 'half', disabled: true }), button('Report Bugs', off, { cls: 'half', disabled: true })),
       h('div', { class: 'row' }, button('Options...', actions.options, { cls: 'half' }), actions.invite
         ? button('Invite Friends', actions.invite, { cls: 'half' })
