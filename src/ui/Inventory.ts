@@ -1,4 +1,4 @@
-import { getItemDef } from '../items/ItemRegistry';
+import { getItemDef, itemId } from '../items/ItemRegistry';
 import type { BlockIcons } from './BlockIcons';
 import { type CreativeTab, allCreativeItems, buildCreativeTabs } from './CreativeTabs';
 import { h } from './dom';
@@ -30,6 +30,8 @@ export class Inventory {
   private scrollRow = 0;
   private items: number[] = [];
   onClose: (() => void) | null = null;
+  /** The "Survival Inventory" tab: switches to the survival screen (armor, crafting). */
+  onSurvival: (() => void) | null = null;
 
   constructor(private readonly icons: BlockIcons, private readonly hotbar: Hotbar) {
     this.tabs = buildCreativeTabs();
@@ -140,7 +142,10 @@ export class Inventory {
       ...this.tabs.map((t, i) => (t.bottom ? null : this.tabEl(t.name, t.icon, i, false))).filter((e): e is HTMLDivElement => !!e),
       this.tabEl('Search Items', null, searchIndex, false),
     );
-    this.bottomTabs.replaceChildren(...this.tabs.map((t, i) => (t.bottom ? this.tabEl(t.name, t.icon, i, true) : null)).filter((e): e is HTMLDivElement => !!e));
+    const survival = h('div', { class: 'inv-tab bottom', title: 'Survival Inventory' },
+      h('img', { src: this.icons.get(itemId('iron_chestplate')), alt: '', draggable: false }));
+    survival.addEventListener('click', () => this.onSurvival?.());
+    this.bottomTabs.replaceChildren(...this.tabs.map((t, i) => (t.bottom ? this.tabEl(t.name, t.icon, i, true) : null)).filter((e): e is HTMLDivElement => !!e), survival);
     this.title.textContent = this.isSearch ? '' : this.tabs[this.tab].name;
     this.title.classList.toggle('hidden', this.isSearch);
     this.search.classList.toggle('hidden', !this.isSearch);

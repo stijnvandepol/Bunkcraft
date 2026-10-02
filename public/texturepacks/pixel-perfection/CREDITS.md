@@ -10,3 +10,6 @@ BunkCraft uses a subset of these textures unmodified. At runtime, grass and leav
 are converted to greyscale and the green overlay of the grass block side is masked, so they
 can be tinted per biome. Water uses the first frame of the animation strip. Ore and
 grass-side textures are composited from the pack's base and overlay images.
+
+Since the content update the subset also contains: jungle and acacia wood and leaves, the chest, steel/gold/diamond/coal/copper blocks, desert sand and stone,
+ice, wooden ladder, papyrus, straw, mushrooms, tulip, geranium, viola, white dandelion, jungle grass and the sapling textures (all unmodified).

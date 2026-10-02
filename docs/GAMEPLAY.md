@@ -84,6 +84,34 @@ in BunkCraft zit. Getallen komen uit de Minecraft Wiki, tenzij anders vermeld.
   - Links klikken pakt een stack op, legt hem neer, voegt samen of wisselt; rechts klikken splitst of legt er één neer.
   - Met Q laat je een item vallen.
 
+## Inhoud van 1.21 (blokken, tools, harnas, voedsel)
+
+Onderzoek, ontwerp en tellingen: [`CONTENT.md`](CONTENT.md). Kort:
+
+- **Blokken:** 8 houtsoorten (eik, spar, berk, jungle, acacia, donkere eik, mangrove, kers) met logs, stripped logs, planken, bladeren,
+  slabs, trappen, deuren, luiken, hekken en hekpoorten; steen (graniet, diorite, andesiet en hun gepolijste varianten, tuff, calciet,
+  deepslate-set, stenen bakstenen met mossy/cracked/chiseled, modderstenen); zandsteen en rood zandsteen met chiseled/cut/smooth;
+  16 kleuren wol, beton, terracotta, geglazuurd terracotta, glas, ruiten, tapijt en bedden; muren, ijzeren tralies, ladders, kisten,
+  lantaarns; ertsen en opslagblokken; hooibaal, pompoen, meloen, ijs, bloemen, paddenstoelen, saplings en suikerriet.
+- **Tools:** hout, steen, ijzer, goud en diamant met de echte snelheid en duurzaamheid; zwaard 4/5/6/4/7 schade, bijl 7/9/9/7/9,
+  houweel 2/3/4/2/5, schop 2,5-5,5, schoffel 1. Schaar (wol, bladeren, spinnenweb). Gouden gereedschap is het snelst maar heeft oogstniveau hout.
+- **Gereedschap gebruiken (rechtermuisknop):** schoffel maakt akkergrond van gras en aarde (en aarde van grof aarde), schop maakt paden,
+  bijl stript logs, schaar snijdt een pompoen uit (en geeft zaden).
+- **Ertsen:** koper en lapis vragen steen, redstone en smaragd ijzer, goud en diamant ijzer; opbrengst koper 2-5 rauw koper, lapis 4-9, redstone 4-5.
+  IJzer, goud en koper geven rauw erts dat je smelt.
+- **Harnas:** helm, borstplaat, broek en schoenen van leer, maliën, ijzer, goud en diamant (maliën alleen in creative). Rechtermuisknop
+  met een stuk in de hand draagt het; de survival-inventory heeft vier harnasslots (shift-klik werkt ook). De armor-balk toont 0-20 punten;
+  schade wordt verminderd met `min(20, max(armor/5, armor − schade/(2 + toughness/4)))/25`, en elk stuk verliest `max(1, ⌊schade/4⌋)` duurzaamheid.
+  Val, verdrinken, honger, de void en gif negeren harnas.
+- **Voedsel:** appel, brood, koekje, aardappel en gebakken aardappel, wortel, gouden appel en wortel, meloenschijf, pompoentaart, paddenstoelenstoofpot
+  (geeft de kom terug), vis, bessen, bieten, konijn, met de vanilla-waarden.
+- **Kist:** 27 slots, rechtermuisknop opent, shift-klik verplaatst stapels, breken laat de inhoud vallen. Opgeslagen per wereld; **alleen singleplayer**
+  (de multiplayer-server bewaart geen containers; daar kun je geen kist plaatsen).
+- **Bed:** twee blokken, rechtermuisknop zet je respawnpunt en slaapt 's nachts door tot de ochtend (singleplayer).
+- **Ladder:** klimmen met springen of tegen de muur aan lopen, sneaken houdt je vast; hekken en muren zijn 1,5 blok hoog.
+- **Recepten:** ongeveer 420, met vanilla-aantallen. Het receptenboek heeft tabs (Now, All, Build, Wood, Tools, Combat, Food, Items, Colors, Smelt)
+  en een zoekveld; alleen recepten van stations binnen 4 blokken worden getoond.
+
 ## Nieuwe blokken
 
 | Blok | Details |
@@ -104,7 +132,7 @@ Een geïmporteerd Minecraft-resourcepack levert ook textures voor `torch`, `lava
 2. **Vloeistofstroming:** **gedaan** (water en lava, emmers).
 3. **Vallend zand en grind** als entity.
 4. **Meer mobs:** skeleton (pijlen) en spin (klimmen).
-5. **Meer blokken en items:** kist, TNT, harnas, XP-orbs en de XP-balk.
+5. **Meer blokken en items:** XP-orbs en de XP-balk, landbouw met groeifases, enchanting (de `ItemStack.data` is er klaar voor), brouwen, anvil, schilden en boten (zie `CONTENT.md`, tier 2).
 6. **Multiplayer:** zie [`MULTIPLAYER.md`](MULTIPLAYER.md).
 
 ## Bronnen

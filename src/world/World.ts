@@ -1,7 +1,7 @@
 import type { WorkerPool } from '../workers/WorkerPool';
 import { tintColor } from './BiomeColors';
 import { ContainerStore } from './Containers';
-import { BLOCK, BOX_KIND, SHAPE, SHAPE_CROSS, SHAPE_DOOR, SHAPE_MODEL, SOLID, TINT } from './BlockRegistry';
+import { BLOCK, BOX_KIND, DYE, DYE_RGB, SHAPE, SHAPE_CROSS, SHAPE_DOOR, SHAPE_MODEL, SOLID, TINT } from './BlockRegistry';
 import { CHUNK_READY, type Chunk } from './Chunk';
 import { ChunkManager, type ChunkMaterials } from './ChunkManager';
 import { CHUNK_HEIGHT, CHUNK_VOLUME, SEA_LEVEL, blockIndex, chunkKey } from './constants';
@@ -113,7 +113,8 @@ export class World {
   }
 
   /** Biome tint (packed 0xRRGGBB) for a block at a column; white if untinted. */
-  tintAt(x: number, z: number, id: number): number {
+  tintAt(x: number, z: number, id: number, meta = 0): number {
+    if (DYE[id]) return DYE_RGB[meta & 15];
     if (!TINT[id]) return 0xffffff;
     const c = this.chunkAt(x >> 4, z >> 4);
     const biome = c?.biomes ? c.biomes[(x & 15) + (z & 15) * 16] : 2;

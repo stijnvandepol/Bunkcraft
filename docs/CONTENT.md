@@ -76,6 +76,68 @@ Formules (uit de wiki): schade na harnas = `damage × (1 − min(20, max(armor/5
 Harnaspunten helm/borst/broek/laars: leer 1/3/2/1, maliën 2/5/4/1, ijzer 2/6/5/2, goud 2/5/3/1, diamant 3/8/6/3 (toughness 2 per diamantstuk).
 Duurzaamheid = basis (11/16/15/13) × multiplier (leer 5, maliën 15, ijzer 15, goud 7, diamant 33).
 
-## 4. Status
+## 4. Wat er is gebouwd
 
-Wordt bijgewerkt bij de oplevering (zie de eindtelling hieronder).
+### Telling per tab (items in de creative inventory)
+
+| Tab | Items | Voorbeelden |
+|---|---|---|
+| Building Blocks | 147 | 8 houtsoorten (log, stripped log, planken), steenfamilie, zandsteen, deepslate, modder, metaalblokken, glas, 9 + 24 slab- en trapmaterialen, deuren, luiken, hekken, poorten, muren |
+| Colored Blocks | 129 | 16 × (wol, tapijt, bed, terracotta, geglazuurd, beton, glas, glasruit) + terracotta |
+| Natural Blocks | 70 | grond, erts, logs, 8 bladsoorten, 7 saplings, 10 bloemen, paddenstoelen, suikerriet, pompoen, meloen, hooibaal, spinnenweb |
+| Functional Blocks | 15 | werkbank, oven, kist, boekenkast, ladder, fakkel, lantaarn, glowstone, zeelantaarn, uitgesneden pompoen, TNT, tralies, glasruit |
+| Redstone Blocks | 3 | alleen redstone-stof, redstoneblok en TNT: de rest is tier 2 |
+| Tools & Utilities | 26 | schop, houweel, bijl, schoffel (5 tiers), schaar, vuur-en-staal, emmers, kom |
+| Combat | 32 | zwaarden en bijlen (5 tiers), boog, pijl, 20 harnasstukken |
+| Food & Drinks | 29 | 10 vleessoorten, appel, gouden appel, brood, koekje, aardappel, wortel, meloen, taart, stoofpot, vis, bessen |
+| Ingredients | 50 | kolen, houtskool, rauwe en gesmolten metalen, edelstenen, 16 kleurstoffen, papier, boek, leer, zaden |
+
+Totaal: **182 bloktypes** (hoogste id 185 van 254, dus nog ruim 60 vrij), ~480 uniek vindbare items, **~420 recepten** (106 zonder werkbank, 271 met werkbank,
+43 smelten), **223 textuurlagen** van de 255 die `FACE_LAYER` toelaat.
+
+### Ontwerpkeuzes
+
+- **Kleurfamilies via tint:** wol, beton, terracotta, geglazuurd terracotta, gekleurd glas, tapijt, ruiten en bedden gebruiken één grijze basistextuur
+  (alpha 128 = "vermenigvuldig met de hoekpunttint" voor ondoorzichtige blokken) en `meta & 15` kiest de kleur. Voor een geïmporteerd Minecraft-jar
+  wordt `white_*` met dezelfde tint vermenigvuldigd. Gekleurd glas is alpha-getest en dus niet doorzichtig; echte transparantie is tier 2.
+- **Materiaal in de state:** `SLAB_X` (bits 2-6, 24 materialen), `STAIRS_X` (bits 3-7), deuren (bits 5-7), luiken (bits 4-7), hekpoorten (bits 3-5), hekken (bits 0-2)
+  en muren (bits 0-4). Het materiaal bepaalt via `VARIANT_LAYER` de textuurlaag, geluid, hardheid en gereedschap. De mesher leest daarvoor alleen
+  `meta` voor deze vormen, kubussen blijven goedkoop (kleur en voorkant zijn de enige uitzonderingen).
+- **Eigen id's voor wat de worldgen moet kunnen plaatsen:** granite, diorite, andesite, tuff, calcite, deepslate-set, ertsen, bloemen, paddenstoelen,
+  suikerriet, pompoen, melon, ijs, cobweb, en de logs en bladeren van jungle, acacia, dark oak, mangrove en cherry zijn gewone blok-id's. **Voor het
+  terrein-team:** deze blokken staan klaar (`CUBE_ID.<naam>`, bijv. `CUBE_ID.granite`, `CUBE_ID.jungle_log`) maar worden nog door niets gegenereerd.
+- **Dunne vormen** (`src/world/BoxShapes.ts`): tapijt, luik, hekpoort, hek, muur, glasruit/tralies, ladder en bed zijn een paar boxen waarvan
+  zichtbare vorm, botsing en raycast uit dezelfde functies komen. Hekken, muren en ruiten leiden hun verbindingen af uit de buren (zoals trappen),
+  hekken en muren zijn 1,5 hoog (de botsing kijkt daarom één cel lager). Een bed is twee blokken, een ladder klimt via `Player.step`.
+- **Furnace, kist en pompoenen** hebben een richting (`meta & 3` bepaalt welke zijde de voorkant toont). `meta 0` is de oude vaste voorkant, dus
+  bestaande ovens veranderen niet.
+- **Chests** (`ContainerStore`, `WorldMeta.containers`): de inhoud staat los van de chunks en wordt met de wereld opgeslagen. In multiplayer slaat de server
+  geen containers op; kisten zijn daar niet te plaatsen.
+- **Per-stack data:** `ItemStack.data?: Record<string, number>` met een append-only sleutellijst (`ITEM_DATA_KEYS`). Opslagformaat
+  `[id, count, damage, sleutel, waarde, ...]`, dus oude saves (3 getallen) blijven geldig; `drop` en `taken` dragen `data` mee.
+- **Harnas** zit als 4 extra records (slot 36-39) in `PlayerInventory.serialize()`: oude saves en de server (limiet 64 records) blijven werken.
+
+### Wat bewust anders is dan vanilla
+
+- Beton heeft geen poeder (4 zand + 4 grind + kleurstof → 8 beton); kleurstoffen: bruin (cacao), zwart (inktzak) en grijs (heeft zwart nodig) hebben nog geen bron.
+- Een bed zet je respawnpunt en slaapt 's nachts door, zonder spelers-in-bed-telling of monstercheck.
+- Mud bricks en hooi vragen tarwe, dus landbouw (tier 2). Het brood-, koekje-, taart- en leerrecept zijn er, maar wat ze als grondstof nodig hebben ontbreekt nog in de wereld
+  (tarwe, cacao, eieren, leer van koeien). `tests/recipes.test.ts` houdt dit lijstje bij ("OUT_OF_REACH").
+- Een kist is een volle kubus (geen kleinere kist met deksel) en heeft geen dubbele variant.
+- Boekenkast blijft 6 planken (vanilla: + 3 boeken), omdat leer nog geen bron heeft.
+- Gouden appel geeft honger en saturatie maar nog geen Absorption en Regeneration (geen effectensysteem).
+- Het bed, de kist en de lantaarn hebben procedurele texturen (in een Minecraft-jar zijn ze entity-textures); de rest wordt wel uit een geïmporteerd jar geladen.
+- Een ontploft blok laat een gekleurd blok als witte wol vallen (`World.explode` kent de state van vernietigde blokken niet).
+
+### Tier 2 en nooit
+
+Tier 2: redstone en alles ervan, landbouw met groeifases en random ticks, enchanting, brouwen, smithing en netherite, anvil, grindstone, blast furnace, smoker,
+stonecutter, schild, kruisboog, hengel en vis, boten en minecarts, kaarsen, banners, borden, koraal, amethist, dripstone, azalea, kelp en bamboe, concrete powder,
+doorzichtig glas en ijs, kisten in multiplayer, dubbele kisten, vallende blokken. Nooit: Nether en End (blackstone, crimson/warped, quartz, purpur, end stone,
+prismarine), Deep Dark, Trial Chambers, spawn eggs en operator-blokken.
+
+### Pixel Perfection
+
+Voor de nieuwe blokken zijn uit de Pixel Perfection-repo (CC BY-SA 4.0) 38 textures toegevoegd in `public/texturepacks/pixel-perfection/`: jungle- en acaciahout, kistzijden,
+metaalblokken, rood zand, ijs, ladder, suikerriet, hooi, paddenstoelen, tulp en saplings. Alles wat het pack niet heeft blijft procedureel
+(`src/rendering/ContentPainters.ts`). De namen voor een Minecraft-jar staan in `MINECRAFT_LAYOUT` (`MINECRAFT_SAME_NAME` voor de textures met dezelfde naam).

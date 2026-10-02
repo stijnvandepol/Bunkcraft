@@ -229,6 +229,10 @@ export class Game {
     });
 
     this.inventory.onClose = () => void this.resumeGame();
+    this.inventory.onSurvival = () => {
+      this.inventory.close();
+      this.survivalInventory.open(this.nearbyStations());
+    };
     this.stats.onHurt = () => this.audio.playHurt();
     this.input.onKeyDown = (code) => this.onKey(code);
     this.input.onLockChange = (locked) => this.onLockChange(locked);

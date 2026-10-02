@@ -38,6 +38,10 @@ dag/nachtcyclus. Geen installatie nodig, en geen Minecraft-assets.
 |---|---|
 | ![Inventory](docs/screenshots/inventory.png) | ![Video settings](docs/screenshots/video-settings.png) |
 
+| Nieuwe blokken (hout, kleuren, hekken, ladders, bedden) | Survival-inventory met harnas en receptenboek |
+|---|---|
+| ![Nieuwe blokken](docs/screenshots/content-build.png) | ![Survival-inventory](docs/screenshots/survival-inventory.png) |
+
 ![Pauzemenu](docs/screenshots/pause.png)
 
 ## Snel starten
@@ -103,7 +107,10 @@ Options → Controls → Key Binds, ook naar muisknoppen (zoals in Minecraft).
 - **Block states:** slabs en trappen (9 materialen, plaatsing als in Minecraft), een eikenhouten deur, en **stromend water en lava** (water 7 blokken per 5 ticks, lava 3 blokken per 30, oneindige bronnen, obsidiaan en cobblestone waar ze elkaar raken) met ijzeren, water- en lavaemmers. In multiplayer simuleert de server de vloeistoffen. Zie [`docs/BLOCKSTATES.md`](docs/BLOCKSTATES.md).
 - First-person-besturing met pointer lock, zwaartekracht, springen, sprinten, zwemmen en vliegen.
 - Blokken breken met crack-animatie en deeltjes; blokken plaatsen met een bereik van 5 blokken.
-- 66 bloktypes, een creative inventory met tabbladen en een hotbar.
+- **Veel inhoud uit Minecraft 1.21** (zie [`docs/CONTENT.md`](docs/CONTENT.md)): 8 houtsoorten met stripped logs, slabs, trappen, deuren, luiken, hekken en poorten, steenvarianten (graniet, diorite, andesiet, tuff, calciet, deepslate, bakstenen), zandsteen en rood zandsteen, 16 kleuren wol, beton, terracotta, geglazuurd terracotta, gekleurd glas en ruiten, tapijt en bedden, muren, ijzeren tralies, ladders, lantaarns, kisten met 27 slots, ertsen (koper, lapis, redstone, smaragd) en metaalblokken, bloemen en saplings.
+- **Tools en harnas:** houweel, bijl, schop, schoffel en zwaard in vijf tiers met de echte schade en duurzaamheid, een schaar, harnas van leer tot diamant (armor-balk, schadeformule met toughness, slijtage), schoffel maakt akkergrond, schop paden, bijl stript logs.
+- **Voedsel en grondstoffen** met de echte honger- en saturatiewaarden, ongeveer 420 recepten met vanilla-aantallen en een receptenboek met categorieën en zoeken.
+- 180 bloktypes en ruim 480 items; een creative inventory met tabs (Building Blocks, Colored Blocks, Natural Blocks, Functional Blocks, Redstone, Tools, Combat, Food, Ingredients), scrollen en zoeken, en een hotbar.
 - Werelden en je bouwwerken worden automatisch opgeslagen (IndexedDB).
 
 **Graphics**

@@ -89,7 +89,7 @@ with sync_playwright() as p:
     time.sleep(0.5)
     n_tabs = page.evaluate("document.querySelectorAll('.inv-tab').length")
     print('tabs', n_tabs)
-    for i in range(n_tabs):
+    for i in range(n_tabs - 1):  # the last tab opens the survival inventory
         page.evaluate(f"document.querySelectorAll('.inv-tab')[{i}].click()")
         time.sleep(0.25)
         page.screenshot(path=f'{out}/tab{i}.png')

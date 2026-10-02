@@ -329,7 +329,7 @@ export class Interaction {
       this.hitSoundTimer = 0.22;
       audio.play('hit', stateSound(def, hitMeta));
       renderer.particles.spawnFace(hit.x, hit.y, hit.z, hit.nx, hit.ny, hit.nz, hit.id,
-        world.getLight(hit.x + hit.nx, hit.y + hit.ny, hit.z + hit.nz), 2, world.tintAt(hit.x, hit.z, hit.id));
+        world.getLight(hit.x + hit.nx, hit.y + hit.ny, hit.z + hit.nz), 2, world.tintAt(hit.x, hit.z, hit.id, hitMeta));
     }
     if (this.breakProgress < 1) return;
 
@@ -338,7 +338,7 @@ export class Interaction {
     const brokenMeta = world.getMeta(hit.x, hit.y, hit.z);
     const broken = world.breakBlock(hit.x, hit.y, hit.z);
     if (broken) {
-      renderer.particles.spawnBreak(hit.x, hit.y, hit.z, broken, light, world.tintAt(hit.x, hit.z, broken));
+      renderer.particles.spawnBreak(hit.x, hit.y, hit.z, broken, light, world.tintAt(hit.x, hit.z, broken, brokenMeta));
       audio.play('break', stateSound(def, brokenMeta));
       if (survival) {
         const drop = blockDrop(broken, held, brokenMeta);
@@ -403,7 +403,7 @@ export class Interaction {
     const def = getBlockDef(id)!;
     audio.play('place', stateSound(def, baseMeta));
     hand.swingHand();
-    renderer.particles.spawnFace(x - hit.nx, y - hit.ny, z - hit.nz, hit.nx, hit.ny, hit.nz, id, world.getLight(x, y, z), 3, world.tintAt(x, z, id));
+    renderer.particles.spawnFace(x - hit.nx, y - hit.ny, z - hit.nz, hit.nx, hit.ny, hit.nz, id, world.getLight(x, y, z), 3, world.tintAt(x, z, id, baseMeta));
     if (hasSurvivalRules(mode)) inventory.consumeSlot(hotbar.selected);
     this.breakProgress = 0;
   }
