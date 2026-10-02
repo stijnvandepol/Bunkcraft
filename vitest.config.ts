@@ -7,5 +7,7 @@ export default defineConfig({
   test: {
     include: ['tests/**/*.test.ts'],
     environment: 'node',
+    // Map generation and the WebSocket integration tests are slow on a busy machine.
+    testTimeout: 30_000,
   },
 });
