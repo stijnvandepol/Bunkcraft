@@ -27,20 +27,24 @@ export class NetClient {
   onRevert: ((x: number, y: number, z: number, id: number) => void) | null = null;
   onClose: ((reason: string) => void) | null = null;
 
-  /** Accepts "host:port", a full ws(s):// URL, or empty for the page's own server. */
-  static urlFor(address: string): string {
+  /**
+   * Accepts "host:port", a full ws(s):// URL, or empty for the page's own server.
+   * With a game code the connection goes to that room (/ws/<CODE>) instead of the main world.
+   */
+  static urlFor(address: string, room?: string): string {
     const a = address.trim();
-    if (/^wss?:\/\//.test(a)) return a;
+    const path = room ? `/ws/${room}` : '/ws';
+    if (/^wss?:\/\//.test(a)) return a.replace(/\/ws(\/[A-Z0-9]+)?\/?$/, '') + path;
     const secure = location.protocol === 'https:';
     const host = a || location.host;
-    return `${secure ? 'wss' : 'ws'}://${host}/ws`;
+    return `${secure ? 'wss' : 'ws'}://${host}${path}`;
   }
 
-  connect(address: string, name: string): Promise<WelcomeMessage> {
+  connect(address: string, name: string, room?: string): Promise<WelcomeMessage> {
     return new Promise((resolve, reject) => {
       let ws: WebSocket;
       try {
-        ws = new WebSocket(NetClient.urlFor(address));
+        ws = new WebSocket(NetClient.urlFor(address, room));
       } catch (e) {
         reject(e instanceof Error ? e : new Error(String(e)));
         return;
@@ -83,13 +87,14 @@ export class NetClient {
         }
         this.onMessage?.(msg);
       };
+      const notFound = room ? 'Game not found. It may have expired, check the code.' : 'Could not connect to the server';
       ws.onerror = () => {
-        if (!welcomed) { window.clearTimeout(timeout); reject(new Error('Could not connect to the server')); }
+        if (!welcomed) { window.clearTimeout(timeout); reject(new Error(notFound)); }
       };
       ws.onclose = () => {
         window.clearTimeout(timeout);
         if (welcomed && !this.closedByUser) this.onClose?.('Connection lost');
-        if (!welcomed) reject(new Error('Could not connect to the server'));
+        if (!welcomed) reject(new Error(notFound));
       };
     });
   }

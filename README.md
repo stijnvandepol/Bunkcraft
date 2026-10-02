@@ -116,12 +116,14 @@ Options → Controls → Key Binds, ook naar muisknoppen (zoals in Minecraft).
 ## Multiplayer
 
 BunkCraft draait als één Node.js-server die de game én de multiplayer-WebSocket op dezelfde poort
-aanbiedt:
+aanbiedt. **Multiplayer → Create Game** geeft je een code en een link om te delen; vrienden openen de
+link of typen de code onder **Join Game**.
 
 ```bash
 npm run build
-npm start                     # http://localhost:3000 → Multiplayer → Join Server
-# of: docker build -t bunkcraft . && docker run -p 3000:3000 -v bunkcraft-data:/app/data bunkcraft
+npm start                     # http://localhost:3000 → Multiplayer → Create Game
+# Op je eigen domein met automatische HTTPS (Caddy):
+DOMAIN=play.example.com docker compose up -d
 ```
 
 - **Gedeelde wereld:** iedereen bouwt mee in dezelfde wereld. Alleen blokwijzigingen gaan over het netwerk, want het terrein komt uit de seed.

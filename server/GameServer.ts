@@ -66,6 +66,8 @@ export interface ServerOptions {
   gameMode: GameMode;
   motd: string;
   maxPlayers: number;
+  /** Skip per-player log lines (rooms log themselves). */
+  quiet?: boolean;
 }
 
 /**
@@ -94,7 +96,7 @@ export class GameServer {
   private load(): WorldData {
     if (existsSync(this.file)) {
       const data = JSON.parse(readFileSync(this.file, 'utf8')) as WorldData;
-      console.log(`[world] loaded "${data.name}" (seed ${data.seed}, ${Object.keys(data.edits).length} edits, ${Object.keys(data.players).length} players)`);
+      this.log(`[world] loaded "${data.name}" (seed ${data.seed}, ${Object.keys(data.edits).length} edits, ${Object.keys(data.players).length} players)`);
       return data;
     }
     const seedText = this.opts.seed;
@@ -104,7 +106,7 @@ export class GameServer {
     const data: WorldData = {
       name: this.opts.worldName, seed, gameMode: this.opts.gameMode, time: 0.08, spawn, edits: {}, players: {},
     };
-    console.log(`[world] created "${data.name}" (seed ${seed}, ${data.gameMode}) spawn ${spawn.x} ${spawn.y} ${spawn.z}`);
+    this.log(`[world] created "${data.name}" (seed ${seed}, ${data.gameMode}) spawn ${spawn.x} ${spawn.y} ${spawn.z}`);
     this.dirty = true;
     this.world = data;
     this.save();
@@ -145,6 +147,14 @@ export class GameServer {
 
   get playerCount(): number {
     return this.sessions.size;
+  }
+
+  info(): { name: string; gameMode: GameMode; players: number; maxPlayers: number } {
+    return { name: this.world.name, gameMode: this.world.gameMode, players: this.sessions.size, maxPlayers: this.opts.maxPlayers };
+  }
+
+  private log(line: string): void {
+    if (!this.opts.quiet) console.log(line);
   }
 
   // ---------------------------------------------------------------- connections
@@ -217,7 +227,7 @@ export class GameServer {
     this.sessions.set(session.id, session);
     this.broadcast({ t: 'join', id: session.id, name }, session.id);
     this.broadcast({ t: 'chat', from: '', text: `${name} joined the game`, system: true });
-    console.log(`[join] ${name} (${this.sessions.size} online)`);
+    this.log(`[join] ${name} (${this.sessions.size} online)`);
     return session;
   }
 
@@ -227,7 +237,7 @@ export class GameServer {
     this.sessions.delete(s.id);
     this.broadcast({ t: 'leave', id: s.id, name: s.name });
     this.broadcast({ t: 'chat', from: '', text: `${s.name} left the game`, system: true });
-    console.log(`[leave] ${s.name} (${this.sessions.size} online)`);
+    this.log(`[leave] ${s.name} (${this.sessions.size} online)`);
   }
 
   private storePlayer(s: Session): void {
@@ -297,7 +307,7 @@ export class GameServer {
     const text = sanitizeChat(String(raw ?? ''));
     if (!text) return;
     if (text.startsWith('/')) return this.command(s, text);
-    console.log(`<${s.name}> ${text}`);
+    this.log(`<${s.name}> ${text}`);
     this.broadcast({ t: 'chat', from: s.name, text });
   }
 

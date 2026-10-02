@@ -5,8 +5,10 @@ Eén Node.js-proces serveert de game (de gebouwde `dist/`) **en** de multiplayer
 
 ```
 Browser ──HTTP──▶  /            → dist/ (de game)
-        ──WS────▶  /ws          → GameServer (gedeelde wereld, spelers, chat)
-        ──HTTP──▶  /health      → {"ok":true,"players":2}
+        ──HTTP──▶  /api/rooms   → een game aanmaken (POST) of opzoeken (GET /api/rooms/<CODE>)
+        ──WS────▶  /ws          → hoofdwereld
+        ──WS────▶  /ws/<CODE>   → een game van een speler
+        ──HTTP──▶  /health      → {"ok":true,"players":2,"rooms":3}
 ```
 
 ## Snel starten
@@ -19,8 +21,38 @@ npm run build
 npm start          # http://localhost:3000
 ```
 
-Open de site, kies **Multiplayer** en vul een naam in. Het serveradres staat standaard op de
-server waar de pagina vandaan komt.
+## Spelen met vrienden: games aanmaken en joinen
+
+Je hoeft niets in te stellen. Op de server kiest iedere speler **Multiplayer**:
+
+- **Create Game:** kies een naam, spelmodus en eventueel een seed. Je krijgt een code van zes tekens
+  (bijvoorbeeld `K7Q-M2X`) en een uitnodigingslink (`https://jouwdomein/?join=K7QM2X`).
+  Ook later in het spel: **Esc → Invite Friends**.
+- **Join Game:** een vriend opent de link (naam invullen, klaar) of typt de code of plakt de link in het
+  codeveld. Recente games staan als knop in het menu.
+- **Join Public Server:** de altijd-aanwezige hoofdwereld (zet uit met `MAIN_WORLD=off`).
+- **Direct Connect:** een ander BunkCraft-adres, voor wie een eigen server draait.
+
+Elke game is een eigen wereld met eigen spelers, tijd en chat. Games worden opgeslagen op de server in
+`data/rooms/<CODE>/`, zijn tot 8 spelers groot en blijven bestaan tot niemand er 60 dagen in is geweest.
+Lege games worden na 5 minuten uit het geheugen gehaald en bij de volgende join weer geladen.
+
+## Op je eigen domein (HTTPS)
+
+Het snelst met Docker en Caddy, die het certificaat automatisch regelt:
+
+```bash
+# DNS: een A-record van play.example.com naar je server; poort 80 en 443 open.
+git clone <deze repo> && cd Game
+DOMAIN=play.example.com docker compose up -d
+```
+
+Open daarna `https://play.example.com`. De wereld staat in het volume `bunkcraft-data` en overleeft
+herstarts en updates (`git pull && docker compose up -d --build`). Instellingen zet je in een `.env`
+naast `docker-compose.yml`, bijvoorbeeld `ROOM_MAX_PLAYERS=12`.
+
+Heb je al een reverse proxy? Zie de voorbeelden verderop; zet dan `TRUST_PROXY=1`, zodat de
+limieten per bezoeker werken in plaats van per proxy.
 
 ## Configuratie (omgevingsvariabelen)
 
@@ -32,7 +64,13 @@ server waar de pagina vandaan komt.
 | `SEED` | willekeurig | Seed: een getal of tekst. Geldt alleen bij een nieuwe wereld. |
 | `GAMEMODE` | `survival` | `survival`, `creative`, `hardcore` of `spectator` |
 | `MOTD` | `Welcome to BunkCraft!` | Bericht bij het inloggen |
-| `MAX_PLAYERS` | `20` | Maximum aantal spelers |
+| `MAX_PLAYERS` | `20` | Maximum aantal spelers in de hoofdwereld |
+| `TRUST_PROXY` | `0` | `1` achter een reverse proxy: gebruik `X-Forwarded-For` voor de limieten per bezoeker |
+| `MAIN_WORLD` | `on` | De hoofdwereld op `/ws` (knop *Join Public Server*) |
+| `ROOMS` | `on` | Spelers kunnen zelf games aanmaken (`off` = alleen de hoofdwereld) |
+| `MAX_ROOMS` | `200` | Maximum aantal games op de server |
+| `ROOM_MAX_PLAYERS` | `8` | Spelers per game |
+| `ROOM_EXPIRE_DAYS` | `60` | Games zonder bezoek worden na zoveel dagen verwijderd (`0` = nooit) |
 
 Voorbeeld: `SEED=bunk GAMEMODE=creative WORLD_NAME="Bouwserver" npm start`
 
@@ -86,10 +124,11 @@ HTTPS en WebSockets automatisch.
 
 ## Bekende beperkingen (v1)
 
-- **Geen mobs:** multiplayer-werelden zijn vredig. Gedeelde mobs moeten door de server gesimuleerd worden; dat staat op de roadmap.
+- **Geen mobs of TNT:** multiplayer-werelden zijn vredig en explosies worden nog niet gesynchroniseerd. Gedeelde mobs moeten door de server gesimuleerd worden; dat staat op de roadmap.
 - **Drops zijn lokaal:** dropped items zie je alleen zelf.
 - **Inventory en health worden door de client opgegeven:** valsspelen met de inventory is mogelijk. Plaats de server daarom niet publiek zonder vertrouwde spelers, of voeg wachtwoorden en whitelisting toe (roadmap).
-- **Geen accounts:** spelersnamen zijn niet beveiligd. Wie dezelfde naam gebruikt, neemt die speler over.
+- **Geen accounts:** spelersnamen zijn niet beveiligd. Wie dezelfde naam gebruikt in dezelfde game, neemt die speler over. Een game is alleen toegankelijk met de code (zes tekens uit 31, met een limiet op het aantal pogingen per bezoeker), dus deel hem alleen met vrienden.
+- **Aanmaken is beperkt:** zes games per uur per bezoeker en `MAX_ROOMS` in totaal, zodat een publieke server niet volloopt.
 
 ## Ontwikkelen
 

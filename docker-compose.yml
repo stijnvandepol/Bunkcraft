@@ -1,0 +1,50 @@
+# BunkCraft on your own domain with automatic HTTPS (Caddy gets the certificate).
+#
+#   1. Point an A/AAAA record for your domain at this server (ports 80 and 443 open).
+#   2. DOMAIN=play.example.com docker compose up -d
+#   3. Open https://play.example.com and press Multiplayer → Create Game.
+#
+# Optional settings go in a .env file next to this one (see docs/SERVER.md).
+services:
+  bunkcraft:
+    build: .
+    restart: unless-stopped
+    environment:
+      TRUST_PROXY: "1"
+      MAIN_WORLD: ${MAIN_WORLD:-on}
+      ROOMS: ${ROOMS:-on}
+      MAX_ROOMS: ${MAX_ROOMS:-200}
+      ROOM_MAX_PLAYERS: ${ROOM_MAX_PLAYERS:-8}
+      ROOM_EXPIRE_DAYS: ${ROOM_EXPIRE_DAYS:-60}
+      WORLD_NAME: ${WORLD_NAME:-BunkCraft Server}
+      GAMEMODE: ${GAMEMODE:-survival}
+      MOTD: ${MOTD:-Welcome to BunkCraft!}
+      SEED: ${SEED:-}
+    volumes:
+      - bunkcraft-data:/app/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - bunkcraft
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN, e.g. DOMAIN=play.example.com docker compose up -d}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  bunkcraft-data:
+  caddy-data:
+  caddy-config:

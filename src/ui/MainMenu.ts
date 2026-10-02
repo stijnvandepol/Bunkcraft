@@ -1,5 +1,7 @@
 import { GAME_MODES, GAME_MODE_HINTS, GAME_MODE_NAMES, type GameMode } from '../player/GameMode';
 import type { WorldMeta } from '../save/SaveSystem';
+import { NAME_PATTERN, formatCode, normalizeCode } from '../net/protocol';
+import { createRoom, forgetGame, lookupRoom, recentGames, serverInfo } from '../net/RoomApi';
 import { button, h, menuScreen, screen } from './dom';
 import type { ScreenStack } from './Screens';
 
@@ -9,13 +11,22 @@ export interface MenuActions {
   createWorld(name: string, seedText: string, mode: GameMode): void;
   deleteWorld(id: string): Promise<void>;
   openOptions(): void;
-  joinServer(name: string, address: string): void;
+  /** Join a server (empty address = this page's server); with a code, that game; without, the main world. */
+  joinServer(name: string, address: string, room?: string): void;
   logo(): HTMLCanvasElement;
   /** Fallback world icon (data URL) when a world has no screenshot yet. */
   defaultWorldIcon(): string;
 }
 
 export const VERSION = 'BunkCraft 1.0';
+
+function load(key: string, fallback: string): string {
+  try { return localStorage.getItem(key) ?? fallback; } catch { return fallback; }
+}
+
+function store(key: string, value: string): void {
+  try { localStorage.setItem(key, value); } catch { /* private mode: nothing to remember */ }
+}
 
 const SPLASHES = [
   'Now in your browser!', 'Greedy meshed!', 'Made of typed arrays!', '60 frames per second!',
@@ -42,7 +53,7 @@ export class MainMenu {
       splash,
       h('div', { class: 'title-buttons' },
         button('Singleplayer', () => void this.showWorlds()),
-        button('Multiplayer', () => this.showMultiplayer()),
+        button('Multiplayer', () => void this.showMultiplayer()),
         button('BunkCraft Realms', () => undefined, { disabled: true }),
         h('div', { class: 'gap' }),
         h('div', { class: 'row' },
@@ -55,16 +66,117 @@ export class MainMenu {
     ));
   }
 
-  /** Join a BunkCraft server; by default the server this page was loaded from. */
-  showMultiplayer(): void {
-    const load = (k: string, d: string) => { try { return localStorage.getItem(k) ?? d; } catch { return d; } };
-    const store = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* private mode */ } };
+  /**
+   * Multiplayer hub: create a game and share its code, join with a code or invite link,
+   * or rejoin a recent game. Falls back to a plain server address on static hosting.
+   */
+  async showMultiplayer(prefillCode = ''): Promise<void> {
+    const info = await serverInfo();
+    if (!info) return this.showDirectConnect();
     const name = h('input', { class: 'mc-input', value: load('bunkcraft.name', ''), maxLength: 16, placeholder: 'Your name (3–16 letters)' });
-    const address = h('input', { class: 'mc-input', value: load('bunkcraft.server', location.host), maxLength: 120 });
+    const code = h('input', { class: 'mc-input', value: prefillCode, maxLength: 80, placeholder: 'Game code or invite link' });
+    const error = h('div', { class: 'error' });
+    const validName = (): string | null => {
+      const n = name.value.trim();
+      if (!NAME_PATTERN.test(n)) {
+        error.textContent = 'Name must be 3–16 letters, digits or _';
+        name.focus();
+        return null;
+      }
+      store('bunkcraft.name', n);
+      error.textContent = '';
+      return n;
+    };
+    const joinCode = async (raw: string) => {
+      const n = validName();
+      if (!n) return;
+      const c = normalizeCode(raw);
+      if (!c) {
+        error.textContent = 'That is not a game code (6 letters and digits, like K7Q-M2X)';
+        return;
+      }
+      try {
+        await lookupRoom(c);
+      } catch (e) {
+        error.textContent = e instanceof Error ? e.message : String(e);
+        forgetGame(c);
+        return;
+      }
+      this.actions.joinServer(n, '', c);
+    };
+    const join = () => void joinCode(code.value);
+    for (const i of [name, code]) i.addEventListener('keydown', (e) => { if (e.key === 'Enter') join(); });
+
+    const recent = recentGames().map((g) => button(`${g.name}  (${formatCode(g.code)})`, () => void joinCode(g.code), { cls: 'w150' }));
+    const column = 'display: flex; flex-direction: column; align-items: center; gap: calc(var(--s) * 4);';
+    const body = h('div', { style: column },
+      h('div', { class: 'field-label', text: 'Player Name' }), name,
+      info.rooms ? button('Create Game', () => { const n = validName(); if (n) this.showCreateGame(n); }, { cls: 'w150' }) : null,
+      info.rooms ? h('div', { class: 'field-label', text: 'Join a Friend' }) : null,
+      info.rooms ? code : null,
+      info.rooms ? button('Join Game', join, { cls: 'w150' }) : null,
+      recent.length ? h('div', { class: 'field-label', text: 'Recent Games' }) : null,
+      ...recent,
+      error,
+    );
+    const footer: HTMLElement[] = [];
+    if (info.main) footer.push(button('Join Public Server', () => { const n = validName(); if (n) this.actions.joinServer(n, ''); }, { cls: 'w150' }));
+    footer.push(button('Direct Connect...', () => this.showDirectConnect(), { cls: 'w150' }), button('Back', () => this.stack.pop(), { cls: 'w150' }));
+    this.stack.push(menuScreen('Play Multiplayer', [body], footer, { list: true }));
+    window.setTimeout(() => (name.value ? (prefillCode ? code : name) : name).focus(), 0);
+    if (prefillCode && name.value) error.textContent = '';
+  }
+
+  /** Name, mode and seed for a new game; the server answers with its share code. */
+  private showCreateGame(playerName: string): void {
+    const name = h('input', { class: 'mc-input', value: `${playerName}'s Game`.slice(0, 32), maxLength: 32 });
+    const seed = h('input', { class: 'mc-input', placeholder: 'Leave blank for a random seed', maxLength: 32 });
+    const error = h('div', { class: 'error' });
+    let mode: GameMode = 'survival';
+    const modeHint = h('div', { class: 'hint', text: GAME_MODE_HINTS[mode] });
+    const modeButton = button(`Game Mode: ${GAME_MODE_NAMES[mode]}`, () => {
+      mode = GAME_MODES[(GAME_MODES.indexOf(mode) + 1) % GAME_MODES.length];
+      modeButton.textContent = `Game Mode: ${GAME_MODE_NAMES[mode]}`;
+      modeHint.textContent = GAME_MODE_HINTS[mode];
+    });
+    let busy = false;
+    const create = async () => {
+      if (busy) return;
+      busy = true;
+      error.textContent = '';
+      try {
+        const code = await createRoom(name.value.trim() || 'BunkCraft Game', mode, seed.value.trim());
+        this.actions.joinServer(playerName, '', code);
+      } catch (e) {
+        error.textContent = e instanceof Error ? e.message : String(e);
+        busy = false;
+      }
+    };
+    for (const i of [name, seed]) i.addEventListener('keydown', (e) => { if (e.key === 'Enter') void create(); });
+    const column = 'display: flex; flex-direction: column; align-items: center; gap: calc(var(--s) * 4);';
+    this.stack.push(menuScreen('Create Game', [
+      h('div', { style: column },
+        h('div', { class: 'field-label', text: 'Game Name' }), name,
+        modeButton, modeHint,
+        h('div', { class: 'field-label', text: 'Seed for the World Generator' }), seed,
+        h('div', { class: 'hint', text: 'You get a code and a link to share. Friends can join any time while the game exists.' }),
+        error,
+      ),
+    ], [
+      button('Create and Play', () => void create(), { cls: 'w150' }),
+      button('Cancel', () => this.stack.pop(), { cls: 'w150' }),
+    ]));
+    window.setTimeout(() => name.select(), 0);
+  }
+
+  /** Join any BunkCraft server by address (the page's own server when left empty). */
+  showDirectConnect(): void {
+    const name = h('input', { class: 'mc-input', value: load('bunkcraft.name', ''), maxLength: 16, placeholder: 'Your name (3–16 letters)' });
+    const address = h('input', { class: 'mc-input', value: load('bunkcraft.server', ''), maxLength: 120, placeholder: location.host });
     const error = h('div', { class: 'error' });
     const join = () => {
       const n = name.value.trim();
-      if (!/^[A-Za-z0-9_]{3,16}$/.test(n)) {
+      if (!NAME_PATTERN.test(n)) {
         error.textContent = 'Name must be 3–16 letters, digits or _';
         return;
       }
@@ -74,11 +186,11 @@ export class MainMenu {
     };
     for (const i of [name, address]) i.addEventListener('keydown', (e) => { if (e.key === 'Enter') join(); });
     const column = 'display: flex; flex-direction: column; align-items: center; gap: calc(var(--s) * 4);';
-    this.stack.push(menuScreen('Play Multiplayer', [
+    this.stack.push(menuScreen('Direct Connect', [
       h('div', { style: column },
         h('div', { class: 'field-label', text: 'Player Name' }), name,
         h('div', { class: 'field-label', text: 'Server Address' }), address,
-        h('div', { class: 'hint', text: 'Leave the address as-is to play on the server this game was loaded from.' }),
+        h('div', { class: 'hint', text: 'Host name or ip:port of a BunkCraft server. Leave empty for the server this page came from.' }),
         error,
       ),
     ], [
@@ -246,7 +358,7 @@ export function deathScreen(opts: {
 }
 
 /** "Game Menu" laid out like Minecraft's pause screen. */
-export function pauseScreen(actions: { resume(): void; options(): void; quit(): void; multiplayer?: boolean }): HTMLDivElement {
+export function pauseScreen(actions: { resume(): void; options(): void; quit(): void; multiplayer?: boolean; invite?: () => void }): HTMLDivElement {
   const off = () => undefined;
   return screen('menu-bg pause',
     h('div', { class: 'screen-header', style: 'flex-basis: calc(var(--s) * 50)' }, h('h2', { class: 'screen-title', text: 'Game Menu' })),
@@ -254,8 +366,29 @@ export function pauseScreen(actions: { resume(): void; options(): void; quit(): 
       button('Back to Game', actions.resume),
       h('div', { class: 'row' }, button('Advancements', off, { cls: 'half', disabled: true }), button('Statistics', off, { cls: 'half', disabled: true })),
       h('div', { class: 'row' }, button('Give Feedback', off, { cls: 'half', disabled: true }), button('Report Bugs', off, { cls: 'half', disabled: true })),
-      h('div', { class: 'row' }, button('Options...', actions.options, { cls: 'half' }), button('Open to LAN', off, { cls: 'half', disabled: true })),
+      h('div', { class: 'row' }, button('Options...', actions.options, { cls: 'half' }), actions.invite
+        ? button('Invite Friends', actions.invite, { cls: 'half' })
+        : button('Open to LAN', off, { cls: 'half', disabled: true })),
       button(actions.multiplayer ? 'Disconnect' : 'Save and Quit to Title', actions.quit),
     ),
   );
+}
+
+/** Share screen of a hosted game: the code, a link, and one-click copy. */
+export function inviteScreen(code: string, link: string, text: string, done: () => void): HTMLDivElement {
+  const linkInput = h('input', { class: 'mc-input', value: link, readOnly: true });
+  linkInput.addEventListener('focus', () => linkInput.select());
+  const copy = button('Copy Invite', () => {
+    const ok = () => { copy.textContent = 'Copied!'; window.setTimeout(() => { copy.textContent = 'Copy Invite'; }, 1500); };
+    navigator.clipboard?.writeText(text).then(ok, () => linkInput.select());
+    if (!navigator.clipboard) linkInput.select();
+  }, { cls: 'w150' });
+  return menuScreen('Invite Friends', [
+    h('div', { style: 'display: flex; flex-direction: column; align-items: center; gap: calc(var(--s) * 4);' },
+      h('div', { class: 'field-label', text: 'Game Code' }),
+      h('div', { class: 'death-title', text: formatCode(code) }),
+      h('div', { class: 'field-label', text: 'Invite Link' }), linkInput,
+      h('div', { class: 'hint', text: 'Friends open the link, or type the code under Multiplayer.' }),
+    ),
+  ], [copy, button('Done', done, { cls: 'w150' })]);
 }

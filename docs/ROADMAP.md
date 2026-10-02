@@ -99,7 +99,13 @@ wat al is doorgevoerd.
 ## 7. Multiplayer (vervolg op v1)
 
 v1 is gebouwd: één Node-server serveert de game en de WebSocket, met een gedeelde wereld,
-spelers, chat, tijd en per speler opgeslagen data. Zie `docs/SERVER.md`. Volgende stappen:
+spelers, chat, tijd en per speler opgeslagen data. Zie `docs/SERVER.md`.
+
+**Gedaan:** spelers maken zelf een game aan en delen een code of link (`?join=CODE`), recente games in het menu,
+`Invite Friends` in het pauzemenu, meerdere games per server, hartslag voor proxies en een
+`docker-compose.yml` met Caddy voor een eigen domein met HTTPS.
+
+Volgende stappen:
 
 1. **Mobs op de server simuleren.** `EntityManager` en `Mob` zijn DOM-vrij. De server heeft daarvoor terreingeneratie per chunk nodig (TerrainGenerator draait al server-side) en een lichtschatting.
 2. **Gedeelde item-drops** en eventueel PvP.

@@ -6,7 +6,8 @@ import { ArrowRenderer } from '../entities/ArrowRenderer';
 import type { Mob, MobEvents } from '../entities/Mob';
 import { MobRenderer } from '../entities/MobRenderer';
 import { NetClient } from '../net/NetClient';
-import type { ServerMessage } from '../net/protocol';
+import { type ServerMessage, formatCode, normalizeCode } from '../net/protocol';
+import { inviteLink, inviteText, rememberGame } from '../net/RoomApi';
 import { RemotePlayers } from '../net/RemotePlayers';
 import { Chat } from '../ui/Chat';
 import { PlayerInventory } from '../items/Inventory';
@@ -30,7 +31,7 @@ import { HUD } from '../ui/HUD';
 import { Hotbar } from '../ui/Hotbar';
 import { Inventory } from '../ui/Inventory';
 import { createLogo } from '../ui/Logo';
-import { MainMenu, VERSION, deathScreen, pauseScreen } from '../ui/MainMenu';
+import { MainMenu, VERSION, deathScreen, inviteScreen, pauseScreen } from '../ui/MainMenu';
 import { resourcePacksScreen } from '../ui/ResourcePacksMenu';
 import { ScreenStack } from '../ui/Screens';
 import { optionsScreen } from '../ui/SettingsMenu';
@@ -129,6 +130,8 @@ export class Game {
   private readonly frustum = new THREE.Frustum();
   private readonly projView = new THREE.Matrix4();
   private gpuName = '';
+  /** Code of the hosted game we are in (null in singleplayer or on the main world). */
+  private roomCode: string | null = null;
   private contextLost: HTMLDivElement | null = null;
 
   constructor(root: HTMLElement) {
@@ -174,7 +177,7 @@ export class Game {
       createWorld: (name, seed, mode) => void this.createWorld(name, seed, mode),
       deleteWorld: (id) => this.save.deleteWorld(id),
       openOptions: () => this.openOptions(),
-      joinServer: (name, address) => void this.joinServer(name, address),
+      joinServer: (name, address, room) => void this.joinServer(name, address, room),
       logo: () => createLogo('BUNKCRAFT', this.renderer.textures.canvas('stone')),
       defaultWorldIcon: () => this.icons.get(BLOCK.GRASS),
     });
@@ -230,6 +233,9 @@ export class Game {
     void navigator.storage?.persist?.().catch(() => false);
     await this.applyTexturePack();
     this.enterMenu();
+    // An invite link (?join=CODE) goes straight to the join screen with the code filled in.
+    const invited = normalizeCode(new URLSearchParams(location.search).get('join') ?? '');
+    if (invited) void this.menu.showMultiplayer(invited);
     this.last = performance.now();
     requestAnimationFrame(this.frame);
   }
@@ -526,14 +532,14 @@ export class Game {
 
   // ---------------------------------------------------------------- multiplayer
 
-  private async joinServer(name: string, address: string): Promise<void> {
+  private async joinServer(name: string, address: string, room?: string): Promise<void> {
     this.audio.unlock();
     const progress = this.menu.showLoading('Connecting to the server...');
     progress('Logging in...', 0);
     const net = new NetClient();
     let welcome;
     try {
-      welcome = await net.connect(address, name);
+      welcome = await net.connect(address, name, room);
     } catch (e) {
       this.menu.showDisconnected(e instanceof Error ? e.message : String(e));
       return;
@@ -551,7 +557,7 @@ export class Game {
     }
     const rec = welcome.player;
     const meta: WorldMeta = {
-      id: 'mp:' + address, name: welcome.worldName, seed: welcome.seed, seedText: '', created: 0, lastPlayed: Date.now(),
+      id: 'mp:' + address + (room ?? ''), name: welcome.worldName, seed: welcome.seed, seedText: '', created: 0, lastPlayed: Date.now(),
       player: rec ? { x: rec.x, y: rec.y, z: rec.z, yaw: rec.yaw, pitch: rec.pitch, flying: false } : null,
       hotbar: [...DEFAULT_HOTBAR], selectedSlot: 0, time: welcome.time, gameMode: welcome.gameMode,
       inventory: rec?.inventory, stats: rec?.stats, spawn: welcome.spawn,
@@ -572,11 +578,18 @@ export class Game {
       this.enterMenu();
       this.menu.showDisconnected(reason);
     };
+    this.roomCode = room ?? null;
+    if (room) {
+      rememberGame({ code: room, name: welcome.worldName });
+      // Invite links stay out of the address bar once you are in the game.
+      if (new URLSearchParams(location.search).has('join')) history.replaceState(null, '', location.pathname);
+    }
     this.remote.clear();
     for (const p of welcome.players) this.remote.add(p.id, p.name);
     this.chat.clear();
     this.chat.setVisible(true);
     if (welcome.motd) this.chat.add(welcome.motd, true);
+    if (room) this.chat.add(`Game code: ${formatCode(room)}. Press Esc, then Invite Friends, to share it.`, true);
   }
 
   private onServerMessage(msg: ServerMessage): void {
@@ -594,6 +607,7 @@ export class Game {
   }
 
   private disconnect(): void {
+    this.roomCode = null;
     if (!this.net) return;
     const net = this.net;
     this.net = null;
@@ -711,7 +725,12 @@ export class Game {
       options: () => this.openOptions(),
       quit: () => void this.quitToTitle(),
       multiplayer: this.net !== null,
+      invite: this.roomCode ? () => this.openInvite(this.roomCode!) : undefined,
     }));
+  }
+
+  private openInvite(code: string): void {
+    this.stack.push(inviteScreen(code, inviteLink(code), inviteText(code), () => this.stack.pop()));
   }
 
   /** Crafting stations within 4 blocks of the player. */

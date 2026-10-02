@@ -1,0 +1,5 @@
+# Caddy terminates HTTPS and forwards everything (game, API and WebSockets) to BunkCraft.
+{$DOMAIN} {
+	encode zstd gzip
+	reverse_proxy bunkcraft:3000
+}

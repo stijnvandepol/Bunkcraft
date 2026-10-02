@@ -57,6 +57,23 @@ export type ServerMessage =
   | { t: 'teleport'; x: number; y: number; z: number }
   | { t: 'kick'; reason: string };
 
+/** No 0/O/1/I/L: game codes are read aloud and typed on phones. */
+export const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+export const CODE_LENGTH = 6;
+const CODE_PATTERN = new RegExp(`^[${CODE_ALPHABET}]{${CODE_LENGTH}}$`);
+
+/** Normalises user input ("bunk-k7qm2x", " k7qm2x ", an invite link) to a code, or null. */
+export function normalizeCode(raw: string): string | null {
+  const fromLink = /[?&]join=([^&#\s]+)/i.exec(raw)?.[1] ?? raw;
+  const code = fromLink.toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/^BUNK/, '');
+  return CODE_PATTERN.test(code) ? code : null;
+}
+
+/** "K7QM2X" → "K7Q-M2X": easier to read and say. */
+export function formatCode(code: string): string {
+  return `${code.slice(0, 3)}-${code.slice(3)}`;
+}
+
 export const NAME_PATTERN = /^[A-Za-z0-9_]{3,16}$/;
 
 export function sanitizeChat(text: string): string {

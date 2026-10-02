@@ -1,21 +1,30 @@
 /**
- * BunkCraft server: serves the built game (dist/) and hosts the multiplayer
- * WebSocket on the same port, so everything runs in one place.
+ * BunkCraft server: serves the built game (dist/) and hosts multiplayer on the same port.
  *
  *   npm run build && npm start
  *
- * Environment: PORT (3000), DATA_DIR (./data), WORLD_NAME, SEED, GAMEMODE
- * (survival|creative|hardcore|spectator), MOTD, MAX_PLAYERS (20).
+ * Multiplayer: players create their own game (room) from the menu and share its code or
+ * link; rooms live at /ws/<CODE>. /ws (no code) is the optional always-on main world.
+ *
+ * Environment: PORT (3000), DATA_DIR (./data), TRUST_PROXY (0|1, behind Caddy/nginx),
+ * MAIN_WORLD (on|off), WORLD_NAME, SEED, GAMEMODE, MOTD, MAX_PLAYERS (main world, 20);
+ * ROOMS (on|off), MAX_ROOMS (200), ROOM_MAX_PLAYERS (8), ROOM_EXPIRE_DAYS (60).
  */
 import { createReadStream, existsSync, statSync } from 'node:fs';
-import { createServer } from 'node:http';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { extname, join, normalize, resolve, sep } from 'node:path';
-import { WebSocketServer } from 'ws';
+import { type WebSocket, WebSocketServer } from 'ws';
 import { GameServer, parseGameMode } from './GameServer';
+import { RateLimiter, Rooms } from './Rooms';
 
 const PORT = Number(process.env.PORT ?? 3000);
 const ROOT = resolve(process.env.STATIC_DIR ?? 'dist');
 const env = process.env;
+const flag = (v: string | undefined, dflt: boolean) => (v === undefined || v === '' ? dflt : !/^(0|off|false|no)$/i.test(v));
+const TRUST_PROXY = flag(env.TRUST_PROXY, false);
+const MAIN_WORLD = flag(env.MAIN_WORLD, true);
+const ROOMS_ENABLED = flag(env.ROOMS, true);
+const DATA_DIR = resolve(env.DATA_DIR ?? 'data');
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -31,20 +40,98 @@ const MIME: Record<string, string> = {
   '.ico': 'image/x-icon',
 };
 
-const game = new GameServer({
-  dataDir: resolve(env.DATA_DIR ?? 'data'),
-  worldName: env.WORLD_NAME ?? 'BunkCraft Server',
-  seed: env.SEED,
-  gameMode: parseGameMode(env.GAMEMODE),
-  motd: env.MOTD ?? 'Welcome to BunkCraft!',
-  maxPlayers: Number(env.MAX_PLAYERS ?? 20),
-});
+const main = MAIN_WORLD
+  ? new GameServer({
+    dataDir: DATA_DIR,
+    worldName: env.WORLD_NAME ?? 'BunkCraft Server',
+    seed: env.SEED,
+    gameMode: parseGameMode(env.GAMEMODE),
+    motd: env.MOTD ?? 'Welcome to BunkCraft!',
+    maxPlayers: Number(env.MAX_PLAYERS ?? 20),
+  })
+  : null;
+
+const rooms = ROOMS_ENABLED
+  ? new Rooms({
+    dataDir: join(DATA_DIR, 'rooms'),
+    maxRooms: Number(env.MAX_ROOMS ?? 200),
+    maxPlayers: Number(env.ROOM_MAX_PLAYERS ?? 8),
+    motd: env.MOTD ?? 'Welcome to BunkCraft! Share the game code with your friends.',
+    idleUnloadMs: 5 * 60_000,
+    expireDays: Number(env.ROOM_EXPIRE_DAYS ?? 60),
+  })
+  : null;
+
+// Per client address: creating rooms and looking up codes (stops code guessing).
+const createLimit = new RateLimiter(6, 3_600_000);
+const lookupLimit = new RateLimiter(40, 60_000);
+setInterval(() => { createLimit.prune(); lookupLimit.prune(); }, 600_000).unref();
+
+/** Client address; X-Forwarded-For only when a trusted reverse proxy sets it. */
+function clientIp(req: IncomingMessage): string {
+  if (TRUST_PROXY) {
+    const fwd = req.headers['x-forwarded-for'];
+    const first = (Array.isArray(fwd) ? fwd[0] : fwd)?.split(',')[0]?.trim();
+    if (first) return first;
+  }
+  return req.socket.remoteAddress ?? 'unknown';
+}
+
+function json(res: ServerResponse, status: number, body: unknown): void {
+  res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+  res.end(JSON.stringify(body));
+}
+
+function readBody(req: IncomingMessage, limit = 4096): Promise<string> {
+  return new Promise((resolveBody, reject) => {
+    let data = '';
+    req.on('data', (chunk: Buffer) => {
+      data += chunk.toString();
+      if (data.length > limit) {
+        reject(new Error('too large'));
+        req.destroy();
+      }
+    });
+    req.on('end', () => resolveBody(data));
+    req.on('error', reject);
+  });
+}
+
+/** JSON API used by the menu: server capabilities, creating a room, looking one up. */
+async function api(req: IncomingMessage, res: ServerResponse, path: string): Promise<void> {
+  const ip = clientIp(req);
+  if (path === '/api/server' && req.method === 'GET') {
+    return json(res, 200, { rooms: ROOMS_ENABLED, main: MAIN_WORLD, players: (main?.playerCount ?? 0) + (rooms?.playerCount ?? 0) });
+  }
+  if (!rooms) return json(res, 404, { error: 'Games are disabled on this server' });
+  if (path === '/api/rooms' && req.method === 'POST') {
+    if (!createLimit.take(ip)) return json(res, 429, { error: 'Too many games created, try again later' });
+    let body: { name?: unknown; gameMode?: unknown; seed?: unknown };
+    try {
+      body = JSON.parse(await readBody(req)) as typeof body;
+    } catch {
+      return json(res, 400, { error: 'Bad request' });
+    }
+    const code = rooms.create(String(body.name ?? ''), typeof body.gameMode === 'string' ? body.gameMode : undefined,
+      typeof body.seed === 'string' ? body.seed : undefined);
+    return code ? json(res, 201, { code }) : json(res, 503, { error: 'This server has reached its game limit' });
+  }
+  const m = /^\/api\/rooms\/([^/]+)$/.exec(path);
+  if (m && req.method === 'GET') {
+    if (!lookupLimit.take(ip)) return json(res, 429, { error: 'Too many requests' });
+    const info = rooms.info(m[1]);
+    return info ? json(res, 200, info) : json(res, 404, { error: 'Game not found. Check the code.' });
+  }
+  return json(res, 404, { error: 'Not found' });
+}
 
 const http = createServer((req, res) => {
   const url = new URL(req.url ?? '/', 'http://localhost');
   if (url.pathname === '/health') {
-    res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, players: game.playerCount }));
+    return json(res, 200, { ok: true, players: (main?.playerCount ?? 0) + (rooms?.playerCount ?? 0), rooms: rooms?.count ?? 0 });
+  }
+  if (url.pathname.startsWith('/api/')) {
+    api(req, res, url.pathname).catch(() => { if (!res.headersSent) json(res, 500, { error: 'Server error' }); });
     return;
   }
   // Static files from dist/, guarded against path traversal.
@@ -78,23 +165,48 @@ const http = createServer((req, res) => {
   createReadStream(file).pipe(res);
 });
 
-// WebSocket on the same port at /ws.
+// WebSocket on the same port: /ws (main world) and /ws/<CODE> (a room).
 const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
 http.on('upgrade', (req, socket, head) => {
-  if (new URL(req.url ?? '/', 'http://localhost').pathname !== '/ws') {
+  const path = new URL(req.url ?? '/', 'http://localhost').pathname;
+  let target: GameServer | null = null;
+  if (path === '/ws') {
+    target = main;
+  } else {
+    const m = /^\/ws\/([^/]+)$/.exec(path);
+    if (m && rooms && lookupLimit.take(clientIp(req))) target = rooms.get(m[1])?.server ?? null;
+  }
+  if (!target) {
+    socket.write('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n');
     socket.destroy();
     return;
   }
-  wss.handleUpgrade(req, socket, head, (ws) => game.accept(ws));
+  const server = target;
+  wss.handleUpgrade(req, socket, head, (ws) => server.accept(ws));
 });
 
+// Proxies and mobile networks silently drop idle sockets: ping every 25 s, drop dead ones.
+const alive = new WeakSet<WebSocket>();
+wss.on('connection', (ws) => {
+  alive.add(ws);
+  ws.on('pong', () => alive.add(ws));
+});
+setInterval(() => {
+  for (const ws of wss.clients) {
+    if (!alive.has(ws)) { ws.terminate(); continue; }
+    alive.delete(ws);
+    ws.ping();
+  }
+}, 25_000).unref();
+
 http.listen(PORT, () => {
-  console.log(`BunkCraft server on http://localhost:${PORT} (static: ${ROOT})`);
+  console.log(`BunkCraft server on http://localhost:${PORT} (static: ${ROOT}; main world ${MAIN_WORLD ? 'on' : 'off'}, games ${ROOMS_ENABLED ? 'on' : 'off'})`);
 });
 
 const stop = () => {
   console.log('Saving and shutting down...');
-  game.shutdown();
+  main?.shutdown();
+  rooms?.shutdown();
   wss.close();
   http.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 2000).unref();

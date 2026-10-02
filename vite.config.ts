@@ -5,6 +5,9 @@ export default defineConfig({
   build: { target: 'es2022', chunkSizeWarningLimit: 1200 },
   server: {
     // During `npm run dev`, multiplayer traffic goes to the game server (`npm run server`).
-    proxy: { '/ws': { target: 'ws://localhost:3000', ws: true } },
+    proxy: {
+      '/ws': { target: 'ws://localhost:3000', ws: true },
+      '/api': { target: 'http://localhost:3000' },
+    },
   },
 });
