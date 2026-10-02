@@ -1,7 +1,11 @@
-import { BLOCK, SHAPE, SHAPE_CROSS, SHAPE_LIQUID, SHAPE_NONE, SHAPE_SLAB, SHAPE_STAIRS } from './BlockRegistry';
 import {
-  SLAB_BOTTOM, SLAB_DOUBLE, SLAB_TOP, canCombineSlab, facingFromYaw, placedOnUpperHalf, stairMeta,
+  BLOCK, OPAQUE, SHAPE, SHAPE_CROSS, SHAPE_CUBE, SHAPE_DOOR, SHAPE_LIQUID, SHAPE_NONE, SHAPE_SLAB, SHAPE_STAIRS, SOLID,
+} from './BlockRegistry';
+import {
+  FACING_CCW, FACING_CW, FACING_DX, FACING_DZ, SLAB_BOTTOM, SLAB_DOUBLE, SLAB_TOP, STAIR_TOP_BIT, canCombineSlab, doorMeta, facingFromYaw,
+  isDoorUpper, placedOnUpperHalf, stairMeta,
 } from './BlockStates';
+import { CHUNK_HEIGHT } from './constants';
 
 /** What the player is aiming at and holding when they press Use. */
 export interface PlaceContext {
@@ -12,6 +16,9 @@ export interface PlaceContext {
   nx: number; ny: number; nz: number;
   /** Height of the click inside the clicked block, 0..1. */
   fracY: number;
+  /** Where along x and z the click landed inside the block (0..1), used for the hinge side of a door. */
+  fracX?: number;
+  fracZ?: number;
   /** Player yaw (see Player): decides which way stairs and doors face. */
   yaw: number;
   getBlock(x: number, y: number, z: number): number;
@@ -22,6 +29,49 @@ export interface Placement {
   x: number; y: number; z: number;
   id: number;
   meta: number;
+  /** A second block placed together with this one (the upper half of a door). */
+  upper?: Placement;
+}
+
+/** Can a block stand on top of this one: opaque blocks, double and top slabs, upside-down stairs (isFaceSturdy UP). */
+export function topFaceSturdy(id: number, meta: number): boolean {
+  if (OPAQUE[id]) return true;
+  const s = SHAPE[id];
+  if (s === SHAPE_SLAB) return meta !== SLAB_BOTTOM;
+  if (s === SHAPE_STAIRS) return (meta & STAIR_TOP_BIT) !== 0;
+  return false;
+}
+
+/** A solid block with a full-cube collision shape (Minecraft's isCollisionShapeFullBlock): decides door hinges. */
+function fullBlock(id: number): boolean {
+  return SHAPE[id] === SHAPE_CUBE && SOLID[id] === 1;
+}
+
+/**
+ * Which side the hinge goes on (Minecraft's DoorBlock.getHinge): next to a wall or another door it joins it
+ * (so a double door opens outwards), otherwise by the side of the block that was clicked. true = right.
+ */
+export function doorHingeRight(c: PlaceContext, x: number, y: number, z: number, facing: number): boolean {
+  const ccw = FACING_CCW[facing], cw = FACING_CW[facing];
+  const lx = x + FACING_DX[ccw], lz = z + FACING_DZ[ccw];
+  const rx = x + FACING_DX[cw], rz = z + FACING_DZ[cw];
+  let score = 0;
+  if (fullBlock(c.getBlock(lx, y, lz))) score--;
+  if (fullBlock(c.getBlock(lx, y + 1, lz))) score--;
+  if (fullBlock(c.getBlock(rx, y, rz))) score++;
+  if (fullBlock(c.getBlock(rx, y + 1, rz))) score++;
+  const leftDoor = SHAPE[c.getBlock(lx, y, lz)] === SHAPE_DOOR && !isDoorUpper(c.getMeta(lx, y, lz));
+  const rightDoor = SHAPE[c.getBlock(rx, y, rz)] === SHAPE_DOOR && !isDoorUpper(c.getMeta(rx, y, rz));
+  if ((!leftDoor || rightDoor) && score <= 0) {
+    if ((!rightDoor || leftDoor) && score >= 0) {
+      const j = FACING_DX[facing], k = FACING_DZ[facing];
+      const d0 = c.fracX ?? 0.5, d1 = c.fracZ ?? 0.5;
+      const left = (j >= 0 || !(d1 < 0.5)) && (j <= 0 || !(d1 > 0.5)) && (k >= 0 || !(d0 > 0.5)) && (k <= 0 || !(d0 < 0.5));
+      return !left;
+    }
+    return false;
+  }
+  return true;
 }
 
 /** Blocks that give way to whatever is placed into them. */
@@ -55,6 +105,18 @@ export function resolvePlacement(c: PlaceContext): Placement | null {
     return { x, y, z, id, meta: SLAB_DOUBLE };
   }
   if (!isReplaceable(existing)) return null;
+  if (shape === SHAPE_DOOR) {
+    // Two blocks tall, on something solid, with room above.
+    if (y < 1 || y + 1 >= CHUNK_HEIGHT || !topFaceSturdy(c.getBlock(x, y - 1, z), c.getMeta(x, y - 1, z))) return null;
+    const above = c.getBlock(x, y + 1, z);
+    if (above === BLOCK.UNLOADED || !isReplaceable(above)) return null;
+    const facing = facingFromYaw(c.yaw);
+    const hinge = doorHingeRight(c, x, y, z, facing);
+    return {
+      x, y, z, id, meta: doorMeta(facing, false, hinge, false),
+      upper: { x, y: y + 1, z, id, meta: doorMeta(facing, true, hinge, false) },
+    };
+  }
   const upper = placedOnUpperHalf(c.ny, c.fracY);
   if (shape === SHAPE_SLAB) return { x, y, z, id, meta: upper ? SLAB_TOP : SLAB_BOTTOM };
   if (shape === SHAPE_STAIRS) return { x, y, z, id, meta: stairMeta(facingFromYaw(c.yaw), upper) };

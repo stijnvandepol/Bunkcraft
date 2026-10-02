@@ -1,10 +1,10 @@
 import type { WorkerPool } from '../workers/WorkerPool';
 import { tintColor } from './BiomeColors';
-import { BLOCK, SHAPE, SHAPE_CROSS, SHAPE_MODEL, SOLID, TINT } from './BlockRegistry';
+import { BLOCK, SHAPE, SHAPE_CROSS, SHAPE_DOOR, SHAPE_MODEL, SOLID, TINT } from './BlockRegistry';
 import { CHUNK_READY, type Chunk } from './Chunk';
 import { ChunkManager, type ChunkMaterials } from './ChunkManager';
 import { CHUNK_HEIGHT, CHUNK_VOLUME, SEA_LEVEL, blockIndex, chunkKey } from './constants';
-import { packState, stateId, stateMeta } from './BlockStates';
+import { DOOR_OPEN_BIT, isDoorUpper, packState, stateId, stateMeta } from './BlockStates';
 import { ARENA_SPAWNS } from '../modes/arena';
 import { BIOME } from './TerrainGenerator';
 import { type WorldGenerator, type WorldType, createGenerator } from './WorldGenerator';
@@ -162,18 +162,24 @@ export class World {
         }
       }
     }
-    // Plants and torches lose their support.
-    for (let k = 0; k < cleared.length; k += 3) {
-      const x = cleared[k], y = cleared[k + 1] + 1, z = cleared[k + 2];
-      const above = this.getBlock(x, y, z);
-      if (SHAPE[above] !== SHAPE_CROSS && SHAPE[above] !== SHAPE_MODEL) continue;
+    // Plants, torches and doors lose their support (a door loses its other half too); the list grows while we walk it.
+    const clearExtra = (x: number, y: number, z: number): void => {
       const c = this.chunkAt(x >> 4, z >> 4);
-      if (!c || !c.blocks) continue;
+      if (!c || !c.blocks) return;
       const i = blockIndex(x & 15, y, z & 15);
       writeState(c, i, BLOCK.AIR, 0);
       this.edits.get(c.key)?.set(i, BLOCK.AIR) ?? this.edits.set(c.key, new Map([[i, BLOCK.AIR]]));
       this.dirtyEditChunks.add(c.key);
       touched.add(c);
+      cleared.push(x, y, z);
+    };
+    for (let k = 0; k < cleared.length; k += 3) {
+      const x = cleared[k], y = cleared[k + 1], z = cleared[k + 2];
+      const above = this.getBlock(x, y + 1, z);
+      if (SHAPE[above] === SHAPE_CROSS || SHAPE[above] === SHAPE_MODEL || SHAPE[above] === SHAPE_DOOR) clearExtra(x, y + 1, z);
+      // A door half whose partner below was cleared (the cleared cell itself held the other half).
+      const below = this.getBlock(x, y - 1, z);
+      if (SHAPE[below] === SHAPE_DOOR && k / 3 < destroyed.length && destroyed[k / 3] === below) clearExtra(x, y - 1, z);
     }
     const remesh = new Set<Chunk>();
     for (const c of touched) {
@@ -273,10 +279,37 @@ export class World {
   /** Break a block; a plant standing on top drops with it. */
   breakBlock(x: number, y: number, z: number): number {
     const id = this.getBlock(x, y, z);
+    const meta = this.getMeta(x, y, z);
     if (!this.setBlock(x, y, z, BLOCK.AIR)) return 0;
+    if (SHAPE[id] === SHAPE_DOOR) {
+      // Both halves go at once.
+      const oy = isDoorUpper(meta) ? y - 1 : y + 1;
+      if (this.getBlock(x, oy, z) === id) this.setBlock(x, oy, z, BLOCK.AIR);
+    }
     const above = this.getBlock(x, y + 1, z);
     if (SHAPE[above] === SHAPE_CROSS || SHAPE[above] === SHAPE_MODEL) this.setBlock(x, y + 1, z, BLOCK.AIR);
+    else if (SHAPE[above] === SHAPE_DOOR && SHAPE[id] !== SHAPE_DOOR) {
+      // A door standing on the block that was broken falls apart.
+      this.setBlock(x, y + 1, z, BLOCK.AIR);
+      this.setBlock(x, y + 2, z, BLOCK.AIR);
+    }
     return id;
+  }
+
+  /**
+   * Opens or closes the door at (x, y, z), both halves together. Returns the new state (true = open), or
+   * null when there is no door.
+   */
+  toggleDoor(x: number, y: number, z: number): boolean | null {
+    const id = this.getBlock(x, y, z);
+    if (SHAPE[id] !== SHAPE_DOOR) return null;
+    const meta = this.getMeta(x, y, z);
+    const open = (meta & DOOR_OPEN_BIT) === 0;
+    const withOpen = (m: number) => (open ? m | DOOR_OPEN_BIT : m & ~DOOR_OPEN_BIT);
+    this.setBlock(x, y, z, id, withOpen(meta));
+    const oy = isDoorUpper(meta) ? y - 1 : y + 1;
+    if (this.getBlock(x, oy, z) === id) this.setBlock(x, oy, z, id, withOpen(this.getMeta(x, oy, z)));
+    return open;
   }
 
   dispose(): void {

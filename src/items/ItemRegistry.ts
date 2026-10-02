@@ -221,6 +221,7 @@ const MINING: Record<number, Mining> = {
   [B.YELLOW_WOOL]: { hardness: 0.8 },
   [B.GREEN_WOOL]: { hardness: 0.8 },
   [B.TNT]: { hardness: 0 },
+  [B.OAK_DOOR]: { hardness: 3, tool: 'axe' },
 };
 
 // Slabs mine like their full block but are harder (2.0, Minecraft); stairs keep the hardness of the full block.

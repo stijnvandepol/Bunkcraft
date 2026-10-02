@@ -237,3 +237,11 @@ export const DOOR_UPPER_BIT = 4;
 export const DOOR_HINGE_RIGHT_BIT = 8;
 export const DOOR_OPEN_BIT = 16;
 export const DOOR_META_MASK = 31;
+
+export function doorMeta(facing: number, upper: boolean, hingeRight: boolean, open: boolean): number {
+  return facing | (upper ? DOOR_UPPER_BIT : 0) | (hingeRight ? DOOR_HINGE_RIGHT_BIT : 0) | (open ? DOOR_OPEN_BIT : 0);
+}
+
+export function isDoorUpper(meta: number): boolean {
+  return (meta & DOOR_UPPER_BIT) !== 0;
+}

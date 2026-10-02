@@ -131,6 +131,8 @@ export const BLOCK = {
   OAK_STAIRS: 63,
   BIRCH_STAIRS: 64,
   SPRUCE_STAIRS: 65,
+  /** Both halves of a door are this block; the state byte says which half (see BlockStates). */
+  OAK_DOOR: 66,
   /** Sentinel returned for blocks in chunks that are not loaded (treated as solid). */
   UNLOADED: 255,
 } as const;
@@ -234,6 +236,12 @@ export const BLOCK_DEFS: BlockDef[] = [
   cube(B.FURNACE, 'furnace', 'Furnace', { top: 'furnace_top', bottom: 'furnace_top', side: 'furnace_side', front: 'furnace_front' }, 1.2, 'stone'),
   cube(B.TNT, 'tnt', 'TNT', { top: 'tnt_top', bottom: 'tnt_bottom', side: 'tnt_side' }, 0, 'grass'),
 ];
+
+// Oak door: the lower half uses the "side" texture slot and the upper half the "top" slot.
+BLOCK_DEFS.push({
+  id: B.OAK_DOOR, name: 'oak_door', displayName: 'Oak Door', shape: 'door', solid: true, transparent: true, hardness: 3, sound: 'wood',
+  inInventory: true, textures: { side: 'oak_door_lower', top: 'oak_door_upper' }, metaMask: 31,
+});
 
 // Slabs and stairs reuse the textures and sounds of the block they are made of.
 PARTIAL_MATERIALS.forEach((m, i) => {

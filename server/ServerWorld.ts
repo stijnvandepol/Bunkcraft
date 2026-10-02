@@ -1,6 +1,6 @@
 import type { ChunkLike, EntityWorld } from '../src/entities/EntityManager';
 import {
-  BLOCK, LIGHT_EMIT, OPAQUE, SHAPE, SHAPE_CROSS, SHAPE_MODEL,
+  BLOCK, LIGHT_EMIT, OPAQUE, SHAPE, SHAPE_CROSS, SHAPE_DOOR, SHAPE_MODEL,
 } from '../src/world/BlockRegistry';
 import { packState, stateId, stateMeta } from '../src/world/BlockStates';
 import { CHUNK_HEIGHT, CHUNK_VOLUME, blockIndex, chunkKey } from '../src/world/constants';
@@ -179,13 +179,21 @@ export class ServerWorld implements EntityWorld {
         }
       }
     }
+    // Plants, torches and doors lose their support, and a door its other half (the list grows while we walk it).
     for (let k = 0; k < positions.length; k += 3) {
-      const x = positions[k], y = positions[k + 1] + 1, z = positions[k + 2];
-      const above = this.getBlock(x, y, z);
-      if (SHAPE[above] !== SHAPE_CROSS && SHAPE[above] !== SHAPE_MODEL) continue;
-      this.setBlock(x, y, z, BLOCK.AIR);
-      destroyed.push(above);
-      positions.push(x, y, z);
+      const x = positions[k], y = positions[k + 1], z = positions[k + 2];
+      const above = this.getBlock(x, y + 1, z);
+      if (SHAPE[above] === SHAPE_CROSS || SHAPE[above] === SHAPE_MODEL || SHAPE[above] === SHAPE_DOOR) {
+        this.setBlock(x, y + 1, z, BLOCK.AIR);
+        destroyed.push(above);
+        positions.push(x, y + 1, z);
+      }
+      const below = this.getBlock(x, y - 1, z);
+      if (SHAPE[below] === SHAPE_DOOR && destroyed[k / 3] === below) {
+        this.setBlock(x, y - 1, z, BLOCK.AIR);
+        destroyed.push(below);
+        positions.push(x, y - 1, z);
+      }
     }
     return destroyed;
   }

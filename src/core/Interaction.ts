@@ -8,13 +8,14 @@ import type { Player } from '../player/Player';
 import type { PlayerStats } from '../player/PlayerStats';
 import type { HandRenderer } from '../rendering/HandRenderer';
 import type { Hotbar } from '../ui/Hotbar';
-import { BLOCK, PARTIAL, SHAPE, SHAPE_CROSS, SHAPE_MODEL, SOLID, getBlockDef } from '../world/BlockRegistry';
+import { BLOCK, PARTIAL, SHAPE, SHAPE_CROSS, SHAPE_DOOR, SHAPE_MODEL, SOLID, getBlockDef } from '../world/BlockRegistry';
 import { collisionBoxes } from '../world/BlockShapes';
 import { resolvePlacement } from '../world/Placement';
 import { type RayHit, createRayHit, raycast } from '../world/Raycast';
 import type { World } from '../world/World';
 import type { AudioEngine } from './Audio';
 import type { Input } from './Input';
+import { KB } from './Keybinds';
 import type { Renderer } from './Renderer';
 
 const EAT_TIME = 1.6;
@@ -146,7 +147,11 @@ export class Interaction {
       this.eating = false;
       this.bowDraw = this.bowPull = 0;
       this.placeCooldown -= dt;
-      if (hit.hit && !mobHit && (input.rightClicked || (input.rightDown && this.placeCooldown <= 0))) {
+      if (hit.hit && !mobHit && SHAPE[hit.id] === SHAPE_DOOR && input.rightClicked
+        && !(input.actionDown(KB.SNEAK) && isBlockItem(held.id))) {
+        // Use a door (sneaking with a block in hand places against it instead).
+        this.useDoor(hit);
+      } else if (hit.hit && !mobHit && (input.rightClicked || (input.rightDown && this.placeCooldown <= 0))) {
         this.placeCooldown = 0.22;
         this.place(mode);
       }
@@ -160,6 +165,13 @@ export class Interaction {
       if (slot >= 0) this.d.hotbar.select(slot);
       else this.d.hotbar.setSlot(this.d.hotbar.selected, hit.id);
     }
+  }
+
+  private useDoor(hit: RayHit): void {
+    const open = this.d.world.toggleDoor(hit.x, hit.y, hit.z);
+    if (open === null) return;
+    this.d.audio.playDoor(open);
+    this.d.hand.swingHand();
   }
 
   /** Outline the block, or the box around a slab, stair or door where it really is. */
@@ -256,7 +268,8 @@ export class Interaction {
         const drop = blockDrop(broken, held, brokenMeta);
         if (drop) entities.dropItem(drop, hit.x + 0.5, hit.y + 0.3, hit.z + 0.5);
         // A plant or torch on top breaks with its support and drops too.
-        if (above !== world.getBlock(hit.x, hit.y + 1, hit.z)) {
+        // (the upper half of a door that went with the lower one is no extra drop)
+        if (above !== world.getBlock(hit.x, hit.y + 1, hit.z) && !(SHAPE[broken] === SHAPE_DOOR && above === broken)) {
           const top = blockDrop(above, 0);
           if (top) entities.dropItem(top, hit.x + 0.5, hit.y + 1.3, hit.z + 0.5);
         }
@@ -280,9 +293,11 @@ export class Interaction {
     if (!id || !isBlockItem(id)) return;
     // Where the click landed inside the block decides the half of a slab or stair.
     const cam = this.d.camera.position;
+    const hx = cam.x + this.dir.x * hit.distance, hz = cam.z + this.dir.z * hit.distance;
     const fracY = Math.min(1, Math.max(0, cam.y + this.dir.y * hit.distance - hit.y));
     const placed = resolvePlacement({
       id, hitX: hit.x, hitY: hit.y, hitZ: hit.z, nx: hit.nx, ny: hit.ny, nz: hit.nz, fracY, yaw: player.yaw,
+      fracX: hx - Math.floor(hx), fracZ: hz - Math.floor(hz),
       getBlock: this.getBlock, getMeta: this.getMeta,
     });
     if (!placed) return;
@@ -292,7 +307,9 @@ export class Interaction {
       && m.y + m.height > y && m.y < y + 1 && m.z + m.width / 2 > z && m.z - m.width / 2 < z + 1)) return;
     // Plants and torches need a solid block underneath.
     if ((SHAPE[id] === SHAPE_CROSS || SHAPE[id] === SHAPE_MODEL) && !SOLID[world.getBlock(x, y - 1, z)]) return;
+    if (placed.upper && SOLID[id] && player.intersectsBlock(x, y + 1, z)) return;
     if (!world.setBlock(x, y, z, id, placed.meta)) return;
+    if (placed.upper) world.setBlock(placed.upper.x, placed.upper.y, placed.upper.z, id, placed.upper.meta);
     const def = getBlockDef(id)!;
     audio.play('place', def.sound);
     hand.swingHand();

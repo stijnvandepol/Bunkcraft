@@ -12,7 +12,7 @@ const TABS: { name: string; icon: number; blocks: number[] }[] = [
     name: 'Building Blocks', icon: B.BRICKS,
     blocks: [B.STONE, B.COBBLESTONE, B.MOSSY_COBBLESTONE, B.STONE_BRICKS, B.BRICKS, B.SANDSTONE, B.OBSIDIAN,
       B.OAK_LOG, B.OAK_PLANKS, B.BIRCH_LOG, B.BIRCH_PLANKS, B.SPRUCE_LOG, B.SPRUCE_PLANKS,
-      ...PARTIAL_MATERIALS.map((_, i) => SLAB_FIRST + i), ...PARTIAL_MATERIALS.map((_, i) => STAIRS_FIRST + i)],
+      ...PARTIAL_MATERIALS.map((_, i) => SLAB_FIRST + i), ...PARTIAL_MATERIALS.map((_, i) => STAIRS_FIRST + i), B.OAK_DOOR],
   },
   {
     name: 'Colored Blocks', icon: B.BLUE_WOOL,

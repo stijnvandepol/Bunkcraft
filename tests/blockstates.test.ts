@@ -8,33 +8,13 @@ import { GameServer } from '../server/GameServer';
 import { ServerWorld } from '../server/ServerWorld';
 import { PROTOCOL_VERSION, type ClientMessage, type ServerMessage } from '../src/net/protocol';
 import { ChunkMesher } from '../src/rendering/ChunkMesher';
-import type { WorkerPool } from '../src/workers/WorkerPool';
 import type { WorkerRequest } from '../src/workers/protocol';
 import { BLOCK } from '../src/world/BlockRegistry';
 import { packState, stateId, stateMeta } from '../src/world/BlockStates';
 import { CHUNK_AREA, CHUNK_VOLUME, blockIndex, chunkKey } from '../src/world/constants';
-import { CHUNK_READY, Chunk } from '../src/world/Chunk';
-import type { ChunkMaterials } from '../src/world/ChunkManager';
-import { World } from '../src/world/World';
-import { emptyChunk, setLocal } from './helpers';
+import { emptyChunk, makeTestWorld, setLocal } from './helpers';
 
-/** A World whose chunks are installed by hand (no workers), around chunk (0, 0). */
-function makeWorld(edits = new Map<number, Map<number, number>>(), requests: WorkerRequest[] = []): World {
-  const pool = { size: 1, submit: (req: WorkerRequest) => { requests.push(req); } } as unknown as WorkerPool;
-  const world = new World(1, pool, {} as ChunkMaterials, edits);
-  for (let cz = -1; cz <= 1; cz++) {
-    for (let cx = -1; cx <= 1; cx++) {
-      const c = new Chunk(cx, cz, chunkKey(cx, cz));
-      c.blocks = new Uint8Array(CHUNK_VOLUME);
-      c.biomes = new Uint8Array(CHUNK_AREA);
-      c.state = CHUNK_READY;
-      world.chunks.chunks.set(c.key, c);
-      world.chunks.onGenerated?.(c);
-    }
-  }
-  world.chunks.epoch++;
-  return world;
-}
+const makeWorld = makeTestWorld;
 
 describe('state packing', () => {
   it('round-trips id and meta', () => {

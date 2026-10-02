@@ -94,6 +94,9 @@ const PIXEL_PERFECTION: PackLayout = {
     tnt_top: 'tnt_top',
     tnt_side: 'tnt_side',
     tnt_bottom: 'tnt_bottom',
+    // The door sheet (38×32) holds both halves in its left 16 columns: "file@x,y,w,h,sheetHeight" crops a part.
+    oak_door_upper: 'doors_door_wood@0,0,16,16,32',
+    oak_door_lower: 'doors_door_wood@0,16,16,16,32',
   },
 };
 
@@ -164,6 +167,8 @@ export const MINECRAFT_LAYOUT: PackLayout = {
     tnt_top: 'tnt_top',
     tnt_side: 'tnt_side',
     tnt_bottom: 'tnt_bottom',
+    oak_door_upper: 'oak_door_top',
+    oak_door_lower: 'oak_door_bottom',
     ...Object.fromEntries(Array.from({ length: 10 }, (_, i) => [`destroy_${i}`, `destroy_stage_${i}`])),
   },
   masks: { grass_side: 'grass_block_side_overlay' },
@@ -195,8 +200,17 @@ function loadImage(url: string): Promise<HTMLImageElement | null> {
   });
 }
 
+interface ParsedLayer {
+  file: string;
+  /**
+   * Source rectangle x, y, w, h and the sheet height they were measured on ("file@x,y,w,h,sheetH"), so an HD
+   * version of the same sheet is cropped at the same place. null = the first square frame.
+   */
+  rect: [number, number, number, number, number] | null;
+}
+
 interface ParsedAlt {
-  layers: string[];
+  layers: ParsedLayer[];
   multiply: [number, number, number] | null;
 }
 
@@ -204,7 +218,12 @@ function parseSpec(spec: string): ParsedAlt[] {
   return spec.split('|').map((alt) => {
     const [files, color] = alt.split('*');
     const c = color ? parseInt(color.slice(1), 16) : -1;
-    return { layers: files.split('^'), multiply: c >= 0 ? [(c >> 16) & 255, (c >> 8) & 255, c & 255] : null };
+    const layers = files.split('^').map((l): ParsedLayer => {
+      const [file, rect] = l.split('@');
+      const r = rect ? rect.split(',').map(Number) : null;
+      return { file, rect: r && r.length === 5 ? [r[0], r[1], r[2], r[3], r[4]] : null };
+    });
+    return { layers, multiply: c >= 0 ? [(c >> 16) & 255, (c >> 8) & 255, c & 255] : null };
   });
 }
 
@@ -215,7 +234,7 @@ function parseSpec(spec: string): ParsedAlt[] {
  */
 export async function loadPack(layout: PackLayout, resolve: FileResolver, size: number): Promise<Map<string, PackImage>> {
   const files = new Set<string>();
-  for (const spec of Object.values(layout.textures)) for (const alt of parseSpec(spec)) alt.layers.forEach((f) => files.add(f));
+  for (const spec of Object.values(layout.textures)) for (const alt of parseSpec(spec)) alt.layers.forEach((l) => files.add(l.file));
   for (const m of Object.values(layout.masks ?? {})) files.add(m);
   const images = new Map<string, HTMLImageElement>();
   await Promise.all([...files].map(async (f) => {
@@ -228,17 +247,20 @@ export async function loadPack(layout: PackLayout, resolve: FileResolver, size: 
   canvas.width = canvas.height = size;
   const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
   ctx.imageSmoothingEnabled = false;
-  const draw = (img: HTMLImageElement) => {
+  const draw = (img: HTMLImageElement, rect: ParsedLayer['rect'] = null) => {
     const frame = Math.min(img.width, img.height);
-    ctx.drawImage(img, 0, 0, frame, frame, 0, 0, size, size);
+    if (rect) {
+      const k = img.height / rect[4];
+      ctx.drawImage(img, rect[0] * k, rect[1] * k, rect[2] * k, rect[3] * k, 0, 0, size, size);
+    } else ctx.drawImage(img, 0, 0, frame, frame, 0, 0, size, size);
   };
 
   const out = new Map<string, PackImage>();
   for (const [name, spec] of Object.entries(layout.textures)) {
-    const alt = parseSpec(spec).find((a) => a.layers.every((f) => images.has(f)));
+    const alt = parseSpec(spec).find((a) => a.layers.every((l) => images.has(l.file)));
     if (!alt) continue;
     ctx.clearRect(0, 0, size, size);
-    for (const f of alt.layers) draw(images.get(f)!);
+    for (const l of alt.layers) draw(images.get(l.file)!, l.rect);
     const data = ctx.getImageData(0, 0, size, size);
     if (alt.multiply) {
       const [r, g, b] = alt.multiply;
@@ -270,7 +292,7 @@ export function builtinResolver(pack: TexturePackInfo): FileResolver {
 /** All file names (without extension) a layout may reference. */
 function layoutFiles(layout: PackLayout): Set<string> {
   const files = new Set<string>();
-  for (const spec of Object.values(layout.textures)) for (const alt of parseSpec(spec)) alt.layers.forEach((f) => files.add(f));
+  for (const spec of Object.values(layout.textures)) for (const alt of parseSpec(spec)) alt.layers.forEach((l) => files.add(l.file));
   for (const m of Object.values(layout.masks ?? {})) files.add(m);
   return files;
 }

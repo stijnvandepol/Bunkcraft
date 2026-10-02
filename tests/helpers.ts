@@ -1,4 +1,9 @@
-import { CHUNK_HEIGHT, CHUNK_SIZE, CHUNK_VOLUME, blockIndex } from '../src/world/constants';
+import type { WorkerPool } from '../src/workers/WorkerPool';
+import type { WorkerRequest } from '../src/workers/protocol';
+import { CHUNK_READY, Chunk } from '../src/world/Chunk';
+import type { ChunkMaterials } from '../src/world/ChunkManager';
+import { CHUNK_AREA, CHUNK_HEIGHT, CHUNK_SIZE, CHUNK_VOLUME, blockIndex, chunkKey } from '../src/world/constants';
+import { World } from '../src/world/World';
 
 /** FNV-1a (32-bit) over raw bytes, for golden hashes of generated chunks. */
 export function fnv1a(bytes: Uint8Array): number {
@@ -35,4 +40,25 @@ export class TestWorld {
   }
 
   readonly get = (x: number, y: number, z: number): number => this.blocks.get(`${x},${y},${z}`) ?? 0;
+}
+
+/**
+ * A World whose 3×3 chunks around (0, 0) are installed by hand, without workers: mesh requests are
+ * collected in `requests` instead of being run.
+ */
+export function makeTestWorld(edits = new Map<number, Map<number, number>>(), requests: WorkerRequest[] = []): World {
+  const pool = { size: 1, submit: (req: WorkerRequest) => { requests.push(req); } } as unknown as WorkerPool;
+  const world = new World(1, pool, {} as ChunkMaterials, edits);
+  for (let cz = -1; cz <= 1; cz++) {
+    for (let cx = -1; cx <= 1; cx++) {
+      const c = new Chunk(cx, cz, chunkKey(cx, cz));
+      c.blocks = new Uint8Array(CHUNK_VOLUME);
+      c.biomes = new Uint8Array(CHUNK_AREA);
+      c.state = CHUNK_READY;
+      world.chunks.chunks.set(c.key, c);
+      world.chunks.onGenerated?.(c);
+    }
+  }
+  world.chunks.epoch++;
+  return world;
 }

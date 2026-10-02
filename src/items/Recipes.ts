@@ -53,6 +53,9 @@ export const RECIPES: Recipe[] = [
   { result: { id: ITEM.COOKED_CHICKEN, count: 1 }, ingredients: [one(ITEM.CHICKEN), any(FUEL, 1)], station: 'furnace' },
 ];
 
+// Doors: 6 planks → 3 doors (the oak door needs oak planks).
+RECIPES.push({ result: { id: B.OAK_DOOR, count: 3 }, ingredients: [one(B.OAK_PLANKS, 6)], station: 'table' });
+
 // Slabs: 3 blocks → 6 slabs; stairs: 6 blocks → 4 stairs (Minecraft's shaped recipes).
 PARTIAL_MATERIALS.forEach((m, i) => {
   RECIPES.push({ result: { id: SLAB_FIRST + i, count: 6 }, ingredients: [one(m.base, 3)], station: 'table' });
