@@ -97,6 +97,48 @@ const PIXEL_PERFECTION: PackLayout = {
     // The door sheet (38×32) holds both halves in its left 16 columns: "file@x,y,w,h,sheetHeight" crops a part.
     oak_door_upper: 'doors_door_wood@0,0,16,16,32',
     oak_door_lower: 'doors_door_wood@0,16,16,16,32',
+    // Woods, sapling, chest and metal blocks Pixel Perfection has an equivalent for (the rest stays procedural).
+    jungle_planks: 'default_junglewood',
+    jungle_log: 'default_jungletree',
+    jungle_log_top: 'default_jungletree_top',
+    jungle_leaves: 'default_jungleleaves',
+    acacia_planks: 'default_acacia_wood',
+    acacia_log: 'default_acacia_tree',
+    acacia_log_top: 'default_acacia_tree_top',
+    acacia_leaves: 'default_acacia_leaves',
+    oak_sapling: 'default_sapling',
+    birch_sapling: 'default_aspen_sapling',
+    spruce_sapling: 'default_pine_sapling',
+    jungle_sapling: 'default_junglesapling',
+    acacia_sapling: 'default_acacia_sapling',
+    chest_top: 'default_chest_top',
+    chest_side: 'default_chest_side',
+    chest_front: 'default_chest_front',
+    coal_block: 'default_coal_block',
+    iron_block: 'default_steel_block',
+    gold_block: 'default_gold_block',
+    diamond_block: 'default_diamond_block',
+    copper_block: 'default_copper_block',
+    copper_ore: 'default_stone^default_mineral_copper',
+    red_sand: 'default_desert_sand',
+    red_sandstone_top: 'default_desert_stone',
+    red_sandstone: 'default_desert_stone',
+    red_sandstone_bottom: 'default_desert_stone',
+    cut_sandstone: 'default_sandstone_brick',
+    cut_red_sandstone: 'default_desert_stone_brick',
+    ice: 'default_ice',
+    ladder: 'default_ladder_wood',
+    sugar_cane: 'default_papyrus',
+    fern: 'default_junglegrass',
+    hay_top: 'farming_straw_top',
+    hay_side: 'farming_straw',
+    brown_mushroom: 'flowers_mushroom_brown',
+    red_mushroom: 'flowers_mushroom_red',
+    red_tulip: 'flowers_tulip',
+    cornflower: 'flowers_geranium',
+    allium: 'flowers_viola',
+    azure_bluet: 'flowers_dandelion_white',
+    oxeye_daisy: 'flowers_dandelion_white',
   },
 };
 
@@ -104,9 +146,39 @@ const PIXEL_PERFECTION: PackLayout = {
  * Layout of a Minecraft Java resource pack / client jar (1.13+ "block" folder names).
  * Used only for packs the player imports from their own files; nothing is bundled.
  */
+/** Textures whose name is the same in the engine and in a Minecraft 1.21 pack (the content tables, see world/Content.ts). */
+const MINECRAFT_SAME_NAME = [
+  'granite', 'diorite', 'andesite', 'polished_granite', 'polished_diorite', 'polished_andesite', 'smooth_stone', 'mossy_stone_bricks',
+  'cracked_stone_bricks', 'chiseled_stone_bricks', 'tuff', 'calcite', 'deepslate', 'deepslate_top', 'cobbled_deepslate', 'polished_deepslate',
+  'deepslate_bricks', 'deepslate_tiles', 'red_sand', 'red_sandstone_top', 'red_sandstone', 'red_sandstone_bottom', 'chiseled_sandstone',
+  'cut_sandstone', 'chiseled_red_sandstone', 'cut_red_sandstone', 'coarse_dirt', 'podzol_top', 'podzol_side', 'mycelium_top', 'mycelium_side',
+  'dirt_path_top', 'dirt_path_side', 'mud', 'mud_bricks', 'packed_mud', 'terracotta', 'moss_block', 'copper_ore', 'lapis_ore', 'redstone_ore',
+  'emerald_ore', 'coal_block', 'iron_block', 'gold_block', 'diamond_block', 'copper_block', 'lapis_block', 'emerald_block', 'redstone_block',
+  'raw_iron_block', 'raw_copper_block', 'raw_gold_block', 'pumpkin_top', 'pumpkin_side', 'melon_top', 'melon_side', 'ice', 'packed_ice',
+  'sea_lantern', 'bone_block_top', 'bone_block_side', 'cobweb', 'sponge', 'brown_mushroom', 'red_mushroom', 'blue_orchid', 'allium',
+  'azure_bluet', 'red_tulip', 'orange_tulip', 'oxeye_daisy', 'cornflower', 'lily_of_the_valley', 'fern', 'sugar_cane', 'iron_bars', 'ladder',
+  'white_concrete', 'white_stained_glass', 'oak_sapling', 'spruce_sapling', 'birch_sapling', 'jungle_sapling', 'acacia_sapling',
+  'dark_oak_sapling', 'cherry_sapling', 'stripped_oak_log', 'stripped_oak_log_top', 'stripped_spruce_log', 'stripped_spruce_log_top',
+  'stripped_birch_log', 'stripped_birch_log_top',
+  ...['jungle', 'acacia', 'dark_oak', 'mangrove', 'cherry'].flatMap((w) => [
+    `${w}_planks`, `${w}_log`, `${w}_log_top`, `stripped_${w}_log`, `stripped_${w}_log_top`, `${w}_leaves`,
+  ]),
+];
+
 export const MINECRAFT_LAYOUT: PackLayout = {
   greyscaleTints: true,
   textures: {
+    ...Object.fromEntries(MINECRAFT_SAME_NAME.map((n) => [n, n])),
+    farmland_top: 'farmland',
+    hay_top: 'hay_block_top',
+    hay_side: 'hay_block_side',
+    carved_pumpkin_front: 'carved_pumpkin',
+    jack_o_lantern_front: 'jack_o_lantern',
+    dyed_terracotta: 'white_terracotta',
+    dyed_glazed_terracotta: 'white_glazed_terracotta',
+    ...Object.fromEntries(['spruce', 'birch', 'jungle', 'acacia', 'dark_oak', 'mangrove', 'cherry'].flatMap((w) => [
+      [`${w}_door_upper`, `${w}_door_top`], [`${w}_door_lower`, `${w}_door_bottom`],
+    ])),
     stone: 'stone',
     dirt: 'dirt',
     grass_top: 'grass_block_top',

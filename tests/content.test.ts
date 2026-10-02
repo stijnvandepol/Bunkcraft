@@ -11,6 +11,8 @@ import { CUBES, CUBE_FIRST, DYES, WOODS } from '../src/world/Content';
 import { CONTENT_PAINTERS } from '../src/rendering/ContentPainters';
 import { isValidMeta } from '../src/world/BlockShapes';
 import { buildCreativeTabs } from '../src/ui/CreativeTabs';
+import { BUILTIN_PACKS, MINECRAFT_LAYOUT } from '../src/rendering/TexturePacks';
+import { existsSync } from 'node:fs';
 
 describe('block ids', () => {
   it('are unique and below 255', () => {
@@ -191,5 +193,20 @@ describe('creative inventory', () => {
 
   it('knows blocks by name', () => {
     expect(getBlockDef(CUBE_ID.granite)?.displayName).toBe('Granite');
+  });
+});
+
+describe('texture pack layouts', () => {
+  it('only name textures the registry has', () => {
+    for (const name of Object.keys(MINECRAFT_LAYOUT.textures)) expect(TEXTURE_NAMES.includes(name), `minecraft ${name}`).toBe(true);
+    for (const pack of BUILTIN_PACKS) for (const name of Object.keys(pack.layout.textures)) expect(TEXTURE_NAMES.includes(name), `${pack.id} ${name}`).toBe(true);
+  });
+
+  it('ship every file the built-in pack refers to', () => {
+    for (const pack of BUILTIN_PACKS) {
+      const files = new Set<string>();
+      for (const spec of Object.values(pack.layout.textures)) for (const alt of spec.split('|')) for (const part of alt.split('*')[0].split('^')) files.add(part.split('@')[0]);
+      for (const f of files) expect(existsSync(`public/${pack.path}${f}.png`), f).toBe(true);
+    }
   });
 });

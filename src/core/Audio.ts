@@ -18,6 +18,10 @@ const PROFILES: Record<BlockSound, SoundProfile> = {
   glass: { type: 'highpass', freq: 3200, q: 0.6, gain: 0.6, tink: true },
   wool: { type: 'lowpass', freq: 700, q: 0.5, gain: 0.8 },
   snow: { type: 'bandpass', freq: 1900, q: 0.5, gain: 0.6 },
+  metal: { type: 'bandpass', freq: 2400, q: 3.2, gain: 0.75, thump: 260, tink: true },
+  ladder: { type: 'bandpass', freq: 800, q: 2.8, gain: 0.8, thump: 230 },
+  deepslate: { type: 'bandpass', freq: 820, q: 1.1, gain: 0.95, thump: 85 },
+  mud: { type: 'lowpass', freq: 520, q: 1.2, gain: 0.85, thump: 80 },
 };
 
 // Pentatonic scale over two octaves for the ambient music.

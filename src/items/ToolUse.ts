@@ -5,7 +5,8 @@ import type { ToolKind } from './ItemRegistry';
  * What a tool does when it is used (right click) on a block, as in Minecraft:
  *  - hoe: grass, dirt and paths become farmland, coarse dirt becomes dirt;
  *  - shovel: grass, dirt, podzol, mycelium and coarse dirt become a dirt path;
- *  - axe: logs become stripped logs.
+ *  - axe: logs become stripped logs;
+ *  - shears: a pumpkin becomes a carved pumpkin (and gives seeds).
  * Hoe and shovel only work when the block above is free (air or a plant).
  */
 
@@ -38,6 +39,10 @@ const PATH: Record<number, number> = {
 export interface ToolUse {
   /** The block the clicked block turns into. */
   to: number;
+  /** The new block faces the player (carved pumpkins). */
+  facesPlayer?: boolean;
+  /** Item dropped by the change: seeds from a carved pumpkin. */
+  drops?: { name: string; count: number };
   /** Sound family to play ('place' sound of this block kind). */
   sound: 'wood' | 'grass' | 'gravel';
 }
@@ -51,6 +56,9 @@ export function toolUse(tool: ToolKind, block: number, above: number): ToolUse |
   if (tool === 'axe') {
     const to = STRIP[block];
     return to ? { to, sound: 'wood' } : null;
+  }
+  if (tool === 'shears') {
+    return block === CUBE_ID.pumpkin ? { to: CUBE_ID.carved_pumpkin, sound: 'wood', facesPlayer: true, drops: { name: 'pumpkin_seeds', count: 4 } } : null;
   }
   if (!free(above) || above === BLOCK.UNLOADED) return null;
   if (tool === 'hoe') {

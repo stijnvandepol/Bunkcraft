@@ -3,6 +3,7 @@ import type { EntityManager } from '../entities/EntityManager';
 import type { PlayerInventory } from '../items/Inventory';
 import { ITEM, blockDrop, breakSeconds, getItemDef, isBlockItem, itemBlock, itemFromState, itemId, itemMeta } from '../items/ItemRegistry';
 import { toolUse } from '../items/ToolUse';
+import { facingFromYaw } from '../world/BlockStates';
 import { type GameMode, hasSurvivalRules } from '../player/GameMode';
 import { PHYSICS } from '../player/Physics';
 import type { Player } from '../player/Player';
@@ -412,7 +413,8 @@ export class Interaction {
     const { world, hotbar, inventory, audio, hand } = this.d;
     const hit = this.ray;
     const use = toolUse(kind, hit.id, world.getBlock(hit.x, hit.y + 1, hit.z));
-    if (!use || !world.setBlock(hit.x, hit.y, hit.z, use.to, 0)) return false;
+    if (!use || !world.setBlock(hit.x, hit.y, hit.z, use.to, use.facesPlayer ? facingFromYaw(this.d.player.yaw) : 0)) return false;
+    if (use.drops && hasSurvivalRules(mode)) this.d.entities.dropItem({ id: itemId(use.drops.name), count: use.drops.count }, hit.x + 0.5, hit.y + 1.1, hit.z + 0.5);
     audio.play('place', use.sound);
     hand.swingHand();
     if (hasSurvivalRules(mode)) inventory.damageTool(hotbar.selected);

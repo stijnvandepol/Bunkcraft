@@ -15,7 +15,7 @@ import { CUBES, CUBE_FIRST, DYES, type MineTool, PARTIAL_EXT, WALL_MATERIALS, WO
  * block's state byte and are collectively the "partial" blocks (not a full cube, but they collide).
  */
 export type RenderShape = 'none' | 'cube' | 'cross' | 'liquid' | 'model' | 'slab' | 'stairs' | 'door' | 'box';
-export type BlockSound = 'stone' | 'wood' | 'grass' | 'gravel' | 'sand' | 'glass' | 'wool' | 'snow';
+export type BlockSound = 'stone' | 'wood' | 'grass' | 'gravel' | 'sand' | 'glass' | 'wool' | 'snow' | 'metal' | 'ladder' | 'deepslate' | 'mud';
 
 export interface BlockTextures {
   all?: string;
@@ -414,7 +414,7 @@ BLOCK_DEFS.push(
   box(B.STAINED_GLASS_PANE, 'stained_glass_pane', 'Stained Glass Pane', BOX_PANE, { all: 'white_stained_glass' }, {
     dye: true, variant: dyeVariant('Stained Glass Pane'), sound: 'glass', hardness: 0.3,
   }),
-  box(B.IRON_BARS, 'iron_bars', 'Iron Bars', BOX_PANE, { all: 'iron_bars' }, { sound: 'stone', hardness: 5, tool: 'pickaxe', minTier: 0 }),
+  box(B.IRON_BARS, 'iron_bars', 'Iron Bars', BOX_PANE, { all: 'iron_bars' }, { sound: 'metal', hardness: 5, tool: 'pickaxe', minTier: 0 }),
   box(B.TRAPDOOR, 'trapdoor', 'Trapdoor', BOX_TRAPDOOR, { all: 'oak_planks' }, {
     variant: woodVariant(4, 'Trapdoor'), hardness: 3, tool: 'axe', metaMask: 0xff,
   }),
@@ -430,10 +430,10 @@ BLOCK_DEFS.push(
     },
     sound: 'stone', hardness: 2, tool: 'pickaxe', minTier: 0,
   }),
-  box(B.LADDER, 'ladder', 'Ladder', BOX_LADDER, { all: 'ladder' }, { solid: false, hardness: 0.4, metaMask: 3 }),
+  box(B.LADDER, 'ladder', 'Ladder', BOX_LADDER, { all: 'ladder' }, { solid: false, hardness: 0.4, metaMask: 3, sound: 'ladder' }),
   cube(B.CHEST, 'chest', 'Chest', { top: 'chest_top', bottom: 'chest_top', side: 'chest_side', front: 'chest_front' }, 2.5, 'wood', { facing: true, tool: 'axe' }),
   {
-    id: B.LANTERN, name: 'lantern', displayName: 'Lantern', shape: 'model', solid: false, transparent: true, hardness: 3.5, sound: 'stone',
+    id: B.LANTERN, name: 'lantern', displayName: 'Lantern', shape: 'model', solid: false, transparent: true, hardness: 3.5, sound: 'metal',
     light: 15, inInventory: true, textures: { all: 'lantern' }, model: [[5, 0, 5, 11, 7, 11], [6, 7, 6, 10, 9, 10]], tool: 'pickaxe', minTier: 0,
   },
 );
