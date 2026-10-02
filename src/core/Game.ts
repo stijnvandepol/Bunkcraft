@@ -828,8 +828,9 @@ export class Game {
     const alpha = Math.min(1, ((this.stepCount % STEPS_PER_TICK) + this.accumulator / PHYSICS.STEP) / STEPS_PER_TICK);
     const list = this.renderMobs;
     list.length = 0;
-    for (const m of e.mobs) list.push(m);
-    for (const m of this.remote.mobs) list.push(m);
+    for (let i = 0; i < e.mobs.length; i++) list.push(e.mobs[i]);
+    const remote = this.remote.mobs;
+    for (let i = 0; i < remote.length; i++) list.push(remote[i]);
     this.mobRenderer.update(list, alpha, world);
     this.itemRenderer.update(e.items, alpha, this.time, world);
     this.tntRenderer.update(e.tnt, alpha, world);
@@ -872,6 +873,15 @@ export class Game {
     this.cam.camera.position.set(this.player.x, this.player.y + PHYSICS.EYE_HEIGHT, this.player.z);
     if (world.chunks.isAreaReady(this.player.x, this.player.z, r)) this.finishLoading();
   }
+
+  /** Reused every game tick (no per-tick allocations). */
+  private readonly mobTarget = { x: 0, y: 0, z: 0, attackable: false };
+
+  private readonly pickupItem = (s: ItemStack): number => {
+    const left = this.playerInventory.add(s);
+    if (left < s.count) this.audio.playPop();
+    return left;
+  };
 
   private readonly mobEvents: MobEvents = {
     attack: (mob, damage) => {
@@ -981,15 +991,14 @@ export class Game {
     p.canSprint = !hasSurvivalRules(this.mode) || stats.canSprint;
 
     const alive = !stats.dead;
+    const target = this.mobTarget;
+    target.x = p.x; target.y = p.y; target.z = p.z;
+    target.attackable = alive && hasSurvivalRules(this.mode);
     this.entities?.tick(
-      { x: p.x, y: p.y, z: p.z, attackable: alive && hasSurvivalRules(this.mode) },
+      target,
       Math.round((1 - this.cycle.dayFactor) * 11),
       this.mobEvents,
-      alive && this.mode !== 'spectator' ? (s) => {
-        const left = this.playerInventory.add(s);
-        if (left < s.count) this.audio.playPop();
-        return left;
-      } : null,
+      alive && this.mode !== 'spectator' ? this.pickupItem : null,
       this.cycle.dayFactor > 0.6,
     );
     if (stats.dead && (this.state === 'playing' || this.state === 'inventory' || this.state === 'chat' || this.state === 'paused')) this.onDeath();

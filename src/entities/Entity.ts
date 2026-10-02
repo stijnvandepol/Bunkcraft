@@ -41,17 +41,33 @@ export abstract class Entity {
   /** Ray–AABB slab test; returns the distance along the ray or Infinity. */
   rayHit(ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, max: number): number {
     const b = this.updateBox();
+    // Unrolled per axis (no temporary arrays): this runs for every mob each frame.
     let tmin = 0, tmax = max;
-    const axes: [number, number, number, number][] = [[ox, dx, b.minX, b.maxX], [oy, dy, b.minY, b.maxY], [oz, dz, b.minZ, b.maxZ]];
-    for (const [o, d, lo, hi] of axes) {
-      if (Math.abs(d) < 1e-9) {
-        if (o < lo || o > hi) return Infinity;
-        continue;
-      }
-      let t1 = (lo - o) / d, t2 = (hi - o) / d;
-      if (t1 > t2) [t1, t2] = [t2, t1];
-      tmin = Math.max(tmin, t1);
-      tmax = Math.min(tmax, t2);
+    if (Math.abs(dx) < 1e-9) {
+      if (ox < b.minX || ox > b.maxX) return Infinity;
+    } else {
+      let t1 = (b.minX - ox) / dx, t2 = (b.maxX - ox) / dx;
+      if (t1 > t2) { const t = t1; t1 = t2; t2 = t; }
+      if (t1 > tmin) tmin = t1;
+      if (t2 < tmax) tmax = t2;
+      if (tmin > tmax) return Infinity;
+    }
+    if (Math.abs(dy) < 1e-9) {
+      if (oy < b.minY || oy > b.maxY) return Infinity;
+    } else {
+      let t1 = (b.minY - oy) / dy, t2 = (b.maxY - oy) / dy;
+      if (t1 > t2) { const t = t1; t1 = t2; t2 = t; }
+      if (t1 > tmin) tmin = t1;
+      if (t2 < tmax) tmax = t2;
+      if (tmin > tmax) return Infinity;
+    }
+    if (Math.abs(dz) < 1e-9) {
+      if (oz < b.minZ || oz > b.maxZ) return Infinity;
+    } else {
+      let t1 = (b.minZ - oz) / dz, t2 = (b.maxZ - oz) / dz;
+      if (t1 > t2) { const t = t1; t1 = t2; t2 = t; }
+      if (t1 > tmin) tmin = t1;
+      if (t2 < tmax) tmax = t2;
       if (tmin > tmax) return Infinity;
     }
     return tmin;

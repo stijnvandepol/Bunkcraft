@@ -33,8 +33,22 @@ export class World {
     this.chunks.onUnloaded = (key) => this.onChunkUnloaded?.(key);
   }
 
+  // chunkKey exceeds the Smi range, so every Map lookup boxes a heap number. Entities, particles and
+  // rays mostly query the same chunk repeatedly: a one-entry cache skips the Map in the common case.
+  private cacheEpoch = -1;
+  private cacheCx = 0;
+  private cacheCz = 0;
+  private cacheChunk: Chunk | undefined;
+
   private chunkAt(cx: number, cz: number): Chunk | undefined {
-    const c = this.chunks.chunks.get(chunkKey(cx, cz));
+    const mgr = this.chunks;
+    if (this.cacheEpoch !== mgr.epoch || this.cacheCx !== cx || this.cacheCz !== cz) {
+      this.cacheEpoch = mgr.epoch;
+      this.cacheCx = cx;
+      this.cacheCz = cz;
+      this.cacheChunk = mgr.chunks.get(chunkKey(cx, cz));
+    }
+    const c = this.cacheChunk;
     return c && c.state === CHUNK_READY ? c : undefined;
   }
 

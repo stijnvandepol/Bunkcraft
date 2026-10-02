@@ -35,7 +35,7 @@ wat al is doorgevoerd.
 | Audio pauzeren in een verborgen tabblad, geen inhaalstap bij terugkomst | **Gedaan** |
 | De shadow map werd bij elke verre chunk-upload opnieuw gerenderd | **Gedaan:** alleen chunks binnen het schaduwbereik |
 | Elke blokwijziging remesht 9 chunks, met een volledige lichtberekening (~2,6 MB kopiëren) | M/L: alleen buren remeshen als hun randlicht verandert; lichtcache per chunk |
-| Allocaties per frame (`rayHit`-arrays, closures, template-strings, iterators) | S |
+| Allocaties per frame (`rayHit`-arrays, closures, template-strings, iterators) | **Gedaan:** `rayHit` uitgerold, iterators/closures/vectoren weg uit `MobRenderer`, `RemotePlayers`, `Game`, `Interaction`; `World.chunkAt` heeft een cache (de `chunkKey` valt buiten het Smi-bereik, dus elke `Map.get` alloceerde een heap-getal). Heap-sampling met 29 mobs + 43 items: 58 → 25 KB/frame |
 | Lege mob-meshes nog steeds in de render-loop; `getLight` per mob per frame | S |
 | Gedeelde GLSL voor licht en mist (5 kopieën lopen nu uiteen; entities missen de onderwater-mist) | S |
 | Worker-crash: jobs blijven "in flight" en het streamen stopt | **Gedaan:** worker vervangen, job opnieuw ingepland (max. 3 pogingen, daarna laat `ChunkManager` de chunk opnieuw proberen); Vitest met nep-worker |

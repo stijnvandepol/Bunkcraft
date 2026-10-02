@@ -116,6 +116,8 @@ const tmpQuat = new THREE.Quaternion();
 export class MobRenderer {
   readonly group = new THREE.Group();
   private readonly types = new Map<MobKind, PartMesh[]>();
+  /** Flat list of all part meshes (iterating the map each frame would allocate iterators). */
+  private readonly all: PartMesh[] = [];
 
   constructor(uniforms: WorldUniforms) {
     for (const type of Object.values(MOB_TYPES)) {
@@ -139,15 +141,19 @@ export class MobRenderer {
         mesh.frustumCulled = false;
         mesh.count = 0;
         this.group.add(mesh);
-        return { part, mesh, data };
+        const pm = { part, mesh, data };
+        this.all.push(pm);
+        return pm;
       });
       this.types.set(type.kind, parts);
     }
   }
 
   update(mobs: Mob[], alpha: number, world: World): void {
-    for (const parts of this.types.values()) for (const p of parts) p.mesh.count = 0;
-    for (const m of mobs) {
+    const all = this.all;
+    for (let i = 0; i < all.length; i++) all[i].mesh.count = 0;
+    for (let mi = 0; mi < mobs.length; mi++) {
+      const m = mobs[mi];
       const parts = this.types.get(m.type.kind)!;
       const index = parts[0].mesh.count;
       if (index >= MAX_PER_TYPE) continue;
@@ -174,9 +180,11 @@ export class MobRenderer {
       const hurt = m.hurtTime > 0 || m.dead ? 1 : m.burning > 0 ? 0.5 : 0;
       const flash = fuse > 0 && Math.floor(fuse * 30 / 4) % 2 === 0 ? fuse : 0;
 
-      for (const pm of parts) {
+      for (let pi = 0; pi < parts.length; pi++) {
+        const pm = parts[pi];
         const rot = this.partRotation(pm.part, swing, amount, m, alpha);
-        const [px, py, pz] = pm.part.pivot;
+        const pivot = pm.part.pivot;
+        const px = pivot[0], py = pivot[1], pz = pivot[2];
         tmpPivot.makeTranslation(px / 16, py / 16, pz / 16);
         tmpRot.makeRotationFromEuler(rot);
         tmpM.copy(tmpBase).multiply(tmpPivot).multiply(tmpRot);
@@ -191,12 +199,11 @@ export class MobRenderer {
         pm.mesh.count = index + 1;
       }
     }
-    for (const parts of this.types.values()) {
-      for (const p of parts) {
-        if (p.mesh.count === 0) continue;
-        p.mesh.instanceMatrix.needsUpdate = true;
-        p.data.needsUpdate = true;
-      }
+    for (let i = 0; i < all.length; i++) {
+      const p = all[i];
+      if (p.mesh.count === 0) continue;
+      p.mesh.instanceMatrix.needsUpdate = true;
+      p.data.needsUpdate = true;
     }
   }
 
@@ -210,7 +217,8 @@ export class MobRenderer {
         const phase = anim === 'spiderA' ? 0 : Math.PI;
         const sweep = Math.cos(swing * 0.6662 * 2 + phase) * 0.4 * amount;
         const lift = Math.abs(Math.sin(swing * 0.6662 + phase)) * 0.4 * amount;
-        const [rx, ry, rz] = part.rest ?? [0, 0, 0];
+        const rest = part.rest;
+        const rx = rest ? rest[0] : 0, ry = rest ? rest[1] : 0, rz = rest ? rest[2] : 0;
         const side = rz > 0 ? 1 : -1;
         return tmpEuler.set(rx, ry + sweep * side, rz - lift * side, 'YXZ');
       }

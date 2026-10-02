@@ -54,6 +54,8 @@ export class ChunkManager {
   private scanNeeded = true;
   /** Incremented whenever chunk geometry changes (used to invalidate the cached shadow map). */
   geometryVersion = 0;
+  /** Incremented whenever a chunk is added to or removed from the map (invalidates World's lookup cache). */
+  epoch = 0;
   /** Applied editing diffs, called after generation (saved player edits). */
   onGenerated: ((chunk: Chunk) => void) | null = null;
   /** Called when a chunk is unloaded (entities tied to it are removed). */
@@ -122,6 +124,7 @@ export class ChunkManager {
       if (!chunk) {
         chunk = new Chunk(cx, cz, key);
         this.chunks.set(key, chunk);
+        this.epoch++;
       }
       if (chunk.state === CHUNK_EMPTY) {
         if (this.genInFlight < maxInFlight) this.requestGenerate(chunk);
@@ -277,6 +280,7 @@ export class ChunkManager {
       if (dx * dx + dz * dz > limit) {
         this.disposeChunk(c);
         this.chunks.delete(key);
+        this.epoch++;
         this.onUnloaded?.(key);
       }
     }
@@ -341,6 +345,7 @@ export class ChunkManager {
     this.disposed = true;
     for (const c of this.chunks.values()) this.disposeChunk(c);
     this.chunks.clear();
+    this.epoch++;
     this.results.length = 0;
     this.opaqueGroup.removeFromParent();
     this.waterGroup.removeFromParent();
