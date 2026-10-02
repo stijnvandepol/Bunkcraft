@@ -183,7 +183,11 @@ export class Mob extends Entity {
       } else if (Math.random() < 1 / 100) {
         this.pickWanderTarget(8);
       }
-      if (Math.random() < 0.02) this.headYaw = (Math.random() - 0.5) * 1.2;
+      // Idle glances stay within ~20° and fade back to the front (the old ±35° that stuck made
+      // pigs look sideways most of the time, so one eye was always out of sight).
+      if (Math.random() < 0.02) this.headYaw = (Math.random() - 0.5) * 0.7;
+      else this.headYaw *= 0.97;
+      this.headPitch *= 0.9;
     }
 
     // Steering towards the current target point.

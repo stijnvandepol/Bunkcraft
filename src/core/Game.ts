@@ -883,6 +883,7 @@ export class Game {
         const p = this.player;
         const volume = Math.max(0, 1 - Math.hypot(msg.x - p.x, msg.y - p.y, msg.z - p.z) / 16);
         if (msg.event === 'arrow') this.audio.playArrowHit(volume, msg);
+        else if (msg.event === 'shoot') this.audio.playBow(volume * 0.6);
         else this.audio.playMob(msg.kind, msg.event, volume, msg);
         break;
       }
@@ -1562,6 +1563,20 @@ export class Game {
 
   // ---------------------------------------------------------------- debug
 
+  /** Living mobs around a point (in multiplayer the mirror of the server mobs), for F3. */
+  private countMobsNear(x: number, z: number, radius: number): { hostile: number; passive: number } {
+    const r2 = radius * radius;
+    let hostile = 0, passive = 0;
+    const count = (list: readonly Mob[]) => {
+      for (const m of list) {
+        if (m.removed || m.dead || (m.x - x) ** 2 + (m.z - z) ** 2 > r2) continue;
+        if (m.type.hostile) hostile++; else passive++;
+      }
+    };
+    if (this.entities) count(this.entities.mobs);
+    return { hostile, passive };
+  }
+
   private updateDebug(): void {
     const world = this.world;
     if (!world) return;
@@ -1582,6 +1597,7 @@ export class Game {
     const ray = this.interaction?.ray;
     const target = ray?.hit ? `${getBlockDef(ray.id)?.displayName} @ ${ray.x}, ${ray.y}, ${ray.z}` : '—';
     const e = this.entities;
+    const near = this.countMobsNear(p.x, p.z, 64);
     d.set([
       `BunkCraft 1.0 (WebGL2 · three.js r${THREE.REVISION})`,
       `${d.fps} fps · frame ${d.frameMs.toFixed(2)} ms CPU · worst ${d.worstMs.toFixed(1)} ms`,
@@ -1589,6 +1605,7 @@ export class Game {
       `Draw calls: ${r.drawCalls} (+${r.shadowCalls} shadow) · Triangles: ${(r.triangles / 1000).toFixed(1)}k`,
       `Workers: ${this.pool.size} · queue ${this.pool.queued} · gen ${this.pool.genMs.toFixed(1)} ms · mesh ${this.pool.meshMs.toFixed(1)} ms`,
       `Entities: ${e?.mobs.length ?? 0} mobs · ${e?.items.length ?? 0} items · Particles: ${this.renderer.particles.active}${this.renderer.precipitation.count > 0 ? ` · Precipitation: ${this.renderer.precipitation.count}` : ''}`,
+      `Mobs within 64: ${near.hostile} hostile · ${near.passive} passive${this.net ? ' (server)' : ''}`,
       '',
       `XYZ: ${p.x.toFixed(3)} / ${p.y.toFixed(3)} / ${p.z.toFixed(3)}`,
       `Block: ${bx} ${by} ${bz}`,

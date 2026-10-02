@@ -185,7 +185,10 @@ export class ServerEntities {
     },
     explode: (mob) => this.explode(mob.type.name, mob.x, mob.y + 0.5, mob.z, 3, false),
     tntExplode: (t) => this.explode('', t.x, t.y + 0.49, t.z, 4, t.inWater),
-    shoot: (mob, target) => this.manager.skeletonShoot(mob, target.x, target.y, target.z),
+    shoot: (mob, target) => {
+      this.manager.skeletonShoot(mob, target.x, target.y, target.z);
+      this.soundNear('', 'shoot', mob.x, mob.y, mob.z);
+    },
     arrowHit: (arrow, damage, targetId) => {
       if (targetId === undefined) return;
       this.host.send(targetId, {
@@ -202,7 +205,7 @@ export class ServerEntities {
     this.soundNear(m.type.kind, event, m.x, m.y, m.z);
   }
 
-  private soundNear(kind: string, event: 'idle' | 'hurt' | 'death' | 'fuse' | 'arrow', x: number, y: number, z: number): void {
+  private soundNear(kind: string, event: 'idle' | 'hurt' | 'death' | 'fuse' | 'arrow' | 'shoot', x: number, y: number, z: number): void {
     const msg: ServerMessage = { t: 'msound', kind, event, x: r2(x), y: r2(y), z: r2(z) };
     for (const p of this.players) {
       if (p.hasPos && Math.hypot(p.x - x, p.y - y, p.z - z) < SOUND_RADIUS) this.host.send(p.id, msg);
