@@ -68,7 +68,7 @@ wat al is doorgevoerd.
    - vuursteen: **Gedaan** (grind, 10%);
    - bed (wol + planken: spawnpunt en nacht overslaan): wacht op block states (een bed is 2 blokken met een richting);
    - pijl en boog: **Gedaan** (boog: 3 stokken + 3 draad, 384 gebruik, kracht (f²+2f)/3, kritiek bij volle spanning, FOV-zoom; pijl: vuursteen + stok + veer → 4, zwaartekracht 0,05/tick, blijft steken en is op te rapen).
-2. **~15 advancements (S–M):** "Getting Wood", "Stone Age", "Acquire Hardware", "Diamonds!", met toast-meldingen. Ze dienen ook als tutorial.
+2. **Advancements (S–M):** **Gedaan** (`src/player/Advancements.ts`, 10 stuks met de officiële 1.21-teksten: Minecraft, Stone Age, Getting an Upgrade, Acquire Hardware, Isn't It Iron Pick, Diamonds!, Ice Bucket Challenge, Adventure, Monster Hunter, Take Aim). Toast rechtsboven met geluid, Advancements-scherm via het pauzemenu (tabs, boom, tooltips, x/y), opgeslagen per wereld in `WorldMeta.advancements`. Alleen in survival/hardcore en niet in multiplayer (daar blijft het uit, tot de server ze in het spelersrecord bewaart). Bewust weggelaten: advancements die niet in 1.21 bestaan (Getting Wood, Benchmarking, Time to Mine!) en alles wat emmers, bed, harnas, enchanting, fokken of een crossbow nodig heeft. Sniper Duel (skelet op 50 m) en de Husbandry-tab volgen met die inhoud.
 3. **Kisten met loot (M):** nodig voor alle structuren.
 4. **Block states (L):** een `meta`-array per chunk. Dit ontgrendelt stromend water en lava, obsidiaan, slabs, trappen, deuren, ladders, muurfakkels, gewassen en een oven met een richting.
 5. **Landbouw (M):** saplings, tarwe, brood en een schoffel. Hernieuwbaar hout en voedsel.

@@ -8,6 +8,8 @@ export class PlayerInventory {
   readonly slots: ItemStack[] = Array.from({ length: INVENTORY_SLOTS }, () => ({ id: 0, count: 0 }));
   /** Fired after any change (UI refresh, autosave). */
   onChange: (() => void) | null = null;
+  /** Fired with the item id whenever `add` stored something (pickup, crafting, smelting). */
+  onAdd: ((id: number) => void) | null = null;
 
   static maxStack(id: number): number {
     return getItemDef(id)?.maxStack ?? 64;
@@ -49,7 +51,10 @@ export class PlayerInventory {
         left -= n;
       }
     }
-    if (left !== stack.count) this.onChange?.();
+    if (left !== stack.count) {
+      this.onChange?.();
+      this.onAdd?.(stack.id);
+    }
     return left;
   }
 

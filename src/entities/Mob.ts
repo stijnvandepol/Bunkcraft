@@ -25,6 +25,10 @@ export interface MobEvents {
   arrowImpact(arrow: Arrow): void;
   /** Lit TNT whose fuse ran out. */
   tntExplode(tnt: PrimedTnt): void;
+  /** A mob died after the player hurt it (advancements). */
+  killed(mob: Mob): void;
+  /** An arrow fired by the player hit a mob. */
+  playerArrowHit(): void;
   sound(mob: Mob, kind: 'idle' | 'hurt' | 'death' | 'fuse'): void;
 }
 

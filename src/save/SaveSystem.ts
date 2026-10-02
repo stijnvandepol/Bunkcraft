@@ -26,6 +26,8 @@ export interface WorldMeta {
   inventory?: number[][];
   /** [health, hunger, saturation, exhaustion, air] */
   stats?: number[];
+  /** Earned advancements: id → timestamp. */
+  advancements?: Record<string, number>;
   /** World spawn / respawn point. */
   spawn?: { x: number; y: number; z: number };
 }

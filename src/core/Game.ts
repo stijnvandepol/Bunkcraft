@@ -31,6 +31,9 @@ import { HUD } from '../ui/HUD';
 import { Hotbar } from '../ui/Hotbar';
 import { Inventory } from '../ui/Inventory';
 import { createLogo } from '../ui/Logo';
+import { AdvancementTracker } from '../player/Advancements';
+import { AdvancementToasts } from '../ui/AdvancementToasts';
+import { advancementsScreen } from '../ui/AdvancementsScreen';
 import { MainMenu, VERSION, deathScreen, inviteScreen, pauseScreen } from '../ui/MainMenu';
 import { resourcePacksScreen } from '../ui/ResourcePacksMenu';
 import { ScreenStack } from '../ui/Screens';
@@ -79,6 +82,8 @@ export class Game {
   private readonly cycle = new DayCycle();
   readonly player = new Player();
   private readonly stats = new PlayerStats();
+  private readonly advancements = new AdvancementTracker();
+  private readonly toasts: AdvancementToasts;
   private readonly playerInventory = new PlayerInventory();
   private readonly icons: BlockIcons;
   private readonly hotbar: Hotbar;
@@ -143,17 +148,23 @@ export class Game {
     this.icons = new BlockIcons(this.renderer.textures);
     this.hotbar = new Hotbar(this.icons, this.playerInventory);
     this.hud = new HUD(this.hotbar);
+    this.toasts = new AdvancementToasts(this.icons);
+    this.advancements.onAward = (def) => {
+      this.toasts.push(def);
+      this.audio.playAdvancement();
+    };
     this.inventory = new Inventory(this.icons, this.hotbar);
     this.survivalInventory = new SurvivalInventory(this.icons, this.playerInventory, {
       drop: (s) => this.throwStack(s),
       close: () => void this.resumeGame(),
     });
+    this.playerInventory.onAdd = (id) => this.advancements.onItemGained(id);
     this.playerInventory.onChange = () => {
       this.hotbar.refresh();
       this.survivalInventory.refresh();
     };
     this.stack = new ScreenStack(root.querySelector<HTMLElement>('#screens')!);
-    root.append(this.remote.el, this.chat.el, this.hud.el, this.debug.el, this.inventory.el, this.survivalInventory.el);
+    root.append(this.toasts.el, this.remote.el, this.chat.el, this.hud.el, this.debug.el, this.inventory.el, this.survivalInventory.el);
     this.chat.onSend = (text) => this.net?.sendChat(text);
     this.chat.onClose = () => {
       if (this.state === 'chat') void this.resumeGame();
@@ -351,6 +362,7 @@ export class Game {
     this.hotbar.showCounts = survival;
     this.hotbar.refresh();
     this.hud.setMode(mode !== 'spectator', survival);
+    this.advancements.enabled = survival && !this.net;
     this.hand.visible = mode !== 'spectator';
     if (this.meta) this.meta.gameMode = mode;
   }
@@ -441,6 +453,7 @@ export class Game {
       if (!hasSurvivalRules(mode)) meta.hotbar.forEach((id, i) => this.playerInventory.set(i, { id, count: id ? 1 : 0 }));
     }
     this.stats.load(meta.stats);
+    this.advancements.load(meta.advancements);
     this.score = 0;
     // A save made on the death screen: hardcore becomes spectator, others respawn at spawn.
     const diedBeforeSave = this.stats.wasDead;
@@ -477,6 +490,7 @@ export class Game {
     this.player.landedFall = 0;
     this.loadingProgress = null;
     this.autosave = 0;
+    this.advancements.onEnterWorld();
     void this.resumeGame();
   }
 
@@ -495,6 +509,7 @@ export class Game {
     meta.hotbar = Array.from({ length: 9 }, (_, i) => this.playerInventory.get(i).id);
     meta.inventory = this.playerInventory.serialize();
     meta.stats = this.stats.serialize();
+    meta.advancements = this.advancements.serialize();
     meta.gameMode = this.mode;
     meta.selectedSlot = this.hotbar.selected;
     meta.time = this.cycle.time;
@@ -725,6 +740,7 @@ export class Game {
       options: () => this.openOptions(),
       quit: () => void this.quitToTitle(),
       multiplayer: this.net !== null,
+      advancements: this.net ? undefined : () => this.stack.push(advancementsScreen(this.advancements, this.icons, () => this.stack.pop())),
       invite: this.roomCode ? () => this.openInvite(this.roomCode!) : undefined,
     }));
   }
@@ -886,6 +902,8 @@ export class Game {
         this.cam.hurtSide = Math.sin(yaw - p.yaw) >= 0 ? 1 : -1;
       }
     },
+    killed: (mob) => this.advancements.onMobKilled(mob.type.hostile),
+    playerArrowHit: () => this.advancements.onArrowHitMob(),
     explode: (mob) => this.explode(mob, mob.x, mob.y + 0.5, mob.z, 3),
     shoot: (mob) => {
       const p = this.player;

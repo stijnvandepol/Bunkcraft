@@ -213,6 +213,7 @@ export class EntityManager {
       if (m.dead && m.deathTime === 1) {
         for (const s of m.type.drops(m.hurtByPlayer > 0)) this.dropItem(s, m.x, m.y + 0.5, m.z);
         events.sound(m, 'death');
+        if (m.hurtByPlayer > 0) events.killed(m);
       }
     }
 
@@ -258,6 +259,7 @@ export class EntityManager {
     // Knockback along the arrow's flight direction.
     if (m.hurt(damage, a.x - a.vx * 4, a.z - a.vz * 4, 0.5, a.fromPlayer)) this.events?.sound(m, 'hurt');
     this.events?.arrowImpact(a);
+    if (a.fromPlayer) this.events?.playerArrowHit();
   };
 
   private readonly onArrowHitPlayer = (a: Arrow, damage: number): void => {
