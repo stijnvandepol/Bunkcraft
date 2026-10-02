@@ -160,9 +160,11 @@ async function main(): Promise<void> {
   }
   await sleep(300);
   const hits = alice.of('hit');
-  check('alice got hit markers for bob', hits.length >= 5 && hits.every((h) => h.victim === bob.id && h.damage > 0));
+  // Rifle: 20 per body hit, 40 per headshot, so a kill takes 3 to 5 hits (spread decides how many are headshots).
+  check('alice got hit markers for bob', hits.length >= 3 && hits.every((h) => h.victim === bob.id && h.damage > 0));
+  check('the hits add up to a kill', hits.reduce((sum, h) => sum + h.damage, 0) >= 100);
   check('the last hit killed', hits.at(-1)?.killed === true);
-  check('bob was told he was damaged', bob.of('damaged').length >= 5 && bob.of('damaged')[0].from === alice.id);
+  check('bob was told he was damaged', bob.of('damaged').length >= 3 && bob.of('damaged')[0].from === alice.id);
   check('everyone sees the kill feed entry', [alice, bob].every((b) => b.of('kill').some((k) => k.killer === alice.id && k.victim === bob.id)));
   check('tracers were broadcast to both', alice.of('shot').length > shotsBefore && bob.of('shot').length >= 5);
   check('alice\'s magazine counts down', alice.of('ammo').some((a) => a.slot === 0 && a.mag <= 25));
