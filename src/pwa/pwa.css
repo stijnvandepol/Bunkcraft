@@ -1,0 +1,35 @@
+/* PWA UI: update toast, install buttons, and reduced-motion handling of the menu animations. */
+
+.pwa-toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--s, 2px) * 8);
+  transform: translateX(-50%);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  gap: calc(var(--s, 2px) * 4);
+  padding: calc(var(--s, 2px) * 3) calc(var(--s, 2px) * 4);
+  background: rgba(16, 16, 16, 0.92);
+  border: calc(var(--s, 2px) * 1) solid #a0a0a0;
+  color: #fff;
+  font-family: var(--font, sans-serif);
+  font-size: var(--fs, 16px);
+  text-shadow: var(--shadow, none);
+  max-width: calc(100vw - 32px);
+}
+.pwa-toast .mc-btn { width: calc(var(--s, 2px) * 60); }
+
+.pwa-install-title {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--s, 2px) * 14);
+  transform: translateX(-50%);
+  width: calc(var(--s, 2px) * 100) !important;
+  z-index: 3;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .splash { animation: none !important; }
+  .progress-fill { transition: none !important; }
+}

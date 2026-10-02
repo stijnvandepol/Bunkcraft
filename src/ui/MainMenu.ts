@@ -4,6 +4,7 @@ import { NAME_PATTERN, formatCode, normalizeCode } from '../net/protocol';
 import { type RoomInfo, createRoom, forgetGame, lookupRoom, recentGames, serverInfo } from '../net/RoomApi';
 import { GAME_TYPES, type GameType, gameTypeDef } from '../modes/GameTypes';
 import { DEFAULT_MAP, MAP_SETTINGS, type MapSetting, getMap, mapName } from '../modes/maps';
+import { installButton } from '../pwa/Pwa';
 import { button, h, menuScreen, screen } from './dom';
 import type { ScreenStack } from './Screens';
 
@@ -88,6 +89,7 @@ export class MainMenu {
           button('Quit Game', () => this.quit(), { cls: 'half' }),
         ),
       ),
+      installButton('pwa-install-title'),
       h('div', { class: 'footer-left', text: VERSION }),
       h('div', { class: 'footer-right', text: 'Not affiliated with Mojang' }),
     ));

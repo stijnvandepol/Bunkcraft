@@ -5,6 +5,7 @@ import {
 import {
   KEYBINDS, KEYBIND_CATEGORIES, type KeybindMap, conflictingActions, defaultKeybinds, isValidCode, keyDisplayName,
 } from '../core/Keybinds';
+import { installButton } from '../pwa/Pwa';
 import { button, cycleButton, h, menuScreen, slider } from './dom';
 
 export interface OptionsNav {
@@ -47,6 +48,7 @@ export function optionsScreen(store: SettingsStore, nav: OptionsNav): HTMLDivEle
       button('Resource Packs...', () => nav.openResourcePacks()),
       button('Credits & Attribution...', () => nav.push(creditsScreen(nav))),
       fullscreenButton(),
+      installButton(),
     ),
   ], [button('Done', () => nav.pop())]);
 }

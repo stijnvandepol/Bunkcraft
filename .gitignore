@@ -1,5 +1,7 @@
 node_modules
 dist
+dist-static
+bunkcraft-static.zip
 .playwright-mcp
 data
 data-test
