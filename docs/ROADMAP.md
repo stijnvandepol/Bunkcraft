@@ -86,12 +86,26 @@ wat al is doorgevoerd.
 
 | Item | Effort |
 |---|---|
-| Grotgeluiden en muziek die per biome wisselt | S |
+| ~~Grotgeluiden en muziek die per biome wisselt~~ (klaar, zie hieronder) | S |
 | Vuurvliegjes en vallende bladeren | S |
 | Suikerriet, pompoenen, meloenen, paddenstoelen, waterlelies | S–M |
 | Regen en sneeuw, daarna onweer | M |
 | Rivieren | M |
 | Nieuwe biomes: moeras, savanne, jungle, badlands | M per stuk |
+
+### Audio-herziening (klaar, `src/core/audio/*`)
+
+Alle audio blijft procedureel (geen assets). `AudioEngine` in `Audio.ts` houdt zijn publieke methodes; het geluidsontwerp zit in losse bestanden.
+
+- **Blokgeluiden:** `SOUND_PROFILES` in `audio/profiles.ts` is het register. Een nieuw blok declareert alleen `sound: '<type>'`; een nieuw type is één regel in dat register (het `BlockSound`-type volgt vanzelf). Er zijn nu 14 types: stone, wood, grass, gravel, sand, glass, wool, snow, metal, ladder, bamboo, dirt, wetgrass, water. Elk geluid is gelaagd (korrelige ruis, resonante body, sinus-thump, korte tonen), met pitch-variatie en nooit twee dezelfde varianten achter elkaar.
+- **Beweging:** `PlayerSounds` (stappen per ondergrond op afstand, lopen/sprinten/sluipen, sprong, landing naar valhoogte, plons, zwemslag, pantser-clink als haak) en `MobSteps` (zachte mobvoetstappen per soort).
+- **Sfeer:** grotten (druppels, drones, gerommel, extra galm; op basis van skylight, een goedkope enclosure-schatting met 18 stralen en diepte), onderwater (low-pass plus bubbels), wind op bergen/hoogte, krekels 's nachts en vogels overdag per biome, lava- en vuurgeknetter, stromend water, regen- en onweerslagen. Het weer roept `audio.setWeather(rain, thunder)` en `audio.playThunder(afstand)` aan.
+- **Muziek:** `setMusicMode('menu'|'game'|'arcade'|'off')`. Pianofrasen per biome en tijdstip (modi/pentatoniek), lange stiltes, donkere galm, dempen in grotten en onder water. In arcade-modus een subtiele puls zolang de match `live` is (`setMusicIntensity`).
+- **Mix:** master met compressor en soft-clipper (piek blijft onder 0,92), volumes voor geluid/ambient/interface/muziek, globale stemlimiet (64) met prioriteit, positionele geluiden met afstandsdemping, stereo-pan of HRTF (instelling "3D Sound"), occlusie door blokken (gedrosselde raycast).
+- **Haken:** `audio.addSoundListener(fn)` / `audio.onSound` geven elke klank door met naam en positie (ondertitels); `audio.playUi(name)` voor interfacegeluid (`src/ui/uiSound.ts` koppelt dat via event delegation aan knoppen en slots).
+- **Verificatie:** `tests/audio.test.ts` (Vitest, pure logica) en `python3 scripts/audio-report.py` (OfflineAudioContext in Playwright: niveau per geluid, clipping, WAV-previews in `tests/audio-previews/`, worst-case scene).
+
+Nog open: gebakken buffers voor veelgebruikte geluiden (minder CPU), geluiden van andere spelers hun blokedits, echte regen/onweer-visuals en lightning-flash koppelen aan `setLightningHandler`, een rustig "nether"-achtig thema, mix en timbre door een mens laten beoordelen (alles is alleen met meters gecontroleerd).
 
 ## 6. Gebruiksgemak en toegankelijkheid
 

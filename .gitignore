@@ -6,3 +6,4 @@ data-test
 
 # Claude Code agent worktrees
 .claude/worktrees/
+tests/audio-previews/*.wav

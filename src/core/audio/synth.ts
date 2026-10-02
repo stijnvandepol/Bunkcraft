@@ -31,6 +31,8 @@ export class Synth {
   out: AudioNode;
   /** Priority of voices created from now on. */
   priority: number = Priority.Normal;
+  /** Distance/occlusion gain for positional sounds (1 = not positional): applied to every voice, and voices too quiet to matter are skipped. */
+  level = 1;
 
   constructor(readonly ctx: BaseAudioContext, out: AudioNode, readonly noise: AudioBuffer, readonly limiter: VoiceLimiter) {
     this.out = out;
@@ -42,22 +44,24 @@ export class Synth {
 
   /** Oscillator with a pitch glide f0 -> f1 and an attack/exponential decay envelope. */
   tone(type: OscillatorType, f0: number, f1: number, dur: number, vol: number, delay = 0, opts: ToneOpts = {}): void {
-    if (vol < MIN_VOLUME) return;
+    if (vol * this.level < MIN_VOLUME) return;
     const ctx = this.ctx;
     const t = ctx.currentTime + delay;
-    const o = ctx.createOscillator();
-    const g = ctx.createGain();
-    const stop = () => stopVoice(ctx, g, o);
-    if (!this.limiter.request(ctx.currentTime, this.priority, vol, t + dur + 0.05, stop)) return;
+    let o: OscillatorNode | null = null;
+    let g: GainNode | null = null;
+    const stop = () => { if (o && g) stopVoice(ctx, g, o); };
+    if (!this.limiter.request(ctx.currentTime, this.priority, vol * this.level, t + dur + 0.05, stop)) return;
+    o = ctx.createOscillator();
+    g = ctx.createGain();
     o.type = type;
     o.frequency.setValueAtTime(f0, t);
     if (f1 !== f0) o.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t + dur);
     const attack = opts.attack ?? Math.min(0.03, dur / 4);
     g.gain.setValueAtTime(0, t);
-    g.gain.linearRampToValueAtTime(vol, t + attack);
+    g.gain.linearRampToValueAtTime(vol * this.level, t + attack);
     g.gain.exponentialRampToValueAtTime(0.001, t + dur);
     const lpFreq = opts.lp ?? 2400;
-    if (lpFreq > 0) {
+    if (lpFreq > 0 && type !== 'sine') { // a sine has nothing to filter
       const lp = ctx.createBiquadFilter();
       lp.type = 'lowpass';
       lp.frequency.value = lpFreq;
@@ -71,13 +75,15 @@ export class Synth {
 
   /** Filtered noise burst (hiss, explosion, crunch). `grains` > 1 makes several quick bumps. */
   noiseBurst(freq: number, q: number, dur: number, vol: number, type: BiquadFilterType = 'bandpass', delay = 0, opts: NoiseOpts = {}): void {
-    if (vol < MIN_VOLUME) return;
+    if (vol * this.level < MIN_VOLUME) return;
     const ctx = this.ctx;
     const t = ctx.currentTime + delay;
-    const src = ctx.createBufferSource();
-    const g = ctx.createGain();
-    const stop = () => stopVoice(ctx, g, src);
-    if (!this.limiter.request(ctx.currentTime, this.priority, vol, t + dur + 0.05, stop)) return;
+    let src: AudioBufferSourceNode | null = null;
+    let g: GainNode | null = null;
+    const stop = () => { if (src && g) stopVoice(ctx, g, src); };
+    if (!this.limiter.request(ctx.currentTime, this.priority, vol * this.level, t + dur + 0.05, stop)) return;
+    src = ctx.createBufferSource();
+    g = ctx.createGain();
     src.buffer = this.noise;
     src.loop = dur > 0.9;
     src.playbackRate.value = opts.rate ?? 1;
@@ -89,14 +95,14 @@ export class Synth {
     const attack = opts.attack ?? 0.004;
     g.gain.setValueAtTime(0, t);
     if (grains <= 1) {
-      g.gain.linearRampToValueAtTime(vol, t + Math.min(attack, dur / 3));
+      g.gain.linearRampToValueAtTime(vol * this.level, t + Math.min(attack, dur / 3));
       g.gain.exponentialRampToValueAtTime(0.001, t + dur);
     } else {
       // Grains: quick bumps with a falling level, irregular spacing.
       const slot = dur / grains;
       for (let i = 0; i < grains; i++) {
         const gt = t + i * slot * (0.85 + Math.random() * 0.3);
-        const level = vol * (1 - (i / grains) * 0.55) * (0.7 + Math.random() * 0.3);
+        const level = vol * this.level * (1 - (i / grains) * 0.55) * (0.7 + Math.random() * 0.3);
         g.gain.linearRampToValueAtTime(0, gt);
         g.gain.linearRampToValueAtTime(level, gt + 0.003);
         g.gain.exponentialRampToValueAtTime(Math.max(0.001, level * 0.08), gt + slot * 0.8);

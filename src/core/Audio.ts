@@ -248,25 +248,32 @@ export class AudioEngine {
         cut *= occlusionCutoff(solid);
       }
     }
-    const g = ctx.createGain();
-    g.gain.value = gain;
-    const lp = ctx.createBiquadFilter();
-    lp.type = 'lowpass';
-    lp.frequency.value = Math.max(300, Math.min(20000, cut));
-    g.connect(lp);
+    this.synth.level = gain; // applied per voice by the synth: no gain node in the chain
+    let entry: AudioNode | null = null;
+    let head: AudioNode | null = null;
+    if (cut < 9000) {
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = Math.max(300, cut);
+      entry = head = lp;
+    }
+    let pan: AudioNode;
     if (this.hrtf) {
       const p = ctx.createPanner();
       p.panningModel = 'HRTF';
       p.distanceModel = 'linear';
       p.rolloffFactor = 0; // distance is handled above
       if (p.positionX) { p.positionX.value = at.x; p.positionY.value = at.y; p.positionZ.value = at.z; }
-      lp.connect(p).connect(this.mix.sfx);
+      pan = p;
     } else {
       const p = ctx.createStereoPanner();
       p.pan.value = panFor(dx, dz, l.yaw);
-      lp.connect(p).connect(this.mix.sfx);
+      pan = p;
     }
-    return g;
+    if (head) head.connect(pan);
+    else entry = pan;
+    pan.connect(this.mix.sfx);
+    return entry;
   }
 
   /** Run `fn` with voices routed to the sfx bus (optionally positional) at a given priority. */
@@ -274,17 +281,23 @@ export class AudioEngine {
     if (!this.ready) return;
     const s = this.synth;
     const prev = s.priority;
+    if (!this.limiter.canAccept(this.ctx!.currentTime, priority, 0.3)) {
+      this.limiter.dropped++;
+      return;
+    }
     if (at) {
       const out = this.spatialOut(at, maxDist);
       if (!out) return;
       s.out = out;
     } else {
       s.out = this.mix.sfx;
+      s.level = 1;
     }
     s.priority = priority;
     fn();
     s.out = this.mix.sfx;
     s.priority = prev;
+    s.level = 1;
   }
 
   private pitchFor(sound: string): number {
@@ -585,6 +598,11 @@ export class AudioEngine {
 
   private gunRecipe(weapon: string, v: number): void {
     const p = 0.95 + Math.random() * 0.1;
+    // Far shots: only the crack (one voice); the body and thump are inaudible at that range anyway.
+    if (this.synth.level < 0.5 && weapon !== 'sniper' && weapon !== 'shotgun') {
+      this.noiseBurst(weapon === 'pistol' ? 2400 : 2800 * p, 0.8, 0.06, v * 0.6);
+      return;
+    }
     switch (weapon) {
       case 'rifle':
         this.noiseBurst(2200 * p, 0.7, 0.09, v * 0.7);
@@ -593,7 +611,7 @@ export class AudioEngine {
         break;
       case 'smg':
         this.noiseBurst(3000 * p, 0.8, 0.05, v * 0.55);
-        this.voice('square', 260 * p, 110, 0.05, v * 0.25);
+        if (this.synth.level >= 0.75) this.voice('square', 260 * p, 110, 0.05, v * 0.25);
         this.voice('sine', 170, 70, 0.06, v * 0.4);
         break;
       case 'shotgun':
@@ -709,15 +727,15 @@ export class AudioEngine {
 
 /** Mob footstep character: loudness and pitch of the block step sound. */
 const MOB_STEP: Record<string, { vol: number; pitch: number }> = {
-  pig: { vol: 0.22, pitch: 1.0 },
-  cow: { vol: 0.3, pitch: 0.8 },
-  sheep: { vol: 0.2, pitch: 0.95 },
-  chicken: { vol: 0.1, pitch: 1.6 },
-  zombie: { vol: 0.32, pitch: 0.85 },
-  skeleton: { vol: 0.25, pitch: 1.15 },
-  creeper: { vol: 0.22, pitch: 1.0 },
-  spider: { vol: 0.12, pitch: 1.4 },
-  default: { vol: 0.2, pitch: 1.0 },
+  pig: { vol: 0.3, pitch: 1.0 },
+  cow: { vol: 0.42, pitch: 0.8 },
+  sheep: { vol: 0.28, pitch: 0.95 },
+  chicken: { vol: 0.2, pitch: 1.6 },
+  zombie: { vol: 0.45, pitch: 0.85 },
+  skeleton: { vol: 0.35, pitch: 1.15 },
+  creeper: { vol: 0.3, pitch: 1.0 },
+  spider: { vol: 0.2, pitch: 1.4 },
+  default: { vol: 0.3, pitch: 1.0 },
 };
 
 /** Volume 0..1 for another player's gunshot: full close by, fading out over 60 blocks. */

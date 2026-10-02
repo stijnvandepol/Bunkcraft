@@ -133,13 +133,24 @@ describe('voice limiter', () => {
     expect(lim.request(0, Priority.Normal, 1.2, 10, null)).toBe(false);
   });
 
-  it('drops the oldest among equals', () => {
+  it('steals the oldest among equally weak voices', () => {
     const lim = new VoiceLimiter(2);
     const stopped: string[] = [];
     lim.request(0, Priority.Normal, 0.5, 10, () => stopped.push('old'));
     lim.request(1, Priority.Normal, 0.5, 10, () => stopped.push('new'));
-    lim.request(2, Priority.Normal, 0.5, 10, null);
+    lim.request(2, Priority.Player, 0.5, 10, null);
     expect(stopped).toEqual(['old']);
+  });
+
+  it('does not thrash: an equal newcomer does not steal a slot', () => {
+    const lim = new VoiceLimiter(2);
+    lim.request(0, Priority.Normal, 0.5, 10, null);
+    lim.request(0, Priority.Normal, 0.5, 10, null);
+    expect(lim.canAccept(1, Priority.Normal, 0.5)).toBe(false);
+    expect(lim.request(1, Priority.Normal, 0.5, 10, null)).toBe(false);
+    expect(lim.stolen).toBe(0);
+    expect(lim.canAccept(1, Priority.Player, 0.5)).toBe(true);
+    expect(lim.canAccept(11, Priority.Ambient, 0.1)).toBe(true); // everything ended
   });
 
   it('frees voices that ended', () => {

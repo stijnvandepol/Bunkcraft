@@ -20,6 +20,9 @@ interface Voice {
   active: boolean;
 }
 
+/** A newcomer must beat the weakest running voice by this much to steal its slot (stops equal sounds from thrashing). */
+const STEAL_MARGIN = 0.05;
+
 export class VoiceLimiter {
   private readonly pool: Voice[] = [];
   /** Voices refused (newcomer least important) and stolen (running voice stopped), for the debug report. */
@@ -41,6 +44,17 @@ export class VoiceLimiter {
     return n;
   }
 
+  /** Would a voice with this priority and volume get a slot right now? (No state change: lets callers skip building nodes.) */
+  canAccept(now: number, priority: number, volume: number): boolean {
+    const score = VoiceLimiter.score(priority, volume);
+    let worst = Infinity;
+    for (const v of this.pool) {
+      if (!v.active || v.end <= now) return true;
+      if (v.score < worst) worst = v.score;
+    }
+    return score > worst + STEAL_MARGIN;
+  }
+
   /**
    * Request a slot. Returns true when the voice may start. `stop` is called if the voice is later stolen
    * (it may be null for voices that cannot be stopped).
@@ -58,7 +72,7 @@ export class VoiceLimiter {
     }
     const score = VoiceLimiter.score(priority, volume);
     if (!free) {
-      if (!worst || worst.score > score) {
+      if (!worst || score <= worst.score + STEAL_MARGIN) {
         this.dropped++;
         return false;
       }
