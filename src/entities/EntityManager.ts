@@ -1,4 +1,4 @@
-import type { ItemStack } from '../items/ItemRegistry';
+import { type ItemStack, getItemDef } from '../items/ItemRegistry';
 import { BLOCK, OPAQUE, SOLID } from '../world/BlockRegistry';
 import type { Chunk } from '../world/Chunk';
 import { CHUNK_HEIGHT, blockIndex } from '../world/constants';
@@ -28,6 +28,8 @@ export class EntityManager {
   private readonly spawnedChunks = new Set<number>();
   private tickCount = 0;
   hostileSpawning = true;
+  /** Multiplayer v1 is peaceful: mobs are not yet simulated by the server. */
+  passiveSpawning = true;
 
   constructor(private readonly world: World, private readonly seed: number) {}
 
@@ -48,8 +50,9 @@ export class EntityManager {
     return m;
   }
 
-  dropItem(stack: ItemStack, x: number, y: number, z: number, pickupDelay = 10, throwYaw?: number): void {
-    if (stack.count <= 0 || this.items.length >= MAX_ITEMS) return;
+  /** @param force ignore the entity cap (death drops must never vanish). */
+  dropItem(stack: ItemStack, x: number, y: number, z: number, pickupDelay = 10, throwYaw?: number, force = false): void {
+    if (stack.count <= 0 || (!force && this.items.length >= MAX_ITEMS)) return;
     const e = new ItemEntity({ ...stack }, pickupDelay);
     e.setPosition(x, y, z);
     if (throwYaw !== undefined) {
@@ -66,7 +69,7 @@ export class EntityManager {
 
   /** Seeded passive group for a freshly loaded chunk (grass surface, daylight). */
   onChunkReady(chunk: Chunk): void {
-    if (this.spawnedChunks.has(chunk.key) || !chunk.blocks) return;
+    if (!this.passiveSpawning || this.spawnedChunks.has(chunk.key) || !chunk.blocks) return;
     this.spawnedChunks.add(chunk.key);
     const rand = mulberry32((hash2(this.seed ^ 0x51ed, chunk.cx, chunk.cz) * 4294967296) >>> 0);
     if (rand() > 0.12 || this.passiveCount() >= MAX_PASSIVE) return;
@@ -189,7 +192,7 @@ export class EntityManager {
       for (let j = i + 1; j < items.length; j++) {
         const b = items[j];
         if (b.removed || b.stack.id !== a.stack.id || a.stack.damage || b.stack.damage) continue;
-        if (Math.abs(a.x - b.x) < 0.5 && Math.abs(a.y - b.y) < 0.5 && Math.abs(a.z - b.z) < 0.5 && a.stack.count + b.stack.count <= 64) {
+        if (Math.abs(a.x - b.x) < 0.5 && Math.abs(a.y - b.y) < 0.5 && Math.abs(a.z - b.z) < 0.5 && a.stack.count + b.stack.count <= (getItemDef(a.stack.id)?.maxStack ?? 64)) {
           a.stack.count += b.stack.count;
           b.removed = true;
         }

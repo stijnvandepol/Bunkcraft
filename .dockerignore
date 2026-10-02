@@ -1,5 +1,6 @@
 node_modules
 dist
-.playwright-mcp
 data
 data-test
+.playwright-mcp
+.git

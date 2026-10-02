@@ -9,6 +9,7 @@ export interface MenuActions {
   createWorld(name: string, seedText: string, mode: GameMode): void;
   deleteWorld(id: string): Promise<void>;
   openOptions(): void;
+  joinServer(name: string, address: string): void;
   logo(): HTMLCanvasElement;
   /** Fallback world icon (data URL) when a world has no screenshot yet. */
   defaultWorldIcon(): string;
@@ -41,7 +42,7 @@ export class MainMenu {
       splash,
       h('div', { class: 'title-buttons' },
         button('Singleplayer', () => void this.showWorlds()),
-        button('Multiplayer', () => undefined, { disabled: true }),
+        button('Multiplayer', () => this.showMultiplayer()),
         button('BunkCraft Realms', () => undefined, { disabled: true }),
         h('div', { class: 'gap' }),
         h('div', { class: 'row' },
@@ -52,6 +53,47 @@ export class MainMenu {
       h('div', { class: 'footer-left', text: VERSION }),
       h('div', { class: 'footer-right', text: 'Not affiliated with Mojang' }),
     ));
+  }
+
+  /** Join a BunkCraft server; by default the server this page was loaded from. */
+  showMultiplayer(): void {
+    const load = (k: string, d: string) => { try { return localStorage.getItem(k) ?? d; } catch { return d; } };
+    const store = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* private mode */ } };
+    const name = h('input', { class: 'mc-input', value: load('bunkcraft.name', ''), maxLength: 16, placeholder: 'Your name (3–16 letters)' });
+    const address = h('input', { class: 'mc-input', value: load('bunkcraft.server', location.host), maxLength: 120 });
+    const error = h('div', { class: 'error' });
+    const join = () => {
+      const n = name.value.trim();
+      if (!/^[A-Za-z0-9_]{3,16}$/.test(n)) {
+        error.textContent = 'Name must be 3–16 letters, digits or _';
+        return;
+      }
+      store('bunkcraft.name', n);
+      store('bunkcraft.server', address.value.trim());
+      this.actions.joinServer(n, address.value.trim());
+    };
+    for (const i of [name, address]) i.addEventListener('keydown', (e) => { if (e.key === 'Enter') join(); });
+    const column = 'display: flex; flex-direction: column; align-items: center; gap: calc(var(--s) * 4);';
+    this.stack.push(menuScreen('Play Multiplayer', [
+      h('div', { style: column },
+        h('div', { class: 'field-label', text: 'Player Name' }), name,
+        h('div', { class: 'field-label', text: 'Server Address' }), address,
+        h('div', { class: 'hint', text: 'Leave the address as-is to play on the server this game was loaded from.' }),
+        error,
+      ),
+    ], [
+      button('Join Server', join, { cls: 'w150' }),
+      button('Cancel', () => this.stack.pop(), { cls: 'w150' }),
+    ]));
+    window.setTimeout(() => (name.value ? address : name).focus(), 0);
+  }
+
+  /** "Connection Lost" / failed to connect screen. */
+  showDisconnected(reason: string): void {
+    this.stack.clear();
+    this.stack.push(menuScreen('Disconnected', [
+      h('div', { class: 'hint', text: reason }),
+    ], [button('Back to Title Screen', () => this.showTitle())]));
   }
 
   /** A browser tab cannot close itself unless script-opened; leave fullscreen and say so. */
@@ -204,7 +246,7 @@ export function deathScreen(opts: {
 }
 
 /** "Game Menu" laid out like Minecraft's pause screen. */
-export function pauseScreen(actions: { resume(): void; options(): void; quit(): void }): HTMLDivElement {
+export function pauseScreen(actions: { resume(): void; options(): void; quit(): void; multiplayer?: boolean }): HTMLDivElement {
   const off = () => undefined;
   return screen('menu-bg pause',
     h('div', { class: 'screen-header', style: 'flex-basis: calc(var(--s) * 50)' }, h('h2', { class: 'screen-title', text: 'Game Menu' })),
@@ -213,7 +255,7 @@ export function pauseScreen(actions: { resume(): void; options(): void; quit(): 
       h('div', { class: 'row' }, button('Advancements', off, { cls: 'half', disabled: true }), button('Statistics', off, { cls: 'half', disabled: true })),
       h('div', { class: 'row' }, button('Give Feedback', off, { cls: 'half', disabled: true }), button('Report Bugs', off, { cls: 'half', disabled: true })),
       h('div', { class: 'row' }, button('Options...', actions.options, { cls: 'half' }), button('Open to LAN', off, { cls: 'half', disabled: true })),
-      button('Save and Quit to Title', actions.quit),
+      button(actions.multiplayer ? 'Disconnect' : 'Save and Quit to Title', actions.quit),
     ),
   );
 }

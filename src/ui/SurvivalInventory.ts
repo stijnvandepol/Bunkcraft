@@ -85,15 +85,19 @@ export class SurvivalInventory {
   }
 
   close(): void {
-    // Anything still on the cursor goes back into the inventory (or is dropped).
+    this.flushCursor();
+    this.el.classList.add('hidden');
+    this.tooltip.classList.add('hidden');
+  }
+
+  /** Anything still on the cursor goes back into the inventory (or is dropped). */
+  flushCursor(): void {
     if (this.cursor.count > 0) {
       const left = this.inv.add(this.cursor);
       if (left > 0) this.actions.drop({ ...this.cursor, count: left });
       this.cursor = { id: 0, count: 0 };
       this.renderCursor();
     }
-    this.el.classList.add('hidden');
-    this.tooltip.classList.add('hidden');
   }
 
   private slotEl(stack: ItemStack, extraClass = ''): HTMLDivElement {

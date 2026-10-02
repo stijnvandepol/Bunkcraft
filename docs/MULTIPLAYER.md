@@ -1,5 +1,9 @@
 # BunkCraft multiplayer: onderzoek en plan
 
+> **Status (oktober 2026):** gebouwd als **dedicated Node-server**: fase 2 hieronder, maar zonder
+> externe dienst. Eén proces serveert de game en de WebSocket (`server/`), zodat alles op één webserver
+> draait. Zie [`SERVER.md`](SERVER.md). De WebRTC-variant (fase 1) is niet meer nodig.
+
 Samenvatting van het multiplayer-onderzoek (oktober 2026). Bronnen staan onderaan.
 
 ## Wat de huidige code al meebrengt

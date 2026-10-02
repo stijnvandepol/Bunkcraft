@@ -1,5 +1,5 @@
 import type { BlockGetter } from '../player/Collision';
-import { SOLID } from '../world/BlockRegistry';
+import { OPAQUE, SOLID } from '../world/BlockRegistry';
 import { Entity } from './Entity';
 import type { MobType } from './MobTypes';
 
@@ -64,9 +64,11 @@ export class Mob extends Entity {
     this.hurtTime = 10;
     const dx = this.x - fromX, dz = this.z - fromZ;
     const d = Math.hypot(dx, dz) || 1;
-    this.vx += (dx / d) * 8 * knockback;
-    this.vz += (dz / d) * 8 * knockback;
-    this.vy = 6;
+    if (knockback > 0) {
+      this.vx += (dx / d) * 8 * knockback;
+      this.vz += (dz / d) * 8 * knockback;
+      this.vy = 6;
+    }
     if (!this.type.hostile) this.panic = 100;
     return true;
   }
@@ -100,8 +102,9 @@ export class Mob extends Entity {
       this.targetZ = target.z;
       speed = t.runSpeed;
       this.lookAt(target.x, target.y + 1.5, target.z);
+      const sees = distT < 4 ? this.canSee(getBlock, target) : false;
       if (t.kind === 'creeper') {
-        if (distT < 3) {
+        if (distT < 3 && sees) {
           if (this.fuse === 0) events.sound(this, 'fuse');
           this.fuse++;
           speed = 0;
@@ -111,7 +114,7 @@ export class Mob extends Entity {
           this.removed = true;
           return;
         }
-      } else if (distT < 1.8 && Math.abs(target.y - this.y) < 1.5 && this.attackCooldown === 0) {
+      } else if (distT < 1.8 && Math.abs(target.y - this.y) < 1.5 && this.attackCooldown === 0 && sees) {
         events.attack(this, t.attack);
         this.attackCooldown = 20;
       }
@@ -157,6 +160,20 @@ export class Mob extends Entity {
     const moved = Math.hypot(this.x - this.prevX, this.z - this.prevZ);
     this.limbAmount += (Math.min(1, moved * 4 * 4) - this.limbAmount) * 0.4;
     this.limbSwing += this.limbAmount;
+  }
+
+  /** Line of sight from the mob's eyes to the player's eyes (no attacks through walls). */
+  private canSee(getBlock: BlockGetter, target: MobTarget): boolean {
+    const ex = this.x, ey = this.y + this.height * 0.85, ez = this.z;
+    const dx = target.x - ex, dy = target.y + 1.62 - ey, dz = target.z - ez;
+    const len = Math.hypot(dx, dy, dz);
+    const steps = Math.ceil(len / 0.25);
+    for (let i = 1; i < steps; i++) {
+      const f = i / steps;
+      const b = getBlock(Math.floor(ex + dx * f), Math.floor(ey + dy * f), Math.floor(ez + dz * f));
+      if (OPAQUE[b]) return false;
+    }
+    return true;
   }
 
   private pickWanderTarget(range: number): void {

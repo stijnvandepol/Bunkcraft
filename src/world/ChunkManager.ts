@@ -219,7 +219,8 @@ export class ChunkManager {
     chunk.light = result.light;
     chunk.opaque = this.setGeometry(chunk, chunk.opaque, result.opaque, this.materials.opaque, this.opaqueGroup);
     chunk.cutout = this.setGeometry(chunk, chunk.cutout, result.cutout, this.materials.cutout, this.opaqueGroup);
-    this.geometryVersion++;
+    // Only chunks inside the shadow map's reach (≤ 128 blocks) invalidate the cached shadows.
+    if (Math.abs(chunk.cx - this.centerX) <= 9 && Math.abs(chunk.cz - this.centerZ) <= 9) this.geometryVersion++;
     chunk.water = this.setGeometry(chunk, chunk.water, result.water, this.materials.water, this.waterGroup);
     if (chunk.version !== version) this.scanNeeded = true;
   }

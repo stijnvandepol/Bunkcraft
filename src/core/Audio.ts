@@ -65,6 +65,13 @@ export class AudioEngine {
     this.applyVolumes();
   }
 
+  /** Pause all audio while the tab is hidden (scheduled music would keep playing). */
+  setSuspended(suspended: boolean): void {
+    if (!this.ctx) return;
+    if (suspended && this.ctx.state === 'running') void this.ctx.suspend();
+    else if (!suspended && this.ctx.state === 'suspended') void this.ctx.resume();
+  }
+
   setVolumes(sound: number, music: number): void {
     this.soundVolume = sound / 100;
     this.musicVolume = music / 100;

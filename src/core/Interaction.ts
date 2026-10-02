@@ -45,6 +45,7 @@ export class Interaction {
   private swingTimer = 0;
   private placeCooldown = 0;
   private eatTime = 0;
+  private eatItem = 0;
   /** True while the eat animation is playing (hand renderer). */
   eating = false;
 
@@ -94,6 +95,10 @@ export class Interaction {
     const food = getItemDef(held.id)?.food;
     const canEat = food && hasSurvivalRules(mode) && this.d.stats.hunger < 20;
     if (canEat && input.rightDown) {
+      if (held.id !== this.eatItem) {
+        this.eatItem = held.id;
+        this.eatTime = 0;
+      }
       this.eatTime += dt;
       this.eating = true;
       if (Math.floor((this.eatTime - dt) / 0.2) !== Math.floor(this.eatTime / 0.2)) this.d.audio.playEat();

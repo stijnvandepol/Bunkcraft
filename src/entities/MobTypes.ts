@@ -1,7 +1,7 @@
 import { ITEM, type ItemStack } from '../items/ItemRegistry';
 import { BLOCK } from '../world/BlockRegistry';
 
-export type MobKind = 'pig' | 'cow' | 'sheep' | 'chicken' | 'zombie' | 'creeper';
+export type MobKind = 'pig' | 'cow' | 'sheep' | 'chicken' | 'zombie' | 'creeper' | 'player';
 
 /** Animation slot a model part follows. */
 export type PartAnim = 'none' | 'head' | 'legA' | 'legB' | 'armL' | 'armR' | 'wingL' | 'wingR';
@@ -37,6 +37,8 @@ export interface MobType {
   hostile: boolean;
   /** Melee damage (Normal difficulty). */
   attack: number;
+  /** Zombie pose: arms held straight forward. */
+  armsForward?: boolean;
   parts: ModelPart[];
   drops(): ItemStack[];
 }
@@ -69,7 +71,7 @@ const SHEEP_SKIN = ['#d9bfa6', '#cdb194', '#e3cbb4'];
 const ZOMBIE_SKIN = ['#4f8a3c', '#457c34', '#5a9a45', '#3f7130'];
 const CREEPER = ['#4caa3a', '#3a8a2c', '#6dc95a', '#2f6e23', '#87d873', '#5bb748'];
 
-export const MOB_TYPES: Record<MobKind, MobType> = {
+export const MOB_TYPES = {
   pig: {
     kind: 'pig', name: 'Pig', health: 10, width: 0.9, height: 0.9, walkSpeed: 1.3, runSpeed: 2.6, hostile: false, attack: 0,
     parts: [
@@ -141,7 +143,7 @@ export const MOB_TYPES: Record<MobKind, MobType> = {
     drops: () => [...stack(ITEM.CHICKEN, 1), ...stack(ITEM.FEATHER, rnd(0, 2))],
   },
   zombie: {
-    kind: 'zombie', name: 'Zombie', health: 20, width: 0.6, height: 1.95, walkSpeed: 1.0, runSpeed: 2.6, hostile: true, attack: 3,
+    kind: 'zombie', name: 'Zombie', health: 20, width: 0.6, height: 1.95, walkSpeed: 1.0, runSpeed: 2.6, hostile: true, attack: 3, armsForward: true,
     parts: [
       {
         anim: 'head', pivot: [0, 24, 0], boxes: [{ from: [-4, 24, -4], to: [4, 32, 4], colors: ZOMBIE_SKIN, face: (px, w) => {
@@ -171,6 +173,30 @@ export const MOB_TYPES: Record<MobKind, MobType> = {
     ],
     drops: () => stack(ITEM.GUNPOWDER, rnd(0, 2)),
   },
+} as Record<MobKind, MobType>;
+
+const SKIN = ['#c99a7a', '#bf8f6f', '#d1a585'];
+const SHIRT = ['#2d9fa6', '#268a90', '#33b0b8'];
+const PANTS = ['#3a3f9a', '#323688', '#4248aa'];
+
+MOB_TYPES.player = {
+  kind: 'player', name: 'Player', health: 20, width: 0.6, height: 1.8, walkSpeed: 0, runSpeed: 0, hostile: false, attack: 0,
+  parts: [
+    {
+      anim: 'head', pivot: [0, 24, 0], boxes: [{ from: [-4, 24, -4], to: [4, 32, 4], colors: SKIN, face: (px, w) => {
+        for (let x = 0; x < w; x++) px(x, 0, '#3b2414'), px(x, 1, '#4a2e1a');
+        px(0, 2, '#3b2414'); px(w - 1, 2, '#3b2414');
+        px(1, 4, '#ffffff'); px(2, 4, '#3a5bb0'); px(w - 3, 4, '#3a5bb0'); px(w - 2, 4, '#ffffff');
+        px(3, 6, '#8a5a40'); px(4, 6, '#8a5a40');
+      } }],
+    },
+    { anim: 'none', pivot: [0, 0, 0], boxes: [{ from: [-4, 12, -2], to: [4, 24, 2], colors: SHIRT }] },
+    { anim: 'armL', pivot: [-6, 22, 0], boxes: [{ from: [-8, 12, -2], to: [-4, 24, 2], colors: SKIN }] },
+    { anim: 'armR', pivot: [6, 22, 0], boxes: [{ from: [4, 12, -2], to: [8, 24, 2], colors: SKIN }] },
+    { anim: 'legA', pivot: [-2, 12, 0], boxes: [{ from: [-4, 0, -2], to: [0, 12, 2], colors: PANTS }] },
+    { anim: 'legB', pivot: [2, 12, 0], boxes: [{ from: [0, 0, -2], to: [4, 12, 2], colors: PANTS }] },
+  ],
+  drops: () => [],
 };
 
 export const PASSIVE_KINDS: MobKind[] = ['pig', 'cow', 'sheep', 'chicken'];

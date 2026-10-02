@@ -44,6 +44,8 @@ export class PlayerStats {
   burnTicks = 0;
   dead = false;
   deathMessage = '';
+  /** The loaded save was made while dead (on the death screen). */
+  wasDead = false;
   private regenTimer = 0;
   private starveTimer = 0;
   private hazardTimer = 0;
@@ -146,12 +148,13 @@ export class PlayerStats {
       this.damage(4, 'lava', mode);
       this.burnTicks = 300;
     } else if (this.burnTicks > 0) {
-      this.burnTicks = p.inWater ? 0 : this.burnTicks - 1;
-      if (this.burnTicks % 20 === 0) this.damage(1, 'fire', mode);
+      if (p.inWater) this.burnTicks = 0;
+      else if (--this.burnTicks % 20 === 0) this.damage(1, 'fire', mode);
     }
     if (cactus) this.damage(1, 'cactus', mode);
     const eye = getBlock(Math.floor(p.x), Math.floor(p.eyeY), Math.floor(p.z));
-    if (SOLID[eye] && OPAQUE[eye] && this.hazardTimer % 10 === 0) this.damage(1, 'suffocate', mode);
+    // Unloaded chunks count as solid for collision, but must not suffocate the player.
+    if (eye !== BLOCK.UNLOADED && SOLID[eye] && OPAQUE[eye] && this.hazardTimer % 10 === 0) this.damage(1, 'suffocate', mode);
 
     // Hunger: every 4 exhaustion removes saturation first, then hunger.
     while (this.exhaustion >= 4) {
@@ -183,8 +186,12 @@ export class PlayerStats {
 
   load(d: number[] | undefined): void {
     this.reset();
+    this.wasDead = false;
     if (!d) return;
     [this.health, this.hunger, this.saturation, this.exhaustion, this.air] = d;
-    if (this.health <= 0) this.health = MAX_HEALTH;
+    if (this.health <= 0) {
+      this.wasDead = true;
+      this.reset();
+    }
   }
 }

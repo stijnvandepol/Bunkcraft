@@ -63,13 +63,23 @@ for (const [base, heads, sticks] of TOOLS) {
   });
 }
 
-function available(inv: PlayerInventory, ing: Ingredient): number {
-  return ing.ids.reduce((n, id) => n + inv.count(id), 0);
-}
-
 export function canCraft(inv: PlayerInventory, r: Recipe, stations: Set<Station>): boolean {
   if (r.station !== 'hand' && !stations.has(r.station)) return false;
-  return r.ingredients.every((ing) => available(inv, ing) >= ing.count);
+  // Simulate taking the ingredients so one item can't count for two of them
+  // (e.g. a single log as both the input and the fuel).
+  const left = new Map<number, number>();
+  for (const ing of r.ingredients) {
+    let need = ing.count;
+    for (const id of ing.ids) {
+      const have = left.has(id) ? left.get(id)! : inv.count(id);
+      const take = Math.min(need, have);
+      left.set(id, have - take);
+      need -= take;
+      if (need === 0) break;
+    }
+    if (need > 0) return false;
+  }
+  return true;
 }
 
 /**

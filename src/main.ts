@@ -19,11 +19,17 @@ function fail(message: string): void {
 if (!document.createElement('canvas').getContext('webgl2')) {
   fail('BunkCraft needs WebGL2. Please use a recent version of Chrome, Edge, Firefox or Safari.');
 } else {
-  const game = new Game(root);
-  // Handle for automated testing in development builds only.
-  if (import.meta.env.DEV) (window as unknown as { game: Game }).game = game;
-  game.start().catch((e: unknown) => {
+  try {
+    const game = new Game(root);
+    // Handle for automated testing in development builds only.
+    if (import.meta.env.DEV) (window as unknown as { game: Game }).game = game;
+    game.start().catch((e: unknown) => {
+      console.error(e);
+      fail(`Failed to start: ${e instanceof Error ? e.message : String(e)}`);
+    });
+  } catch (e) {
+    // E.g. WebGLRenderer creation failed (blocklisted GPU): show a message, not a blank page.
     console.error(e);
     fail(`Failed to start: ${e instanceof Error ? e.message : String(e)}`);
-  });
+  }
 }

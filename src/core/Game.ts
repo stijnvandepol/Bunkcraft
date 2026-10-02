@@ -3,8 +3,12 @@ import { EntityManager } from '../entities/EntityManager';
 import { ItemRenderer } from '../entities/ItemRenderer';
 import type { Mob, MobEvents } from '../entities/Mob';
 import { MobRenderer } from '../entities/MobRenderer';
+import { NetClient } from '../net/NetClient';
+import type { ServerMessage } from '../net/protocol';
+import { RemotePlayers } from '../net/RemotePlayers';
+import { Chat } from '../ui/Chat';
 import { PlayerInventory } from '../items/Inventory';
-import { type ItemStack, getItemDef } from '../items/ItemRegistry';
+import { ITEM, type ItemStack, blockDrop, getItemDef } from '../items/ItemRegistry';
 import type { Station } from '../items/Recipes';
 import { type GameMode, GAME_MODE_NAMES, canFly, hasSurvivalRules } from '../player/GameMode';
 import { PHYSICS } from '../player/Physics';
@@ -31,7 +35,7 @@ import { optionsScreen } from '../ui/SettingsMenu';
 import { SurvivalInventory } from '../ui/SurvivalInventory';
 import { WorkerPool } from '../workers/WorkerPool';
 import { BLOCK, SOLID, getBlockDef } from '../world/BlockRegistry';
-import { CHUNK_VOLUME } from '../world/constants';
+import { CHUNK_VOLUME, blockIndex, chunkKey } from '../world/constants';
 import { hashString } from '../world/Noise';
 import { BIOME_NAMES } from '../world/TerrainGenerator';
 import { World } from '../world/World';
@@ -42,7 +46,7 @@ import { Interaction } from './Interaction';
 import { Renderer } from './Renderer';
 import { SettingsStore } from './Settings';
 
-type GameState = 'menu' | 'loading' | 'playing' | 'paused' | 'inventory' | 'dead';
+type GameState = 'menu' | 'loading' | 'playing' | 'paused' | 'inventory' | 'dead' | 'chat';
 
 const DEFAULT_HOTBAR = [
   BLOCK.GRASS, BLOCK.DIRT, BLOCK.STONE, BLOCK.COBBLESTONE, BLOCK.OAK_PLANKS,
@@ -79,6 +83,12 @@ export class Game {
   private readonly mobRenderer: MobRenderer;
   private readonly itemRenderer: ItemRenderer;
   private readonly debug = new DebugOverlay();
+  private readonly remote = new RemotePlayers();
+  private readonly chat = new Chat();
+  /** Mobs plus remote players, handed to the mob renderer each frame. */
+  private readonly renderMobs: Mob[] = [];
+  /** Multiplayer connection (null in singleplayer). */
+  private net: NetClient | null = null;
   private readonly stack: ScreenStack;
   private readonly menu: MainMenu;
 
@@ -111,6 +121,7 @@ export class Game {
   private readonly frustum = new THREE.Frustum();
   private readonly projView = new THREE.Matrix4();
   private gpuName = '';
+  private contextLost: HTMLDivElement | null = null;
 
   constructor(root: HTMLElement) {
     const canvas = root.querySelector<HTMLCanvasElement>('#game')!;
@@ -131,7 +142,11 @@ export class Game {
       this.survivalInventory.refresh();
     };
     this.stack = new ScreenStack(root.querySelector<HTMLElement>('#screens')!);
-    root.append(this.hud.el, this.debug.el, this.inventory.el, this.survivalInventory.el);
+    root.append(this.remote.el, this.chat.el, this.hud.el, this.debug.el, this.inventory.el, this.survivalInventory.el);
+    this.chat.onSend = (text) => this.net?.sendChat(text);
+    this.chat.onClose = () => {
+      if (this.state === 'chat') void this.resumeGame();
+    };
 
     // Entities and the first-person hand.
     this.hand = new HandRenderer(this.renderer.uniforms, this.icons);
@@ -140,7 +155,7 @@ export class Game {
     this.renderer.scene.add(this.mobRenderer.group, this.itemRenderer.mesh);
     this.renderer.shadowExcluded.push(this.mobRenderer.group, this.itemRenderer.mesh);
     this.renderer.afterMain = (three) => {
-      if (this.state === 'playing' || this.state === 'inventory' || this.state === 'paused') this.hand.render(three);
+      if (this.state === 'playing' || this.state === 'inventory' || this.state === 'paused' || this.state === 'chat') this.hand.render(three);
     };
 
     this.menu = new MainMenu(this.stack, {
@@ -149,6 +164,7 @@ export class Game {
       createWorld: (name, seed, mode) => void this.createWorld(name, seed, mode),
       deleteWorld: (id) => this.save.deleteWorld(id),
       openOptions: () => this.openOptions(),
+      joinServer: (name, address) => void this.joinServer(name, address),
       logo: () => createLogo('BUNKCRAFT', this.renderer.textures.canvas('stone')),
       defaultWorldIcon: () => this.icons.get(BLOCK.GRASS),
     });
@@ -165,6 +181,24 @@ export class Game {
     });
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) void this.saveGame();
+      this.audio.setSuspended(document.hidden);
+      // Avoid a big catch-up step when the tab comes back.
+      this.last = performance.now();
+    });
+    // WebGL context loss (GPU reset, driver update, too many tabs): pause and recover.
+    canvas.addEventListener('webglcontextlost', (e) => {
+      e.preventDefault();
+      if (this.state === 'playing') this.pause();
+      this.contextLost = h('div', { class: 'screen menu-bg', style: 'justify-content: center' },
+        h('div', { text: 'Graphics context lost — restoring...' }));
+      root.append(this.contextLost);
+    });
+    canvas.addEventListener('webglcontextrestored', () => {
+      this.contextLost?.remove();
+      this.contextLost = null;
+      this.renderer.textures.texture.needsUpdate = true;
+      this.renderer.shadows.invalidate();
+      this.world?.chunks.remeshAll();
     });
     window.addEventListener('pagehide', () => void this.saveGame());
     // Audio needs a user gesture before it may start.
@@ -345,6 +379,11 @@ export class Game {
     this.loadingProgress = this.menu.showLoading('Loading world');
     this.loadingProgress('Reading save data...', 0);
     const edits = await this.save.loadEdits(meta.id);
+    this.startSession(meta, edits);
+  }
+
+  /** Common world setup for singleplayer saves and multiplayer servers. */
+  private startSession(meta: WorldMeta, edits: Map<number, Map<number, number>>): void {
     this.meta = meta;
     const world = this.createWorldInstance(meta.seed, edits);
     this.cycle.time = meta.time;
@@ -357,10 +396,12 @@ export class Game {
     }
     this.stats.load(meta.stats);
     this.score = 0;
-    this.setMode(mode);
+    // A save made on the death screen: hardcore becomes spectator, others respawn at spawn.
+    const diedBeforeSave = this.stats.wasDead;
+    this.setMode(diedBeforeSave && mode === 'hardcore' ? 'spectator' : mode);
     this.hotbar.selected = meta.selectedSlot;
     this.hotbar.refresh();
-    const p = meta.player;
+    const p = diedBeforeSave && mode !== 'hardcore' ? null : meta.player;
     if (p) {
       this.player.setPosition(p.x, p.y, p.z);
       this.player.yaw = p.yaw;
@@ -368,7 +409,7 @@ export class Game {
       this.player.flying = p.flying && this.player.canFly;
       this.needsSurface = false;
     } else {
-      const spawn = world.findSpawn();
+      const spawn = meta.spawn ?? world.findSpawn();
       this.player.setPosition(spawn.x, 100, spawn.z);
       this.player.yaw = 0;
       this.player.pitch = 0;
@@ -396,6 +437,13 @@ export class Game {
   private async saveGame(): Promise<void> {
     const world = this.world, meta = this.meta;
     if (!world || !meta || this.state === 'loading' || this.state === 'menu') return;
+    // Items held on the inventory cursor go back into the inventory before saving.
+    this.survivalInventory.flushCursor();
+    if (this.net) {
+      // Multiplayer: the server stores position, inventory and health per player.
+      this.net.sendState(this.playerInventory.serialize(), this.stats.serialize());
+      return;
+    }
     const p = this.player;
     meta.player = { x: p.x, y: p.y, z: p.z, yaw: p.yaw, pitch: p.pitch, flying: p.flying };
     meta.hotbar = Array.from({ length: 9 }, (_, i) => this.playerInventory.get(i).id);
@@ -430,26 +478,113 @@ export class Game {
 
   private async quitToTitle(): Promise<void> {
     await this.saveGame();
+    this.disconnect();
     this.input.exitLock();
     this.stack.clear();
     this.enterMenu();
   }
 
+  // ---------------------------------------------------------------- multiplayer
+
+  private async joinServer(name: string, address: string): Promise<void> {
+    this.audio.unlock();
+    const progress = this.menu.showLoading('Connecting to the server...');
+    progress('Logging in...', 0);
+    const net = new NetClient();
+    let welcome;
+    try {
+      welcome = await net.connect(address, name);
+    } catch (e) {
+      this.menu.showDisconnected(e instanceof Error ? e.message : String(e));
+      return;
+    }
+    this.net = net;
+    // Terrain comes from the seed; only the server's edit list is transferred.
+    const edits = new Map<number, Map<number, number>>();
+    const list = welcome.edits;
+    for (let i = 0; i + 3 < list.length; i += 4) {
+      const x = list[i], y = list[i + 1], z = list[i + 2], id = list[i + 3];
+      const key = chunkKey(x >> 4, z >> 4);
+      let m = edits.get(key);
+      if (!m) { m = new Map(); edits.set(key, m); }
+      m.set(blockIndex(x & 15, y, z & 15), id);
+    }
+    const rec = welcome.player;
+    const meta: WorldMeta = {
+      id: 'mp:' + address, name: welcome.worldName, seed: welcome.seed, seedText: '', created: 0, lastPlayed: Date.now(),
+      player: rec ? { x: rec.x, y: rec.y, z: rec.z, yaw: rec.yaw, pitch: rec.pitch, flying: false } : null,
+      hotbar: [...DEFAULT_HOTBAR], selectedSlot: 0, time: welcome.time, gameMode: welcome.gameMode,
+      inventory: rec?.inventory, stats: rec?.stats, spawn: welcome.spawn,
+    };
+    this.loadingProgress = progress;
+    this.startSession(meta, edits);
+    const world = this.world!;
+    // Multiplayer v1 is peaceful: mobs are not simulated by the server yet.
+    this.entities!.passiveSpawning = false;
+    this.entities!.hostileSpawning = false;
+    world.onEdit = (x, y, z, id, prev) => net.sendBlock(x, y, z, id, prev);
+    net.onRevert = (x, y, z, id) => world.applyRemoteEdit(x, y, z, id);
+    net.onMessage = (msg) => this.onServerMessage(msg);
+    net.onClose = (reason) => {
+      if (this.net !== net) return;
+      this.disconnect();
+      this.input.exitLock();
+      this.enterMenu();
+      this.menu.showDisconnected(reason);
+    };
+    this.remote.clear();
+    for (const p of welcome.players) this.remote.add(p.id, p.name);
+    this.chat.clear();
+    this.chat.setVisible(true);
+    if (welcome.motd) this.chat.add(welcome.motd, true);
+  }
+
+  private onServerMessage(msg: ServerMessage): void {
+    const world = this.world;
+    switch (msg.t) {
+      case 'snap': this.remote.snapshot(msg.players, this.net?.id ?? -1, performance.now() / 1000); break;
+      case 'block': world?.applyRemoteEdit(msg.x, msg.y, msg.z, msg.id); break;
+      case 'join': this.remote.add(msg.id, msg.name); break;
+      case 'leave': this.remote.remove(msg.id); break;
+      case 'chat': this.chat.add(msg.system ? msg.text : '<' + msg.from + '> ' + msg.text, msg.system); break;
+      case 'time': this.cycle.time = msg.time; break;
+      case 'teleport': this.player.setPosition(msg.x, msg.y, msg.z); break;
+      default: break;
+    }
+  }
+
+  private disconnect(): void {
+    if (!this.net) return;
+    const net = this.net;
+    this.net = null;
+    net.close();
+    this.remote.clear();
+    this.chat.close();
+    this.chat.setVisible(false);
+  }
+
   // ---------------------------------------------------------------- death
 
   private onDeath(): void {
+    this.inventory.close();
+    this.survivalInventory.close();
+    this.chat.close();
     this.state = 'dead';
-    this.suppressPause = true;
-    this.input.exitLock();
+    if (this.input.locked) {
+      this.suppressPause = true;
+      this.input.exitLock();
+    }
     this.interaction?.reset();
     // Drop the whole inventory where the player died.
     const p = this.player;
     for (let i = 0; i < 36; i++) {
       const s = this.playerInventory.get(i);
-      if (s.count > 0) this.entities?.dropItem(s, p.x, p.y + 1, p.z, 40);
+      if (s.count > 0) this.entities?.dropItem(s, p.x, p.y + 1, p.z, 40, undefined, true);
     }
     this.playerInventory.clear();
     const hardcore = this.mode === 'hardcore';
+    // Hardcore: the single life is gone even if the tab is closed now.
+    if (hardcore && this.meta) this.meta.gameMode = 'spectator';
     this.stack.clear();
     this.stack.push(deathScreen({
       hardcore,
@@ -462,25 +597,31 @@ export class Game {
         void this.resumeGame();
       },
       title: () => {
-        if (!hardcore) this.respawnState();
+        if (hardcore) this.setMode('spectator');
+        else {
+          this.stats.reset();
+          this.player.setPosition(this.meta?.spawn?.x ?? this.player.x, this.meta?.spawn?.y ?? this.player.y, this.meta?.spawn?.z ?? this.player.z);
+          if (this.meta) this.meta.player = null;
+        }
         void this.quitToTitle();
       },
     }));
   }
 
-  private respawnState(): void {
+  /**
+   * Respawn goes through the loading path: the spawn chunk may have been unloaded, and
+   * placing the player before it exists would push them up and drop them to their death.
+   */
+  private respawn(): void {
     this.stats.reset();
-    const s = this.meta?.spawn;
-    if (s) this.player.setPosition(s.x, s.y, s.z);
+    const s = this.meta?.spawn ?? { x: this.player.x, y: this.player.y, z: this.player.z };
+    this.player.setPosition(s.x, s.y, s.z);
     this.player.vx = this.player.vy = this.player.vz = 0;
-    this.player.unstick(this.getBlock);
     this.player.fallDistance = 0;
     this.player.landedFall = 0;
-  }
-
-  private respawn(): void {
-    this.respawnState();
-    void this.resumeGame();
+    this.needsSurface = true;
+    this.stack.clear();
+    this.state = 'loading';
   }
 
   // ---------------------------------------------------------------- input / states
@@ -489,10 +630,15 @@ export class Game {
     this.inventory.close();
     this.survivalInventory.close();
     this.stack.clear();
+    this.suppressPause = false;
     this.state = 'playing';
     this.hud.setVisible(!this.hudHidden);
     await this.input.requestLock();
-    if (!this.input.locked && this.state === 'playing') this.showClickToPlay();
+    if (!this.input.locked && this.state === 'playing') {
+      // The world must not keep running (mobs, hunger) behind the overlay.
+      this.state = 'paused';
+      this.showClickToPlay();
+    }
   }
 
   private showClickToPlay(): void {
@@ -524,6 +670,7 @@ export class Game {
       resume: () => void this.resumeGame(),
       options: () => this.openOptions(),
       quit: () => void this.quitToTitle(),
+      multiplayer: this.net !== null,
     }));
   }
 
@@ -540,6 +687,14 @@ export class Game {
   }
 
   private onKey(code: string): void {
+    if (this.chat.isOpen) return;
+    if ((code === 'KeyT' || code === 'Slash') && this.net && this.state === 'playing' && this.input.locked) {
+      this.state = 'chat';
+      this.suppressPause = this.input.locked;
+      this.input.exitLock();
+      this.chat.openInput(code === 'Slash' ? '/' : '');
+      return;
+    }
     if (code === 'F3') this.debug.toggle();
     if (code === 'F1' && this.state === 'playing') {
       this.hudHidden = !this.hudHidden;
@@ -548,7 +703,7 @@ export class Game {
     if (code === 'KeyE') {
       if (this.state === 'playing' && this.input.locked && this.mode !== 'spectator') {
         this.state = 'inventory';
-        this.suppressPause = true;
+        this.suppressPause = this.input.locked;
         this.input.exitLock();
         if (this.mode === 'creative') this.inventory.open();
         else this.survivalInventory.open(this.nearbyStations());
@@ -605,7 +760,11 @@ export class Game {
     if (!e || !world) return;
     // Interpolation factor between 20 Hz entity ticks.
     const alpha = Math.min(1, ((this.stepCount % STEPS_PER_TICK) + this.accumulator / PHYSICS.STEP) / STEPS_PER_TICK);
-    this.mobRenderer.update(e.mobs, alpha, world);
+    const list = this.renderMobs;
+    list.length = 0;
+    for (const m of e.mobs) list.push(m);
+    for (const m of this.remote.mobs) list.push(m);
+    this.mobRenderer.update(list, alpha, world);
     this.itemRenderer.update(e.items, alpha, this.time, world);
   }
 
@@ -673,7 +832,8 @@ export class Game {
     // Drop roughly 1/power of the destroyed blocks, like Minecraft.
     for (const id of destroyed) {
       if (Math.random() < 1 / power && getBlockDef(id)?.inInventory) {
-        entities.dropItem({ id: id === BLOCK.GRASS ? BLOCK.DIRT : id === BLOCK.STONE ? BLOCK.COBBLESTONE : id, count: 1 },
+        const drop = blockDrop(id, ITEM.DIAMOND_PICKAXE);
+        if (drop) entities.dropItem(drop,
           x + (Math.random() - 0.5) * power, y + Math.random() * power * 0.5, z + (Math.random() - 0.5) * power);
       }
     }
@@ -732,7 +892,7 @@ export class Game {
       } : null,
       this.cycle.dayFactor > 0.6,
     );
-    if (stats.dead && this.state === 'playing') this.onDeath();
+    if (stats.dead && (this.state === 'playing' || this.state === 'inventory' || this.state === 'chat' || this.state === 'paused')) this.onDeath();
   }
 
   private updatePlaying(dt: number): void {
@@ -792,6 +952,11 @@ export class Game {
     this.hud.setHurt(this.stats.hurtTime / 10);
     this.hud.survival.update({ health: this.stats.health, hunger: this.stats.hunger, air: this.stats.air, maxAir: MAX_AIR }, this.time);
 
+    if (this.net) {
+      const flags = (p.sprinting ? 1 : 0) | (p.flying ? 2 : 0) | (p.onGround ? 4 : 0);
+      this.net.update(dt, p.x, p.y, p.z, p.yaw, p.pitch, flags, this.hotbar.selectedBlock);
+      this.remote.update(performance.now() / 1000, this.cam.camera, window.innerWidth, window.innerHeight);
+    }
     this.interaction!.update(dt, active, input, this.mode);
     const held = this.hotbar.selectedBlock;
     this.hand.update(dt, held, this.cam.bobPhase, this.cam.bobStrength, world.getLight(Math.floor(p.x), Math.floor(p.eyeY), Math.floor(p.z)),

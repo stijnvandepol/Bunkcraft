@@ -636,3 +636,47 @@ html, body {
 .inv-slot.disabled img { opacity: 0.35; }
 .cursor-stack { position: fixed; pointer-events: none; z-index: 40; width: calc(var(--s) * 16); height: calc(var(--s) * 16); }
 .cursor-stack img { width: 100%; height: 100%; image-rendering: pixelated; }
+
+/* ---------------------------------------------------------------- multiplayer */
+
+.chat {
+  position: absolute;
+  left: calc(var(--s) * 2);
+  bottom: calc(var(--s) * 40);
+  width: min(calc(var(--s) * 320), 60vw);
+  z-index: 9;
+  pointer-events: none;
+  text-shadow: var(--shadow);
+}
+
+.chat-log { max-height: calc(var(--s) * 9 * 10); overflow: hidden; display: flex; flex-direction: column; }
+.chat-line { background: rgba(0, 0, 0, 0.5); padding: 0 calc(var(--s) * 2); line-height: calc(var(--s) * 9); white-space: pre-wrap; word-break: break-word; transition: opacity 0.5s; }
+.chat-line.system { color: #ffff55; }
+.chat-line.faded { opacity: 0; }
+.chat.open .chat-log { overflow-y: auto; pointer-events: auto; max-height: calc(var(--s) * 9 * 20); }
+.chat.open .chat-line.faded { opacity: 1; }
+
+.chat-input {
+  pointer-events: auto;
+  width: 100%;
+  margin-top: calc(var(--s) * 2);
+  height: calc(var(--s) * 12);
+  background: rgba(0, 0, 0, 0.6);
+  border: none;
+  outline: none;
+  color: #fff;
+  font-family: var(--font);
+  font-size: var(--fs);
+  padding: 0 calc(var(--s) * 2);
+}
+
+.nametags { position: absolute; inset: 0; pointer-events: none; z-index: 4; overflow: hidden; }
+.nametag {
+  position: absolute;
+  left: 0;
+  top: 0;
+  padding: 0 calc(var(--s) * 2);
+  background: rgba(0, 0, 0, 0.35);
+  color: #fff;
+  white-space: nowrap;
+}

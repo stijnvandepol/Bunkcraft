@@ -55,6 +55,8 @@ Overige scripts:
 | Script | Doel |
 |---|---|
 | `npm run build` | Typecheck en productiebuild in `dist/` |
+| `npm start` | Game **en** multiplayer-server op http://localhost:3000 (na `build`) |
+| `npm run server` | Alleen de multiplayer-server, voor ontwikkeling (Vite stuurt `/ws` door) |
 | `npm run preview` | De productiebuild lokaal serveren |
 | `npm run typecheck` | Alleen TypeScript controleren |
 
@@ -75,6 +77,7 @@ Overige scripts:
 | Rechtermuisknop (vasthouden) | Eten (Survival) |
 | <kbd>Q</kbd> | Item laten vallen |
 | <kbd>E</kbd> | Inventory / crafting |
+| <kbd>T</kbd> / <kbd>/</kbd> | Chat / commando (multiplayer) |
 | <kbd>F3</kbd> | Debug- en performance-overlay |
 | <kbd>F1</kbd> | HUD verbergen |
 | <kbd>Esc</kbd> | Muis vrijgeven / pauzemenu |
@@ -106,6 +109,24 @@ Overige scripts:
 **Menu's**
 - Opgebouwd zoals Minecraft 1.21: titelscherm met panorama, wereldselectie met screenshots, Options-hub met submenu's, pauzemenu en een F3-scherm.
 - Procedurele geluidseffecten en generatieve achtergrondmuziek.
+
+## Multiplayer
+
+BunkCraft draait als één Node.js-server die de game én de multiplayer-WebSocket op dezelfde poort
+aanbiedt:
+
+```bash
+npm run build
+npm start                     # http://localhost:3000 → Multiplayer → Join Server
+# of: docker build -t bunkcraft . && docker run -p 3000:3000 -v bunkcraft-data:/app/data bunkcraft
+```
+
+- **Gedeelde wereld:** iedereen bouwt mee in dezelfde wereld. Alleen blokwijzigingen gaan over het netwerk, want het terrein komt uit de seed.
+- **Spelers en chat:** je ziet andere spelers met naamkaartje en loopanimatie, er is chat met commando's (`/help`, `/time set`, `/spawn`), en de dag/nachtcyclus is gedeeld.
+- **Validatie op de server:** de server controleert bereik, blok-id's, snelheid en rate limits, en bewaart positie, inventory en health per speler.
+- **Configuratie:** via omgevingsvariabelen (`SEED`, `GAMEMODE`, `WORLD_NAME`, …). Zie [`docs/SERVER.md`](docs/SERVER.md) voor HTTPS via nginx of Caddy.
+
+Multiplayer v1 is vredig (geen mobs). Zie [`docs/ROADMAP.md`](docs/ROADMAP.md) voor de volgende stappen.
 
 ## Grafische kwaliteit
 
@@ -206,7 +227,9 @@ src/
 ├── player/      Speler, physics, collision, game modes, health/honger
 ├── ui/          Titelscherm, menu's, HUD, hotbar, inventory, F3, logo, GUI-schaal
 ├── workers/     Worker pool en chunk worker
+├── net/         Multiplayer-protocol, NetClient, andere spelers
 └── save/        IndexedDB-opslag
+server/          Node-server: statische bestanden + WebSocket-gameserver
 public/
 ├── fonts/                        Pixel-font (OFL)
 └── texturepacks/pixel-perfection Standaard texture pack (CC BY-SA 4.0)
@@ -219,7 +242,7 @@ docs/
 
 - **Textures:** [Pixel Perfection](https://github.com/minetest-texture-packs/Pixel-Perfection) van Hugh "XSSheep" Rutland en bijdragers (Toby109tt, tacotexmex, devurandom), licentie [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). Gras- en bladtextures worden tijdens het laden grijs gemaakt voor biome-tinting. Zie `public/texturepacks/pixel-perfection/`.
 - **Font:** [Minecraft-Font](https://github.com/IdreesInc/Minecraft-Font) van Idrees Hassan, licentie SIL Open Font License 1.1 (`public/fonts/LICENSE-OFL.txt`). Het is met de hand nagetekend en bevat geen Mojang-bestanden.
-- **Rendering:** [three.js](https://threejs.org/) (MIT). Zip-import via [fflate](https://github.com/101arrowz/fflate) (MIT).
+- **Rendering:** [three.js](https://threejs.org/) (MIT). Zip-import via [fflate](https://github.com/101arrowz/fflate) (MIT). Server: [ws](https://github.com/websockets/ws) (MIT).
 - **Zelf gemaakt:** het terrein, de procedurele textures, het logo, de geluiden en de muziek worden in code gegenereerd.
 
 BunkCraft is niet verbonden aan Mojang of Microsoft en bevat geen Minecraft-assets.

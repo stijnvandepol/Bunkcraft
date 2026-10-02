@@ -18,6 +18,8 @@ export class World {
   /** Entity hooks: a chunk finished generating / was unloaded. */
   onChunkReady: ((chunk: Chunk) => void) | null = null;
   onChunkUnloaded: ((key: number) => void) | null = null;
+  /** Local (player) edits, for multiplayer sync: position, new id, previous id. */
+  onEdit: ((x: number, y: number, z: number, id: number, prev: number) => void) | null = null;
 
   constructor(readonly seed: number, pool: WorkerPool, materials: ChunkMaterials, edits: EditMap = new Map()) {
     this.generator = new TerrainGenerator(seed);
@@ -62,15 +64,18 @@ export class World {
     return (t[0] << 16) | (t[1] << 8) | t[2];
   }
 
-  setBlock(x: number, y: number, z: number, id: number): boolean {
+  /** @param remote true when applying an edit received from the server (not re-sent). */
+  setBlock(x: number, y: number, z: number, id: number, remote = false): boolean {
     if (y < 0 || y >= CHUNK_HEIGHT) return false;
     const cx = x >> 4, cz = z >> 4;
     const c = this.chunkAt(cx, cz);
     if (!c || !c.blocks) return false;
     const lx = x & 15, lz = z & 15;
     const i = blockIndex(lx, y, lz);
-    if (c.blocks[i] === id) return false;
+    const prev = c.blocks[i];
+    if (prev === id) return false;
     c.blocks[i] = id;
+    if (!remote) this.onEdit?.(x, y, z, id, prev);
 
     let e = this.edits.get(c.key);
     if (!e) { e = new Map(); this.edits.set(c.key, e); }
@@ -101,6 +106,7 @@ export class World {
    */
   explode(cx: number, cy: number, cz: number, radius: number): number[] {
     const destroyed: number[] = [];
+    const cleared: number[] = [];
     const touched = new Set<Chunk>();
     const r = Math.ceil(radius);
     for (let dy = -r; dy <= r; dy++) {
@@ -116,6 +122,7 @@ export class World {
           const id = c.blocks[i];
           if (id === BLOCK.AIR || id === BLOCK.BEDROCK || id === BLOCK.OBSIDIAN || id === BLOCK.WATER || id === BLOCK.LAVA) continue;
           c.blocks[i] = BLOCK.AIR;
+          cleared.push(x, y, z);
           let e = this.edits.get(c.key);
           if (!e) { e = new Map(); this.edits.set(c.key, e); }
           e.set(i, BLOCK.AIR);
@@ -124,6 +131,19 @@ export class World {
           destroyed.push(id);
         }
       }
+    }
+    // Plants and torches lose their support.
+    for (let k = 0; k < cleared.length; k += 3) {
+      const x = cleared[k], y = cleared[k + 1] + 1, z = cleared[k + 2];
+      const above = this.getBlock(x, y, z);
+      if (SHAPE[above] !== SHAPE_CROSS && SHAPE[above] !== SHAPE_MODEL) continue;
+      const c = this.chunkAt(x >> 4, z >> 4);
+      if (!c || !c.blocks) continue;
+      const i = blockIndex(x & 15, y, z & 15);
+      c.blocks[i] = BLOCK.AIR;
+      this.edits.get(c.key)?.set(i, BLOCK.AIR) ?? this.edits.set(c.key, new Map([[i, BLOCK.AIR]]));
+      this.dirtyEditChunks.add(c.key);
+      touched.add(c);
     }
     const remesh = new Set<Chunk>();
     for (const c of touched) {
@@ -138,6 +158,19 @@ export class World {
     }
     this.chunks.markDirty();
     return destroyed;
+  }
+
+  /**
+   * Edit received from the server. Unloaded chunks just record it, so it is applied
+   * when the chunk generates (the same path as saved edits).
+   */
+  applyRemoteEdit(x: number, y: number, z: number, id: number): void {
+    if (y < 0 || y >= CHUNK_HEIGHT) return;
+    if (this.setBlock(x, y, z, id, true)) return;
+    const key = chunkKey(x >> 4, z >> 4);
+    let e = this.edits.get(key);
+    if (!e) { e = new Map(); this.edits.set(key, e); }
+    e.set(blockIndex(x & 15, y, z & 15), id);
   }
 
   /** Highest y whose block is solid, in a loaded chunk; -1 if unknown. */

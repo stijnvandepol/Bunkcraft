@@ -79,7 +79,10 @@ export class SaveSystem {
         };
         req.onsuccess = () => resolve(req.result);
         req.onerror = () => reject(req.error);
+        // Another tab holds an older version open: don't hang the game forever.
+        req.onblocked = () => reject(new Error('Database blocked by another BunkCraft tab'));
       });
+      this.db.onversionchange = () => this.db?.close();
     } catch (e) {
       console.warn('IndexedDB unavailable, worlds will not persist', e);
       this.db = null;
@@ -125,9 +128,13 @@ export class SaveSystem {
   /** Writes only the chunks whose edits changed since the last save. */
   async saveEdits(worldId: string, edits: EditMap, dirty: Set<number>): Promise<void> {
     if (!this.db || dirty.size === 0) return;
+    // Only forget the dirty set once the transaction has committed; on failure the
+    // chunks stay dirty and are retried on the next save.
+    const keys = [...dirty];
+    dirty.clear();
     const tx = this.db.transaction('chunks', 'readwrite');
     const store = tx.objectStore('chunks');
-    for (const key of dirty) {
+    for (const key of keys) {
       const m = edits.get(key);
       if (!m) continue;
       const data = new Uint32Array(m.size);
@@ -136,8 +143,12 @@ export class SaveSystem {
       const record: ChunkEditRecord = { worldId, chunkKey: key, data };
       store.put(record);
     }
-    dirty.clear();
-    await done(tx);
+    try {
+      await done(tx);
+    } catch (e) {
+      for (const k of keys) dirty.add(k);
+      throw e;
+    }
   }
 
   async listPacks(): Promise<ImportedPack[]> {

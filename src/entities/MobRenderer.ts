@@ -208,9 +208,10 @@ export class MobRenderer {
       case 'legB': return tmpEuler.set(-legSwing, 0, 0);
       case 'armL':
       case 'armR': {
-        // Zombies hold their arms forward, with a slight sway.
-        const sway = Math.cos(swing * 0.6662 + (anim === 'armL' ? Math.PI : 0)) * 0.2 * amount;
-        return tmpEuler.set(Math.PI / 2 + sway, 0, 0);
+        const phase = swing * 0.6662 + (anim === 'armL' ? 0 : Math.PI);
+        // Zombies hold their arms forward; players swing them opposite to the legs.
+        if (m.type.armsForward) return tmpEuler.set(Math.PI / 2 + Math.cos(phase) * 0.2 * amount, 0, 0);
+        return tmpEuler.set(Math.cos(phase) * amount, 0, 0);
       }
       case 'wingL':
       case 'wingR': {
