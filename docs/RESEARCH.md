@@ -57,6 +57,22 @@ Bronnen staan per sectie onderaan.
 | 12 (High) | — | 84–88 FPS |
 | 16 (Ultra) | 43–48 FPS | 61–68 FPS |
 
+### Gemeten (Apple M1 Pro, oktober 2026)
+
+Playwright, 1280×800, wandelen en draaien in een survival-wereld, render distance 8:
+
+| Browser | Backend | Mediaan frame | p99 | Haperingen > 30 ms |
+|---|---|---|---|---|
+| Chromium | ANGLE Metal | 8,3 ms (120 FPS, schermlimiet) | 9,3 ms | 0 in 25 s (na de fixes hieronder) |
+| Chromium | SwiftShader (software, "slechtste GPU") | 33 ms | 100 ms | regelmatig |
+| WebKit (Safari-engine) | Metal | 16,7 ms (60 FPS, vsync) | – | – |
+
+De CPU kost per frame ~0,4–0,8 ms (renderen) en vrijwel niets voor chunks; de rest is GPU-tijd of wachten op vsync.
+
+- **Hapering bij het betreden van een wereld (~250 ms):** shaders van mobs, items, pijlen, TNT en de hand compileerden pas bij hun eerste gebruik. Ze worden nu tijdens het titelscherm voorgecompileerd (`compileAsync`).
+- **Hapering elke 30 s:** elke autosave las een frame terug van de GPU voor de wereldthumbnail (synchroon). De thumbnail wordt nu alleen bij pauzeren, afsluiten of een wereld zonder icoon gemaakt.
+- **Nog open:** garbage collection tijdens het streamen van chunks (`WorkerPool.pump`, `onmessage`), `updateMatrixWorld` over alle chunk-meshes per frame (statische meshes kunnen `matrixAutoUpdate = false`), en `toDataURL` voor de hotbar-iconen (eenmalig ~6 ms).
+
 ### Doorgevoerd (geen visuele trade-off)
 
 1. **Opaque / cutout split.** Massieve blokken renderen zonder `discard` → early-Z blijft actief. Alleen bladeren/glas/planten zijn alpha-tested.

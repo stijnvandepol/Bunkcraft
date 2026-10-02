@@ -272,6 +272,7 @@ export class Game {
     void navigator.storage?.persist?.().catch(() => false);
     await this.applyTexturePack();
     this.enterMenu();
+    this.precompileShaders();
     // An invite link (?join=CODE) goes straight to the join screen with the code filled in.
     const invited = normalizeCode(new URLSearchParams(location.search).get('join') ?? '');
     if (invited) void this.menu.showMultiplayer(invited);
@@ -519,6 +520,27 @@ export class Game {
     this.state = 'loading';
   }
 
+  /**
+   * Compiles every world, entity and hand shader while the title screen is up. Otherwise the
+   * first frames in a world stall on the GPU driver (mob, item, arrow, TNT and hand shaders are
+   * first used there), which showed up as a ~250 ms hitch when entering a world.
+   */
+  private precompileShaders(): void {
+    const three = this.renderer.three;
+    const hidden: THREE.Object3D[] = [];
+    this.renderer.scene.traverse((o) => {
+      if (!o.visible) {
+        hidden.push(o);
+        o.visible = true;
+      }
+    });
+    // compileAsync starts every compile synchronously (then waits with KHR_parallel_shader_compile),
+    // so the hidden objects only need to be visible during the call itself.
+    const compiling = Promise.all([three.compileAsync(this.renderer.scene, this.cam.camera), this.hand.precompile(three)]);
+    for (const o of hidden) o.visible = false;
+    compiling.catch((e: unknown) => console.warn('Shader precompile failed', e));
+  }
+
   private finishLoading(): void {
     const world = this.world!;
     if (this.needsSurface) {
@@ -538,7 +560,11 @@ export class Game {
     void this.resumeGame();
   }
 
-  private async saveGame(): Promise<void> {
+  /**
+   * @param thumbnail also refresh the world icon from the next frame. Reading the frame back stalls
+   * the GPU, so autosaves skip it; pausing and quitting take it (like Minecraft's world screenshot).
+   */
+  private async saveGame(thumbnail = false): Promise<void> {
     const world = this.world, meta = this.meta;
     if (!world || !meta || this.state === 'loading' || this.state === 'menu' || this.arcade) return;
     // Items held on the inventory cursor go back into the inventory before saving.
@@ -558,7 +584,7 @@ export class Game {
     meta.selectedSlot = this.hotbar.selected;
     meta.time = this.cycle.time;
     meta.lastPlayed = Date.now();
-    this.wantThumbnail = true;
+    if (thumbnail || !meta.icon) this.wantThumbnail = true;
     try {
       await this.save.saveWorld(meta);
       await this.save.saveEdits(meta.id, world.edits, world.dirtyEditChunks);
@@ -582,7 +608,7 @@ export class Game {
   }
 
   private async quitToTitle(): Promise<void> {
-    await this.saveGame();
+    await this.saveGame(true);
     this.disconnect();
     this.input.exitLock();
     this.stack.clear();
@@ -962,7 +988,7 @@ export class Game {
 
   private pause(): void {
     this.state = 'paused';
-    void this.saveGame();
+    void this.saveGame(true);
     this.stack.clear();
     this.stack.push(pauseScreen({
       resume: () => void this.resumeGame(),

@@ -14,6 +14,11 @@ const SWING_TIME = 0.3; // 6 ticks
 export class HandRenderer {
   private readonly scene = new THREE.Scene();
   private readonly camera = new THREE.PerspectiveCamera(70, 1, 0.01, 10);
+
+  /** Compiles the hand and held-item shaders ahead of the first in-game frame. */
+  precompile(three: THREE.WebGLRenderer): Promise<unknown> {
+    return three.compileAsync(this.scene, this.camera);
+  }
   private readonly root = new THREE.Group();
   private readonly arm: THREE.Mesh;
   private readonly block: THREE.Mesh;
