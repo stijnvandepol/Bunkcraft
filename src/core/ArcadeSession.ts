@@ -132,6 +132,7 @@ export class ArcadeSession {
     this.fillAmmo();
     this.hud.setVisible(true);
     this.refreshSlots();
+    d.remote.setTagOcclusion(d.getBlock);
   }
 
   // ---------------------------------------------------------------- game-facing state
@@ -599,6 +600,7 @@ export class ArcadeSession {
     this.d.player.speedMultiplier = 1;
     this.d.player.airAccel = PHYSICS.AIR_ACCEL;
     this.d.remote.reviveAll();
+    this.d.remote.setTagOcclusion(null);
   }
 }
 

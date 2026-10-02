@@ -5,10 +5,19 @@ import { type Team, TEAM_COLORS } from '../modes/GameTypes';
 import { RESPAWN_SECONDS } from '../modes/Weapons';
 import { createWeaponMaterial, weaponGeometry } from '../rendering/WeaponModels';
 import { h } from '../ui/dom';
+import { type RayHit, createRayHit, raycast } from '../world/Raycast';
 import type { SnapshotEntry } from './protocol';
 
 /** Render other players this far in the past so there are always two snapshots to blend. */
 const INTERPOLATION_DELAY = 0.1;
+/** Arcade name tags need a clear line from the camera to the head, re-checked this often per player (s), within this range. */
+const LOS_INTERVAL = 0.1;
+const ARCADE_TAG_RANGE = 60;
+const TAG_RANGE = 64;
+/** Seconds for a tag to fade fully in or out. */
+const TAG_FADE = 0.18;
+/** The ray for the line-of-sight check ends at the head, 1.7 above the feet. */
+const HEAD_HEIGHT = 1.7;
 /** A shot player lies on the ground this long, then is hidden until the respawn. */
 const CORPSE_SECONDS = 1.4;
 
@@ -31,6 +40,11 @@ interface Remote {
   deadAt: number;
   /** Corpse hidden, waiting for the respawn. */
   hidden: boolean;
+  /** Arcade tags: last line-of-sight result, when it was checked and the current fade (0..1). */
+  los: boolean;
+  losAt: number;
+  tagAlpha: number;
+  tagOpacity: number;
 }
 
 const tmp = new THREE.Vector3();
@@ -57,10 +71,22 @@ export class RemotePlayers {
   /** Third-person weapons in the players' hands (arcade): add to the scene. */
   readonly weapons = new THREE.Group();
   private readonly weaponMaterial = createWeaponMaterial();
+  /** Arcade: block lookup for the line-of-sight check; null = every tag is always shown (sandbox). */
+  private occluder: ((x: number, y: number, z: number) => number) | null = null;
+  private lastUpdate = 0;
+  private readonly losRay: RayHit = createRayHit();
 
   constructor() {
     this.el = h('div', { class: 'nametags' });
     this.weaponMaterial.color.setScalar(0.92);
+  }
+
+  /**
+   * Arcade name tags: nobody's tag is drawn through walls. A tag shows only with a clear block line
+   * from the camera to the head (teammates included) and fades in and out. Pass null to turn it off.
+   */
+  setTagOcclusion(getBlock: ((x: number, y: number, z: number) => number) | null): void {
+    this.occluder = getBlock;
   }
 
   add(id: number, name: string, team: Team | '' = ''): void {
@@ -76,6 +102,7 @@ export class RemotePlayers {
     this.weapons.add(weapon);
     const r: Remote = {
       name, mob, buffer: [], tag, tagX: NaN, tagY: NaN, tagShown: true, team: '', weaponId: '', weapon, deadAt: -1, hidden: false,
+      los: true, losAt: -1, tagAlpha: 1, tagOpacity: 1,
     };
     this.players.set(id, r);
     this.list.push(r);
@@ -177,6 +204,8 @@ export class RemotePlayers {
 
   update(now: number, camera: THREE.PerspectiveCamera, width: number, height: number): void {
     const renderTime = now - INTERPOLATION_DELAY;
+    const dtTag = Math.min(0.25, Math.max(0, now - this.lastUpdate));
+    this.lastUpdate = now;
     for (let pi = 0; pi < this.list.length; pi++) {
       const r = this.list[pi];
       const b = r.buffer;
@@ -221,7 +250,31 @@ export class RemotePlayers {
       // Name tag above the head.
       tmp.set(m.x, m.y + 2.15, m.z).project(camera);
       const dx = camera.position.x - m.x, dy = camera.position.y - m.y, dz = camera.position.z - m.z;
-      const visible = !r.hidden && tmp.z < 1 && Math.abs(tmp.x) < 1.2 && Math.abs(tmp.y) < 1.2 && dx * dx + dy * dy + dz * dz < 64 * 64;
+      const d2 = dx * dx + dy * dy + dz * dz;
+      const arcade = this.occluder !== null;
+      const range = arcade ? ARCADE_TAG_RANGE : TAG_RANGE;
+      let visible = !r.hidden && tmp.z < 1 && Math.abs(tmp.x) < 1.2 && Math.abs(tmp.y) < 1.2 && d2 < range * range;
+      if (arcade) {
+        // Throttled line of sight, then a fade towards the result.
+        if (visible && now - r.losAt >= LOS_INTERVAL) {
+          r.losAt = now;
+          const dist = Math.sqrt(d2) || 1;
+          const hit = raycast(this.occluder!, camera.position.x, camera.position.y, camera.position.z,
+            (m.x - camera.position.x) / dist, (m.y + HEAD_HEIGHT - camera.position.y) / dist, (m.z - camera.position.z) / dist, dist, this.losRay);
+          r.los = !hit.hit || hit.distance >= dist - 0.3;
+        }
+        const target = visible && r.los ? 1 : 0;
+        const step = dtTag / TAG_FADE;
+        r.tagAlpha = target > r.tagAlpha ? Math.min(1, r.tagAlpha + step) : Math.max(0, r.tagAlpha - step);
+        visible = visible && r.tagAlpha > 0;
+        if (Math.abs(r.tagAlpha - r.tagOpacity) >= 0.02 || (r.tagAlpha !== r.tagOpacity && (r.tagAlpha === 0 || r.tagAlpha === 1))) {
+          r.tagOpacity = r.tagAlpha;
+          r.tag.style.opacity = r.tagAlpha === 1 ? '' : String(Math.round(r.tagAlpha * 100) / 100);
+        }
+      } else if (r.tagOpacity !== 1) {
+        r.tagOpacity = r.tagAlpha = 1;
+        r.tag.style.opacity = '';
+      }
       this.showTag(r, visible);
       if (visible) {
         const sx = Math.round(((tmp.x + 1) / 2) * width), sy = Math.round(((1 - tmp.y) / 2) * height);
