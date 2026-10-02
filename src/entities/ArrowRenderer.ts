@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { WorldUniforms } from '../rendering/Materials';
+import { FOG_GLSL, LIGHT_GLSL, type WorldUniforms } from '../rendering/Materials';
 import type { World } from '../world/World';
 import type { Arrow } from './Arrow';
 
@@ -71,19 +71,13 @@ export class ArrowRenderer {
         }
       `,
       fragmentShader: /* glsl */ `
-        uniform float uDaylight;
-        uniform vec3 uSkyLightColor;
-        uniform vec3 uFogColor;
-        uniform float uFogNear, uFogFar;
-        uniform float uBrightness;
+        ${LIGHT_GLSL}
+        ${FOG_GLSL}
         varying vec3 vColor;
         varying vec2 vLight;
         varying vec3 vWorldPos;
-        float curve(float l) { float c = l / (4.0 - 3.0 * l); return mix(c, l, 0.12 + 0.42 * uBrightness); }
         void main() {
-          vec3 light = max(max(uSkyLightColor * curve(vLight.x) * uDaylight, vec3(1.0, 0.86, 0.66) * curve(vLight.y)), vec3(0.03));
-          float f = smoothstep(uFogNear, uFogFar, length(vWorldPos.xz - cameraPosition.xz));
-          gl_FragColor = vec4(mix(vColor * light, uFogColor, f), 1.0);
+          gl_FragColor = vec4(applyFog(vColor * combineLight(vLight.x, vLight.y, 1.0), vWorldPos), 1.0);
         }
       `,
     });

@@ -60,19 +60,16 @@ const COMMON_VERTEX = /* glsl */ `
   }
 `;
 
-/** Light curve and fog shared by every world-lit shader (chunks, water, block entities). */
-export const COMMON_FRAGMENT = /* glsl */ `
+/** Atlas sampler declaration (shaders with their own texture skip this one). */
+export const ATLAS_GLSL = /* glsl */ `
   precision highp sampler2DArray;
   uniform sampler2DArray uAtlas;
+`;
+
+/** Light curve shared by every world-lit shader: chunks, water, entities, particles and the hand. */
+export const LIGHT_GLSL = /* glsl */ `
   uniform float uDaylight;
   uniform vec3 uSkyLightColor;
-  uniform vec3 uFogColor;
-  uniform vec3 uSunsetColor;
-  uniform float uSunsetAmount;
-  uniform float uFogNear;
-  uniform float uFogFar;
-  uniform float uUnderwater;
-  uniform vec3 uSunDir;
   uniform float uBrightness;
 
   // Minecraft-like light curve: dim levels fall off quickly but never reach pitch black.
@@ -86,6 +83,17 @@ export const COMMON_FRAGMENT = /* glsl */ `
     vec3 blkCol = vec3(1.0, 0.86, 0.66) * lightCurve(blk) * 1.05;
     return max(max(skyCol, blkCol), vec3(0.02 + 0.045 * uBrightness));
   }
+`;
+
+/** Distance fog with sunset glow, and the denser blue fog under water. Needs `cameraPosition` (three.js builtin). */
+export const FOG_GLSL = /* glsl */ `
+  uniform vec3 uFogColor;
+  uniform vec3 uSunsetColor;
+  uniform float uSunsetAmount;
+  uniform float uFogNear;
+  uniform float uFogFar;
+  uniform float uUnderwater;
+  uniform vec3 uSunDir;
 
   vec3 applyFog(vec3 color, vec3 worldPos) {
     vec3 toFrag = worldPos - cameraPosition;
@@ -102,6 +110,9 @@ export const COMMON_FRAGMENT = /* glsl */ `
     return mix(color, fogCol, f);
   }
 `;
+
+/** Atlas + light + fog: the full set for block-textured shaders (chunks, water, block entities). */
+export const COMMON_FRAGMENT = ATLAS_GLSL + LIGHT_GLSL + FOG_GLSL;
 
 /** cutout = alpha-tested (leaves, glass, plants); solid blocks skip discard to keep early-Z. */
 export function createChunkMaterial(u: WorldUniforms, cutout: boolean): THREE.ShaderMaterial {

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { WorldUniforms } from '../rendering/Materials';
+import { FOG_GLSL, LIGHT_GLSL, type WorldUniforms } from '../rendering/Materials';
 import type { World } from '../world/World';
 import type { Mob } from './Mob';
 import { MOB_TYPES, type MobKind, type ModelBox, type ModelPart, type PartAnim } from './MobTypes';
@@ -276,28 +276,21 @@ function createMobMaterial(u: WorldUniforms, map: THREE.Texture): THREE.ShaderMa
       }
     `,
     fragmentShader: /* glsl */ `
+      ${LIGHT_GLSL}
+      ${FOG_GLSL}
       uniform sampler2D uMap;
-      uniform float uDaylight;
-      uniform vec3 uSkyLightColor;
-      uniform vec3 uFogColor;
-      uniform float uFogNear, uFogFar;
-      uniform float uBrightness;
       varying vec2 vUv;
       varying vec4 vData;
       varying float vShade;
       varying vec3 vWorldPos;
-      float curve(float l) { float c = l / (4.0 - 3.0 * l); return mix(c, l, 0.12 + 0.42 * uBrightness); }
       void main() {
         vec4 tex = texture2D(uMap, vUv);
         if (tex.a < 0.5) discard;
-        vec3 sky = uSkyLightColor * curve(vData.x) * uDaylight;
-        vec3 blk = vec3(1.0, 0.86, 0.66) * curve(vData.y);
-        vec3 light = max(max(sky, blk), vec3(0.03));
+        vec3 light = combineLight(vData.x, vData.y, 1.0);
         vec3 c = tex.rgb * light * vShade;
         c = mix(c, vec3(1.0, 0.15, 0.1) * max(light.r, 0.3), vData.z * 0.5);
         c = mix(c, vec3(1.0), vData.w * 0.7);
-        float f = smoothstep(uFogNear, uFogFar, length(vWorldPos.xz - cameraPosition.xz));
-        gl_FragColor = vec4(mix(c, uFogColor, f), 1.0);
+        gl_FragColor = vec4(applyFog(c, vWorldPos), 1.0);
       }
     `,
   });

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { FACE_LAYER, OPAQUE, SOLID } from '../world/BlockRegistry';
-import type { WorldUniforms } from './Materials';
+import { FOG_GLSL, LIGHT_GLSL, type WorldUniforms } from './Materials';
 
 const MAX = 1024;
 
@@ -76,10 +76,8 @@ export class Particles {
       fragmentShader: /* glsl */ `
         precision highp sampler2DArray;
         uniform sampler2DArray uAtlas;
-        uniform float uDaylight;
-        uniform vec3 uSkyLightColor;
-        uniform vec3 uFogColor;
-        uniform float uFogNear, uFogFar;
+        ${LIGHT_GLSL}
+        ${FOG_GLSL}
         varying vec2 vUv;
         flat varying float vLayer;
         varying vec2 vLight;
@@ -90,10 +88,7 @@ export class Particles {
           if (tex.a < 0.4) discard;
           float m = vTint.a > 0.5 ? 1.0 : clamp((1.0 - tex.a) * 2.0, 0.0, 1.0);
           tex.rgb *= mix(vec3(1.0), vTint.rgb, m);
-          vec3 l = max(uSkyLightColor * vLight.x * uDaylight, vec3(1.0, 0.86, 0.66) * vLight.y);
-          vec3 c = tex.rgb * max(l, vec3(0.06));
-          float f = smoothstep(uFogNear, uFogFar, length(vWorldPos.xz - cameraPosition.xz));
-          gl_FragColor = vec4(mix(c, uFogColor, f), 1.0);
+          gl_FragColor = vec4(applyFog(tex.rgb * combineLight(vLight.x, vLight.y, 1.0), vWorldPos), 1.0);
         }
       `,
     });

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { FACE_LAYER, getBlockDef } from '../world/BlockRegistry';
 import type { BlockIcons } from '../ui/BlockIcons';
-import type { WorldUniforms } from './Materials';
+import { LIGHT_GLSL, type WorldUniforms } from './Materials';
 
 const SWING_TIME = 0.3; // 6 ticks
 
@@ -31,15 +31,12 @@ export class HandRenderer {
 
   constructor(uniforms: WorldUniforms, private readonly icons: BlockIcons) {
     this.scene.add(this.root);
-    const shared = { uDaylight: uniforms.uDaylight, uSkyLightColor: uniforms.uSkyLightColor, uLight: this.light };
+    const shared = { uDaylight: uniforms.uDaylight, uSkyLightColor: uniforms.uSkyLightColor, uBrightness: uniforms.uBrightness, uLight: this.light };
     const lightGlsl = /* glsl */ `
-      uniform float uDaylight;
-      uniform vec3 uSkyLightColor;
+      ${LIGHT_GLSL}
       uniform vec2 uLight;
       vec3 handLight() {
-        vec3 sky = uSkyLightColor * uLight.x * uDaylight;
-        vec3 blk = vec3(1.0, 0.86, 0.66) * uLight.y;
-        return max(max(sky, blk), vec3(0.06));
+        return max(combineLight(uLight.x, uLight.y, 1.0), vec3(0.06));
       }
     `;
 
@@ -145,7 +142,7 @@ export class HandRenderer {
     this.swing = Math.min(1, this.swing + dt / SWING_TIME);
     this.equip = Math.min(1, this.equip + dt * 5);
     this.eating = eating ? this.eating + dt : 0;
-    this.light.value.set(curve((light >> 4) / 15), curve((light & 15) / 15));
+    this.light.value.set((light >> 4) / 15, (light & 15) / 15);
     if (Math.abs(this.camera.aspect - aspect) > 1e-3) {
       this.camera.aspect = aspect;
       this.camera.updateProjectionMatrix();
@@ -182,9 +179,4 @@ export class HandRenderer {
     renderer.render(this.scene, this.camera);
     renderer.autoClear = autoClear;
   }
-}
-
-function curve(l: number): number {
-  const c = l / (4 - 3 * l);
-  return c + (l - c) * 0.35;
 }

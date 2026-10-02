@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { WorldUniforms } from '../rendering/Materials';
+import { FOG_GLSL, LIGHT_GLSL, type WorldUniforms } from '../rendering/Materials';
 import type { BlockIcons } from '../ui/BlockIcons';
 import type { World } from '../world/World';
 import type { ItemEntity } from './ItemEntity';
@@ -65,21 +65,16 @@ export class ItemRenderer {
         }
       `,
       fragmentShader: /* glsl */ `
+        ${LIGHT_GLSL}
+        ${FOG_GLSL}
         uniform sampler2D uIcons;
-        uniform float uDaylight;
-        uniform vec3 uSkyLightColor;
-        uniform vec3 uFogColor;
-        uniform float uFogNear, uFogFar;
         varying vec2 vUv;
         varying vec2 vLight;
         varying vec3 vWorldPos;
         void main() {
           vec4 tex = texture2D(uIcons, vUv);
           if (tex.a < 0.5) discard;
-          vec3 light = max(uSkyLightColor * vLight.x * uDaylight, vec3(1.0, 0.86, 0.66) * vLight.y);
-          vec3 c = tex.rgb * max(light, vec3(0.08));
-          float f = smoothstep(uFogNear, uFogFar, length(vWorldPos.xz - cameraPosition.xz));
-          gl_FragColor = vec4(mix(c, uFogColor, f), 1.0);
+          gl_FragColor = vec4(applyFog(tex.rgb * combineLight(vLight.x, vLight.y, 1.0), vWorldPos), 1.0);
         }
       `,
     });
