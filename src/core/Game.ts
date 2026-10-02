@@ -36,6 +36,11 @@ import { createLogo } from '../ui/Logo';
 import { AdvancementTracker } from '../player/Advancements';
 import { AdvancementToasts } from '../ui/AdvancementToasts';
 import { advancementsScreen } from '../ui/AdvancementsScreen';
+import { initKeyboardLock, keyboardLockActive } from '../pwa/KeyboardLock';
+import { showToast } from '../pwa/Toast';
+import { parseShareParams } from '../save/share';
+import { WorldTransfer } from '../save/WorldTransfer';
+import { downloadBlob } from '../ui/download';
 import { MainMenu, VERSION, deathScreen, inviteScreen, pauseScreen } from '../ui/MainMenu';
 import { resourcePacksScreen } from '../ui/ResourcePacksMenu';
 import { ScreenStack } from '../ui/Screens';
@@ -137,6 +142,8 @@ export class Game {
   private hudHidden = false;
   /** Capture a world icon from the next rendered frame (like Minecraft's world screenshot). */
   private wantThumbnail = false;
+  /** F2: save the next rendered frame as a PNG. */
+  private wantScreenshot = false;
   private packCredit = 'Procedural textures';
   private score = 0;
 
@@ -219,6 +226,8 @@ export class Game {
       playWorld: (m) => void this.enterWorld(m),
       createWorld: (name, seed, mode) => void this.createWorld(name, seed, mode),
       deleteWorld: (id) => this.save.deleteWorld(id),
+      saveWorld: (meta) => this.save.saveWorld(meta),
+      transfer: new WorldTransfer(this.save),
       openOptions: () => this.openOptions(),
       joinServer: (name, address, room) => void this.joinServer(name, address, room),
       logo: () => createLogo('BUNKCRAFT', this.renderer.textures.canvas('stone')),
@@ -280,6 +289,12 @@ export class Game {
     // An invite link (?join=CODE) goes straight to the join screen with the code filled in.
     const invited = normalizeCode(new URLSearchParams(location.search).get('join') ?? '');
     if (invited) void this.menu.showMultiplayer(invited);
+    // A share link (?seed=…&mode=…) opens Create World prefilled.
+    else {
+      const share = parseShareParams(location.search);
+      if (share) void this.menu.showWorlds().then(() => this.menu.showCreate(share));
+    }
+    initKeyboardLock();
     this.last = performance.now();
     requestAnimationFrame(this.frame);
   }
@@ -622,6 +637,19 @@ export class Game {
     c.getContext('2d')!.drawImage(src, (src.width - side) / 2, (src.height - side) / 2, side, side, 0, 0, 64, 64);
     meta.icon = c.toDataURL('image/png');
     void this.save.saveWorld(meta);
+  }
+
+  /** F2: the rendered 3D view (hand included, DOM HUD excluded) as a timestamped PNG download. */
+  private captureScreenshot(): void {
+    this.wantScreenshot = false;
+    const d = new Date();
+    const p = (n: number) => String(n).padStart(2, '0');
+    const name = `bunkcraft-${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}.${p(d.getMinutes())}.${p(d.getSeconds())}.png`;
+    this.renderer.three.domElement.toBlob((blob) => {
+      if (!blob) return;
+      downloadBlob(blob, name);
+      showToast(`Saved screenshot ${name}`);
+    }, 'image/png');
   }
 
   private async quitToTitle(): Promise<void> {
@@ -1020,6 +1048,7 @@ export class Game {
       multiplayer: this.net !== null,
       advancements: this.net ? undefined : () => this.stack.push(advancementsScreen(this.advancements, this.icons, () => this.stack.pop())),
       invite: this.roomCode ? () => this.openInvite(this.roomCode!) : undefined,
+      seed: !this.net && this.meta && this.meta.worldType !== 'arena' ? this.meta.seedText || String(this.meta.seed) : undefined,
     }));
   }
 
@@ -1051,6 +1080,9 @@ export class Game {
       return;
     }
     if (code === 'F3') this.debug.toggle();
+    if (code === 'F2' && this.world) this.wantScreenshot = true;
+    // With keyboard lock (fullscreen) Esc arrives as a key press instead of ending pointer lock.
+    if (code === 'Escape' && keyboardLockActive() && this.state === 'playing') this.input.exitLock();
     if (code === 'F1' && this.state === 'playing') {
       this.hudHidden = !this.hudHidden;
       this.hud.setVisible(!this.hudHidden);
@@ -1122,6 +1154,7 @@ export class Game {
       this.updateMenuBlur();
     }
     if (this.wantThumbnail) this.captureThumbnail();
+    if (this.wantScreenshot) this.captureScreenshot();
     this.world?.chunks.afterRender();
     this.audio.update(dt);
     if (this.debug.tick(dt, performance.now() - cpuStart)) this.updateDebug();

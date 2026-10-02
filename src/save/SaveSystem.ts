@@ -42,7 +42,7 @@ export interface WorldMeta {
   worldType?: 'terrain' | 'arena';
 }
 
-interface ChunkEditRecord {
+export interface ChunkEditRecord {
   worldId: string;
   chunkKey: number;
   /** Record format; absent on records saved before versioning (same layout as version 1). */
@@ -186,6 +186,23 @@ export class SaveSystem {
       edits.set(r.chunkKey, m);
     }
     return edits;
+  }
+
+  /** Raw chunk edit records of a world, as stored (used by world export). */
+  async loadRawChunks(worldId: string): Promise<ChunkEditRecord[]> {
+    if (!this.db) return [];
+    return promisify(
+      this.db.transaction('chunks').objectStore('chunks').getAll(IDBKeyRange.bound([worldId, -Infinity], [worldId, Infinity])) as IDBRequest<ChunkEditRecord[]>,
+    );
+  }
+
+  /** Stores raw chunk edit records in one transaction (used by world import). */
+  async saveRawChunks(records: ChunkEditRecord[]): Promise<void> {
+    if (!this.db || records.length === 0) return;
+    const tx = this.db.transaction('chunks', 'readwrite');
+    const store = tx.objectStore('chunks');
+    for (const r of records) store.put(r);
+    await done(tx);
   }
 
   /** Writes only the chunks whose edits changed since the last save. */

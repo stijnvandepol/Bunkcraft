@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#1c1a18" />
+    <title>BunkCraft</title>
+    <style>
+      body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; background: #1c1a18; color: #eee; font-family: system-ui, sans-serif; text-align: center; }
+      a { color: #7fc24a; }
+    </style>
+  </head>
+  <body>
+    <p>This page does not exist. <a id="home" href="/">Back to BunkCraft</a></p>
+    <script>
+      // Static hosts (GitHub Pages, Netlify ...) show this page for unknown paths. Send the player to
+      // the game and keep invite (?join=CODE) and share (?seed=...) links working.
+      var q = location.search + location.hash;
+      document.getElementById('home').href = '/' + q;
+      location.replace('/' + q);
+    </script>
+  </body>
+</html>

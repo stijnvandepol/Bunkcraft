@@ -20,6 +20,7 @@ dag/nachtcyclus. Geen installatie nodig, en geen Minecraft-assets.
 - [Snel starten](#snel-starten)
 - [Besturing](#besturing)
 - [Features](#features)
+- [Installeren, delen en hosten](#installeren-delen-en-hosten)
 - [Grafische kwaliteit](#grafische-kwaliteit)
 - [Originele Minecraft-textures gebruiken](#originele-minecraft-textures-gebruiken)
 - [Architectuur](#architectuur)
@@ -80,9 +81,10 @@ Overige scripts:
 | <kbd>T</kbd> / <kbd>/</kbd> | Chat / commando (multiplayer) |
 | <kbd>F3</kbd> | Debug- en performance-overlay |
 | <kbd>F1</kbd> | HUD verbergen |
+| <kbd>F2</kbd> | Screenshot (PNG-download) |
 | <kbd>Esc</kbd> | Muis vrijgeven / pauzemenu |
 
-Alle toetsen behalve <kbd>F1</kbd>, <kbd>F3</kbd> en <kbd>Esc</kbd> zijn aan te passen via
+Alle toetsen behalve <kbd>F1</kbd>, <kbd>F2</kbd>, <kbd>F3</kbd> en <kbd>Esc</kbd> zijn aan te passen via
 Options → Controls → Key Binds, ook naar muisknoppen (zoals in Minecraft).
 
 ## Features
@@ -134,6 +136,25 @@ DOMAIN=play.example.com docker compose up -d
 - **Configuratie:** via omgevingsvariabelen (`SEED`, `GAMEMODE`, `WORLD_NAME`, …). Zie [`docs/SERVER.md`](docs/SERVER.md) voor HTTPS via nginx of Caddy.
 
 Multiplayer v1 is vredig (geen mobs). Zie [`docs/ROADMAP.md`](docs/ROADMAP.md) voor de volgende stappen.
+
+## Installeren, delen en hosten
+
+**App (PWA).** Chrome, Edge en Android bieden "Install App" aan (knop op het titelscherm en in Options); op iOS
+kies je Deel → Zet op beginscherm. De service worker (`public/sw.js`, geen Workbox) cachet de hele game, dus
+singleplayer werkt offline, inclusief je werelden (IndexedDB). Een nieuwe versie meldt zich met een "Reload"-toast.
+`/api`, `/ws` en `/health` worden nooit gecachet.
+
+**Werelden delen en bewaren.** In Select World: *Export* geeft een `.bunkworld` (zip met `level.json`,
+`player.json`, `advancements.json`, `icon.png` en de bewerkte chunks), *Import* leest er een of een backup terug
+(ongeldige of te grote zips worden geweigerd, botsende id's krijgen een nieuw id), *Backup All* downloadt alle
+werelden in één zip. *Edit* hernoemt en wisselt de spelmodus, *Re-Create* opent Create World met dezelfde seed.
+Een link als `https://jouw.site/?seed=bunker&mode=survival` opent Create World ingevuld. <kbd>F2</kbd> bewaart een
+screenshot (alleen het 3D-beeld, zonder HUD), "Copy Seed" staat in het pauzemenu.
+
+**Zonder server hosten (itch.io, GitHub Pages, Netlify).** `npm run build:static` bouwt `dist-static/` met relatieve
+paden en maakt `bunkcraft-static.zip` (`index.html` in de root). Upload de zip op itch.io als "HTML" met
+"This file will be played in the browser" aan; of zet de map op elke statische host, ook onder een submap
+(`/game/`). Multiplayer vraagt dan om het adres van een server. Zie `docs/DISTRIBUTION.md`.
 
 ## Grafische kwaliteit
 

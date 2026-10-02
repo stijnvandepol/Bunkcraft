@@ -5,6 +5,8 @@ import {
 import {
   KEYBINDS, KEYBIND_CATEGORIES, type KeybindMap, conflictingActions, defaultKeybinds, isValidCode, keyDisplayName,
 } from '../core/Keybinds';
+import { keyboardLockEnabled, keyboardLockSupported, setKeyboardLockEnabled } from '../pwa/KeyboardLock';
+import { installButton } from '../pwa/Pwa';
 import { button, cycleButton, h, menuScreen, slider } from './dom';
 
 export interface OptionsNav {
@@ -20,6 +22,16 @@ function fullscreenButton(): HTMLButtonElement {
     if (document.fullscreenElement) void document.exitFullscreen();
     else void document.documentElement.requestFullscreen().catch(() => undefined);
     window.setTimeout(() => (btn.textContent = label()), 200);
+  });
+  return btn;
+}
+
+/** Chromium: receive Esc in fullscreen so it pauses the game instead of leaving fullscreen. */
+function lockEscButton(): HTMLButtonElement {
+  const label = () => `Lock Esc in Fullscreen: ${keyboardLockEnabled() ? 'ON' : 'OFF'}`;
+  const btn = button(label(), () => {
+    setKeyboardLockEnabled(!keyboardLockEnabled());
+    btn.textContent = label();
   });
   return btn;
 }
@@ -47,6 +59,8 @@ export function optionsScreen(store: SettingsStore, nav: OptionsNav): HTMLDivEle
       button('Resource Packs...', () => nav.openResourcePacks()),
       button('Credits & Attribution...', () => nav.push(creditsScreen(nav))),
       fullscreenButton(),
+      keyboardLockSupported() ? lockEscButton() : null,
+      installButton(),
     ),
   ], [button('Done', () => nav.pop())]);
 }

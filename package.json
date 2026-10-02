@@ -6,6 +6,7 @@
     "dev": "vite",
     "server": "tsx watch server/index.ts",
     "build": "tsc --noEmit && vite build",
+    "build:static": "tsc --noEmit && BUNK_STATIC=1 VITE_STATIC=1 vite build && node scripts/zip-static.mjs",
     "start": "tsx server/index.ts",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",

@@ -1,10 +1,15 @@
 import { GAME_MODES, GAME_MODE_HINTS, GAME_MODE_NAMES, type GameMode } from '../player/GameMode';
 import type { WorldMeta } from '../save/SaveSystem';
+import { ArchiveError } from '../save/WorldArchive';
+import type { WorldTransfer } from '../save/WorldTransfer';
+import { type ShareParams } from '../save/share';
 import { NAME_PATTERN, formatCode, normalizeCode } from '../net/protocol';
 import { type RoomInfo, createRoom, forgetGame, lookupRoom, recentGames, serverInfo } from '../net/RoomApi';
 import { GAME_TYPES, type GameType, gameTypeDef } from '../modes/GameTypes';
 import { DEFAULT_MAP, MAP_SETTINGS, type MapSetting, getMap, mapName } from '../modes/maps';
+import { installButton } from '../pwa/Pwa';
 import { button, h, menuScreen, screen } from './dom';
+import { pickFile } from './download';
 import type { ScreenStack } from './Screens';
 
 export interface MenuActions {
@@ -12,6 +17,10 @@ export interface MenuActions {
   playWorld(meta: WorldMeta): void;
   createWorld(name: string, seedText: string, mode: GameMode): void;
   deleteWorld(id: string): Promise<void>;
+  /** Persists changed world metadata (rename, game mode). */
+  saveWorld(meta: WorldMeta): Promise<void>;
+  /** `.bunkworld` export/import and backups. */
+  transfer: WorldTransfer;
   openOptions(): void;
   /** Join a server (empty address = this page's server); with a code, that game; without, the main world. */
   joinServer(name: string, address: string, room?: string): void;
@@ -21,6 +30,9 @@ export interface MenuActions {
 }
 
 export const VERSION = 'BunkCraft 1.0';
+
+/** `npm run build:static`: hosted without a game server (itch.io, GitHub Pages ...). */
+const STATIC_BUILD = import.meta.env.VITE_STATIC === '1';
 
 /** Short tag for lists: "TDM", "FFA"; nothing for the Minecraft sandbox. */
 const GAME_TYPE_TAGS: Record<GameType, string> = { minecraft: '', tdm: 'TDM', ffa: 'FFA' };
@@ -88,6 +100,7 @@ export class MainMenu {
           button('Quit Game', () => this.quit(), { cls: 'half' }),
         ),
       ),
+      installButton('pwa-install-title'),
       h('div', { class: 'footer-left', text: VERSION }),
       h('div', { class: 'footer-right', text: 'Not affiliated with Mojang' }),
     ));
@@ -274,12 +287,16 @@ export class MainMenu {
   /** Join any BunkCraft server by address (the page's own server when left empty). */
   showDirectConnect(): void {
     const name = h('input', { class: 'mc-input', value: load('bunkcraft.name', ''), maxLength: 16, placeholder: 'Your name (3–16 letters)' });
-    const address = h('input', { class: 'mc-input', value: load('bunkcraft.server', ''), maxLength: 120, placeholder: location.host });
+    const address = h('input', { class: 'mc-input', value: load('bunkcraft.server', ''), maxLength: 120, placeholder: STATIC_BUILD ? 'play.example.com' : location.host });
     const error = h('div', { class: 'error' });
     const join = () => {
       const n = name.value.trim();
       if (!NAME_PATTERN.test(n)) {
         error.textContent = 'Name must be 3–16 letters, digits or _';
+        return;
+      }
+      if (STATIC_BUILD && !address.value.trim()) {
+        error.textContent = 'Enter the address of a BunkCraft server';
         return;
       }
       store('bunkcraft.name', n);
@@ -292,7 +309,7 @@ export class MainMenu {
       h('div', { style: column },
         h('div', { class: 'field-label', text: 'Player Name' }), name,
         h('div', { class: 'field-label', text: 'Server Address' }), address,
-        h('div', { class: 'hint', text: 'Host name or ip:port of a BunkCraft server. Leave empty for the server this page came from.' }),
+        h('div', { class: 'hint', text: STATIC_BUILD ? 'Host name or ip:port of a BunkCraft server. This copy of the game has no server of its own.' : 'Host name or ip:port of a BunkCraft server. Leave empty for the server this page came from.' }),
         error,
       ),
     ], [
@@ -327,10 +344,35 @@ export class MainMenu {
     const search = h('input', { class: 'mc-input', placeholder: 'Search...', maxLength: 32 });
     const play = button('Play Selected World', () => selected && this.actions.playWorld(selected), { cls: 'w150' });
     const del = button('Delete', () => selected && this.confirmDelete(selected), { cls: 'w72' });
+    let status = '';
+    let statusError = false;
+    const edit = button('Edit', () => selected && this.showEdit(selected), { cls: 'w72' });
+    const recreate = button('Re-Create', () => selected && this.showCreate({ name: selected.name, seed: selected.seedText, mode: selected.gameMode }), { cls: 'w72' });
+    const exportBtn = button('Export', () => {
+      if (!selected) return;
+      this.actions.transfer.exportWorld(selected).then(() => say(`Exported '${selected?.name}'`), (e) => say(describeError(e), true));
+    }, { cls: 'w72' });
+    const importBtn = button('Import', () => void (async () => {
+      const file = await pickFile('.bunkworld,.zip,application/zip');
+      if (!file) return;
+      try {
+        const imported = await this.actions.transfer.importFile(file);
+        worlds.splice(0, worlds.length, ...(await this.actions.listWorlds()));
+        selected = worlds.find((w) => w.id === imported[0]?.id) ?? selected;
+        say(imported.length === 1 ? `Imported '${imported[0].name}'` : `Imported ${imported.length} worlds`);
+      } catch (e) {
+        say(describeError(e), true);
+      }
+    })(), { cls: 'w72' });
+    const backupBtn = button('Backup All', () => {
+      this.actions.transfer.backupAll().then((n) => say(`Backup of ${n} world${n === 1 ? '' : 's'} downloaded`), (e) => say(describeError(e), true));
+    }, { cls: 'w72' });
+    const say = (text: string, isError = false) => { status = text; statusError = isError; render(); };
 
     const render = () => {
       const shown = worlds.filter((w) => w.name.toLowerCase().includes(filter));
       list.replaceChildren();
+      if (status) list.append(h('div', { class: statusError ? 'error' : 'hint', text: status }));
       if (shown.length === 0) list.append(h('div', { class: 'world-empty', text: worlds.length ? 'No worlds found' : 'No worlds yet — create one!' }));
       for (const w of shown) {
         const item = h('div', { class: `world-item${w === selected ? ' selected' : ''}` },
@@ -345,7 +387,8 @@ export class MainMenu {
         item.addEventListener('dblclick', () => this.actions.playWorld(w));
         list.append(item);
       }
-      play.disabled = del.disabled = !selected;
+      play.disabled = del.disabled = edit.disabled = recreate.disabled = exportBtn.disabled = !selected;
+      backupBtn.disabled = worlds.length === 0;
     };
     search.addEventListener('input', () => { filter = search.value.toLowerCase(); render(); });
     render();
@@ -353,12 +396,13 @@ export class MainMenu {
     const el = menuScreen('Select World', [list], [
       h('div', { class: 'row' }, play, button('Create New World', () => this.showCreate(), { cls: 'w150' })),
       h('div', { class: 'row' },
-        button('Edit', () => undefined, { cls: 'w72', disabled: true }),
+        edit,
         del,
-        button('Re-Create', () => undefined, { cls: 'w72', disabled: true }),
+        recreate,
         button('Back', () => this.stack.pop(), { cls: 'w72' }),
       ),
-    ], { list: true, tallFooter: true });
+      h('div', { class: 'row' }, exportBtn, importBtn, backupBtn),
+    ], { list: true, tallFooter: true, cls: 'worlds-screen' });
     // Search box sits in the header under the title, like Minecraft.
     const header = el.querySelector<HTMLElement>('.screen-header')!;
     header.style.flexDirection = 'column';
@@ -382,10 +426,42 @@ export class MainMenu {
     ]));
   }
 
-  showCreate(): void {
-    const name = h('input', { class: 'mc-input', value: 'New World', maxLength: 32 });
-    const seed = h('input', { class: 'mc-input', placeholder: 'Leave blank for a random seed', maxLength: 32 });
-    let mode: GameMode = 'survival';
+  /** Rename a world and change its game mode (the world itself is untouched). */
+  private showEdit(world: WorldMeta): void {
+    const name = h('input', { class: 'mc-input', value: world.name, maxLength: 32 });
+    let mode: GameMode = world.gameMode ?? 'creative';
+    const modeHint = h('div', { class: 'hint', text: GAME_MODE_HINTS[mode] });
+    const modeButton = button(`Game Mode: ${GAME_MODE_NAMES[mode]}`, () => {
+      mode = GAME_MODES[(GAME_MODES.indexOf(mode) + 1) % GAME_MODES.length];
+      modeButton.textContent = `Game Mode: ${GAME_MODE_NAMES[mode]}`;
+      modeHint.textContent = GAME_MODE_HINTS[mode];
+    });
+    const save = async () => {
+      world.name = name.value.trim() || world.name;
+      world.gameMode = mode;
+      await this.actions.saveWorld(world);
+      this.stack.pop();
+      this.stack.pop();
+      void this.showWorlds();
+    };
+    name.addEventListener('keydown', (e) => { if (e.key === 'Enter') void save(); });
+    this.stack.push(menuScreen('Edit World', [
+      h('div', { style: COLUMN },
+        h('div', { class: 'field-label', text: 'World Name' }), name,
+        modeButton, modeHint,
+        h('div', { class: 'hint', text: `Seed: ${world.seedText || world.seed}` }),
+      ),
+    ], [
+      button('Save', () => void save(), { cls: 'w150' }),
+      button('Cancel', () => this.stack.pop(), { cls: 'w150' }),
+    ]));
+    window.setTimeout(() => name.select(), 0);
+  }
+
+  showCreate(prefill: ShareParams = {}): void {
+    const name = h('input', { class: 'mc-input', value: prefill.name ?? 'New World', maxLength: 32 });
+    const seed = h('input', { class: 'mc-input', placeholder: 'Leave blank for a random seed', maxLength: 32, value: prefill.seed ?? '' });
+    let mode: GameMode = prefill.mode ?? 'survival';
     const create = () => this.actions.createWorld(name.value.trim() || 'New World', seed.value.trim(), mode);
     for (const input of [name, seed]) input.addEventListener('keydown', (e) => { if (e.key === 'Enter') create(); });
 
@@ -400,6 +476,7 @@ export class MainMenu {
       h('div', { class: 'field-label', text: 'World Name' }), name,
       modeButton,
       modeHint,
+      prefill.seed ? h('div', { class: 'hint', text: `Seed: ${prefill.seed}` }) : null,
       button('Difficulty: Normal', () => undefined, { disabled: true }),
     );
     const worldTab = h('div', { class: 'hidden', style: column },
@@ -460,14 +537,18 @@ export function deathScreen(opts: {
 }
 
 /** "Game Menu" laid out like Minecraft's pause screen. */
-export function pauseScreen(actions: { resume(): void; options(): void; quit(): void; multiplayer?: boolean; advancements?: () => void; invite?: () => void }): HTMLDivElement {
+export function pauseScreen(actions: { resume(): void; options(): void; quit(): void; multiplayer?: boolean; advancements?: () => void; invite?: () => void; seed?: string }): HTMLDivElement {
   const off = () => undefined;
+  const copySeed = button('Copy Seed', () => {
+    const ok = () => { copySeed.textContent = 'Copied!'; window.setTimeout(() => { copySeed.textContent = 'Copy Seed'; }, 1500); };
+    navigator.clipboard?.writeText(actions.seed ?? '').then(ok, () => { copySeed.textContent = actions.seed ?? ''; });
+  }, { cls: 'half', disabled: !actions.seed });
   return screen('menu-bg pause',
     h('div', { class: 'screen-header', style: 'flex-basis: calc(var(--s) * 50)' }, h('h2', { class: 'screen-title', text: 'Game Menu' })),
     h('div', { class: 'title-buttons', style: 'top: calc(25% + var(--s) * 8)' },
       button('Back to Game', actions.resume),
       h('div', { class: 'row' }, button('Advancements', actions.advancements ?? off, { cls: 'half', disabled: !actions.advancements }), button('Statistics', off, { cls: 'half', disabled: true })),
-      h('div', { class: 'row' }, button('Give Feedback', off, { cls: 'half', disabled: true }), button('Report Bugs', off, { cls: 'half', disabled: true })),
+      h('div', { class: 'row' }, copySeed, button('Report Bugs', off, { cls: 'half', disabled: true })),
       h('div', { class: 'row' }, button('Options...', actions.options, { cls: 'half' }), actions.invite
         ? button('Invite Friends', actions.invite, { cls: 'half' })
         : button('Open to LAN', off, { cls: 'half', disabled: true })),
@@ -493,4 +574,8 @@ export function inviteScreen(code: string, link: string, text: string, done: () 
       h('div', { class: 'hint', text: 'Friends open the link, or type the code under Multiplayer.' }),
     ),
   ], [copy, button('Done', done, { cls: 'w150' })]);
+}
+
+function describeError(e: unknown): string {
+  return e instanceof ArchiveError ? e.message : 'Something went wrong. The file could not be processed.';
 }
