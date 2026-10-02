@@ -1,0 +1,659 @@
+## Opdracht
+
+Bouw een volledig speelbare voxel-game in de browser die duidelijk geïnspireerd is op de klassieke Minecraft-ervaring.
+
+De game moet **visueel overtuigend, vloeiend en technisch performant** zijn. Het doel is niet om Minecraft exact na te bouwen, maar om de herkenbare uitstraling, wereldopbouw en gameplay van Minecraft zo goed mogelijk te benaderen binnen een browseromgeving.
+
+Gebruik **HTML, CSS en JavaScript/TypeScript**. WebGL/WebGL2 is toegestaan en heeft de voorkeur boven een DOM-gebaseerde implementatie. Gebruik Three.js of een vergelijkbare lichte WebGL-library alleen wanneer dit daadwerkelijk voordelen biedt; bouw geen onnodig zware architectuur.
+
+### 1. Visuele kwaliteit
+
+De game moet direct herkenbaar zijn als een moderne browserimplementatie van Minecraft.
+
+Belangrijk:
+
+* voxel-based wereld
+* vierkante blokken
+* herkenbare Minecraft-achtige texturen
+* gras, dirt, stone, sand, water, wood, leaves en verschillende andere bloktypes
+* duidelijke block edges
+* ambient lighting
+* directional sunlight
+* eenvoudige maar mooie schaduwen
+* fog/draw distance
+* skybox met daglicht
+* clouds
+* water met transparantie en lichte animatie
+* particles bij het breken/plaatsen van blokken
+* block breaking animation
+* correcte first-person camera
+* subtiele camera movement
+* eenvoudige head-bob
+* Minecraft-achtige crosshair
+* hotbar onderaan
+* geselecteerde block-indicator
+* inventory/interface die qua stijl bij de game past
+
+De stijl moet **clean en pixelachtig** zijn, niet fotorealistisch.
+
+Vermijd moderne glossy UI-elementen. Het moet voelen alsof je daadwerkelijk in een voxel-game zit.
+
+### 2. Wereld
+
+Maak een procedureel gegenereerde voxelwereld.
+
+Gebruik:
+
+* chunks
+* seeded terrain generation
+* heightmap/noise
+* verschillende biomes of minimaal duidelijke terreinvariatie
+* caves indien performance dit toelaat
+* bomen
+* water
+* stranden
+* bergen/heuvels
+* ondergrondse lagen
+
+De wereld moet niet volledig vlak zijn.
+
+Gebruik bijvoorbeeld:
+
+```text
+bedrock
+stone
+stone
+stone
+dirt
+grass
+```
+
+voor standaard terrein.
+
+Terrain generation moet deterministisch zijn op basis van een seed.
+
+### 3. Chunk-engine
+
+Dit is een van de belangrijkste onderdelen.
+
+Gebruik **chunk-based rendering**.
+
+Bijvoorbeeld:
+
+```text
+Chunk: 16 × 16 × 128
+```
+
+Render niet ieder blok als een afzonderlijke mesh.
+
+Gebruik **greedy meshing of een vergelijkbare face-culling techniek** zodat alleen zichtbare faces worden gegenereerd.
+
+Voorbeeld:
+
+```text
+100.000 blocks
+        ↓
+visible faces only
+        ↓
+chunk mesh
+        ↓
+GPU
+```
+
+Nooit duizenden afzonderlijke Three.js/Object3D-objecten creëren.
+
+Gebruik zo min mogelijk draw calls.
+
+Chunks moeten afzonderlijk geladen en verwijderd kunnen worden.
+
+Bijvoorbeeld:
+
+```text
+           [Chunk]
+ [Chunk] [Chunk] [Chunk]
+           [Player]
+ [Chunk] [Chunk] [Chunk]
+           [Chunk]
+```
+
+Render alleen chunks binnen de render distance.
+
+### 4. Performance
+
+Performance heeft prioriteit.
+
+De game moet proberen stabiel rond **60 FPS** te draaien op een normale moderne desktop/laptop.
+
+Optimaliseer specifiek voor browsers.
+
+Gebruik:
+
+* WebGL/WebGL2
+* GPU instancing waar nuttig
+* chunk meshing
+* face culling
+* frustum culling
+* object pooling
+* texture atlases
+* typed arrays
+* minimale garbage collection
+* requestAnimationFrame
+* lazy chunk generation
+* background/incremental chunk generation
+* beperkte render distance
+* geen onnodige DOM-updates tijdens gameplay
+
+Gebruik voor world data bijvoorbeeld TypedArrays in plaats van enorme aantallen JavaScript-objecten.
+
+Niet:
+
+```javascript
+blocks.push({
+    x,
+    y,
+    z,
+    type
+});
+```
+
+voor honderdduizenden blokken.
+
+Wel iets in de richting van:
+
+```javascript
+Uint8Array
+Uint16Array
+```
+
+voor compacte block storage.
+
+### 5. Chunk loading
+
+Chunk generation mag de main thread niet langdurig blokkeren.
+
+Gebruik waar mogelijk:
+
+```text
+Main Thread
+    │
+    ├── rendering
+    ├── input
+    └── gameplay
+          │
+          ↓
+     Web Worker
+          │
+          └── terrain generation
+```
+
+Gebruik Web Workers voor zware terrain/chunk generation wanneer dit daadwerkelijk voordeel oplevert.
+
+Chunks moeten geleidelijk verschijnen.
+
+De game mag nooit meerdere seconden bevriezen omdat er een nieuwe wereld wordt gegenereerd.
+
+### 6. Camera
+
+Implementeer een echte first-person camera.
+
+Controls:
+
+```text
+W      forward
+S      backward
+A      left
+D      right
+Space  jump
+Shift  sprint
+Mouse  look
+ESC    release mouse
+```
+
+Gebruik pointer lock.
+
+De camera moet soepel bewegen.
+
+Voeg lichte head bob toe tijdens lopen, maar houd dit subtiel.
+
+### 7. Block interaction
+
+De speler moet blokken kunnen:
+
+* bekijken
+* selecteren
+* breken
+* plaatsen
+
+Gebruik raycasting vanuit de camera.
+
+Wanneer de speler naar een blok kijkt:
+
+* highlight het geselecteerde blok
+* toon een dunne outline
+* klik links → breek blok
+* klik rechts → plaats geselecteerd blok
+
+Gebruik een beperkte interactierange zoals Minecraft.
+
+Bijvoorbeeld:
+
+```text
+reach = 5 blocks
+```
+
+### 8. Physics
+
+Implementeer eenvoudige first-person physics.
+
+Nodig:
+
+* gravity
+* jumping
+* collision detection
+* block collision
+* ground detection
+* sprinting
+
+Geen volledige physics engine gebruiken tenzij noodzakelijk.
+
+De speler is gewoon een eenvoudige capsule/AABB.
+
+Collision detection moet performant zijn.
+
+Controleer alleen blocks rondom de speler in plaats van de hele wereld.
+
+### 9. Lighting
+
+Maak de lighting simpel maar effectief.
+
+Gebruik:
+
+* ambient light
+* directional sun
+* eenvoudige ambient occlusion
+* distance fog
+
+Vooral ambient occlusion is belangrijk voor het Minecraft-gevoel.
+
+Blokken moeten duidelijk diepte hebben.
+
+Bijvoorbeeld:
+
+```text
+      grass
+   ┌────────┐
+   │        │
+   │        │
+   └────────┘
+      dirt
+```
+
+De hoeken en aansluitingen moeten visueel duidelijk blijven.
+
+### 10. Textures
+
+Gebruik een texture atlas.
+
+Geen individuele texture/material per block.
+
+Bijvoorbeeld:
+
+```text
+texture-atlas.png
+
+┌────┬────┬────┬────┐
+│grass│dirt│stone│sand│
+├────┼────┼────┼────┤
+│wood │leaf│water│... │
+└────┴────┴────┴────┘
+```
+
+Gebruik nearest-neighbor filtering om pixelachtige textures scherp te houden.
+
+De textures moeten qua stijl sterk aan Minecraft doen denken, maar gebruik geen officiële Minecraft-assets.
+
+Maak of gebruik eigen, vergelijkbare pixel-art textures.
+
+### 11. Water
+
+Water moet duidelijk beter ogen dan simpel blauw transparant materiaal.
+
+Gebruik:
+
+* transparantie
+* lichte wave animation
+* reflectie-achtige highlight
+* depth/fog
+* bewegend oppervlak
+
+Houd het echter performant.
+
+Geen zware realtime water simulation.
+
+### 12. Sky
+
+Maak een mooie Minecraft-achtige lucht.
+
+Gebruik:
+
+* blauwe gradient
+* zon
+* wolken
+* horizon fog
+
+Voeg een eenvoudige dag/nachtcyclus toe.
+
+Bijvoorbeeld:
+
+```text
+day
+ ↓
+sunset
+ ↓
+night
+ ↓
+sunrise
+ ↓
+day
+```
+
+De wereld moet hierdoor zichtbaar veranderen.
+
+### 13. UI
+
+De UI moet minimaal zijn.
+
+Tijdens gameplay:
+
+```text
+                 +
+              crosshair
+
+
+             GAME WORLD
+
+
+ ┌─────────────────────────────────────┐
+ │ [1][2][3][4][5][6][7][8][9]       │
+ └─────────────────────────────────────┘
+```
+
+Hotbar:
+
+* 9 slots
+* selected slot duidelijk zichtbaar
+* block icon
+* number indicator
+
+Geen permanente grote tekstblokken op het scherm.
+
+### 14. Main menu
+
+Maak een Minecraft-achtige startpagina.
+
+Bijvoorbeeld:
+
+```text
+                  VOXELCRAFT
+
+              [ Singleplayer ]
+
+              [ New World ]
+
+              [ Settings ]
+
+              [ Controls ]
+```
+
+Gebruik een dynamische achtergrond met een langzaam bewegende voxelwereld.
+
+Het menu moet er verzorgd uitzien, niet als een standaard HTML-formulier.
+
+### 15. Settings
+
+Maak een settings-menu met minimaal:
+
+* render distance
+* graphics quality
+* shadows
+* particles
+* FOV
+* mouse sensitivity
+* sound volume
+* music volume
+
+Render distance moet bijvoorbeeld:
+
+```text
+Low       4 chunks
+Medium    8 chunks
+High      12 chunks
+Ultra     16 chunks
+```
+
+kunnen instellen.
+
+### 16. Game architecture
+
+Houd de architectuur overzichtelijk.
+
+Bijvoorbeeld:
+
+```text
+/src
+  /core
+    Game
+    Renderer
+    Input
+    Camera
+
+  /world
+    World
+    Chunk
+    ChunkManager
+    TerrainGenerator
+    BlockRegistry
+
+  /rendering
+    ChunkMesher
+    Materials
+    Lighting
+    Particles
+
+  /player
+    Player
+    Physics
+    Collision
+
+  /ui
+    MainMenu
+    HUD
+    Hotbar
+    Inventory
+    Settings
+```
+
+Maak geen enorme monolithische JavaScript-file.
+
+Gebruik duidelijke modules.
+
+### 17. Block registry
+
+Maak blocks data-driven.
+
+Bijvoorbeeld:
+
+```javascript
+{
+    id: 1,
+    name: "grass",
+    solid: true,
+    transparent: false,
+    textures: {
+        top: "grass_top",
+        side: "grass_side",
+        bottom: "dirt"
+    }
+}
+```
+
+Nieuwe blocks moeten toegevoegd kunnen worden zonder de renderer te herschrijven.
+
+### 18. Save system
+
+Voeg een eenvoudige localStorage/IndexedDB save system toe.
+
+Sla minimaal op:
+
+* world seed
+* player position
+* player rotation
+* inventory
+* gewijzigde blocks
+
+Gebruik IndexedDB wanneer de werelddata groter wordt.
+
+### 19. Responsive browser
+
+De game moet fullscreen kunnen draaien.
+
+Ondersteun:
+
+* 1080p
+* 1440p
+* ultrawide
+* window resizing
+
+De renderer moet correct reageren op resize.
+
+### 20. Debug/performance overlay
+
+Maak een verborgen debug overlay die met bijvoorbeeld F3 geopend kan worden.
+
+Toon:
+
+```text
+FPS
+Frame time
+Chunks loaded
+Chunks rendered
+Triangles
+Draw calls
+Player XYZ
+Current chunk
+Render distance
+Memory/world blocks
+```
+
+Dit is belangrijk om daadwerkelijk te kunnen optimaliseren.
+
+### 21. Performance targets
+
+Streef naar:
+
+```text
+60 FPS target
+<16.7ms frame time
+minimal draw calls
+minimal allocations during gameplay
+no noticeable input latency
+no long main-thread stalls
+```
+
+De game moet ook bij duizenden zichtbare blokken soepel blijven functioneren.
+
+### 22. Belangrijk: geen fake performance
+
+Maak geen simpele demo met een paar blokken die alleen maar indrukwekkend lijkt.
+
+Bouw daadwerkelijk een kleine voxel-engine.
+
+De volgende zaken zijn belangrijker dan hoeveelheid content:
+
+1. goede chunk architecture
+2. efficient meshing
+3. frustum/face culling
+4. GPU-efficient rendering
+5. worker-based generation
+6. goede texture atlas
+7. stabiele game loop
+8. goede camera/input
+9. mooie lighting
+10. visuele polish
+
+### 23. Visuele lat
+
+De eerste indruk moet ongeveer zijn:
+
+> "Dit is gewoon Minecraft, maar dan in mijn browser."
+
+Niet:
+
+> "Dit is een Three.js demo met kubussen."
+
+Besteed daarom veel aandacht aan:
+
+* texturekwaliteit
+* lighting
+* fog
+* shadows
+* block outlines
+* sky
+* water
+* particles
+* UI
+* camera movement
+* world generation
+
+Alles moet samen één consistente stijl vormen.
+
+### 24. Codekwaliteit
+
+Schrijf production-quality code.
+
+Vermijd:
+
+* onnodige dependencies
+* over-engineering
+* honderden kleine packages
+* globale variabelen
+* DOM-based rendering
+* één mesh/object per block
+* synchronously generating huge worlds
+* memory leaks
+* onnodige re-renders
+
+Documenteer alleen complexe technische onderdelen.
+
+### 25. Eindresultaat
+
+Lever een volledig werkende browsergame op.
+
+De gebruiker moet na openen direct:
+
+1. het hoofdmenu zien
+2. een wereld kunnen starten
+3. in first-person rond kunnen lopen
+4. kunnen springen
+5. blokken kunnen bekijken
+6. blokken kunnen breken
+7. blokken kunnen plaatsen
+8. verschillende bloktypes kunnen selecteren
+9. terrain kunnen verkennen
+10. een overtuigende Minecraft-achtige wereld ervaren
+
+**Prioriteit:**
+
+```text
+PERFORMANCE
+     ↓
+GAMEPLAY
+     ↓
+VISUAL QUALITY
+     ↓
+POLISH
+```
+
+Als een visueel effect performance zwaar belast, kies dan voor een goedkopere benadering die hetzelfde visuele resultaat benadert.
+
+Bouw eerst de engine correct en performant. Voeg daarna visuele polish toe. Maak geen shortcuts waarbij de game alleen in een kleine demo-scene goed werkt.

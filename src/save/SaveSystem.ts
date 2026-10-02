@@ -1,0 +1,167 @@
+import type { ImportedPack } from '../rendering/TexturePacks';
+import type { EditMap } from '../world/World';
+
+export interface PlayerSave {
+  x: number; y: number; z: number;
+  yaw: number; pitch: number;
+  flying: boolean;
+}
+
+export interface WorldMeta {
+  id: string;
+  name: string;
+  seed: number;
+  seedText: string;
+  created: number;
+  lastPlayed: number;
+  player: PlayerSave | null;
+  hotbar: number[];
+  selectedSlot: number;
+  time: number;
+  /** 64×64 PNG data URL screenshot shown in the world list. */
+  icon?: string;
+}
+
+interface ChunkEditRecord {
+  worldId: string;
+  chunkKey: number;
+  /** Packed entries: blockIndex << 8 | blockId. */
+  data: Uint32Array;
+}
+
+const DB_NAME = 'bunkcraft';
+const DB_VERSION = 2;
+
+function promisify<T>(req: IDBRequest<T>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+function done(tx: IDBTransaction): Promise<void> {
+  return new Promise((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  });
+}
+
+/**
+ * IndexedDB persistence. World metadata and player edits live in separate stores;
+ * edits are stored sparsely per chunk (only changed blocks), so saves stay tiny no
+ * matter how far the player explores. Falls back to memory if IndexedDB is blocked.
+ */
+export class SaveSystem {
+  private db: IDBDatabase | null = null;
+  private readonly memory = new Map<string, WorldMeta>();
+  private readonly memoryPacks = new Map<string, ImportedPack>();
+
+  async open(): Promise<void> {
+    if (!('indexedDB' in window)) return;
+    try {
+      this.db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const req = indexedDB.open(DB_NAME, DB_VERSION);
+        req.onupgradeneeded = () => {
+          const db = req.result;
+          if (!db.objectStoreNames.contains('worlds')) db.createObjectStore('worlds', { keyPath: 'id' });
+          if (!db.objectStoreNames.contains('chunks')) db.createObjectStore('chunks', { keyPath: ['worldId', 'chunkKey'] });
+          // Resource packs the player imported from their own files (kept only in this browser).
+          if (!db.objectStoreNames.contains('packs')) db.createObjectStore('packs', { keyPath: 'id' });
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+    } catch (e) {
+      console.warn('IndexedDB unavailable, worlds will not persist', e);
+      this.db = null;
+    }
+  }
+
+  async listWorlds(): Promise<WorldMeta[]> {
+    const list = this.db
+      ? await promisify(this.db.transaction('worlds').objectStore('worlds').getAll() as IDBRequest<WorldMeta[]>)
+      : [...this.memory.values()];
+    return list.sort((a, b) => b.lastPlayed - a.lastPlayed);
+  }
+
+  async saveWorld(meta: WorldMeta): Promise<void> {
+    if (!this.db) { this.memory.set(meta.id, meta); return; }
+    const tx = this.db.transaction('worlds', 'readwrite');
+    tx.objectStore('worlds').put(meta);
+    await done(tx);
+  }
+
+  async deleteWorld(id: string): Promise<void> {
+    if (!this.db) { this.memory.delete(id); return; }
+    const tx = this.db.transaction(['worlds', 'chunks'], 'readwrite');
+    tx.objectStore('worlds').delete(id);
+    tx.objectStore('chunks').delete(IDBKeyRange.bound([id, -Infinity], [id, Infinity]));
+    await done(tx);
+  }
+
+  async loadEdits(worldId: string): Promise<EditMap> {
+    const edits: EditMap = new Map();
+    if (!this.db) return edits;
+    const records = await promisify(
+      this.db.transaction('chunks').objectStore('chunks').getAll(IDBKeyRange.bound([worldId, -Infinity], [worldId, Infinity])) as IDBRequest<ChunkEditRecord[]>,
+    );
+    for (const r of records) {
+      const m = new Map<number, number>();
+      for (const packed of r.data) m.set(packed >>> 8, packed & 255);
+      edits.set(r.chunkKey, m);
+    }
+    return edits;
+  }
+
+  /** Writes only the chunks whose edits changed since the last save. */
+  async saveEdits(worldId: string, edits: EditMap, dirty: Set<number>): Promise<void> {
+    if (!this.db || dirty.size === 0) return;
+    const tx = this.db.transaction('chunks', 'readwrite');
+    const store = tx.objectStore('chunks');
+    for (const key of dirty) {
+      const m = edits.get(key);
+      if (!m) continue;
+      const data = new Uint32Array(m.size);
+      let i = 0;
+      for (const [idx, id] of m) data[i++] = (idx << 8) | id;
+      const record: ChunkEditRecord = { worldId, chunkKey: key, data };
+      store.put(record);
+    }
+    dirty.clear();
+    await done(tx);
+  }
+
+  async listPacks(): Promise<ImportedPack[]> {
+    if (!this.db) return [...this.memoryPacks.values()];
+    const packs = await promisify(this.db.transaction('packs').objectStore('packs').getAll() as IDBRequest<ImportedPack[]>);
+    return packs.sort((a, b) => a.created - b.created);
+  }
+
+  async getPack(id: string): Promise<ImportedPack | undefined> {
+    if (!this.db) return this.memoryPacks.get(id);
+    return promisify(this.db.transaction('packs').objectStore('packs').get(id) as IDBRequest<ImportedPack | undefined>);
+  }
+
+  async savePack(pack: ImportedPack): Promise<void> {
+    if (!this.db) { this.memoryPacks.set(pack.id, pack); return; }
+    const tx = this.db.transaction('packs', 'readwrite');
+    tx.objectStore('packs').put(pack);
+    await done(tx);
+  }
+
+  async deletePack(id: string): Promise<void> {
+    if (!this.db) { this.memoryPacks.delete(id); return; }
+    const tx = this.db.transaction('packs', 'readwrite');
+    tx.objectStore('packs').delete(id);
+    await done(tx);
+  }
+
+  get persistent(): boolean {
+    return this.db !== null;
+  }
+}
+
+export function newWorldId(): string {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
