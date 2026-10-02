@@ -14,10 +14,21 @@ export interface RoomInfo {
   timeLimitSec?: number;
   /** Arcade games: a map id or "rotate"; absent on older servers. */
   map?: string;
+  /** A password is needed to join (older servers: absent = open). */
+  locked?: boolean;
+}
+
+/** One row of the public server list. */
+export interface ListedRoom extends RoomInfo {
+  code: string;
 }
 
 /** Match settings sent when creating an arcade game (ignored for Minecraft games). */
 export interface RoomOptions {
+  /** Optional room password (the server stores only a hash). */
+  password?: string;
+  /** Show the game in the public server list (default: private). */
+  listed?: boolean;
   gameType: GameType;
   scoreLimit: number;
   timeLimitSec: number;
@@ -30,6 +41,8 @@ export interface ServerInfo {
   rooms: boolean;
   /** The always-on main world is open. */
   main: boolean;
+  /** Features of newer servers; absent on older ones. */
+  features?: { passwords?: boolean; browse?: boolean; binary?: boolean };
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -56,7 +69,7 @@ export async function serverInfo(): Promise<ServerInfo | null> {
 }
 
 export async function createRoom(name: string, gameMode: string, seed: string, options?: RoomOptions): Promise<string> {
-  const { code } = await request<{ code: string }>('/api/rooms', {
+  const { code, ownerToken } = await request<{ code: string; ownerToken?: string }>('/api/rooms', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
@@ -65,9 +78,76 @@ export async function createRoom(name: string, gameMode: string, seed: string, o
       scoreLimit: options?.scoreLimit ?? 0,
       timeLimitSec: options?.timeLimitSec ?? 0,
       ...(options?.mapId ? { mapId: options.mapId } : {}),
+      ...(options?.password ? { password: options.password } : {}),
+      ...(options?.listed ? { listed: true } : {}),
     }),
   });
+  // The server shows the owner token once; keeping it makes this browser the operator of the game.
+  if (ownerToken) {
+    saveOwnerToken(code, ownerToken);
+    if (options?.password) setRoomPassword(code, options.password);
+  }
   return code;
+}
+
+/** The public server list; empty on servers that do not have it. */
+export async function browseRooms(): Promise<ListedRoom[]> {
+  const { rooms } = await request<{ rooms: ListedRoom[] }>('/api/rooms?public=1');
+  return (Array.isArray(rooms) ? rooms : []).map((r) => ({ ...r, gameType: parseGameType(r.gameType) }));
+}
+
+// ---------------------------------------------------------------- secrets kept in this browser
+
+const OWNER_PREFIX = 'bunkcraft.owner.';
+const KEY_PREFIX = 'bunkcraft.key.';
+/** Room passwords live in memory only (they are typed again after a reload). */
+const passwords = new Map<string, string>();
+
+export function saveOwnerToken(code: string, token: string): void {
+  try {
+    localStorage.setItem(OWNER_PREFIX + code, token);
+  } catch {
+    // Storage unavailable: this browser just will not be the operator next time.
+  }
+}
+
+/** The token that makes this browser the owner (operator) of a game it created, if any. */
+export function ownerToken(code: string): string | undefined {
+  try {
+    return localStorage.getItem(OWNER_PREFIX + code) ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function setRoomPassword(code: string, password: string): void {
+  passwords.set(code, password);
+}
+
+export function roomPassword(code: string): string | undefined {
+  return passwords.get(code);
+}
+
+/**
+ * A random secret per server and game that binds your name to this browser (so nobody can log in as
+ * you, or as an operator). Never leaves for another server because the key is stored per host and room.
+ */
+export function identityKey(host: string, room?: string): string {
+  const id = `${KEY_PREFIX}${host}/${room ?? 'main'}`;
+  try {
+    const have = localStorage.getItem(id);
+    if (have && have.length >= 16) return have;
+    const key = randomKey();
+    localStorage.setItem(id, key);
+    return key;
+  } catch {
+    return randomKey();
+  }
+}
+
+function randomKey(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(24));
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 export async function lookupRoom(code: string): Promise<RoomInfo> {

@@ -653,6 +653,7 @@ export class Game {
   }
 
   private async quitToTitle(): Promise<void> {
+    window.clearTimeout(this.reconnectTimer);
     await this.saveGame(true);
     this.disconnect();
     this.input.exitLock();
@@ -662,7 +663,21 @@ export class Game {
 
   // ---------------------------------------------------------------- multiplayer
 
-  private async joinServer(name: string, address: string, room?: string): Promise<void> {
+  /** Pending automatic reconnect after a server restart. */
+  private reconnectTimer = 0;
+
+  /** The server said it is restarting: try to rejoin a few times with growing pauses. */
+  private scheduleReconnect(join: { name: string; address: string; room?: string }, delayMs: number, attempt = 1): void {
+    window.clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = window.setTimeout(() => {
+      void this.joinServer(join.name, join.address, join.room).then((ok) => {
+        if (!ok && attempt < 5) this.scheduleReconnect(join, delayMs * 1.5, attempt + 1);
+      });
+    }, delayMs);
+  }
+
+  private async joinServer(name: string, address: string, room?: string): Promise<boolean> {
+    window.clearTimeout(this.reconnectTimer);
     this.audio.unlock();
     const progress = this.menu.showLoading('Connecting to the server...');
     progress('Logging in...', 0);
@@ -672,7 +687,7 @@ export class Game {
       welcome = await net.connect(address, name, room);
     } catch (e) {
       this.menu.showDisconnected(e instanceof Error ? e.message : String(e));
-      return;
+      return false;
     }
     this.net = net;
     // Terrain comes from the seed; only the server's edit list is transferred.
@@ -714,11 +729,17 @@ export class Game {
     world.onEdit = (x, y, z, id, meta, prev, prevMeta) => net.sendBlock(x, y, z, id, meta, prev, prevMeta);
     net.onRevert = (x, y, z, id, meta) => world.applyRemoteEdit(x, y, z, id, meta);
     net.onMessage = (msg) => this.onServerMessage(msg);
-    net.onClose = (reason) => {
+    net.onClose = (reason, reconnectMs) => {
       if (this.net !== net) return;
       this.disconnect();
       this.input.exitLock();
       this.enterMenu();
+      if (reconnectMs) {
+        // The server is restarting (update or maintenance): come back by ourselves.
+        this.menu.showDisconnected(`${reason}. Reconnecting automatically...`);
+        this.scheduleReconnect({ name, address, room }, Math.max(1500, reconnectMs));
+        return;
+      }
       this.menu.showDisconnected(reason);
     };
     this.roomCode = room ?? null;
@@ -735,6 +756,7 @@ export class Game {
     if (welcome.motd) this.chat.add(welcome.motd, true);
     if (this.arcade) this.chat.add(this.arcadeHint, true);
     if (room) this.chat.add(`Game code: ${formatCode(room)}. Press Esc, then Invite Friends, to share it.`, true);
+    return true;
   }
 
   /** Leaves and joins the same game again (new welcome, so the arena is rebuilt for the map the server now plays). */
@@ -845,6 +867,12 @@ export class Game {
       case 'chat': this.chat.add(msg.system ? msg.text : '<' + msg.from + '> ' + msg.text, msg.system); break;
       case 'time': this.cycle.time = msg.time; break;
       case 'teleport': this.player.setPosition(msg.x, msg.y, msg.z); break;
+      case 'state':
+        // The server did not accept our last inventory (it did not add up): take its version.
+        this.playerInventory.load(msg.inventory);
+        this.chat.add('The server corrected your inventory.', true);
+        break;
+      case 'gamemode': this.setMode(msg.mode); break;
       default: this.arcade?.handle(msg, performance.now() / 1000); break;
     }
   }

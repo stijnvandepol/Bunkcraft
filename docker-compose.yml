@@ -19,6 +19,8 @@ services:
     mem_limit: 1g
     cpus: 2
     pids_limit: 256
+    # SIGTERM saves every game and tells players to reconnect; give it time to finish.
+    stop_grace_period: 15s
     environment:
       TRUST_PROXY: "1"
       MAIN_WORLD: ${MAIN_WORLD:-on}
@@ -30,6 +32,15 @@ services:
       GAMEMODE: ${GAMEMODE:-survival}
       MOTD: ${MOTD:-Welcome to BunkCraft!}
       SEED: ${SEED:-}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
+      OPS: ${OPS:-}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+      MAX_CONNECTIONS: ${MAX_CONNECTIONS:-500}
+      MAX_CONN_PER_IP: ${MAX_CONN_PER_IP:-10}
+      INVENTORY_GUARD: ${INVENTORY_GUARD:-enforce}
+      BACKUP_KEEP: ${BACKUP_KEEP:-12}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
     volumes:
       - bunkcraft-data:/app/data
     healthcheck:

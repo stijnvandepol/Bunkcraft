@@ -67,7 +67,12 @@ export type TntEntry = [number, number, number, number, number];
 // ---------------------------------------------------------------- client → server
 
 export type ClientMessage =
-  | { t: 'hello'; v: number; name: string }
+  /**
+   * Optional fields (older clients leave them out): `key` is a random per-browser secret that binds the
+   * name to this player, `owner` the token POST /api/rooms returned to the creator (grants op),
+   * `password` the room password, `bin` asks for binary snap/ent frames (see binary.ts).
+   */
+  | { t: 'hello'; v: number; name: string; key?: string; owner?: string; password?: string; bin?: boolean }
   | { t: 'pos'; x: number; y: number; z: number; yaw: number; pitch: number; flags: number; held: number }
   /** `meta` is the block state byte (see BlockStates); absent = 0. */
   | { t: 'block'; seq: number; x: number; y: number; z: number; id: number; meta?: number }
@@ -111,6 +116,10 @@ export type ServerMessage =
     player: PlayerRecord | null;
     players: RemotePlayerInfo[];
     motd: string;
+    /** You are an operator of this game (can use /kick, /ban, ...). Absent = no. */
+    op?: boolean;
+    /** The server will send snap and ent as binary frames (negotiated by `bin` in hello). */
+    binary?: boolean;
   }
   | { t: 'join'; id: number; name: string }
   | { t: 'leave'; id: number; name: string }
@@ -123,7 +132,12 @@ export type ServerMessage =
   | { t: 'chat'; from: string; text: string; system?: boolean }
   | { t: 'time'; time: number }
   | { t: 'teleport'; x: number; y: number; z: number }
-  | { t: 'kick'; reason: string }
+  /** `reconnect`: the server is restarting; try again after this many milliseconds. `code` tells why for login failures. */
+  | { t: 'kick'; reason: string; reconnect?: number; code?: 'password' | 'banned' | 'whitelist' | 'identity' | 'full' }
+  /** The server corrected your inventory (it did not accept your last update); replace it. */
+  | { t: 'state'; inventory: number[][]; reason?: string }
+  /** The game mode of this game changed (/gamemode). */
+  | { t: 'gamemode'; mode: GameMode }
   /** Entities around the player (10 Hz). Lists replace what the client knows. */
   | { t: 'ent'; m: MobEntry[]; i: ItemEntry[]; a: ArrowEntry[]; b: TntEntry[] }
   /** A mob or arrow hurt this player. */

@@ -5,10 +5,12 @@ Eén Node.js-proces serveert de game (de gebouwde `dist/`) **en** de multiplayer
 
 ```
 Browser ──HTTP──▶  /            → dist/ (de game)
-        ──HTTP──▶  /api/rooms   → een game aanmaken (POST) of opzoeken (GET /api/rooms/<CODE>)
+        ──HTTP──▶  /api/rooms   → een game aanmaken (POST), opzoeken (GET /api/rooms/<CODE>) of de serverlijst (GET /api/rooms?public=1)
         ──WS────▶  /ws          → hoofdwereld
         ──WS────▶  /ws/<CODE>   → een game van een speler
-        ──HTTP──▶  /health      → {"ok":true,"players":2,"rooms":3}
+        ──HTTP──▶  /health      → {"ok":true,"version":"1.0.0","uptime":3600,"players":2,"rooms":3}
+        ──HTTP──▶  /metrics     → Prometheus (alleen lokaal of met token)
+        ──HTTP──▶  /admin       → beheerpagina (alleen met ADMIN_TOKEN), API op /api/admin/*
 ```
 
 ## Snel starten
@@ -25,11 +27,13 @@ npm start          # http://localhost:3000
 
 Je hoeft niets in te stellen. Op de server kiest iedere speler **Multiplayer**:
 
-- **Create Game:** kies een naam, spelmodus en eventueel een seed. Je krijgt een code van zes tekens
+- **Create Game:** kies een naam, spelmodus en eventueel een seed, een **wachtwoord** en of de game in de
+  **serverlijst** mag staan. Je krijgt een code van zes tekens
   (bijvoorbeeld `K7Q-M2X`) en een uitnodigingslink (`https://jouwdomein/?join=K7QM2X`).
   Ook later in het spel: **Esc → Invite Friends**.
 - **Join Game:** een vriend opent de link (naam invullen, klaar) of typt de code of plakt de link in het
   codeveld. Recente games staan als knop in het menu.
+- **Browse Games:** de publieke serverlijst: games waarvan de maker "Show in Server List" aanzette.
 - **Join Public Server:** de altijd-aanwezige hoofdwereld (zet uit met `MAIN_WORLD=off`).
 - **Direct Connect:** een ander BunkCraft-adres, voor wie een eigen server draait.
 
@@ -72,10 +76,170 @@ limieten per bezoeker werken in plaats van per proxy.
 | `ROOM_MAX_PLAYERS` | `8` | Spelers per game |
 | `ROOM_CREATE_LIMIT` | `6` | Games die één bezoeker per uur mag aanmaken |
 | `ROOM_EXPIRE_DAYS` | `60` | Games zonder bezoek worden na zoveel dagen verwijderd (`0` = nooit) |
+| `ADMIN_TOKEN` | niet gezet | Geheim voor `/admin` en `/api/admin/*`. Leeg = beheer staat uit. Minstens 16 willekeurige tekens (`openssl rand -hex 24`). Wie dit token als `owner` meestuurt, is ook operator in elke game. |
+| `METRICS_TOKEN` | niet gezet | Bearer-token voor `/metrics`. Zonder `METRICS_TOKEN` en `ADMIN_TOKEN` is `/metrics` alleen bereikbaar vanaf deze machine (niet via een reverse proxy). |
+| `OPS` | leeg | Komma-gescheiden namen die operator zijn in de **hoofdwereld** (games hebben hun eigen eigenaar). |
+| `ALLOWED_ORIGINS` | leeg (alles) | Komma-gescheiden `Origin`-lijst voor WebSocket en API-CORS, bijv. `https://play.example.com`. `same-origin` staat alleen de eigen host toe. |
+| `MAX_CONNECTIONS` | `500` | Maximum aantal gelijktijdige WebSocket-verbindingen |
+| `MAX_CONN_PER_IP` | `10` | Maximum aantal verbindingen per adres (let op: een huishouden achter één IP) |
+| `PASSWORD_FAIL_LIMIT` | `5` | Foute wachtwoorden per adres per 10 minuten, daarna geweigerd |
+| `LIST_MAX` | `50` | Maximum aantal games in de publieke serverlijst |
+| `INVENTORY_GUARD` | `enforce` | Inventory-controle in survival: `enforce` (terugdraaien), `warn` (alleen loggen) of `off` |
+| `BINARY_PROTOCOL` | `on` | Binaire `snap`/`ent`-frames voor clients die erom vragen (`off` = altijd JSON) |
+| `BACKUP_KEEP` | `12` | Aantal back-ups per wereld (`0` = geen back-ups) |
+| `BACKUP_INTERVAL_MIN` | `60` | Minuten tussen back-ups |
+| `RECONNECT_HINT_MS` | `8000` | Bij afsluiten (SIGTERM) krijgen spelers de hint om zoveel milliseconden later opnieuw te verbinden |
+| `LOG_LEVEL` | `info` | `debug`, `info`, `warn` of `error` |
+| `LOG_FORMAT` | `json` | `json` (een object per regel) of `text` |
 
 `world.json` bevat ook `genVersion`, de versie van de terreingenerator (zie RESEARCH.md §4). Een nieuw bestand krijgt de huidige versie, een bestand zonder het veld (van voor versies) is versie 1 en blijft dat: zijn terrein blijft hetzelfde.
 
 Voorbeeld: `SEED=bunk GAMEMODE=creative WORLD_NAME="Bouwserver" npm start`
+
+## Wachtwoorden, privacy en namen
+
+- **Wachtwoord per game** (optioneel, bij *Create Game*). De server bewaart alleen een `scrypt`-hash in `world.json`
+  (`scrypt$N$r$p$salt$hash`); het wachtwoord zelf wordt nergens teruggestuurd of gelogd. `GET /api/rooms/<CODE>` meldt
+  alleen `"locked": true`, waarna het menu om het wachtwoord vraagt. Het wachtwoord gaat in het `hello`-bericht over de
+  WebSocket, dus gebruik HTTPS (`wss://`).
+- **Brute force:** `PASSWORD_FAIL_LIMIT` foute pogingen per adres per 10 minuten, over alle games samen. Daarna weigert de
+  server zelfs het juiste wachtwoord totdat het venster voorbij is, zonder de (dure) scrypt-controle uit te voeren.
+- **Privé of in de lijst:** een game staat standaard **niet** in de serverlijst. Alleen "Show in Server List" zet hem erin.
+  `GET /api/rooms?public=1` geeft per game `code`, `name`, `gameType`, `gameMode`, `players`, `maxPlayers`, `locked` en bij
+  arcade-games `map`: maximaal `LIST_MAX` stuks, vijf seconden gecachet, begrensd per adres. De lijst komt uit een klein
+  `meta.json` naast elke `world.json`, zodat een lijst nooit werelden hoeft te laden. Games van vóór deze versie hebben geen
+  `meta.json` en staan dus niet in de lijst.
+- **Eigenaar:** `POST /api/rooms` geeft **één keer** een `ownerToken` terug (alleen de SHA-256 staat in `world.json`). De
+  browser van de maker bewaart hem in `localStorage` (`bunkcraft.owner.<CODE>`) en stuurt hem mee bij het joinen: dat maakt
+  hem eigenaar en operator, zonder wachtwoord en zonder dat een ban of whitelist hem buitensluit. Raak je dat token kwijt,
+  dan ben je geen eigenaar meer; de beheerder kan de game dan nog sluiten via `/admin`.
+- **Namen zijn gebonden aan een browser.** Elke browser maakt per server en game een geheime sleutel (`bunkcraft.key.<host>/<CODE>`)
+  en stuurt hem mee. De eerste login met een naam claimt die naam in die game (`claims` in `world.json`, alleen de hash).
+  Wie later dezelfde naam met een andere sleutel gebruikt, wordt geweigerd. Zo kan niemand zich voordoen als operator.
+  Oude clients zonder sleutel kunnen nog joinen onder namen die niemand claimde, maar zijn nooit operator. Een claim is
+  geen account: wie zijn browserdata wist, verliest zijn naam (vraag de eigenaar `/unban`/een nieuwe naam).
+
+## Operators en commando's
+
+Een game heeft een **eigenaar** (de maker, via het token) en **operators** (`/op`). Alles wordt op de server gecontroleerd; de
+client stuurt alleen de chattekst. `/help` toont alleen wat jij mag gebruiken.
+
+| Commando | Wie | Wat |
+|---|---|---|
+| `/help`, `/list`, `/seed`, `/spawn` | iedereen | |
+| `/say <tekst>` | operator | Systeembericht aan iedereen |
+| `/kick <naam> [reden]` | operator | Speler verwijderen (hij kan terugkomen) |
+| `/ban <naam> [reden]`, `/unban <naam>`, `/banlist` | operator | Ban op naam én op adres (gehasht met een zout) als de speler online was |
+| `/op <naam>`, `/deop <naam>` | eigenaar | Operators beheren; alleen de eigenaar kan een operator kicken of bannen |
+| `/whitelist add\|remove <naam>`, `on`, `off`, `list` | operator | Alleen genoemde namen (en operators) mogen joinen |
+| `/tp <naam>` of `/tp <naam> to <naam>` | operator | Teleporteren |
+| `/gamemode survival\|creative\|hardcore\|spectator` | operator | Geldt voor iedereen in die game |
+| `/time set day\|noon\|night\|midnight` | operator | |
+| `/weather clear\|rain\|thunder` | operator | Stub: meldt dat weer nog niet beschikbaar is (haakje `setWeather` in `CommandHost`) |
+| `/give <naam> <item> [aantal]` | operator | **Alleen in creative-games** |
+
+Opslag: `ops`, `bans` en `whitelist` staan in `world.json` en overleven herstarts. Een game die van vóór de eigenaars-tokens
+dateert, heeft geen eigenaar: daar bestaan geen moderatiecommando's en blijft `/time` open voor iedereen, zoals vroeger.
+De hoofdwereld krijgt operators via `OPS` (namen, gebonden via de sleutel) of via `ADMIN_TOKEN` als `owner`.
+
+## Beheer: `/admin` en `/api/admin/*`
+
+Alleen actief met `ADMIN_TOKEN`. Elk verzoek heeft `Authorization: Bearer <token>` nodig; het token wordt in constante tijd
+vergeleken (`timingSafeEqual` over SHA-256) en 20 foute pogingen per adres per 10 minuten geven 429. Zet `/admin` bij voorkeur
+alleen open via HTTPS, of beperk het in je reverse proxy tot je eigen IP.
+
+| Verzoek | Doet |
+|---|---|
+| `GET /api/admin/stats` | uptime, spelers, games, verbindingen, CPU, geheugen, tick p50/p99, verkeer |
+| `GET /api/admin/rooms` | hoofdwereld en alle games (ook die niet in het geheugen staan) |
+| `GET /api/admin/rooms/<CODE>/players`, `GET /api/admin/main/players` | spelers met adres en ping |
+| `POST /api/admin/rooms/<CODE>/kick`, `POST /api/admin/main/kick` | `{"name":"..."}` |
+| `POST /api/admin/rooms/<CODE>/close` | iedereen eruit en uit het geheugen; `{"remove":true}` verwijdert ook de data |
+| `GET/POST /api/admin/ip-bans`, `DELETE /api/admin/ip-bans/<ip>` | adressen blokkeren (bewaard in `data/ip-bans.json`); open verbindingen sluiten direct |
+
+`/admin` is één statische HTML-pagina zonder framework en zonder geheimen erin: je plakt het token in (alleen in
+`sessionStorage` van dat tabblad), ziet elke 5 seconden de cijfers en kunt games sluiten of verwijderen, spelers kicken en
+adressen blokkeren. Alle data gaat via `textContent` de pagina in en een strikte CSP verbiedt externe scripts.
+
+## Observability en betrouwbaarheid
+
+- **Logs:** een JSON-object per regel (`{"ts","level","msg",...velden}`), met `room` op regels van een game. Handig met
+  `docker logs bunkcraft | jq`. `LOG_LEVEL` en `LOG_FORMAT=text` voor leesbare regels.
+- **`/health`:** `{ok, version, uptime, players, rooms}`; 503 terwijl de server afsluit.
+- **`/metrics`** (Prometheus): `bunkcraft_players`, `bunkcraft_rooms_loaded`, `bunkcraft_rooms_total`, `bunkcraft_connections`,
+  `bunkcraft_tick_duration_seconds{quantile="0.5"|"0.99"}`, `process_resident_memory_bytes`, `process_heap_used_bytes`,
+  `process_cpu_seconds_total`, `bunkcraft_ws_messages_{received,sent}_total`, `bunkcraft_ws_bytes_{received,sent}_total`,
+  `bunkcraft_ws_messages_per_second{direction}`, `bunkcraft_ws_bytes_per_second{direction}`,
+  `bunkcraft_rate_limit_hits_total{kind}`, `bunkcraft_connections_refused_total`, `bunkcraft_logins_failed_total`,
+  `bunkcraft_inventory_rejects_total`. Scrape-config: `bearer_token: <METRICS_TOKEN>` of scrape lokaal.
+- **Afsluiten (SIGTERM/SIGINT):** de server stopt met nieuwe verbindingen, slaat alle werelden op, stuurt elke speler
+  `kick` met `reconnect: <ms>` en sluit de sockets met code 1012. De client toont "Server restarting" en probeert tot vijf keer
+  zelf opnieuw te joinen. Docker stuurt SIGTERM en wacht 10 seconden: ruim genoeg.
+- **Back-ups:** elke `BACKUP_INTERVAL_MIN` minuten een kopie van elke gewijzigde `world.json` naar
+  `data/backups/<main|CODE>/<tijdstempel>.json`, de nieuwste `BACKUP_KEEP` blijven. Back-ups van verwijderde games blijven
+  30 dagen. De wereld zelf wordt al atomair geschreven (tijdelijk bestand + rename). Is een `world.json` toch onleesbaar, dan
+  gebruikt de server de nieuwste leesbare back-up (en bewaart het kapotte bestand als `world.json.corrupt-<tijd>`); zonder
+  back-up weigert hij te starten in plaats van de wereld te overschrijven. Terugzetten: kopieer een back-up naar `world.json`
+  terwijl de server uit staat.
+- **Verbindingslimieten:** `MAX_CONNECTIONS` globaal, `MAX_CONN_PER_IP` per adres (503 / 429 vóór de WebSocket-handshake),
+  `ALLOWED_ORIGINS` voor de `Origin`-header (browsers sturen die altijd; clients zonder Origin, zoals bots en curl, vallen niet
+  onder deze controle). Zonder `TRUST_PROXY=1` ziet de server achter een proxy overal hetzelfde adres: zet het aan.
+- **Fouten:** een onverwachte fout in één game wordt gelogd (`uncaught exception`) zonder de rest te stoppen; mislukt het opslaan
+  (schijf vol), dan blijft de wereld in het geheugen en probeert de server het over 30 seconden opnieuw.
+
+## Server-authoritative inventory (survival)
+
+De client beheert nog steeds het inventoryscherm (geen server-roundtrip per klik), maar in **survival- en hardcore-games**
+accepteert de server een `state`-bericht alleen als de wijziging uit te leggen is. Een afgewezen inventory wordt niet
+opgeslagen; de client krijgt `{t:"state", inventory, reason}` terug met de laatste goedgekeurde inventory plus de pickups en
+drops die de server sindsdien zag, en laadt die. Creative en spectator zijn uitgezonderd (daar bestaat een onbeperkte
+inventory), maar ook daar moet de vorm kloppen. `INVENTORY_GUARD=warn` logt alleen (handig om te testen), `off` schakelt uit.
+
+**Wat de server controleert** (`server/InventoryGuard.ts`):
+
+- Vorm: maximaal 36 slots, alleen gehele getallen, bestaand item-id, stackgrootte `1..maxStack` (gereedschap stapelt niet),
+  gereedschapsschade binnen de levensduur.
+- Items komen alleen binnen via een **pickup** die de server zelf stuurde (`taken`) of via **craften/smelten**: een
+  toename die geen pickup verklaart, moet te maken zijn uit de vorige inhoud met `RECIPES`, ook ketens (blok hout → planken →
+  stokken) tot drie niveaus diep.
+- **`drop`-berichten** (blokdrops, Q, doodsdrops) maken alleen een itementiteit als er een **blok was dat deze speler brak**
+  (de server zag de `block`-wijziging; krediet 60 seconden, het zwaarste gereedschap als maximum, grind mag vuursteen geven)
+  of het item **in zijn inventory zit**. Een gesmeed `drop` van 64 diamanten maakt dus niets, en dezelfde drop herhalen
+  dupliceert niet: elk stuk wordt van het saldo afgeboekt. Drop en weer oppakken geeft het saldo één keer terug.
+
+**Wat niet wordt voorkomen** (eerlijk, zodat je weet waar de grenzen liggen):
+
+- Welk werkblad of welke oven werd gebruikt en of die dichtbij stond: de recepten zelf worden gecontroleerd, het station niet.
+- Items die als blok geplaatst of opgegeten worden: verbruik wordt vertrouwd (het verlaagt alleen het saldo). Wie een blok plaatst
+  en het item daarna toch dropt, kan dat een keer doen met items die hij daadwerkelijk had.
+- Gereedschapsschade terugzetten naar 0 (repareren zonder recept) en de volgorde van slots.
+- Health, honger en `stats`: die geeft de client op (alleen getallen en lengte worden gecontroleerd).
+- Een speler die al vóór deze versie vals speelde: zijn opgeslagen inventory geldt als beginsituatie.
+- Een legitieme drop zonder blokbreuk die de server niet kent (bijvoorbeeld bladverval aan de clientkant) wordt geweigerd:
+  `INVENTORY_GUARD=warn` laat zien of dat gebeurt (`unbacked drop` in de logs).
+- Kisten bestaan nog niet; als ze er komen, moeten overdrachten via een servervalidatie lopen en krediet geven in `InventoryGuard`.
+
+## Binair protocol voor `snap` en `ent`
+
+De twee berichten met de meeste bytes kunnen als binaire WebSocket-frames (`src/net/binary.ts`, `DataView`, geen
+afhankelijkheid). De client zet `bin: true` in `hello`; de server antwoordt `binary: true` in `welcome` en verstuurt vanaf dan
+alleen `snap` en `ent` binair. Alle andere berichten, en alles van client naar server, blijven JSON. Een client begrijpt altijd
+beide vormen, dus oude en nieuwe clients kunnen in dezelfde game zitten. Layout: zie de kop van `binary.ts`
+(snap 21 bytes per speler, mob 27, item 20, pijl 21, TNT 18).
+
+Meting (`npx tsx scripts/bench-binary.ts`, 16 spelers, willekeurige maar realistische waarden):
+
+| Bericht | JSON | Binair | Besparing | Encode (JSON / bin) | Decode (JSON / bin) |
+|---|---|---|---|---|---|
+| `snap`, 16 spelers, 20 Hz | 737 B | 339 B | **54 %** | 2,6 / 1,0 µs | 4,2 / 0,6 µs |
+| `ent`, rustig (6 mobs, 2 items), 10 Hz | 395 B | 211 B | **47 %** | 1,5 / 1,2 µs | 2,6 / 0,8 µs |
+| `ent`, druk (24 mobs, 12 items, 4 pijlen, 3 TNT) | 1832 B | 1035 B | **44 %** | 7,4 / 2,4 µs | 12,0 / 1,2 µs |
+
+Per client in een volle game: 14,4 → 6,6 KiB/s voor `snap`; de server verstuurt met 16 spelers ongeveer 230 → 106 KiB/s aan `snap`
+alleen. De CPU gaat omlaag in plaats van omhoog (binair is goedkoper dan `JSON.stringify` en `JSON.parse`), en de besparing is
+boven de 40 %, dus staat het standaard aan. Een deflate-compressie van de JSON (`permessage-deflate`) haalt vergelijkbare
+bytes (400 B voor `snap`), maar kost CPU per bericht en per verbinding op de server; dat staat daarom uit. Gevolg: hoeken
+hebben 0,0001 rad resolutie en posities zijn `float32` (< 1 cm fout tot 100 000 blokken).
 
 ## Docker
 
@@ -125,7 +289,7 @@ HTTPS en WebSockets automatisch.
 - **Tijd:** de dag/nachtcyclus loopt op de server (alleen als er spelers online zijn) en wordt gesynchroniseerd.
 - **Opslaan:** elke 30 seconden en bij afsluiten (Ctrl+C / SIGTERM), atomisch via
   een tijdelijk bestand, zodat een crash nooit een half geschreven wereld achterlaat.
-- **Commando's in de chat:** `/help`, `/list`, `/seed`, `/spawn`, `/time set day|noon|night|midnight`.
+- **Commando's in de chat:** zie *Operators en commando's*.
 
 ## Mobs, items en TNT op de server
 
@@ -235,9 +399,11 @@ Beveiliging (dreigingsmodel, bevindingen, hardening-checklist voor een domein): 
 
 - **Geen PvP in Minecraft-games:** pijlen en explosies raken wel mobs en de speler die in de buurt is. PvP bestaat alleen in de arcade-speltypes.
 - **Arcade-games vertrouwen de positie van de client** (alleen snelheid en arena-grenzen worden gecontroleerd): er is geen botsingscontrole tegen de blokken en geen server-side beweging.
-- **Inventory en health worden door de client opgegeven:** valsspelen met de inventory is mogelijk. Plaats de server daarom niet publiek zonder vertrouwde spelers, of voeg wachtwoorden en whitelisting toe (roadmap).
+- **Health en honger worden door de client opgegeven.** De inventory wordt in survival gecontroleerd, met de grenzen die onder *Server-authoritative inventory* staan. Gebruik voor een publieke server wachtwoorden of de whitelist.
 - **Items:** blokdrops, Q en doodsdrops gaan via de server en zijn voor iedereen zichtbaar; wie het eerst bij een item komt, krijgt het.
-- **Geen accounts:** spelersnamen zijn niet beveiligd. Wie dezelfde naam gebruikt in dezelfde game, neemt die speler over. Een game is alleen toegankelijk met de code (zes tekens uit 31, met een limiet op het aantal pogingen per bezoeker), dus deel hem alleen met vrienden.
+- **Geen accounts, wel gebonden namen:** een naam hoort bij de browser die hem het eerst gebruikte (zie *Wachtwoorden, privacy en namen*); er is geen herstel als je je browserdata wist. Een game is toegankelijk met de code (zes tekens uit 31, met een limiet op het aantal pogingen per bezoeker) en eventueel een wachtwoord. De whitelist werkt op naam: iemand kan een naam claimen die nog nooit gebruikt is, dus combineer hem met een wachtwoord als dat telt.
+- **Ban op adres** raakt iedereen achter hetzelfde IP (huishouden, school). Bans op naam helpen weinig tegen iemand die een andere naam kiest; gebruik daarvoor een wachtwoord of de whitelist.
+- **Weer** bestaat nog niet in multiplayer: `/weather` is een stub.
 - **Aanmaken is beperkt:** zes games per uur per bezoeker en `MAX_ROOMS` in totaal, zodat een publieke server niet volloopt.
 - **Advancements** staan uit in multiplayer.
 

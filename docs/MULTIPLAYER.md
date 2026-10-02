@@ -4,6 +4,9 @@
 > externe dienst. Eén proces serveert de game en de WebSocket (`server/`), zodat alles op één webserver
 > draait. Zie [`SERVER.md`](SERVER.md). De WebRTC-variant (fase 1) is niet meer nodig.
 
+> **Beheer en vertrouwen (oktober 2026):** wachtwoorden, operators, een publieke serverlijst, `/admin`, metrics, back-ups,
+> controle van survival-inventories en binaire `snap`/`ent`-frames staan beschreven in [`SERVER.md`](SERVER.md).
+
 Samenvatting van het multiplayer-onderzoek (oktober 2026). Bronnen staan onderaan.
 
 ## Wat de huidige code al meebrengt

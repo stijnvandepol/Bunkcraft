@@ -64,7 +64,7 @@ export class ServerEntities {
   constructor(
     seed: number,
     edits: Record<string, number>,
-    private readonly mode: GameMode,
+    private mode: GameMode,
     private readonly host: EntityHost,
     private readonly getTime: () => number,
     genVersion?: number,
@@ -90,6 +90,11 @@ export class ServerEntities {
     this.world.drainSimEdits();
     this.sentAnything.clear();
     this.tickCount = 0;
+  }
+
+  /** The game mode changed (/gamemode): mobs and block drops follow the new rules. */
+  setMode(mode: GameMode): void {
+    this.mode = mode;
   }
 
   get mobCount(): number {

@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { CSP, SECURITY_HEADERS, clientAddress } from '../../server/security';
+import { CSP, SECURITY_HEADERS, clientAddress } from '../../server/HttpSecurity';
 
 describe('security headers', () => {
   it('CSP forbids inline scripts, eval, plugins, framing and base tag injection', () => {

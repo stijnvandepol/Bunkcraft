@@ -4,7 +4,7 @@ import { ArchiveError } from '../save/WorldArchive';
 import type { WorldTransfer } from '../save/WorldTransfer';
 import { type ShareParams } from '../save/share';
 import { NAME_PATTERN, formatCode, normalizeCode } from '../net/protocol';
-import { type RoomInfo, createRoom, forgetGame, lookupRoom, recentGames, serverInfo } from '../net/RoomApi';
+import { type RoomInfo, browseRooms, createRoom, forgetGame, lookupRoom, ownerToken, recentGames, roomPassword, serverInfo, setRoomPassword } from '../net/RoomApi';
 import { GAME_TYPES, type GameType, gameTypeDef } from '../modes/GameTypes';
 import { DEFAULT_MAP, MAP_SETTINGS, type MapSetting, getMap, mapName } from '../modes/maps';
 import { installButton } from '../pwa/Pwa';
@@ -53,6 +53,7 @@ export function describeRoom(info: RoomInfo): string {
     parts.push(info.gameMode[0].toUpperCase() + info.gameMode.slice(1));
   }
   parts.push(`${info.players}/${info.maxPlayers} players`);
+  if (info.locked) parts.push('Password');
   return parts.join(' · ');
 }
 
@@ -136,14 +137,7 @@ export class MainMenu {
         error.textContent = 'That is not a game code (6 letters and digits, like K7Q-M2X)';
         return;
       }
-      try {
-        roomInfo.textContent = describeRoom(await lookupRoom(c));
-      } catch (e) {
-        error.textContent = e instanceof Error ? e.message : String(e);
-        forgetGame(c);
-        return;
-      }
-      this.actions.joinServer(n, '', c);
+      await this.joinByCode(n, c, (msg) => { error.textContent = msg; }, (text) => { roomInfo.textContent = text; });
     };
     const join = () => void joinCode(code.value);
     for (const i of [name, code]) i.addEventListener('keydown', (e) => { if (e.key === 'Enter') join(); });
@@ -172,6 +166,7 @@ export class MainMenu {
       info.rooms ? code : null,
       info.rooms ? roomInfo : null,
       info.rooms ? button('Join Game', join, { cls: 'w150' }) : null,
+      info.rooms && info.features?.browse ? button('Browse Games', () => { const n = validName(); if (n) void this.showBrowse(n); }, { cls: 'w150' }) : null,
       recent.length ? h('div', { class: 'field-label', text: 'Recent Games' }) : null,
       ...recent,
       error,
@@ -185,10 +180,84 @@ export class MainMenu {
     if (prefillCode) previewCode();
   }
 
+  /** Looks a game up and joins it; asks for the password first when the game has one. */
+  private async joinByCode(playerName: string, code: string, onError: (msg: string) => void, onInfo: (text: string) => void = () => undefined): Promise<void> {
+    let info: RoomInfo;
+    try {
+      info = await lookupRoom(code);
+      onInfo(describeRoom(info));
+    } catch (e) {
+      onError(e instanceof Error ? e.message : String(e));
+      forgetGame(code);
+      return;
+    }
+    // The creator is let in with the owner token, and a password typed earlier this session is remembered.
+    if (info.locked && !roomPassword(code) && !ownerToken(code)) {
+      this.askPassword(playerName, code, info);
+      return;
+    }
+    this.actions.joinServer(playerName, '', code);
+  }
+
+  /** Password prompt for a locked game. The password goes to the server in `hello` and is kept in memory only. */
+  private askPassword(playerName: string, code: string, info: RoomInfo): void {
+    const password = h('input', { class: 'mc-input', type: 'password', maxLength: 64, placeholder: 'Password', autocomplete: 'off' });
+    const join = () => {
+      if (!password.value) { password.focus(); return; }
+      setRoomPassword(code, password.value);
+      this.actions.joinServer(playerName, '', code);
+    };
+    password.addEventListener('keydown', (e) => { if (e.key === 'Enter') join(); });
+    this.stack.push(menuScreen('Password Required', [
+      h('div', { style: COLUMN },
+        h('div', { class: 'hint', text: `${info.name} is protected with a password.` }),
+        password,
+      ),
+    ], [button('Join Game', join, { cls: 'w150' }), button('Cancel', () => this.stack.pop(), { cls: 'w150' })]));
+    window.setTimeout(() => password.focus(), 0);
+  }
+
+  /** The public server list: games whose owners chose to show them. */
+  private async showBrowse(playerName: string): Promise<void> {
+    const error = h('div', { class: 'error' });
+    const list = h('div', { style: COLUMN }, h('div', { class: 'hint', text: 'Loading...' }));
+    const render = async () => {
+      list.replaceChildren();
+      error.textContent = '';
+      try {
+        const rooms = await browseRooms();
+        if (rooms.length === 0) list.append(h('div', { class: 'hint', text: 'No public games right now. Create one and tick "Show in Server List".' }));
+        for (const r of rooms) {
+          const tag = GAME_TYPE_TAGS[r.gameType ?? 'minecraft'];
+          list.append(
+            button(`${tag ? `[${tag}] ` : ''}${r.name}`, () => void this.joinByCode(playerName, r.code, (m) => { error.textContent = m; }), { cls: 'w150' }),
+            h('div', { class: 'hint', text: describeRoom(r) }),
+          );
+        }
+      } catch (e) {
+        list.replaceChildren();
+        error.textContent = e instanceof Error ? e.message : String(e);
+      }
+    };
+    this.stack.push(menuScreen('Browse Games', [h('div', { style: COLUMN }, list, error)], [
+      button('Refresh', () => void render(), { cls: 'w150' }),
+      button('Back', () => this.stack.pop(), { cls: 'w150' }),
+    ], { list: true }));
+    await render();
+  }
+
   /** Name, game type and settings for a new game; the server answers with its share code. */
   private showCreateGame(playerName: string): void {
     const name = h('input', { class: 'mc-input', value: `${playerName}'s Game`.slice(0, 32), maxLength: 32 });
     const seed = h('input', { class: 'mc-input', placeholder: 'Leave blank for a random seed', maxLength: 32 });
+    const password = h('input', { class: 'mc-input', type: 'password', maxLength: 64, placeholder: 'Optional password', autocomplete: 'off' });
+    let listed = false;
+    const listedHint = h('div', { class: 'hint', text: 'Private: only people with the code or link can find this game.' });
+    const listedButton = button('Show in Server List: No', () => {
+      listed = !listed;
+      listedButton.textContent = `Show in Server List: ${listed ? 'Yes' : 'No'}`;
+      listedHint.textContent = listed ? 'Anyone can see this game under Browse Games and join it.' : 'Private: only people with the code or link can find this game.';
+    });
     const error = h('div', { class: 'error' });
     let type: GameType = 'minecraft';
     let mode: GameMode = 'survival';
@@ -261,6 +330,7 @@ export class MainMenu {
         const arcade = gameTypeDef(type).arcade;
         const code = await createRoom(name.value.trim() || 'BunkCraft Game', mode, arcade ? '' : seed.value.trim(), {
           gameType: type, scoreLimit: arcade ? scoreLimit : 0, timeLimitSec: arcade ? timeLimit : 0, mapId: arcade ? map : undefined,
+          password: password.value || undefined, listed,
         });
         this.actions.joinServer(playerName, '', code);
       } catch (e) {
@@ -268,12 +338,14 @@ export class MainMenu {
         busy = false;
       }
     };
-    for (const i of [name, seed]) i.addEventListener('keydown', (e) => { if (e.key === 'Enter') void create(); });
+    for (const i of [name, seed, password]) i.addEventListener('keydown', (e) => { if (e.key === 'Enter') void create(); });
     this.stack.push(menuScreen('Create Game', [
       h('div', { style: COLUMN },
         h('div', { class: 'field-label', text: 'Game Name' }), name,
         typeButton, typeHint,
         sandboxFields, arcadeFields,
+        h('div', { class: 'field-label', text: 'Password' }), password,
+        listedButton, listedHint,
         h('div', { class: 'hint', text: 'You get a code and a link to share. Friends can join any time while the game exists.' }),
         error,
       ),
