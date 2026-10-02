@@ -13,11 +13,13 @@ GC pauses come from a CDP trace of the renderer main thread (MinorGC / MajorGC e
 import argparse
 import json
 import os
+import socket
 import statistics
 import subprocess
 import sys
 import tempfile
 import time
+import urllib.request
 
 from playwright.sync_api import sync_playwright
 
@@ -49,12 +51,19 @@ def pct(xs, p):
     return s[min(len(s) - 1, int(len(s) * p))]
 
 
+def free_port():
+    with socket.socket() as s:
+        s.bind(('127.0.0.1', 0))
+        return s.getsockname()[1]
+
+
 def start_server(port):
+    port = port or free_port()
     cfg = os.path.join(ROOT, f'.vite.perf.{port}.config.mjs')
     with open(cfg, 'w') as f:
         f.write("export default { worker: { format: 'es' }, server: { port: %d, strictPort: true, hmr: false, watch: null } };" % port)
     proc = subprocess.Popen(['npx', 'vite', '--config', cfg], cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return proc, cfg
+    return proc, cfg, port
 
 
 def main():
@@ -64,18 +73,25 @@ def main():
     ap.add_argument('--distance', type=int, default=8)
     ap.add_argument('--cpu', type=float, default=1)
     ap.add_argument('--speed', default='fast')
-    ap.add_argument('--port', type=int, default=5199)
+    ap.add_argument('--port', type=int, default=0, help='0 = pick a free port')
     ap.add_argument('--url', default=None, help='use a running server instead of starting Vite')
     ap.add_argument('--json', default=None)
+    ap.add_argument('--profile-out', default=None, help='save the raw .cpuprofile here')
+    ap.add_argument('--alloc', action='store_true', help='also print the top JS allocation sites (CDP sampling heap profiler)')
     ap.add_argument('--profile', action='store_true', help='also print the top self-time functions (CDP CPU profiler)')
     args = ap.parse_args()
 
     proc = cfg = None
     url = args.url
     if not url:
-        proc, cfg = start_server(args.port)
-        url = f'http://localhost:{args.port}/'
-        time.sleep(3)
+        proc, cfg, port = start_server(args.port)
+        url = f'http://localhost:{port}/'
+        for _ in range(100):
+            try:
+                urllib.request.urlopen(url, timeout=1)
+                break
+            except OSError:
+                time.sleep(0.2)
     try:
         with sync_playwright() as pw:
             if args.browser == 'webkit':
@@ -111,10 +127,15 @@ def main():
                 cdp.send('Profiler.enable')
                 cdp.send('Profiler.setSamplingInterval', {'interval': 250})
                 cdp.send('Profiler.start')
+            if cdp and args.alloc:
+                cdp.send('HeapProfiler.startSampling', {'samplingInterval': 4096, 'includeObjectsCollectedByMajorGC': True,
+                                                         'includeObjectsCollectedByMinorGC': True})
             res = page.evaluate(RECORDER, args.seconds)
+            alloc = cdp.send('HeapProfiler.stopSampling')['profile'] if cdp and args.alloc else None
             prof = cdp.send('Profiler.stop')['profile'] if cdp and args.profile else None
             page.evaluate('() => clearInterval(window.__turn)')
             gc = []
+            gc_major = 0
             heap = {}
             if cdp:
                 heap = {m['name']: m['value'] for m in cdp.send('Performance.getMetrics')['metrics']}
@@ -128,9 +149,10 @@ def main():
                     if e.get('ph') == 'M' and e.get('name') == 'thread_name' and e['args'].get('name') == 'CrRendererMain':
                         main_tid = (e['pid'], e['tid'])
                 for e in events:
-                    if e.get('name') in ('MinorGC', 'MajorGC', 'V8.GCScavenger', 'V8.GCCompactor') and e.get('ph') == 'X' \
+                    if e.get('name') in ('MinorGC', 'MajorGC') and e.get('ph') == 'X' \
                             and (main_tid is None or (e['pid'], e['tid']) == main_tid):
                         gc.append(e['dur'] / 1000)
+                        gc_major += e['name'] == 'MajorGC'
                 if args.cpu != 1:
                     cdp.send('Emulation.setCPUThrottlingRate', {'rate': 1})
             gaps = res['gaps'][5:]
@@ -147,6 +169,7 @@ def main():
                 ('long frames > 33 ms', sum(1 for x in gaps if x > 33)),
                 ('GC pauses (n)', len(gc)),
                 ('GC total (ms)', f'{sum(gc):.1f}'),
+                ('GC major collections', gc_major),
                 ('GC worst (ms)', f'{max(gc):.1f}' if gc else '-'),
                 ('GC pauses > 4 ms', sum(1 for x in gc if x > 4)),
                 ('draw calls (median)', int(statistics.median(res['drawCalls']))),
@@ -157,6 +180,19 @@ def main():
             width = max(len(k) for k, _ in row)
             for k, v in row:
                 print(f'{k:<{width}}  {v}')
+            if alloc:
+                sites = {}
+                stack = [alloc['head']]
+                while stack:
+                    n = stack.pop()
+                    cf = n['callFrame']
+                    key = f"{cf['functionName'] or '(anonymous)'} {cf['url'].split('/')[-1].split('?')[0]}:{cf['lineNumber']}"
+                    sites[key] = sites.get(key, 0) + n['selfSize']
+                    stack.extend(n['children'])
+                total = sum(sites.values()) or 1
+                print(f'\ntop allocation sites (sampled, still-live objects only; total {total / 1048576:.1f} MB):')
+                for k, v in sorted(sites.items(), key=lambda kv: -kv[1])[:14]:
+                    print(f'  {v / 1024:9.0f} KB  {100 * v / total:5.1f} %  {k}')
             if prof:
                 self_us = {}
                 nodes = {n['id']: n for n in prof['nodes']}
@@ -165,6 +201,9 @@ def main():
                     key = f"{cf['functionName'] or '(anonymous)'} {cf['url'].split('/')[-1].split('?')[0]}:{cf['lineNumber']}"
                     self_us[key] = self_us.get(key, 0) + dt
                 total = sum(self_us.values())
+                if args.profile_out:
+                    with open(args.profile_out, 'w') as f:
+                        json.dump(prof, f)
                 print('\ntop self time (main thread):')
                 for k, v in sorted(self_us.items(), key=lambda kv: -kv[1])[:18]:
                     print(f'  {v / 1000:8.1f} ms  {100 * v / total:5.1f} %  {k}')

@@ -12,6 +12,26 @@ import { type TextureSet, buildTextures } from '../rendering/TextureAtlas';
 import type { World } from '../world/World';
 import type { Settings } from './Settings';
 
+/** Sort items of three.js' render list (the fields we compare). */
+interface RenderItem { id: number; groupOrder: number; renderOrder: number; z: number; material: { id: number } | null }
+
+/** Same order as three.js' painterSortStable, but returning small integers. */
+function sortFrontToBack(a: RenderItem, b: RenderItem): number {
+  if (a.groupOrder !== b.groupOrder) return a.groupOrder < b.groupOrder ? -1 : 1;
+  if (a.renderOrder !== b.renderOrder) return a.renderOrder < b.renderOrder ? -1 : 1;
+  if (a.material!.id !== b.material!.id) return a.material!.id < b.material!.id ? -1 : 1;
+  if (a.z !== b.z) return a.z < b.z ? -1 : 1;
+  return a.id < b.id ? -1 : 1;
+}
+
+/** Same order as three.js' reversePainterSortStable (transparent objects: far to near). */
+function sortBackToFront(a: RenderItem, b: RenderItem): number {
+  if (a.groupOrder !== b.groupOrder) return a.groupOrder < b.groupOrder ? -1 : 1;
+  if (a.renderOrder !== b.renderOrder) return a.renderOrder < b.renderOrder ? -1 : 1;
+  if (a.z !== b.z) return a.z > b.z ? -1 : 1;
+  return a.id < b.id ? -1 : 1;
+}
+
 export interface FrameStats {
   drawCalls: number;
   triangles: number;
@@ -60,6 +80,9 @@ export class Renderer {
       powerPreference: 'high-performance',
     });
     this.three.info.autoReset = false;
+    // three.js' own comparators return doubles, which V8 boxes into heap numbers on every compare.
+    this.three.setOpaqueSort(sortFrontToBack);
+    this.three.setTransparentSort(sortBackToFront);
     this.three.outputColorSpace = THREE.LinearSRGBColorSpace; // shaders output display-ready colours
     this.three.setClearColor(0x000000, 1);
 

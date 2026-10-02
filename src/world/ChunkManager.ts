@@ -2,8 +2,9 @@ import * as THREE from 'three';
 import type { GeometryData, MeshResult } from '../rendering/ChunkMesher';
 import type { WorkerPool } from '../workers/WorkerPool';
 import type { GenerateResponse, MeshResponse } from '../workers/protocol';
+import { PACK_BASE_BYTES, PACK_CHUNKS } from '../workers/protocol';
 import { CHUNK_EMPTY, CHUNK_GENERATING, CHUNK_READY, Chunk } from './Chunk';
-import { CHUNK_HEIGHT, CHUNK_SIZE, chunkKey } from './constants';
+import { CHUNK_AREA, CHUNK_HEIGHT, CHUNK_SIZE, CHUNK_VOLUME, chunkKey } from './constants';
 import type { WorldType } from './WorldGenerator';
 
 export interface ChunkMaterials {
@@ -11,6 +12,12 @@ export interface ChunkMaterials {
   cutout: THREE.Material;
   water: THREE.Material;
 }
+
+function noopUpdate(): void {}
+
+const EMPTY_ARRAYS = new Map<unknown, Uint8Array | Uint16Array | Uint32Array>([
+  [Uint8Array, new Uint8Array(0)], [Uint16Array, new Uint16Array(0)], [Uint32Array, new Uint32Array(0)],
+]);
 
 function geometryBytes(g: GeometryData | null): number {
   return g ? g.packed.byteLength + g.data.byteLength + g.tint.byteLength + g.index.byteLength : 0;
@@ -49,6 +56,9 @@ export class ChunkManager {
   private meshInFlight = 0;
   private readonly results: PendingMesh[] = [];
   private readonly meshPool: THREE.Mesh[] = [];
+  /** Scratch for the 3x3 neighbourhood while packing a mesh request; and reusable pack buffers. */
+  private readonly around: Chunk[] = new Array(PACK_CHUNKS);
+  private readonly packs: ArrayBuffer[] = [];
   /** Meshes uploaded this frame; frustum culling is skipped once to force the GPU upload. */
   private readonly fresh: THREE.Mesh[] = [];
   /** Chunks that own at least one mesh (flat array: no iterator garbage in the per-frame cull). */
@@ -61,7 +71,8 @@ export class ChunkManager {
   /** Meshes hidden from the main camera by the CPU cull (drawn only in the shadow pass). */
   culledChunks = 0;
   private disposed = false;
-  private scanNeeded = true;
+  /** Set by anything that can change what to schedule (a job finished, the player moved, an edit); a scan that found every worker busy waits for it. */
+  private scanWake = true;
   /** Incremented whenever chunk geometry changes (used to invalidate the cached shadow map). */
   geometryVersion = 0;
   /** Incremented whenever a chunk is added to or removed from the map (invalidates World's lookup cache). */
@@ -81,8 +92,10 @@ export class ChunkManager {
     // updateMatrixWorld traversal out of ~1000 children.
     this.opaqueGroup.matrixAutoUpdate = false;
     this.waterGroup.matrixAutoUpdate = false;
-    this.opaqueGroup.matrixWorldAutoUpdate = false;
-    this.waterGroup.matrixWorldAutoUpdate = false;
+    // three.js r186 still recurses into children when matrixWorldAutoUpdate is false: stop the
+    // traversal itself. Meshes get their matrixWorld once in setGeometry.
+    this.opaqueGroup.updateMatrixWorld = noopUpdate;
+    this.waterGroup.updateMatrixWorld = noopUpdate;
   }
 
   get(cx: number, cz: number): Chunk | undefined {
@@ -105,7 +118,7 @@ export class ChunkManager {
   }
 
   markDirty(): void {
-    this.scanNeeded = true;
+    this.scanWake = true;
   }
 
   update(px: number, pz: number, uploadBudgetBytes = 1.5 * 1024 * 1024): void {
@@ -120,10 +133,14 @@ export class ChunkManager {
       this.centerX = pcx;
       this.centerZ = pcz;
       this.unloadFar(pcx, pcz);
-      this.scanNeeded = true;
+      this.scanWake = true;
     }
     this.applyResults(uploadBudgetBytes);
-    if (this.scanNeeded) this.schedule(pcx, pcz);
+    if (this.scanWake) {
+      this.scanWake = false;
+      this.schedule(pcx, pcz);
+    }
+    this.pool.flushRecycle();
   }
 
   private schedule(pcx: number, pcz: number): void {
@@ -151,8 +168,6 @@ export class ChunkManager {
       }
       if (blocked && this.genInFlight >= maxInFlight && this.meshInFlight >= maxInFlight) return;
     }
-    // Everything inside the radius is generated and meshed: idle until something changes.
-    if (!blocked && this.genInFlight === 0 && this.meshInFlight === 0) this.scanNeeded = false;
   }
 
   private neighboursReady(c: Chunk): boolean {
@@ -176,60 +191,93 @@ export class ChunkManager {
       chunk.state = CHUNK_READY;
       chunk.version++;
       this.onGenerated?.(chunk);
-      this.scanNeeded = true;
+      this.scanWake = true;
     }, [], false, () => {
       // The worker crashed repeatedly on this job: let the next scan try again.
       this.genInFlight--;
       chunk.state = CHUNK_EMPTY;
-      this.scanNeeded = true;
+      this.scanWake = true;
     });
   }
 
   /** Immediately (re)mesh a chunk with high priority, if possible. */
   requestMeshUrgent(chunk: Chunk): void {
     chunk.urgent = true;
-    this.scanNeeded = true;
+    this.scanWake = true;
     if (!chunk.meshing && chunk.needsMesh && this.neighboursReady(chunk)) this.requestMesh(chunk);
   }
 
   private requestMesh(chunk: Chunk): void {
-    const neighbours: Uint8Array[] = [];
-    const biomes: Uint8Array[] = [];
-    const metas: (Uint8Array | null)[] = [];
+    // Pack the 3x3 neighbourhood into one pooled buffer that is transferred (not cloned) to the worker.
+    const around = this.around;
+    let metaMask = 0, metaCount = 0;
     for (let dz = -1; dz <= 1; dz++) {
       for (let dx = -1; dx <= 1; dx++) {
-        const n = this.chunks.get(chunkKey(chunk.cx + dx, chunk.cz + dz))!;
-        neighbours.push(n.blocks!);
-        biomes.push(n.biomes!);
-        metas.push(n.meta);
+        const n = (dz + 1) * 3 + dx + 1;
+        const c = this.chunks.get(chunkKey(chunk.cx + dx, chunk.cz + dz))!;
+        around[n] = c;
+        if (c.meta) { metaMask |= 1 << n; metaCount++; }
       }
+    }
+    const pack = (metaCount === 0 ? this.packs.pop() : undefined) ?? new ArrayBuffer(PACK_BASE_BYTES + metaCount * CHUNK_VOLUME);
+    const bytes = new Uint8Array(pack);
+    let metaOffset = PACK_BASE_BYTES;
+    for (let n = 0; n < PACK_CHUNKS; n++) {
+      const c = around[n];
+      bytes.set(c.blocks!, n * CHUNK_VOLUME);
+      bytes.set(c.biomes!, PACK_CHUNKS * CHUNK_VOLUME + n * CHUNK_AREA);
+      if (metaMask & (1 << n)) {
+        bytes.set(c.meta!, metaOffset);
+        metaOffset += CHUNK_VOLUME;
+      }
+      around[n] = undefined!;
     }
     const version = chunk.version;
     const urgent = chunk.urgent;
     chunk.urgent = false;
     chunk.meshing = true;
     this.meshInFlight++;
-    // Typed arrays are structured-cloned (copied): the main thread keeps ownership.
-    this.pool.submit({ type: 'mesh', id: 0, neighbours, metas, biomes, fancyLeaves: this.fancyLeaves }, (res) => {
+    const onFail = () => {
+      // The worker crashed on this job (its pack is gone): let the next scan rebuild it.
       this.meshInFlight--;
       chunk.meshing = false;
-      if (this.disposed || this.chunks.get(chunk.key) !== chunk) return;
-      const result = (res as MeshResponse).result;
-      if (urgent) this.uploadMesh(chunk, version, result); // edits skip the upload queue
-      else this.results.push({ chunk, version, result });
-      this.scanNeeded = true;
-    }, [], urgent, () => {
+      this.scanWake = true;
+    };
+    this.pool.submit({ type: 'mesh', id: 0, pack, metaMask, fancyLeaves: this.fancyLeaves }, (res) => {
       this.meshInFlight--;
       chunk.meshing = false;
-      this.scanNeeded = true;
-    });
+      const mesh = res as MeshResponse;
+      if (mesh.pack.byteLength === PACK_BASE_BYTES && this.packs.length < 16) this.packs.push(mesh.pack);
+      if (this.disposed || this.chunks.get(chunk.key) !== chunk) {
+        this.recycleResult(mesh.result);
+        return;
+      }
+      if (urgent) this.uploadMesh(chunk, version, mesh.result); // edits skip the upload queue
+      else this.results.push({ chunk, version, result: mesh.result });
+      this.scanWake = true;
+    }, [pack], urgent, onFail);
+  }
+
+  /** Give the buffers of a result that was never uploaded back to the worker pool. */
+  private recycleResult(r: MeshResult): void {
+    this.pool.recycle(r.light.buffer as ArrayBuffer);
+    for (const g of [r.opaque, r.cutout, r.water]) {
+      if (!g) continue;
+      this.pool.recycle(g.packed.buffer as ArrayBuffer);
+      this.pool.recycle(g.data.buffer as ArrayBuffer);
+      this.pool.recycle(g.tint.buffer as ArrayBuffer);
+      this.pool.recycle(g.index.buffer as ArrayBuffer);
+    }
   }
 
   private applyResults(budgetBytes: number): void {
     let bytes = 0;
     while (this.results.length > 0 && bytes < budgetBytes) {
       const r = this.results.shift()!;
-      if (this.chunks.get(r.chunk.key) !== r.chunk) continue;
+      if (this.chunks.get(r.chunk.key) !== r.chunk) {
+        this.recycleResult(r.result);
+        continue;
+      }
       this.uploadMesh(r.chunk, r.version, r.result);
       bytes += resultBytes(r.result);
     }
@@ -245,18 +293,24 @@ export class ChunkManager {
 
   private uploadMesh(chunk: Chunk, version: number, result: MeshResult): void {
     // An urgent (edit) remesh may already have uploaded a newer version.
-    if (chunk.meshedVersion >= version) return;
+    if (chunk.meshedVersion >= version) {
+      this.recycleResult(result);
+      return;
+    }
     chunk.meshedVersion = version;
     const prevLight = chunk.light;
     chunk.light = result.light;
-    if (prevLight) this.propagateLight(chunk, prevLight, result.light);
+    if (prevLight) {
+      this.propagateLight(chunk, prevLight, result.light);
+      this.pool.recycle(prevLight.buffer as ArrayBuffer);
+    }
     chunk.opaque = this.setGeometry(chunk, chunk.opaque, result.opaque, this.materials.opaque, this.opaqueGroup);
     chunk.cutout = this.setGeometry(chunk, chunk.cutout, result.cutout, this.materials.cutout, this.opaqueGroup);
     // Only chunks inside the shadow map's reach (≤ 128 blocks) invalidate the cached shadows.
     if (Math.abs(chunk.cx - this.centerX) <= 9 && Math.abs(chunk.cz - this.centerZ) <= 9) this.geometryVersion++;
     chunk.water = this.setGeometry(chunk, chunk.water, result.water, this.materials.water, this.waterGroup);
     this.updateExtent(chunk);
-    if (chunk.version !== version) this.scanNeeded = true;
+    if (chunk.version !== version) this.scanWake = true;
   }
 
   /**
@@ -274,7 +328,7 @@ export class ChunkManager {
         const z0 = dz < 0 ? 0 : dz > 0 ? 15 : 0, z1 = dz === 0 ? 15 : z0;
         if (!borderChanged(prev, next, x0, x1, z0, z1)) continue;
         n.version++;
-        this.scanNeeded = true;
+        this.scanWake = true;
       }
     }
   }
@@ -288,13 +342,6 @@ export class ChunkManager {
       if (mesh) this.releaseMesh(mesh);
       return null;
     }
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('packed', new THREE.BufferAttribute(data.packed, 4));
-    geo.setAttribute('data', new THREE.BufferAttribute(data.data, 4));
-    geo.setAttribute('tint', new THREE.BufferAttribute(data.tint, 4, true));
-    geo.setIndex(new THREE.BufferAttribute(data.index, 1));
-    geo.boundingBox = new THREE.Box3(new THREE.Vector3(0, data.minY - 0.5, 0), new THREE.Vector3(16, data.maxY + 0.5, 16));
-    geo.boundingSphere = geo.boundingBox.getBoundingSphere(new THREE.Sphere());
     if (!mesh) {
       mesh = this.meshPool.pop() ?? new THREE.Mesh();
       mesh.matrixAutoUpdate = false;
@@ -304,21 +351,42 @@ export class ChunkManager {
       mesh.material = material;
       group.add(mesh);
     }
-    mesh.geometry = geo;
+    // The (disposed) geometry object, its bounds and the mesh are reused: no uuid strings and
+    // bounding volumes per upload. three.js re-registers a disposed geometry on its next draw.
+    const geo = mesh.geometry;
+    geo.setAttribute('packed', this.gpuOnly(new THREE.BufferAttribute(data.packed, 4)));
+    geo.setAttribute('data', this.gpuOnly(new THREE.BufferAttribute(data.data, 4)));
+    geo.setAttribute('tint', this.gpuOnly(new THREE.BufferAttribute(data.tint, 4, true)));
+    geo.setIndex(this.gpuOnly(new THREE.BufferAttribute(data.index, 1)));
+    const box = (geo.boundingBox ??= new THREE.Box3());
+    box.min.set(0, data.minY - 0.5, 0);
+    box.max.set(16, data.maxY + 0.5, 16);
+    box.getBoundingSphere((geo.boundingSphere ??= new THREE.Sphere()));
     mesh.layers.mask = 3;
     mesh.frustumCulled = false;
     this.fresh.push(mesh);
     return mesh;
   }
 
+  /**
+   * Chunk geometry is static: once three.js has copied an attribute to the GPU, its CPU array goes
+   * back to a worker (zero-copy) instead of waiting for the garbage collector. The attribute keeps
+   * its `count`; a lost WebGL context remeshes everything (Game's contextrestored handler).
+   */
+  private gpuOnly<T extends THREE.BufferAttribute>(attr: T): T {
+    attr.onUpload(() => {
+      const array = attr.array;
+      attr.array = EMPTY_ARRAYS.get(array.constructor as typeof Uint8Array) ?? array;
+      if (attr.array !== array) this.pool.recycle(array.buffer as ArrayBuffer);
+    });
+    return attr;
+  }
+
   private updateExtent(c: Chunk): void {
     let lo = Infinity, hi = -Infinity;
-    for (const m of [c.opaque, c.cutout, c.water]) {
-      if (!m) continue;
-      const b = m.geometry.boundingBox!;
-      if (b.min.y < lo) lo = b.min.y;
-      if (b.max.y > hi) hi = b.max.y;
-    }
+    if (c.opaque) { lo = Math.min(lo, c.opaque.geometry.boundingBox!.min.y); hi = Math.max(hi, c.opaque.geometry.boundingBox!.max.y); }
+    if (c.cutout) { lo = Math.min(lo, c.cutout.geometry.boundingBox!.min.y); hi = Math.max(hi, c.cutout.geometry.boundingBox!.max.y); }
+    if (c.water) { lo = Math.min(lo, c.water.geometry.boundingBox!.min.y); hi = Math.max(hi, c.water.geometry.boundingBox!.max.y); }
     if (hi < lo) {
       this.removeFromDrawList(c);
     } else {
@@ -400,7 +468,8 @@ export class ChunkManager {
 
   private unloadFar(pcx: number, pcz: number): void {
     const limit = (this.renderDistance + 2.5) ** 2;
-    for (const [key, c] of this.chunks) {
+    // forEach, not for...of: no [key, value] entry array per chunk.
+    this.chunks.forEach((c, key) => {
       const dx = c.cx - pcx, dz = c.cz - pcz;
       if (dx * dx + dz * dz > limit) {
         this.disposeChunk(c);
@@ -408,7 +477,7 @@ export class ChunkManager {
         this.epoch++;
         this.onUnloaded?.(key);
       }
-    }
+    });
   }
 
   private disposeChunk(c: Chunk): void {
@@ -420,6 +489,9 @@ export class ChunkManager {
     }
     c.opaque = c.cutout = c.water = null;
     this.removeFromDrawList(c);
+    // Generated arrays are pooled worker buffers: hand them back (nothing else keeps a reference).
+    if (c.blocks && c.blocks.byteOffset === 0 && c.blocks.buffer.byteLength === CHUNK_VOLUME) this.pool.recycle(c.blocks.buffer as ArrayBuffer);
+    if (c.light) this.pool.recycle(c.light.buffer as ArrayBuffer);
     c.blocks = null;
     c.meta = null;
     c.biomes = null;
@@ -429,7 +501,7 @@ export class ChunkManager {
   /** Force every chunk to be remeshed (e.g. leaves quality changed). */
   remeshAll(): void {
     for (const c of this.chunks.values()) if (c.state === CHUNK_READY) c.version++;
-    this.scanNeeded = true;
+    this.scanWake = true;
   }
 
   /** Number of loaded chunks whose mesh is inside the camera frustum. */
