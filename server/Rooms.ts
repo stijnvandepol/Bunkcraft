@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomInt } from 'node:crypto';
+import { type GameType, gameTypeDef, parseGameType } from '../src/modes/GameTypes';
 import { CODE_ALPHABET, CODE_LENGTH, normalizeCode } from '../src/net/protocol';
 import { GAME_MODES, type GameMode } from '../src/player/GameMode';
 import { GameServer, parseGameMode } from './GameServer';
@@ -23,6 +24,24 @@ export interface RoomInfo {
   gameMode: GameMode;
   players: number;
   maxPlayers: number;
+  gameType: GameType;
+  scoreLimit: number;
+  timeLimitSec: number;
+}
+
+/** Match settings a client may ask for; the server clamps them. */
+export interface MatchRequest {
+  gameType?: unknown;
+  scoreLimit?: unknown;
+  timeLimitSec?: unknown;
+}
+
+export const SCORE_LIMIT_RANGE = { min: 5, max: 100 };
+export const TIME_LIMIT_RANGE = { min: 120, max: 1800 };
+
+function clampSetting(v: unknown, range: { min: number; max: number }, dflt: number): number {
+  const n = typeof v === 'number' && Number.isFinite(v) ? Math.round(v) : dflt;
+  return Math.min(range.max, Math.max(range.min, n));
 }
 
 /** Sliding-window limiter keyed by client address. */
@@ -78,7 +97,7 @@ export class Rooms {
   }
 
   /** Creates a new room and returns its code, or null when the server is full of rooms. */
-  create(name: string, gameMode: string | undefined, seed: string | undefined): string | null {
+  create(name: string, gameMode: string | undefined, seed: string | undefined, match: MatchRequest = {}): string | null {
     if (this.onDisk >= this.opts.maxRooms) return null;
     let code = '';
     do {
@@ -87,13 +106,20 @@ export class Rooms {
     const cleanName = name.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 32) || 'BunkCraft Game';
     const mode = GAME_MODES.includes(gameMode as GameMode) ? parseGameMode(gameMode) : 'survival';
     const cleanSeed = seed?.trim().slice(0, 32) || undefined;
+    // Arcade game types ignore the Minecraft game mode and bring their own match settings.
+    const type = gameTypeDef(parseGameType(match.gameType));
     const server = new GameServer({
       dataDir: join(this.opts.dataDir, code), worldName: cleanName, seed: cleanSeed, gameMode: mode,
       motd: this.opts.motd, maxPlayers: this.opts.maxPlayers, quiet: true,
+      ...(type.arcade ? {
+        gameType: type.id,
+        scoreLimit: clampSetting(match.scoreLimit, SCORE_LIMIT_RANGE, type.scoreLimit),
+        timeLimitSec: clampSetting(match.timeLimitSec, TIME_LIMIT_RANGE, type.timeLimitSec),
+      } : {}),
     });
     this.loaded.set(code, { server, lastActive: Date.now() });
     this.onDisk++;
-    console.log(`[room] created ${code} "${cleanName}" (${mode}); ${this.onDisk} rooms`);
+    console.log(`[room] created ${code} "${cleanName}" (${type.arcade ? type.id : mode}); ${this.onDisk} rooms`);
     return code;
   }
 

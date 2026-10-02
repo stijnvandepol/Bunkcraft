@@ -1,3 +1,4 @@
+import type { GameType } from '../modes/GameTypes';
 import { formatCode } from './protocol';
 
 export interface RoomInfo {
@@ -6,6 +7,10 @@ export interface RoomInfo {
   gameMode: string;
   players: number;
   maxPlayers: number;
+  /** "minecraft" unless it is an arcade game; limits are 0 for minecraft. */
+  gameType: GameType;
+  scoreLimit: number;
+  timeLimitSec: number;
 }
 
 export interface ServerInfo {

@@ -107,14 +107,14 @@ async function api(req: IncomingMessage, res: ServerResponse, path: string): Pro
   if (!rooms) return json(res, 404, { error: 'Games are disabled on this server' });
   if (path === '/api/rooms' && req.method === 'POST') {
     if (!createLimit.take(ip)) return json(res, 429, { error: 'Too many games created, try again later' });
-    let body: { name?: unknown; gameMode?: unknown; seed?: unknown };
+    let body: { name?: unknown; gameMode?: unknown; seed?: unknown; gameType?: unknown; scoreLimit?: unknown; timeLimitSec?: unknown };
     try {
       body = JSON.parse(await readBody(req)) as typeof body;
     } catch {
       return json(res, 400, { error: 'Bad request' });
     }
     const code = rooms.create(String(body.name ?? ''), typeof body.gameMode === 'string' ? body.gameMode : undefined,
-      typeof body.seed === 'string' ? body.seed : undefined);
+      typeof body.seed === 'string' ? body.seed : undefined, { gameType: body.gameType, scoreLimit: body.scoreLimit, timeLimitSec: body.timeLimitSec });
     return code ? json(res, 201, { code }) : json(res, 503, { error: 'This server has reached its game limit' });
   }
   const m = /^\/api\/rooms\/([^/]+)$/.exec(path);

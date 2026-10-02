@@ -4,18 +4,25 @@ import type { WebSocket } from 'ws';
 import {
   type ClientMessage, NAME_PATTERN, PROTOCOL_VERSION, type PlayerRecord, type ServerMessage, type SnapshotEntry, sanitizeChat,
 } from '../src/net/protocol';
+import { ARENA_FLOOR_Y, ARENA_SPAWNS } from '../src/modes/arena';
+import { type GameType, gameTypeDef } from '../src/modes/GameTypes';
 import { GAME_MODES, type GameMode } from '../src/player/GameMode';
 import { BLOCK, getBlockDef } from '../src/world/BlockRegistry';
 import { SEA_LEVEL } from '../src/world/constants';
 import { hashString } from '../src/world/Noise';
 import { TerrainGenerator } from '../src/world/TerrainGenerator';
+import { Match, type MatchHost } from './Match';
 import { ServerEntities } from './ServerEntities';
+import { ServerWorld } from './ServerWorld';
 
 const TICK_MS = 50; // 20 ticks per second, like Minecraft
 const DAY_SECONDS = 1200;
 const SAVE_INTERVAL_MS = 30_000;
 const REACH = 8; // lenient server-side reach check (client uses 5)
 const MAX_SPEED = 26; // blocks/second (fast flying + slack)
+const ARENA_MAX_SPEED = 40; // arcade: sprint + jump + slack
+const PING_INTERVAL_TICKS = 60; // arcade: measure the round trip every 3 s
+const ARENA_DAY = 0.25; // arcade games are always noon
 
 interface WorldData {
   name: string;
@@ -26,6 +33,10 @@ interface WorldData {
   /** "x,y,z" → block id */
   edits: Record<string, number>;
   players: Record<string, PlayerRecord>;
+  /** Arcade game type; absent = the Minecraft sandbox. */
+  gameType?: GameType;
+  scoreLimit?: number;
+  timeLimitSec?: number;
 }
 
 /** Token bucket rate limiter (per player, per message kind). */
@@ -62,7 +73,15 @@ interface Session {
   takes: Bucket;
   chat: Bucket;
   moves: Bucket;
+  /** Arcade: fire, reload, weapon and loadout requests. */
+  fires: Bucket;
+  actions: Bucket;
   violations: number;
+  /** Round trip in ms (WebSocket ping/pong, arcade games). */
+  pingMs: number;
+  pingSentAt: number;
+  /** After a server-side move (spawn) positions from before it are ignored until the client arrives. */
+  awaiting: { x: number; y: number; z: number; until: number } | null;
 }
 
 export interface ServerOptions {
@@ -74,6 +93,10 @@ export interface ServerOptions {
   maxPlayers: number;
   /** Skip per-player log lines (rooms log themselves). */
   quiet?: boolean;
+  /** Arcade game type and match settings for a new world (a saved world keeps its own). */
+  gameType?: GameType;
+  scoreLimit?: number;
+  timeLimitSec?: number;
 }
 
 /**
@@ -91,14 +114,25 @@ export class GameServer {
   private tickCount = 0;
   private timers: NodeJS.Timeout[] = [];
   /** Mobs, items, arrows and TNT for this world. */
-  private readonly entities: ServerEntities;
+  private readonly entities: ServerEntities | null;
   private entitiesActive = false;
+  /** Arcade games: the match and the arena as bullets see it. */
+  private readonly match: Match | null = null;
+  private readonly arena: ServerWorld | null = null;
 
   constructor(private readonly opts: ServerOptions) {
     mkdirSync(opts.dataDir, { recursive: true });
     this.file = join(opts.dataDir, 'world.json');
     this.world = this.load();
-    this.entities = new ServerEntities(this.world.seed, this.world.edits, this.world.gameMode, {
+    const def = gameTypeDef(this.world.gameType ?? 'minecraft');
+    if (def.arcade) {
+      this.arena = new ServerWorld(this.world.seed, {}, 'arena');
+      this.arena.preloadArena();
+      this.match = new Match(this.matchHost(), {
+        type: def.id, scoreLimit: this.world.scoreLimit ?? def.scoreLimit, timeLimitSec: this.world.timeLimitSec ?? def.timeLimitSec,
+      });
+      this.entities = null;
+    } else this.entities = new ServerEntities(this.world.seed, this.world.edits, this.world.gameMode, {
       send: (id, msg) => { const s = this.sessions.get(id); if (s) this.send(s, msg); },
       broadcast: (msg) => this.broadcast(msg),
       broadcastBlock: (x, y, z, id) => this.broadcast({ t: 'block', x, y, z, id }),
@@ -117,11 +151,17 @@ export class GameServer {
     const seedText = this.opts.seed;
     const seed = !seedText ? (Math.random() * 4294967296) >>> 0
       : /^-?\d+$/.test(seedText) ? Number(BigInt.asUintN(32, BigInt(seedText))) : hashString(seedText);
-    const spawn = this.findSpawn(seed);
+    const def = gameTypeDef(this.opts.gameType ?? 'minecraft');
+    const spawn = def.arcade ? ARENA_SPAWNS.ffa[0] : this.findSpawn(seed);
     const data: WorldData = {
-      name: this.opts.worldName, seed, gameMode: this.opts.gameMode, time: 0.08, spawn, edits: {}, players: {},
+      name: this.opts.worldName, seed, gameMode: this.opts.gameMode, time: def.arcade ? ARENA_DAY : 0.08, spawn, edits: {}, players: {},
     };
-    this.log(`[world] created "${data.name}" (seed ${seed}, ${data.gameMode}) spawn ${spawn.x} ${spawn.y} ${spawn.z}`);
+    if (def.arcade) {
+      data.gameType = def.id;
+      data.scoreLimit = this.opts.scoreLimit ?? def.scoreLimit;
+      data.timeLimitSec = this.opts.timeLimitSec ?? def.timeLimitSec;
+    }
+    this.log(`[world] created "${data.name}" (seed ${seed}, ${def.arcade ? def.id : data.gameMode}) spawn ${spawn.x} ${spawn.y} ${spawn.z}`);
     this.dirty = true;
     this.world = data;
     this.save();
@@ -164,8 +204,33 @@ export class GameServer {
     return this.sessions.size;
   }
 
-  info(): { name: string; gameMode: GameMode; players: number; maxPlayers: number } {
-    return { name: this.world.name, gameMode: this.world.gameMode, players: this.sessions.size, maxPlayers: this.opts.maxPlayers };
+  info(): {
+    name: string; gameMode: GameMode; players: number; maxPlayers: number; gameType: GameType; scoreLimit: number; timeLimitSec: number;
+  } {
+    return {
+      name: this.world.name, gameMode: this.world.gameMode, players: this.sessions.size, maxPlayers: this.opts.maxPlayers,
+      gameType: this.match?.info.type ?? 'minecraft', scoreLimit: this.match?.info.scoreLimit ?? 0, timeLimitSec: this.match?.info.timeLimitSec ?? 0,
+    };
+  }
+
+  /** The match's view of this server: clock, messages, bullets' world and moving players. */
+  private matchHost(): MatchHost {
+    return {
+      now: () => Date.now() / 1000,
+      send: (id, msg) => { const s = this.sessions.get(id); if (s) this.send(s, msg); },
+      broadcast: (msg, except) => this.broadcast(msg, except),
+      blocks: { getBlock: (x, y, z) => this.arena!.getBlock(x, y, z) },
+      moveTo: (id, x, y, z) => {
+        const s = this.sessions.get(id);
+        if (!s) return;
+        s.x = x; s.y = y; s.z = z;
+        s.hasPos = true;
+        s.lastPosTime = Date.now();
+        s.awaiting = { x, y, z, until: Date.now() + 1500 };
+      },
+      random: Math.random,
+      ping: (id) => this.sessions.get(id)?.pingMs ?? 0,
+    };
   }
 
   private log(line: string): void {
@@ -194,6 +259,13 @@ export class GameServer {
       }
       this.handle(session, msg);
     });
+    ws.on('pong', () => {
+      if (session && session.pingSentAt > 0) {
+        const rtt = Date.now() - session.pingSentAt;
+        session.pingMs = session.pingMs > 0 ? Math.round(session.pingMs * 0.5 + rtt * 0.5) : rtt;
+        session.pingSentAt = 0;
+      }
+    });
     ws.on('close', () => {
       clearTimeout(timeout);
       if (session) this.logout(session);
@@ -220,15 +292,18 @@ export class GameServer {
     }
     if (this.sessions.size >= this.opts.maxPlayers) return kick('The server is full');
 
-    const record = this.world.players[name] ?? null;
+    const record = this.match ? null : this.world.players[name] ?? null;
     const start = record ?? this.world.spawn;
     const session: Session = {
       id: this.nextId++, name, ws,
       x: start.x, y: start.y, z: start.z, yaw: 0, pitch: 0, flags: 0, held: 0,
       hasPos: false, lastPosTime: Date.now(),
       edits: new Bucket(20, 40), attacks: new Bucket(8, 12), shots: new Bucket(3, 5), drops: new Bucket(30, 60), takes: new Bucket(20, 30),
-      chat: new Bucket(1, 5), moves: new Bucket(40, 80), violations: 0,
+      chat: new Bucket(1, 5), moves: new Bucket(40, 80), fires: new Bucket(25, 30), actions: new Bucket(15, 30), violations: 0,
+      pingMs: 0, pingSentAt: 0, awaiting: null,
     };
+    const joined = this.match?.join(session.id, name) ?? null;
+    if (joined) { session.x = joined.x; session.y = joined.y; session.z = joined.z; session.hasPos = true; }
     const edits: number[] = [];
     for (const [key, id] of Object.entries(this.world.edits)) {
       const [x, y, z] = key.split(',').map(Number);
@@ -236,13 +311,17 @@ export class GameServer {
     }
     this.send(session, {
       t: 'welcome', id: session.id, worldName: this.world.name, seed: this.world.seed, gameMode: this.world.gameMode,
-      gameType: 'minecraft', worldType: 'terrain',
-      time: this.world.time, spawn: this.world.spawn, edits, player: record,
-      players: [...this.sessions.values()].map((s) => ({ id: s.id, name: s.name })),
+      gameType: this.match?.info.type ?? 'minecraft', worldType: this.match ? 'arena' : 'terrain', match: this.match?.info,
+      time: this.world.time, spawn: joined ? { x: joined.x, y: joined.y, z: joined.z } : this.world.spawn, edits, player: record,
+      players: [...this.sessions.values()].map((s) => ({ id: s.id, name: s.name, team: this.match?.players.get(s.id)?.team || undefined })),
       motd: this.opts.motd,
     });
     this.sessions.set(session.id, session);
     this.broadcast({ t: 'join', id: session.id, name }, session.id);
+    if (joined) {
+      session.awaiting = { x: joined.x, y: joined.y, z: joined.z, until: Date.now() + 1500 };
+      this.match!.ready(session.id);
+    }
     this.broadcast({ t: 'chat', from: '', text: `${name} joined the game`, system: true });
     this.log(`[join] ${name} (${this.sessions.size} online)`);
     return session;
@@ -252,14 +331,15 @@ export class GameServer {
     if (!this.sessions.has(s.id)) return;
     this.storePlayer(s);
     this.sessions.delete(s.id);
-    this.entities.forget(s.id);
+    this.entities?.forget(s.id);
+    this.match?.leave(s.id);
     this.broadcast({ t: 'leave', id: s.id, name: s.name });
     this.broadcast({ t: 'chat', from: '', text: `${s.name} left the game`, system: true });
     this.log(`[leave] ${s.name} (${this.sessions.size} online)`);
   }
 
   private storePlayer(s: Session): void {
-    if (!s.hasPos) return;
+    if (!s.hasPos || this.match) return;
     const prev = this.world.players[s.name];
     this.world.players[s.name] = { ...prev, x: s.x, y: s.y, z: s.z, yaw: s.yaw, pitch: s.pitch };
     this.dirty = true;
@@ -268,17 +348,19 @@ export class GameServer {
   // ---------------------------------------------------------------- messages
 
   private handle(s: Session, msg: ClientMessage): void {
+    if (this.match) return this.handleArcade(s, msg, this.match);
+    const entities = this.entities!;
     switch (msg.t) {
       case 'pos': return this.onPos(s, msg);
       case 'block': return this.onBlock(s, msg);
       case 'chat': return this.onChat(s, msg.text);
-      case 'attack': return void (s.attacks.take() && this.entities.attack(s, Number(msg.id)));
+      case 'attack': return void (s.attacks.take() && entities.attack(s, Number(msg.id)));
       case 'shoot':
-        return void (s.shots.take() && this.entities.shoot(s, msg.x, msg.y, msg.z, msg.dx, msg.dy, msg.dz, msg.power));
-      case 'ignite': return void (s.edits.take() && this.entities.ignite(s, msg.x, msg.y, msg.z));
-      case 'take': return void (s.takes.take() && this.entities.take(s, Number(msg.id)));
+        return void (s.shots.take() && entities.shoot(s, msg.x, msg.y, msg.z, msg.dx, msg.dy, msg.dz, msg.power));
+      case 'ignite': return void (s.edits.take() && entities.ignite(s, msg.x, msg.y, msg.z));
+      case 'take': return void (s.takes.take() && entities.take(s, Number(msg.id)));
       case 'drop':
-        return void (s.drops.take() && this.entities.drop(s, { id: msg.id, count: msg.count, damage: msg.damage }, msg.x, msg.y, msg.z, msg.yaw, msg.delay));
+        return void (s.drops.take() && entities.drop(s, { id: msg.id, count: msg.count, damage: msg.damage }, msg.x, msg.y, msg.z, msg.yaw, msg.delay));
       case 'state':
         if (Array.isArray(msg.inventory) && msg.inventory.length <= 64 && Array.isArray(msg.stats) && msg.stats.length <= 8) {
           const prev = this.world.players[s.name] ?? { x: s.x, y: s.y, z: s.z, yaw: s.yaw, pitch: s.pitch };
@@ -289,16 +371,52 @@ export class GameServer {
     }
   }
 
+  /** Arcade games: movement, chat and the weapon messages; building, mobs and items do not exist. */
+  private handleArcade(s: Session, msg: ClientMessage, match: Match): void {
+    switch (msg.t) {
+      case 'pos': return this.onPos(s, msg);
+      case 'chat': return this.onChat(s, msg.text);
+      case 'fire': return void (s.fires.take() && match.fire(s.id, msg));
+      case 'reload': return void (s.actions.take() && match.reload(s.id, Number(msg.slot)));
+      case 'weapon': return void (s.actions.take() && match.switchWeapon(s.id, Number(msg.slot)));
+      case 'loadout': return void (s.actions.take() && match.setLoadout(s.id, String(msg.primary)));
+      case 'block':
+        // Nobody builds in an arcade game: roll the client's guess back.
+        return this.send(s, { t: 'reject', seq: msg.seq, x: msg.x, y: msg.y, z: msg.z, id: this.arena!.getBlock(msg.x | 0, msg.y | 0, msg.z | 0) });
+      default: return;
+    }
+  }
+
   private onPos(s: Session, m: Extract<ClientMessage, { t: 'pos' }>): void {
     if (!s.moves.take()) return;
     const nums = [m.x, m.y, m.z, m.yaw, m.pitch];
     if (nums.some((n) => typeof n !== 'number' || !Number.isFinite(n))) return;
     const now = Date.now();
+    if (s.awaiting) {
+      // We moved this player (spawn): ignore positions from before the client got the message.
+      const a = s.awaiting;
+      if (Math.hypot(m.x - a.x, m.z - a.z) <= 2.5 && Math.abs(m.y - a.y) <= 3) {
+        s.awaiting = null;
+      } else {
+        if (now > a.until) {
+          a.until = now + 1500;
+          this.send(s, { t: 'teleport', x: a.x, y: a.y, z: a.z });
+        }
+        return;
+      }
+    }
+    if (this.match) {
+      // Arcade: inside the arena, on or above the floor.
+      if (!Match.inBounds(m.x, m.z) || m.y < ARENA_FLOOR_Y - 2 || m.y > ARENA_FLOOR_Y + 40) {
+        if (++s.violations > 3) this.send(s, { t: 'teleport', x: s.x, y: s.y, z: s.z });
+        return;
+      }
+    }
     if (s.hasPos) {
       // Movement sanity check: reject impossible speeds and snap the player back.
       const dt = Math.max(0.05, (now - s.lastPosTime) / 1000);
       const dist = Math.hypot(m.x - s.x, m.z - s.z);
-      if (dist > MAX_SPEED * dt + 4 && m.y > -60) {
+      if (dist > (this.match ? ARENA_MAX_SPEED : MAX_SPEED) * dt + 4 && m.y > -60) {
         if (++s.violations > 3) this.send(s, { t: 'teleport', x: s.x, y: s.y, z: s.z });
         return;
       }
@@ -309,6 +427,7 @@ export class GameServer {
     s.flags = m.flags | 0; s.held = m.held | 0;
     s.hasPos = true;
     s.lastPosTime = now;
+    this.match?.setPosition(s.id, s.x, s.y, s.z, s.yaw, s.pitch);
   }
 
   private onBlock(s: Session, m: Extract<ClientMessage, { t: 'block' }>): void {
@@ -321,7 +440,7 @@ export class GameServer {
     // Reach: distance from the player's eyes to the block centre.
     const d = Math.hypot(x + 0.5 - s.x, y + 0.5 - (s.y + 1.62), z + 0.5 - s.z);
     if (!s.hasPos || d > REACH) return reject();
-    this.entities.setBlock(x, y, z, id); // records the edit and updates what the mobs see
+    this.entities?.setBlock(x, y, z, id); // records the edit and updates what the mobs see
     this.broadcast({ t: 'block', x, y, z, id }, s.id);
   }
 
@@ -346,8 +465,10 @@ export class GameServer {
       case 'seed':
         return reply(`Seed: [${this.world.seed}]`);
       case 'spawn':
+        if (this.match) return reply('Not available in this game type');
         return this.send(s, { t: 'teleport', ...this.world.spawn });
       case 'time': {
+        if (this.match) return reply('The time is fixed in this game type');
         const times: Record<string, number> = { day: 0.04, noon: 0.25, night: 0.55, midnight: 0.75 };
         if (args[0] === 'set' && args[1] in times) {
           this.world.time = times[args[1]];
@@ -369,24 +490,32 @@ export class GameServer {
     const dt = (now - this.lastTick) / 1000;
     this.lastTick = now;
     this.tickCount++;
-    if (this.sessions.size > 0) this.world.time = (this.world.time + dt / DAY_SECONDS) % 1;
+    if (this.sessions.size > 0 && !this.match) this.world.time = (this.world.time + dt / DAY_SECONDS) % 1;
     if (this.sessions.size === 0) {
       // Nobody around: free the chunks and mobs (passive mobs respawn from the seed).
       if (this.entitiesActive) {
-        this.entities.clear();
+        this.entities?.clear();
         this.entitiesActive = false;
       }
       return;
     }
     this.entitiesActive = true;
-    this.entities.tick([...this.sessions.values()]);
+    this.entities?.tick([...this.sessions.values()]);
+    if (this.match) {
+      this.match.tick();
+      if (this.tickCount % PING_INTERVAL_TICKS === 0) {
+        for (const s of this.sessions.values()) {
+          if (s.ws.readyState === s.ws.OPEN && s.pingSentAt === 0) { s.pingSentAt = Date.now(); s.ws.ping(); }
+        }
+      }
+    }
     const players: SnapshotEntry[] = [];
     for (const s of this.sessions.values()) {
       if (!s.hasPos) continue;
       players.push([s.id, round(s.x), round(s.y), round(s.z), round(s.yaw), round(s.pitch), s.flags, s.held]);
     }
     if (players.length > 0) this.broadcast({ t: 'snap', players });
-    if (this.tickCount % 100 === 0) this.broadcast({ t: 'time', time: this.world.time });
+    if (this.tickCount % 100 === 0 && !this.match) this.broadcast({ t: 'time', time: this.world.time });
   }
 
   private send(s: Session, msg: ServerMessage): void {

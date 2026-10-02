@@ -44,6 +44,16 @@ export class ServerWorld implements EntityWorld {
     }
   }
 
+  /** The whole arena stays loaded for hitscan (6×6 chunks); nothing is ever unloaded. */
+  preloadArena(): void {
+    for (let cz = -3; cz < 3; cz++) {
+      for (let cx = -3; cx < 3; cx++) {
+        const key = chunkKey(cx, cz);
+        if (!this.chunks.has(key)) this.generate(cx, cz, key);
+      }
+    }
+  }
+
   get loadedChunks(): number {
     return this.chunks.size;
   }
