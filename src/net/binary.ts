@@ -20,6 +20,18 @@ import type { ArrowEntry, ItemEntry, MobEntry, ServerMessage, SnapshotEntry, Tnt
  */
 export const BIN_SNAP = 1;
 export const BIN_ENT = 2;
+/**
+ * Quantised player snapshot (arcade rooms; negotiated with `binv: 2` in hello, the server answers
+ * `binaryVersion: 2` in welcome):
+ *   u8 kind 3, u16 n, i16 ox, i16 oy, i16 oz (per-room origin, whole blocks), then
+ *   n × { u16 id, i16 x, i16 y, i16 z (1/32 block relative to the origin), u16 yaw, u16 pitch, u8 flags }   (13 bytes)
+ * The held item is not sent (arcade players hold weapons, announced by `holds`) and decodes as 0.
+ */
+export const BIN_SNAP_Q = 3;
+/** Binary format version a client understands: 1 = snap/ent floats, 2 = also the quantised snapshot. */
+export const BINARY_VERSION = 2;
+export const SNAP_Q_ENTRY_BYTES = 13;
+const Q = 32;
 
 const TAU = Math.PI * 2;
 const encAngle = (a: number): number => {
@@ -113,6 +125,31 @@ export function encodeEnt(m: MobEntry[], i: ItemEntry[], a: ArrowEntry[], b: Tnt
   return buf;
 }
 
+const i16 = (v: number): number => Math.max(-32768, Math.min(32767, Math.round(v)));
+
+/** Quantised snapshot relative to `origin` (whole blocks): positions to 1/32 block, ±1024 blocks around it. */
+export function encodeSnapQ(players: SnapshotEntry[], ox: number, oy: number, oz: number): ArrayBuffer {
+  const buf = new ArrayBuffer(9 + players.length * SNAP_Q_ENTRY_BYTES);
+  const v = new DataView(buf);
+  v.setUint8(0, BIN_SNAP_Q);
+  v.setUint16(1, players.length, true);
+  v.setInt16(3, ox, true);
+  v.setInt16(5, oy, true);
+  v.setInt16(7, oz, true);
+  let o = 9;
+  for (const p of players) {
+    v.setUint16(o, p[0], true);
+    v.setInt16(o + 2, i16((p[1] - ox) * Q), true);
+    v.setInt16(o + 4, i16((p[2] - oy) * Q), true);
+    v.setInt16(o + 6, i16((p[3] - oz) * Q), true);
+    v.setUint16(o + 8, encAngle(p[4]), true);
+    v.setUint16(o + 10, encAngle(p[5]), true);
+    v.setUint8(o + 12, u8(p[6]));
+    o += SNAP_Q_ENTRY_BYTES;
+  }
+  return buf;
+}
+
 /** Encodes a snap or ent message; null for any other message (send those as JSON). */
 export function encodeBinary(msg: ServerMessage): ArrayBuffer | null {
   if (msg.t === 'snap') return encodeSnap(msg.players);
@@ -134,6 +171,21 @@ export function decodeBinary(buf: ArrayBuffer): ServerMessage | null {
       players.push([
         v.getUint16(o, true), v.getFloat32(o + 2, true), v.getFloat32(o + 6, true), v.getFloat32(o + 10, true),
         decAngle(v.getUint16(o + 14, true)), decAngle(v.getUint16(o + 16, true)), v.getUint8(o + 18), v.getUint16(o + 19, true),
+      ]);
+    }
+    return { t: 'snap', players };
+  }
+  if (kind === BIN_SNAP_Q) {
+    if (buf.byteLength < 9) return null;
+    const n = v.getUint16(1, true);
+    if (buf.byteLength !== 9 + n * SNAP_Q_ENTRY_BYTES) return null;
+    const ox = v.getInt16(3, true), oy = v.getInt16(5, true), oz = v.getInt16(7, true);
+    const players: SnapshotEntry[] = [];
+    let o = 9;
+    for (let k = 0; k < n; k++, o += SNAP_Q_ENTRY_BYTES) {
+      players.push([
+        v.getUint16(o, true), ox + v.getInt16(o + 2, true) / Q, oy + v.getInt16(o + 4, true) / Q, oz + v.getInt16(o + 6, true) / Q,
+        decAngle(v.getUint16(o + 8, true)), decAngle(v.getUint16(o + 10, true)), v.getUint8(o + 12), 0,
       ]);
     }
     return { t: 'snap', players };

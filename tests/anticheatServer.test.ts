@@ -170,4 +170,17 @@ describe('arcade movement enforcement on the server', () => {
       expect(ws.of('snap').every((m) => m.players.every((e) => e[0] !== self))).toBe(true);
     }
   });
+
+  it('arcade rooms tick at 30 Hz and negotiate quantised binary snapshots (old clients keep the old formats)', () => {
+    const server = room();
+    const ws = new FakeSocket();
+    server.accept(ws as unknown as WebSocket);
+    ws.say({ t: 'hello', v: PROTOCOL_VERSION, name: 'newclient', bin: true, binv: 2 });
+    expect(ws.of('welcome')[0]).toMatchObject({ tickHz: 30, binary: true, binaryVersion: 2 });
+    const old = new FakeSocket();
+    server.accept(old as unknown as WebSocket);
+    old.say({ t: 'hello', v: PROTOCOL_VERSION, name: 'oldclient', bin: true });
+    expect(old.of('welcome')[0].binary).toBe(true);
+    expect(old.of('welcome')[0].binaryVersion).toBeUndefined();
+  });
 });

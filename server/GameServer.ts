@@ -8,7 +8,8 @@ import {
 import { ARENA_FLOOR_Y, DEFAULT_MAP, type MapId, type MapSetting, getMap, mapFor, nextMap, parseMapId, parseMapSetting } from '../src/modes/maps';
 import { type GameType, gameTypeDef } from '../src/modes/GameTypes';
 import { GAME_MODES, type GameMode, hasSurvivalRules } from '../src/player/GameMode';
-import { encodeBinary, encodeSnap } from '../src/net/binary';
+import { BINARY_VERSION, encodeBinary, encodeSnap, encodeSnapQ } from '../src/net/binary';
+import { ARCADE_TICK_HZ, ARCADE_TICK_MAX, ARCADE_TICK_MIN, arcadeInterpDelay } from '../src/modes/ArcadeLogic';
 import { decodeData } from '../src/items/ItemRegistry';
 import { BLOCK, getBlockDef } from '../src/world/BlockRegistry';
 import { isValidMeta } from '../src/world/BlockShapes';
@@ -43,7 +44,7 @@ const DAY_SECONDS = 1200;
 const SAVE_INTERVAL_MS = 30_000;
 const REACH = 8; // lenient server-side reach check (client uses 4.5, creative 5)
 const MAX_SPEED = 26; // blocks/second (fast flying + slack)
-const PING_INTERVAL_TICKS = 60; // arcade: measure the round trip every 3 s
+const PING_INTERVAL_SECONDS = 3; // arcade: measure the round trip every 3 s
 /** Block changes per 'blocks' message (flowing water). */
 const BLOCKS_PER_MESSAGE = 100;
 const ARENA_DAY = 0.25; // arcade games are always noon
@@ -160,6 +161,8 @@ interface Session {
   verified: boolean;
   /** Receives snap and ent as binary frames. */
   bin: boolean;
+  /** Arcade: receives snapshots in the quantised binary format (binary version 2). */
+  binq: boolean;
   guard: InventoryGuard;
   /** Arcade: fire, reload, weapon and loadout requests. */
   fires: Bucket;
@@ -208,6 +211,8 @@ export interface ServerOptions {
   binary?: boolean;
   /** Called when something changed that the room list shows (name, listing, password). */
   onMetaChange?: () => void;
+  /** Arcade: server tick rate in Hz (default 30; env ARCADE_TICK_HZ, clamped to 10-60). */
+  arcadeTickHz?: number;
   /** Arcade: leave enemies out of snapshots when they cannot be seen (default on; env ARCADE_CULLING=off). */
   culling?: boolean;
   /** Arcade: kick at this aim suspicion score (0 = never, the default; env ARCADE_AUTOKICK_SCORE). */
@@ -232,6 +237,8 @@ export class GameServer {
   private dirty = false;
   private lastTick = Date.now();
   private tickCount = 0;
+  /** Ticks per second: 20 (Minecraft), arcade rooms ARCADE_TICK_HZ (default 30). */
+  private readonly tickHz: number = 20;
   /** Weather of this world (minecraft game types only; arcade rooms are always clear). */
   private readonly weather = new Weather();
   private weatherVersion = -1;
@@ -342,7 +349,11 @@ export class GameServer {
         session: (id) => this.sessions.get(id),
       });
     }
-    this.timers.push(setInterval(() => this.tick(), TICK_MS));
+    if (this.match) {
+      const hz = this.opts.arcadeTickHz ?? (Number(process.env.ARCADE_TICK_HZ) || ARCADE_TICK_HZ);
+      this.tickHz = Math.max(ARCADE_TICK_MIN, Math.min(ARCADE_TICK_MAX, Math.round(hz)));
+    }
+    this.timers.push(setInterval(() => this.tick(), this.match ? 1000 / this.tickHz : TICK_MS));
     this.timers.push(setInterval(() => {
       try {
         this.save();
@@ -523,6 +534,7 @@ export class GameServer {
 
   /** The match's view of this server: clock, messages, bullets' world and moving players. */
   private matchHost(): MatchHost {
+    const gs = this;
     return {
       now: () => Date.now() / 1000,
       send: (id, msg) => { const s = this.sessions.get(id); if (s) this.send(s, msg); },
@@ -541,6 +553,7 @@ export class GameServer {
       random: Math.random,
       ping: (id) => this.sessions.get(id)?.pingMs ?? 0,
       onShot: (r) => this.onShot(r),
+      get interpDelay() { return arcadeInterpDelay(gs.tickHz); },
       nextMap: (current, requires) => {
         if (this.mapSetting !== 'rotate') return null;
         const next = nextMap(parseMapId(current) ?? DEFAULT_MAP, requires);
@@ -711,6 +724,7 @@ export class GameServer {
     const session: Session = {
       id: this.nextId++, name, ws, ip, op, owner: who.owner, verified: who.verified,
       bin: hello.bin === true && this.opts.binary !== false,
+      binq: hello.bin === true && this.opts.binary !== false && !!this.match && Number(hello.binv) >= BINARY_VERSION,
       guard: new InventoryGuard(initial.error ? [] : initial.slots),
       x: start.x, y: start.y, z: start.z, yaw: 0, pitch: 0, flags: 0, held: 0,
       hasPos: false, lastPosTime: Date.now(),
@@ -739,6 +753,8 @@ export class GameServer {
       motd: this.opts.motd,
       ...(op ? { op: true } : {}),
       ...(session.bin ? { binary: true } : {}),
+      ...(session.binq ? { binaryVersion: BINARY_VERSION } : {}),
+      ...(this.match ? { tickHz: this.tickHz } : {}),
       ...(this.survival ? this.survival.welcome() : {}),
       ...(this.containers ? { containers: true } : {}),
     });
@@ -1251,13 +1267,13 @@ export class GameServer {
     this.containers?.tick();
     if (this.match) {
       this.match.tick();
-      if (this.tickCount % PING_INTERVAL_TICKS === 0) {
+      if (this.tickCount % Math.round(PING_INTERVAL_SECONDS * this.tickHz) === 0) {
         for (const s of this.sessions.values()) {
           if (s.ws.readyState === s.ws.OPEN && s.pingSentAt === 0) { s.pingSentAt = Date.now(); s.ws.ping(); }
         }
       }
     }
-    if (this.visibility && this.match?.phase === 'live') this.sendCulledSnapshots();
+    if (this.visibility && this.match && this.match.phase !== 'warmup' && this.match.phase !== 'ended') this.sendCulledSnapshots();
     else {
       const players: SnapshotEntry[] = [];
       for (const s of this.sessions.values()) {
@@ -1336,7 +1352,7 @@ export class GameServer {
     // A pickup the server approved is what lets the next inventory update contain the item.
     if (msg.t === 'taken' && msg.id >= 0) s.guard.creditPickup(msg.itemId, msg.count, msg.damage);
     if (s.bin) {
-      const frame = encodeBinary(msg);
+      const frame = s.binq && msg.t === 'snap' ? encodeSnapQ(msg.players, 0, ARENA_FLOOR_Y, 0) : encodeBinary(msg);
       if (frame) {
         s.ws.send(frame);
         metrics.sent(frame.byteLength);
@@ -1351,8 +1367,15 @@ export class GameServer {
   private broadcast(msg: ServerMessage, except = -1): void {
     const data = JSON.stringify(msg);
     let frame: ArrayBuffer | null | undefined;
+    let frameQ: ArrayBuffer | undefined;
     for (const s of this.sessions.values()) {
       if (s.id === except || s.ws.readyState !== s.ws.OPEN || this.overloaded(s)) continue;
+      if (s.binq && msg.t === 'snap') {
+        frameQ ??= encodeSnapQ(msg.players, 0, ARENA_FLOOR_Y, 0);
+        s.ws.send(frameQ);
+        metrics.sent(frameQ.byteLength);
+        continue;
+      }
       if (s.bin && (msg.t === 'snap' || msg.t === 'ent')) {
         frame ??= msg.t === 'snap' ? encodeSnap(msg.players) : encodeBinary(msg);
         if (frame) {

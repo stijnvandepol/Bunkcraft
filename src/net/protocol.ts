@@ -170,7 +170,8 @@ export type ClientMessage =
    * name to this player, `owner` the token POST /api/rooms returned to the creator (grants op),
    * `password` the room password, `bin` asks for binary snap/ent frames (see binary.ts).
    */
-  | { t: 'hello'; v: number; name: string; key?: string; owner?: string; password?: string; bin?: boolean }
+  /** `binv`: highest binary format understood (2 = quantised arcade snapshots, see binary.ts); absent = 1. */
+  | { t: 'hello'; v: number; name: string; key?: string; owner?: string; password?: string; bin?: boolean; binv?: number }
   | { t: 'pos'; x: number; y: number; z: number; yaw: number; pitch: number; flags: number; held: number }
   /** `meta` is the block state byte (see BlockStates); absent = 0. */
   | { t: 'block'; seq: number; x: number; y: number; z: number; id: number; meta?: number }
@@ -230,6 +231,10 @@ export type ServerMessage =
     op?: boolean;
     /** The server will send snap and ent as binary frames (negotiated by `bin` in hello). */
     binary?: boolean;
+    /** Binary format the server uses (2 = quantised snapshots in arcade rooms); absent = 1. */
+    binaryVersion?: number;
+    /** Arcade: server tick rate (Hz) for the interpolation delay and the position send rate; absent = 20. */
+    tickHz?: number;
     /** World difficulty and the game rules that differ from the defaults (absent on older servers = Normal, defaults). */
     difficulty?: Difficulty;
     rules?: Record<string, boolean | number>;

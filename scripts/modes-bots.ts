@@ -26,13 +26,13 @@ const check = (name: string, ok: boolean) => {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}`);
 };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const SPEED = 9; // blocks per second, about the arcade run speed
+const SPEED = 6; // blocks per second: under the arcade run speed (the server validates movement, see server/anticheat)
 
 /** A walking path over open floor cells (4-neighbour BFS), as cell centres. */
-function path(map: ArenaMap, from: [number, number], to: [number, number]): [number, number][] {
+function path(map: ArenaMap, from: [number, number], to: [number, number], variant = 0): [number, number][] {
   const b = map.bounds, w = b.maxX - b.minX, d = b.maxZ - b.minZ;
   const open = (x: number, z: number) => map.inBounds(x + 0.5, z + 0.5)
-    && map.blockAt(0, x, ARENA_FLOOR_Y + 1, z) === 0 && map.blockAt(0, x, ARENA_FLOOR_Y + 2, z) === 0;
+    && map.blockAt(variant, x, ARENA_FLOOR_Y + 1, z) === 0 && map.blockAt(variant, x, ARENA_FLOOR_Y + 2, z) === 0;
   const idx = (x: number, z: number) => (x - b.minX) * d + (z - b.minZ);
   const prev = new Int32Array(w * d).fill(-1);
   const sx = Math.floor(from[0]), sz = Math.floor(from[1]), tx = Math.floor(to[0]), tz = Math.floor(to[1]);
@@ -59,6 +59,8 @@ class Bot {
   id = 0;
   x = 0; y = ARENA_FLOOR_Y + 1; z = 0;
   route: [number, number][] = [];
+  /** Cover layout of the room (from the welcome seed): paths must use the server's blocks. */
+  variant = 0;
   fresh = false;
   phase = '';
   team = '';
@@ -77,7 +79,7 @@ class Bot {
       this.ws.on('message', (raw) => {
         const m = JSON.parse(raw.toString()) as ServerMessage;
         this.log.push(m);
-        if (m.t === 'welcome') { this.id = m.id; resolve(); }
+        if (m.t === 'welcome') { this.id = m.id; this.variant = this.map().variantFor(m.seed); resolve(); }
         if (m.t === 'spawn') { this.x = m.x; this.y = m.y; this.z = m.z; this.team = m.team; this.fresh = true; this.route = []; }
         if (m.t === 'match') { this.phase = m.phase; this.scores = m.scores; }
         if (m.t === 'mode') this.mode = m.state;
@@ -101,7 +103,7 @@ class Bot {
 
   /** Walks to a floor point; resolves when there (or after `timeoutMs`). */
   async walk(to: [number, number], timeoutMs = 20000): Promise<boolean> {
-    this.route = path(this.map(), [this.x, this.z], to);
+    this.route = path(this.map(), [this.x, this.z], to, this.variant);
     for (let t = 0; t < timeoutMs && this.route.length; t += 100) await sleep(100);
     return Math.hypot(this.x - to[0], this.z - to[1]) < 0.6;
   }
@@ -122,7 +124,9 @@ class Bot {
   async shoot(target: Bot, slot: 0 | 1 | 2 = 0, tries = 30): Promise<boolean> {
     const before = this.of('kill').filter((k) => k.victim === target.id).length;
     for (let i = 0; i < tries; i++) {
-      this.send({ t: 'fire', slot, ox: this.x, oy: this.y + 1.62, oz: this.z, dx: target.x - this.x, dy: target.y + 0.9 - (this.y + 1.62), dz: target.z - this.z, ads: true });
+      // The server only accepts a unit aim vector.
+      const dx = target.x - this.x, dy = target.y + 0.9 - (this.y + 1.62), dz = target.z - this.z, d = Math.hypot(dx, dy, dz) || 1;
+      this.send({ t: 'fire', slot, ox: this.x, oy: this.y + 1.62, oz: this.z, dx: dx / d, dy: dy / d, dz: dz / d, ads: true });
       await sleep(250);
       if (this.of('kill').filter((k) => k.victim === target.id).length > before) return true;
     }
@@ -168,7 +172,7 @@ async function waitFor(cond: () => boolean, ms: number): Promise<boolean> {
 /** Brings the victim next to the shooter on open floor (2 blocks apart). */
 async function meet(shooter: Bot, victim: Bot): Promise<void> {
   const spot: [number, number] = [shooter.x, shooter.z];
-  const next = path(shooter.map(), [victim.x, victim.z], spot);
+  const next = path(shooter.map(), [victim.x, victim.z], spot, shooter.variant);
   const near = next.length > 3 ? next[next.length - 3] : next[0];
   await victim.walk(near);
 }

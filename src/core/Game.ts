@@ -18,6 +18,7 @@ import { NetEntities } from '../net/NetEntities';
 import { useBoneMeal } from '../world/Growth';
 import { type ClientMessage, type ServerMessage, formatCode, normalizeCode } from '../net/protocol';
 import { type GameType, TEAM_COLORS, gameTypeDef } from '../modes/GameTypes';
+import { ARCADE_POS_HZ, arcadeInterpDelay } from '../modes/ArcadeLogic';
 import { inviteLink, inviteText, rememberGame } from '../net/RoomApi';
 import { RemotePlayers } from '../net/RemotePlayers';
 import { Chat } from '../ui/Chat';
@@ -1104,7 +1105,13 @@ export class Game {
     }
     this.remote.clear();
     if (welcome.gameType === 'minecraft') for (const p of welcome.players) this.remote.add(p.id, p.name);
-    if (welcome.gameType !== 'minecraft') this.startArcade(welcome, (m) => net.send(m), name);
+    if (welcome.gameType !== 'minecraft') {
+      this.startArcade(welcome, (m) => net.send(m), name);
+      // Arcade rooms tick faster (30 Hz): draw others two ticks in the past and report the position as often.
+      const hz = welcome.tickHz ?? 20;
+      this.remote.interpDelay = arcadeInterpDelay(hz);
+      net.posInterval = 1 / Math.min(ARCADE_POS_HZ, hz);
+    }
     this.chat.clear();
     this.chat.setCommands(SERVER_COMMAND_USAGE);
     this.chat.setVisible(true);
@@ -1170,6 +1177,8 @@ export class Game {
     if (!session) return;
     this.arcade = null;
     this.remote.clear();
+    this.remote.interpDelay = arcadeInterpDelay(20);
+    if (this.net) this.net.posInterval = 0.05;
     session.dispose();
     session.tracers.mesh.removeFromParent();
     for (const o of [session.tracers.mesh, session.modeVisuals.group]) {
