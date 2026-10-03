@@ -14,6 +14,7 @@ import { BLOCK, BOX_KIND, PARTIAL, SHAPE, SHAPE_BOX, SHAPE_CROSS, SHAPE_DOOR, SH
 import { collisionBoxes } from '../world/BlockShapes';
 import { BOX_BED, BOX_CARPET, BOX_GATE, BOX_TRAPDOOR } from '../world/BoxShapes';
 import { isLiquid } from '../world/Liquids';
+import { LEVER_ON, isUsableComponent, noteInstrument, notePitchRate, useComponent } from '../world/Redstone';
 import { resolveBucketTarget, resolvePlacement } from '../world/Placement';
 import { type RayHit, createRayHit, raycast } from '../world/Raycast';
 import type { World } from '../world/World';
@@ -23,10 +24,11 @@ import { KB } from './Keybinds';
 import type { Renderer } from './Renderer';
 
 const EAT_TIME = 1.6;
+const REDSTONE_ITEM = itemId('redstone');
 
 /** Blocks a right click does something to (instead of placing against them). */
 function isUsable(id: number): boolean {
-  if (SHAPE[id] === SHAPE_DOOR || id === BLOCK.CHEST) return true;
+  if (SHAPE[id] === SHAPE_DOOR || id === BLOCK.CHEST || isUsableComponent(id)) return true;
   const kind = SHAPE[id] === SHAPE_BOX ? BOX_KIND[id] : 0;
   return kind === BOX_TRAPDOOR || kind === BOX_GATE || kind === BOX_BED;
 }
@@ -232,6 +234,19 @@ export class Interaction {
 
   private useBlock(hit: RayHit): void {
     const kind = SHAPE[hit.id] === SHAPE_BOX ? BOX_KIND[hit.id] : 0;
+    if (isUsableComponent(hit.id)) {
+      // Lever, button, repeater delay, note block pitch: an ordinary block edit (the server simulates the rest in multiplayer).
+      const { world, audio, hand } = this.d;
+      const meta = world.getMeta(hit.x, hit.y, hit.z);
+      const next = useComponent(hit.id, meta);
+      if (next === null || !world.setBlock(hit.x, hit.y, hit.z, hit.id, next)) return;
+      if (hit.id === BLOCK.LEVER) audio.playClick((next & LEVER_ON) !== 0);
+      else if (hit.id === BLOCK.BUTTON) audio.playClick(true);
+      else if (hit.id === BLOCK.REPEATER) audio.playClick(false);
+      else audio.playNote(noteInstrument(world.getBlock(hit.x, hit.y - 1, hit.z)), notePitchRate(next & 31));
+      hand.swingHand();
+      return;
+    }
     if (SHAPE[hit.id] === SHAPE_DOOR) this.useDoor(hit);
     else if (kind === BOX_TRAPDOOR || kind === BOX_GATE) {
       const open = this.d.world.toggleBox(hit.x, hit.y, hit.z);
@@ -374,16 +389,18 @@ export class Interaction {
     }
     const toolKind = getItemDef(item)?.tool?.kind;
     if (toolKind && this.useToolOnBlock(toolKind, mode)) return;
-    if (!item || !isBlockItem(item)) return;
+    // Redstone dust is an item that places the dust block.
+    const dust = item === REDSTONE_ITEM;
+    if (!item || (!isBlockItem(item) && !dust)) return;
     if (itemBlock(item) === BLOCK.CHEST && this.d.chestsAllowed && !this.d.chestsAllowed()) return;
     // A block item is a block id plus the variant bits of its state (colour, wood, material).
-    const id = itemBlock(item), baseMeta = itemMeta(item);
+    const id = dust ? BLOCK.REDSTONE_WIRE : itemBlock(item), baseMeta = dust ? 0 : itemMeta(item);
     // Where the click landed inside the block decides the half of a slab or stair.
     const cam = this.d.camera.position;
     const hx = cam.x + this.dir.x * hit.distance, hz = cam.z + this.dir.z * hit.distance;
     const fracY = Math.min(1, Math.max(0, cam.y + this.dir.y * hit.distance - hit.y));
     const placed = resolvePlacement({
-      id, variant: baseMeta, hitX: hit.x, hitY: hit.y, hitZ: hit.z, nx: hit.nx, ny: hit.ny, nz: hit.nz, fracY, yaw: player.yaw,
+      id, variant: baseMeta, hitX: hit.x, hitY: hit.y, hitZ: hit.z, nx: hit.nx, ny: hit.ny, nz: hit.nz, fracY, yaw: player.yaw, pitch: player.pitch,
       fracX: hx - Math.floor(hx), fracZ: hz - Math.floor(hz),
       getBlock: this.getBlock, getMeta: this.getMeta,
     });

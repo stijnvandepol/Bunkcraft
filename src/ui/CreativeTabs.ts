@@ -89,7 +89,10 @@ export function buildCreativeTabs(): CreativeTab[] {
     blk('carved_pumpkin'), blk('jack_o_lantern'), byName('bed'), B.TNT, byName('iron_bars'), byName('glass_pane'),
   ]);
 
-  const redstone = ids([itm('redstone'), blk('redstone_block'), B.TNT]);
+  const redstone = ids([
+    itm('redstone'), B.REDSTONE_TORCH, blk('redstone_block'), B.REPEATER, B.PISTON, B.STICKY_PISTON, B.LEVER, ...variants(B.BUTTON),
+    ...variants(B.PRESSURE_PLATE), B.NOTE_BLOCK, B.REDSTONE_LAMP, B.TNT, ...variants(B.OAK_DOOR).slice(0, 1), byName('trapdoor'), byName('fence_gate'),
+  ]);
 
   const tiers = ['wooden', 'stone', 'iron', 'diamond', 'golden'];
   const tool = (kind: string): number[] => tiers.map((t) => ITEM_ID[`${t}_${kind}`]);

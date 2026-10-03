@@ -953,3 +953,10 @@ export class RedstoneSim {
     if (g.getBlock(hx, hy, hz) === BLOCK.PISTON_HEAD) this.set(hx, hy, hz, BLOCK.AIR, 0);
   }
 }
+
+/** Does an entity (feet at ex, ey, ez; half width, height) touch the pressure plate in cell (x, y, z)? Its detection box is 1/16 in from the sides and 1/4 high. */
+export function touchesPlate(ex: number, ey: number, ez: number, halfWidth: number, height: number, x: number, y: number, z: number): boolean {
+  const m = 1 / 16;
+  return ex + halfWidth > x + m && ex - halfWidth < x + 1 - m && ez + halfWidth > z + m && ez - halfWidth < z + 1 - m
+    && ey < y + 0.25 && ey + height > y;
+}

@@ -461,7 +461,7 @@ const stoneOak = (shift: number, noun: string): VariantSpec => ({
 });
 BLOCK_DEFS.push(
   box(B.REDSTONE_WIRE, 'redstone_wire', 'Redstone Dust', BOX_DUST, { all: 'redstone_dust' }, {
-    solid: false, hardness: 0, sound: 'stone', metaMask: 15,
+    solid: false, hardness: 0, sound: 'stone', metaMask: 15, inInventory: false,
   }),
   box(B.LEVER, 'lever', 'Lever', BOX_LEVER, { all: 'cobblestone', front: 'lever' }, { solid: false, hardness: 0.5, sound: 'stone', metaMask: 15 }),
   box(B.BUTTON, 'button', 'Button', BOX_BUTTON, { all: 'stone' }, {

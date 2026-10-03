@@ -577,6 +577,46 @@ export class AudioEngine {
     });
   }
 
+  /** Lever, button or pressure plate click (higher when switching on). `at` makes it positional. */
+  playClick(on: boolean, at?: Vec3): void {
+    this.emitAt(on ? 'block.click.on' : 'block.click.off', at, 0.4);
+    this.placed(at, 16, at ? Priority.Normal : Priority.Player, () => {
+      this.voice('square', on ? 1500 : 1150, on ? 1300 : 950, 0.03, 0.12);
+      this.noiseBurst(on ? 3200 : 2600, 2, 0.03, 0.18);
+    });
+  }
+
+  /** Piston pushing out (or pulling back): a wooden thump with a short slide. */
+  playPiston(extend: boolean, at?: Vec3): void {
+    this.emitAt(extend ? 'block.piston.extend' : 'block.piston.contract', at, 0.5);
+    this.placed(at, 16, at ? Priority.Normal : Priority.Player, () => {
+      this.noiseBurst(extend ? 420 : 360, 1.1, 0.16, 0.45, 'lowpass');
+      this.voice('triangle', extend ? 180 : 140, extend ? 120 : 200, 0.12, 0.2);
+      this.noiseBurst(1600, 0.8, 0.12, 0.12, 'bandpass', 0.02);
+    });
+  }
+
+  /**
+   * Note block: `rate` is Minecraft's pitch multiplier (0.5 … 2, F♯3 … F♯5 around a base of F♯4 = 370 Hz), the instrument
+   * picks the timbre (by the block under it).
+   */
+  playNote(instrument: string, rate: number, at?: Vec3): void {
+    this.emitAt(`block.note.${instrument}`, at, 0.6);
+    const f = 370 * rate;
+    this.placed(at, 48, at ? Priority.Normal : Priority.Player, () => {
+      switch (instrument) {
+        case 'basedrum': this.voice('sine', f / 4, f / 8, 0.18, 0.5); this.noiseBurst(200, 1, 0.08, 0.3, 'lowpass'); break;
+        case 'snare': this.noiseBurst(f * 4, 0.8, 0.12, 0.35); break;
+        case 'hat': this.noiseBurst(f * 12, 2, 0.05, 0.25, 'highpass'); break;
+        case 'bass': this.voice('triangle', f / 4, f / 4, 0.4, 0.45); break;
+        case 'guitar': this.voice('sawtooth', f / 2, f / 2, 0.35, 0.18); break;
+        case 'chime': case 'bell': this.voice('sine', f * 2, f * 2, 0.9, 0.25); this.voice('sine', f * 5.4, f * 5.4, 0.4, 0.06); break;
+        case 'flute': this.voice('sine', f * 2, f * 2, 0.45, 0.25); break;
+        default: this.voice('triangle', f, f, 0.5, 0.3); this.voice('sine', f * 2, f * 2, 0.25, 0.08); break;
+      }
+    });
+  }
+
   /** Lava meeting water: a short hiss. */
   playFizz(volume: number): void {
     this.emit('block.fizz', NaN, NaN, NaN, volume);

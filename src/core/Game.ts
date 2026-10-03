@@ -1,3 +1,4 @@
+import { enableRedstone, redstoneSound } from './RedstoneHooks';
 import * as THREE from 'three';
 import { MobSteps } from './audio/mobSteps';
 import { PlayerSounds, surfaceLookup } from './audio/playerSounds';
@@ -495,6 +496,11 @@ export class Game {
         this.audio.playFizz(Math.max(0, 1 - Math.hypot(x - p.x, y - p.y, z - p.z) / 20));
       };
     }
+    // Redstone: simulated here in singleplayer (not in arenas); in multiplayer the server's changes arrive as edits.
+    if (!this.net && worldType === 'terrain') {
+      enableRedstone(world, { entities, player: this.player, survival: () => hasSurvivalRules(this.mode) });
+    }
+    world.onRedstoneChange = (x, y, z, prevId, prevMeta, id, meta) => redstoneSound(this.audio, world, x, y, z, prevId, prevMeta, id, meta);
     this.interaction = new Interaction({
       world, player: this.player, stats: this.stats, inventory: this.playerInventory, hotbar: this.hotbar,
       entities, renderer: this.renderer, hand: this.hand, audio: this.audio, camera: this.cam.camera,
@@ -1484,6 +1490,7 @@ export class Game {
     p.jumps = 0;
     this.weatherSys.gameTick();
     this.world?.tickLiquids();
+    this.world?.tickRedstone();
     stats.tick(p, this.getBlock, this.mode);
     p.canSprint = !hasSurvivalRules(this.mode) || stats.canSprint;
 

@@ -7,6 +7,7 @@ import {
 } from './BlockStates';
 import { BED_HEAD_BIT, BOX_BED, BOX_CARPET, BOX_GATE, BOX_LADDER, BOX_TRAPDOOR, TRAPDOOR_TOP_BIT, ladderSide } from './BoxShapes';
 import { CHUNK_HEIGHT } from './constants';
+import { redstonePlacement } from './RedstonePlacement';
 
 /** What the player is aiming at and holding when they press Use. */
 export interface PlaceContext {
@@ -24,6 +25,8 @@ export interface PlaceContext {
   variant?: number;
   /** Player yaw (see Player): decides which way stairs and doors face. */
   yaw: number;
+  /** Player pitch (positive = up): pistons placed while looking steeply face up or down. */
+  pitch?: number;
   getBlock(x: number, y: number, z: number): number;
   getMeta(x: number, y: number, z: number): number;
 }
@@ -138,6 +141,9 @@ export function resolvePlacement(c: PlaceContext): Placement | null {
     };
   }
   const upper = placedOnUpperHalf(c.ny, c.fracY);
+  const rs = redstonePlacement(c, x, y, z);
+  if (rs === null) return null;
+  if (rs !== undefined) return { x, y, z, id, meta: rs };
   const kind = BOX_KIND[id];
   if (kind) {
     const below = c.getBlock(x, y - 1, z);

@@ -558,6 +558,9 @@ export function blockDrop(blockId: number, held: number, meta = 0): ItemStack | 
     return Math.random() < 0.125 ? { id: named('wheat_seeds'), count: 1 } : null;
   }
   switch (blockId) {
+    case B.REDSTONE_WIRE: return { id: named('redstone'), count: 1 };
+    case B.REDSTONE_LAMP_LIT: return { id: B.REDSTONE_LAMP, count: 1 };
+    case B.PISTON_HEAD: return null;
     case B.STONE: return { id: B.COBBLESTONE, count: 1 };
     case CUBE_ID.deepslate: return { id: CUBE_ID.cobbled_deepslate, count: 1 };
     // Gravel drops flint 10% of the time (no Fortune).
