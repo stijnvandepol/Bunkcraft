@@ -12,7 +12,7 @@ import { BIOME } from './TerrainGenerator';
 import { BlockUpdates } from './BlockUpdates';
 import { createRandomTicker } from './Growth';
 import { LAVA_TICK_DELAY, LiquidSim, WATER_TICK_DELAY, isLiquid } from './Liquids';
-import type { RandomTicker, RandomTickHost } from './RandomTicks';
+import { type RandomTicker, type RandomTickHost, noteRandomTickable } from './RandomTicks';
 import { type WorldGenerator, type WorldType, arenaMapOf, createGenerator, isArenaWorld } from './WorldGenerator';
 
 /** Sparse player edits per chunk: block index → packed state (id | meta << 8, see BlockStates). */
@@ -107,7 +107,7 @@ export class World {
       begin: () => this.beginBatch(),
       end: () => this.endBatch(false),
     };
-    this.randomTicker = createRandomTicker(host, { radius: 8 });
+    this.randomTicker = createRandomTicker(host, { radius: 8, budgetMs: 0.5 });
     const updates = new BlockUpdates({
       getBlock: (x, y, z) => this.getBlock(x, y, z),
       getMeta: (x, y, z) => this.getMeta(x, y, z),
@@ -236,6 +236,7 @@ export class World {
     const prevMeta = c.meta ? c.meta[i] : 0;
     if (prev === id && prevMeta === meta) return false;
     writeState(c, i, id, meta);
+    noteRandomTickable(c.blocks, y, id);
     if (!remote) this.onEdit?.(x, y, z, id, meta, prev, prevMeta);
 
     let e = this.edits.get(c.key);

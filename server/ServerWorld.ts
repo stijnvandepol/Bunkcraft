@@ -6,7 +6,7 @@ import { packState, stateId, stateMeta } from '../src/world/BlockStates';
 import { BlockUpdates } from '../src/world/BlockUpdates';
 import { createRandomTicker } from '../src/world/Growth';
 import { LAVA_TICK_DELAY, LiquidSim, WATER_TICK_DELAY, isLiquid } from '../src/world/Liquids';
-import type { RandomTicker } from '../src/world/RandomTicks';
+import { type RandomTicker, noteRandomTickable } from '../src/world/RandomTicks';
 import { CHUNK_HEIGHT, CHUNK_VOLUME, blockIndex, chunkKey } from '../src/world/constants';
 import { GEN_VERSION_CURRENT } from '../src/world/GenVersion';
 import { type WorldGenerator, type WorldType, createGenerator } from '../src/world/WorldGenerator';
@@ -190,6 +190,7 @@ export class ServerWorld implements EntityWorld {
     const prev = c.blocks[i];
     if (prev === id && (c.meta ? c.meta[i] : 0) === meta) return -1;
     c.blocks[i] = id;
+    noteRandomTickable(c.blocks, y, id);
     if (meta !== 0 && !c.meta) c.meta = new Uint8Array(CHUNK_VOLUME);
     if (c.meta) c.meta[i] = meta;
     if (LIGHT_EMIT[id] > 0) c.emitters.add(i); else c.emitters.delete(i);

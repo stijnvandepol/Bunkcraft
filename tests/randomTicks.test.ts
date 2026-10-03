@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { BLOCK } from '../src/world/BlockRegistry';
-import { HAS_RANDOM_TICK, RandomTicker, SECTIONS, XorShift32 } from '../src/world/RandomTicks';
+import { HAS_RANDOM_TICK, RandomTicker, SECTIONS, XorShift32, noteRandomTickable } from '../src/world/RandomTicks';
 import { GrowthWorld, seeded } from './helpers/growthWorld';
 
 const MARK = BLOCK.COBBLESTONE;
@@ -155,5 +155,27 @@ describe('RandomTicker', () => {
     w.light = () => 0xf8;
     t.tick([{ x: 0, z: 0 }]);
     expect(seen).toBe(8);
+  });
+
+  it('skips sections without tickable blocks and picks up a new one as soon as the host reports it', () => {
+    const w = new GrowthWorld(0, 60); // stone up to 60, air above: nothing ticks
+    let n = 0;
+    RandomTicker.register(MARK, () => { n++; });
+    const t = new RandomTicker(w, { rng: seeded(10), radius: 0, speed: 4096 });
+    t.tick([{ x: 0, z: 0 }]);
+    expect(t.stats.sections).toBe(0);
+    // A block written without telling the ticker waits for the periodic rescan...
+    w.set(3, 100, 3, MARK);
+    t.tick([{ x: 0, z: 0 }]);
+    expect(n).toBe(0);
+    // ...and is picked up at once when the host reports it (World and ServerWorld do in setBlock).
+    noteRandomTickable(w.chunkBlocks(0, 0)!, 100, MARK);
+    for (let i = 0; i < 5; i++) t.tick([{ x: 0, z: 0 }]);
+    expect(t.stats.sections).toBe(1);
+    expect(n).toBeGreaterThan(0);
+    // The rescan finds it too.
+    w.set(3, 20, 3, MARK);
+    for (let i = 0; i < 1300; i++) t.tick([{ x: 0, z: 0 }]);
+    expect(t.stats.sections).toBe(2);
   });
 });

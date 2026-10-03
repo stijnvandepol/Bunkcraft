@@ -47,7 +47,8 @@ export interface TickRng {
 
 /** xorshift32: tiny and fast, plenty for picking blocks. */
 export class XorShift32 implements TickRng {
-  private s: number;
+  /** State; the ticker's hot loop inlines the step on it. */
+  s: number;
   constructor(seed = (Math.random() * 4294967296) >>> 0) {
     this.s = seed | 0 || 0x9e3779b9;
   }
@@ -97,8 +98,9 @@ export interface RandomTickOptions {
 export interface RandomTickStats {
   /** Time of the last tick, ms. */
   lastMs: number;
-  /** Picks and handler calls over the last tick. */
+  /** Picks and handler calls over the last tick (picks as if every section ticked; `sections` = the ones that did). */
   picks: number;
+  sections: number;
   handled: number;
   changes: number;
   /** Ticks that stopped early because of the time budget or the change cap, over the lifetime. */
@@ -116,6 +118,24 @@ export const HAS_RANDOM_TICK = new Uint8Array(256);
 const HANDLERS: (RandomTickHandler | null)[] = new Array<RandomTickHandler | null>(256).fill(null);
 const SURFACE: SurfaceHandler[] = [];
 
+/**
+ * Which 16³ sections of a chunk hold anything with a random tick (bit s = section s), like Minecraft's
+ * isRandomlyTicking: sections of only stone or air are skipped without reading them. Keyed by the chunk's block
+ * array; rescanned after RESCAN_TICKS (stale bits only cost a few wasted picks) or when a handler is registered.
+ * Hosts report new tickable blocks with `noteRandomTickable` so a planted sapling ticks from the next tick on.
+ */
+interface SectionMask { mask: number; at: number; epoch: number }
+const SECTION_MASKS = new WeakMap<Uint8Array, SectionMask>();
+const RESCAN_TICKS = 1200;
+let registryEpoch = 0;
+
+/** A block was written into a chunk array: if it has a random tick, its section ticks from now on. */
+export function noteRandomTickable(blocks: Uint8Array, y: number, id: number): void {
+  if (HAS_RANDOM_TICK[id] === 0) return;
+  const e = SECTION_MASKS.get(blocks);
+  if (e) e.mask |= 1 << (y >> 4);
+}
+
 /** Pick a position inside a section from 12 random bits: x | z << 4 | y << 8 (y within the section). */
 const POS_MASK = 0xfff;
 
@@ -124,11 +144,13 @@ export class RandomTicker implements TickContext {
   static register(blockId: number, handler: RandomTickHandler): void {
     HANDLERS[blockId] = handler;
     HAS_RANDOM_TICK[blockId] = 1;
+    registryEpoch++;
   }
 
   static unregister(blockId: number): void {
     HANDLERS[blockId] = null;
     HAS_RANDOM_TICK[blockId] = 0;
+    registryEpoch++;
   }
 
   /** Registers a handler that runs for the top block of a random column, about once per 16 chunks per tick. */
@@ -146,7 +168,7 @@ export class RandomTicker implements TickContext {
   budgetMs: number;
   maxChanges: number;
   rng: TickRng;
-  readonly stats: RandomTickStats = { lastMs: 0, picks: 0, handled: 0, changes: 0, skipped: 0, ticks: 0 };
+  readonly stats: RandomTickStats = { lastMs: 0, picks: 0, sections: 0, handled: 0, changes: 0, skipped: 0, ticks: 0 };
 
   private changes = 0;
   /** Where the chunk walk resumes after a tick that ran out of time. */
@@ -154,6 +176,7 @@ export class RandomTicker implements TickContext {
   private readonly pcx = new Int32Array(MAX_PLAYERS);
   private readonly pcz = new Int32Array(MAX_PLAYERS);
   private errors = 0;
+  private scans = 0;
   private readonly clock: () => number;
 
   constructor(private readonly host: RandomTickHost, opts: RandomTickOptions = {}) {
@@ -215,7 +238,7 @@ export class RandomTicker implements TickContext {
   tick(centers: ArrayLike<{ x: number; z: number }>): number {
     const stats = this.stats;
     stats.ticks++;
-    stats.picks = stats.handled = 0;
+    stats.picks = stats.handled = stats.sections = 0;
     this.changes = 0;
     const n = Math.min(centers.length, MAX_PLAYERS);
     const speed = this.speed | 0;
@@ -266,24 +289,50 @@ export class RandomTicker implements TickContext {
   }
 
   private tickChunk(blocks: Uint8Array, cx: number, cz: number, speed: number): void {
-    const rng = this.rng;
     const ox = cx << 4, oz = cz << 4;
     let handled = 0;
+    // The default generator is stepped inline (no call per pick); an injected one is called.
+    const fast = this.rng instanceof XorShift32 ? this.rng : null;
+    let st = fast ? fast.s : 0;
+    const mask = this.sectionMask(blocks);
     for (let s = 0; s < SECTIONS; s++) {
+      if ((mask & (1 << s)) === 0) continue;
       const base = s << 12; // section s starts at y = 16 s, block index y << 8
       for (let k = 0; k < speed; k++) {
-        const pos = rng.nextU32() & POS_MASK;
+        let r: number;
+        if (fast) { st ^= st << 13; st ^= st >>> 17; st ^= st << 5; r = st; } else r = this.rng.nextU32();
         // pos = x | z << 4 | ys << 8, and the block index is x | z << 4 | (16 s + ys) << 8 = pos + base
-        const idx = pos + base;
-        const handler = HANDLERS[blocks[idx]];
-        if (handler === null) continue;
-        handler(this, ox + (pos & 15), (idx >> 8), oz + ((pos >> 4) & 15));
+        const idx = (r & POS_MASK) + base;
+        const id = blocks[idx];
+        if (HAS_RANDOM_TICK[id] === 0) continue;
+        if (fast) fast.s = st;
+        HANDLERS[id]!(this, ox + (idx & 15), idx >> 8, oz + ((idx >> 4) & 15));
+        if (fast) st = fast.s;
         handled++;
       }
     }
+    if (fast) fast.s = st;
     this.stats.picks += SECTIONS * speed;
+    this.stats.sections += popcount8(mask);
     this.stats.handled += handled;
-    if (SURFACE.length > 0 && (rng.nextU32() >>> (32 - SURFACE_CHANCE_SHIFT)) === 0) this.surfacePass(blocks, ox, oz);
+    if (SURFACE.length > 0 && (this.rng.nextU32() >>> (32 - SURFACE_CHANCE_SHIFT)) === 0) this.surfacePass(blocks, ox, oz);
+  }
+
+  private sectionMask(blocks: Uint8Array): number {
+    const ticks = this.stats.ticks;
+    let e = SECTION_MASKS.get(blocks);
+    if (e && e.epoch === registryEpoch && ticks - e.at < RESCAN_TICKS && e.at <= ticks) return e.mask;
+    let mask = 0;
+    for (let s = 0; s < SECTIONS; s++) {
+      const end = (s + 1) << 12;
+      for (let i = s << 12; i < end; i++) {
+        if (HAS_RANDOM_TICK[blocks[i]] !== 0) { mask |= 1 << s; break; }
+      }
+    }
+    // Spread the rescans of chunks seen in the same tick over time.
+    const at = ticks - (this.scans++ % 200);
+    if (e) { e.mask = mask; e.at = at; e.epoch = registryEpoch; } else SECTION_MASKS.set(blocks, e = { mask, at, epoch: registryEpoch });
+    return mask;
   }
 
   /** Top block of one random column, for effects that start at the surface. */
@@ -296,6 +345,12 @@ export class RandomTicker implements TickContext {
       return;
     }
   }
+}
+
+function popcount8(m: number): number {
+  let n = 0;
+  for (; m; m &= m - 1) n++;
+  return n;
 }
 
 function defaultNow(): number {
