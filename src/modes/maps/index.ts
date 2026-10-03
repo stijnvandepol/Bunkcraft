@@ -1,5 +1,6 @@
 import { ArenaMap } from './ArenaMap';
 import { BUNKER } from './bunker';
+import { ATOMIC } from './atomic';
 import { CLASSIC } from './classic';
 import { DESERT } from './desert';
 import { DOCKYARD } from './dockyard';
@@ -8,13 +9,16 @@ import { SUBURB } from './suburb';
 
 export { ARENA_FLOOR_Y, ArenaMap, type Flag, type Spawn, type Zone } from './ArenaMap';
 
-export type MapId = 'classic' | 'suburb' | 'quarter' | 'dockyard' | 'desert' | 'bunker';
+export type MapId = 'classic' | 'suburb' | 'quarter' | 'dockyard' | 'desert' | 'atomic' | 'bunker';
+/** The map of plain "arena" worlds; it must stay 'classic' so old saves keep their map. */
 export const DEFAULT_MAP: MapId = 'classic';
+/** The map the create-game menu suggests first. */
+export const MENU_DEFAULT_MAP: MapId = 'atomic';
 
 /** Room setting: a fixed map, or "rotate" = the next match uses the next map. */
 export type MapSetting = MapId | 'rotate';
 
-export const MAPS: ArenaMap[] = [CLASSIC, SUBURB, QUARTER, DOCKYARD, DESERT, BUNKER].map((d) => new ArenaMap(d));
+export const MAPS: ArenaMap[] = [CLASSIC, SUBURB, QUARTER, DOCKYARD, DESERT, ATOMIC, BUNKER].map((d) => new ArenaMap(d));
 export const MAP_IDS: MapId[] = MAPS.map((m) => m.id as MapId);
 export const MAP_SETTINGS: MapSetting[] = [...MAP_IDS, 'rotate'];
 

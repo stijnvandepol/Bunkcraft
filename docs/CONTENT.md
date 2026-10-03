@@ -111,8 +111,24 @@ Totaal: **182 bloktypes** (hoogste id 185 van 254, dus nog ruim 60 vrij), ~480 u
   hekken en muren zijn 1,5 hoog (de botsing kijkt daarom één cel lager). Een bed is twee blokken, een ladder klimt via `Player.step`.
 - **Furnace, kist en pompoenen** hebben een richting (`meta & 3` bepaalt welke zijde de voorkant toont). `meta 0` is de oude vaste voorkant, dus
   bestaande ovens veranderen niet.
-- **Chests** (`ContainerStore`, `WorldMeta.containers`): de inhoud staat los van de chunks en wordt met de wereld opgeslagen. In multiplayer slaat de server
-  geen containers op; kisten zijn daar niet te plaatsen.
+- **Block entities** (`src/world/BlockEntities.ts`): kist en oven bewaren hun inhoud per positie in een `BlockEntityStore`
+  per wereld. Ze ontstaan bij plaatsen, verdwijnen bij breken (inhoud valt eruit in survival) en tikken alleen als ze iets
+  te doen hebben en hun chunk geladen is. Opslag: singleplayer `WorldMeta.blockEntities` (save-versie 4; de oude
+  `WorldMeta.containers` wordt bij het laden omgezet), de server in `world.json` (`blockEntities`). Andere soorten (spawner,
+  bord, bed, banner) registreren zich met `registerBlockEntityKind`.
+- **Dubbele kist:** een kist naast een kist met dezelfde richting wordt één kist van 54 slots. State-bits: 0-1 richting,
+  bit 2 = linker/lage helft (houdt de 54 slots), bit 3 = rechter/hoge helft. Breek je één helft, dan vallen de 27 slots van
+  die helft eruit en blijft de andere een enkele kist. Een helft zonder echte partner telt als enkele kist. Beide helften
+  zien er nog uit als twee enkele kisten (geen eigen textuur).
+- **Oven** (`src/items/Smelting.ts`): input-, brandstof- en outputslot, kooktijd 200 ticks (blast furnace en smoker 100,
+  klaar in de code maar nog zonder blok), brandstoftabel van de wiki (lavaemmer 20000 → lege emmer, kolenblok 16000, kool en
+  houtskool 1600, hout 300, houten gereedschap 200, stok 100, ...), voortgang zakt 2 per tick zonder vuur. XP per recept
+  wordt in de oven bewaard (`xpStored`) en bij het pakken van de output uitgedeeld (`takeXp()`, hook `onXpAwarded` /
+  `Game.onFurnaceXp` voor het XP-systeem). Brandend is een eigen blok-id `lit_furnace` (86) met licht 13 en een gloeiende
+  voorkant; het valt als gewone oven. De smelt-recepten in het receptenboek zijn naslag: smelten gaat alleen in een oven.
+- **Loot-tabellen** (`src/items/Loot.ts`): pools met rolls, gewogen entries, aantallen en condities (`killed_by_player`,
+  `chance`, `looting_chance`), deterministisch met `seededRng(hashSeed(...))`. `fillContainer` strooit de stacks over
+  willekeurige vrije slots zoals Minecraft.
 - **Per-stack data:** `ItemStack.data?: Record<string, number>` met een append-only sleutellijst (`ITEM_DATA_KEYS`). Opslagformaat
   `[id, count, damage, sleutel, waarde, ...]`, dus oude saves (3 getallen) blijven geldig; `drop` en `taken` dragen `data` mee.
 - **Harnas** zit als 4 extra records (slot 36-39) in `PlayerInventory.serialize()`: oude saves en de server (limiet 64 records) blijven werken.
@@ -121,10 +137,10 @@ Totaal: **182 bloktypes** (hoogste id 185 van 254, dus nog ruim 60 vrij), ~480 u
 
 - Beton heeft geen poeder (4 zand + 4 grind + kleurstof → 8 beton); kleurstoffen: bruin (cacao), zwart (inktzak) en grijs (heeft zwart nodig) hebben nog geen bron.
 - Een bed zet je respawnpunt en slaapt 's nachts door, zonder spelers-in-bed-telling of monstercheck.
-- Mud bricks en hooi vragen tarwe, dus landbouw (tier 2). Het brood-, koekje-, taart- en leerrecept zijn er, maar wat ze als grondstof nodig hebben ontbreekt nog in de wereld
-  (tarwe, cacao, eieren, leer van koeien). `tests/recipes.test.ts` houdt dit lijstje bij ("OUT_OF_REACH").
+- Mud bricks en hooi vragen tarwe, dus landbouw (tier 2). Het brood-, koekje- en taartrecept zijn er, maar wat ze als grondstof nodig hebben ontbreekt nog in de wereld
+  (tarwe, cacao, eieren). Koeien laten sinds de balans-audit 0–2 leer vallen (`docs/qa/BALANCE.md`). `tests/recipes.test.ts` houdt dit lijstje bij ("OUT_OF_REACH").
 - Een kist is een volle kubus (geen kleinere kist met deksel) en heeft geen dubbele variant.
-- Boekenkast blijft 6 planken (vanilla: + 3 boeken), omdat leer nog geen bron heeft.
+- Boekenkast blijft 6 planken (vanilla: + 3 boeken); nu leer van koeien komt, kan het vanilla-recept terug.
 - Gouden appel geeft honger en saturatie maar nog geen Absorption en Regeneration (geen effectensysteem).
 - Het bed, de kist en de lantaarn hebben procedurele texturen (in een Minecraft-jar zijn ze entity-textures); de rest wordt wel uit een geïmporteerd jar geladen.
 - Een ontploft blok laat een gekleurd blok als witte wol vallen (`World.explode` kent de state van vernietigde blokken niet).

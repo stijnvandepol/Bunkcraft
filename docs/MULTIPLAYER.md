@@ -46,6 +46,31 @@ UDP (Geckos.io) is niet nodig: een blokkengame op 20 Hz werkt prima met betrouwb
 
 Bij 8 spelers is dat ongeveer 19 KB/s upload voor de host: prima voor een gewone internetverbinding.
 
+## Kisten en ovens (containers)
+
+De server is eigenaar van kisten en ovens (`ServerWorld.blockEntities`, opgeslagen in `world.json` onder `blockEntities`).
+Het protocol is additief (`PROTOCOL_VERSION` blijft 4); `welcome.containers: true` zegt dat de server het kent. Een oude
+server negeert de berichten en de client meldt dan dat de server geen kisten opslaat.
+
+| Bericht | Richting | Inhoud |
+|---|---|---|
+| `{t:'container', op:'open', x,y,z}` | client → server | openen; binnen 8 blokken, één container tegelijk per speler |
+| `{op:'open', kind, title, slots, props?}` | server → client | inhoud (`[]` = leeg slot), oven-`props` = [brandtijd, totaal, kooktijd, totaal] |
+| `{op:'deny', reason}` | server → client | te ver, geen container, limiet |
+| `{op:'click', seq, slot, button, shift?, from?, inv, cursor}` | client → server | klik op slot (of shift vanuit inventory-slot `from` met `slot: -1`), met de inventory-rijen en de cursor-stack |
+| `{op:'result', seq, ok, cursor, toInv?, fromInv?, xp?}` | server → client | nieuwe cursor, wat er naar/uit de inventory gaat, oven-XP |
+| `{op:'slots', slots, props?}` | server → iedereen die hem open heeft | nieuwe inhoud (meteen bij wijziging, oven-voortgang max 2×/s) |
+| `{op:'close'}` | beide | sluiten; de server sluit ook bij breken of weglopen |
+
+Omdat de inventory bij de client hoort, stuurt elke klik de inventory en cursor mee. De server controleert die met de
+inventory guard (de cursor telt als "in bezit"), past de klik toe op een kopie van de slots en neemt hem pas over als de
+guard de overdracht accepteert: wat uit de container komt gaat de pool in (`creditTransfer`), wat erin gaat moet in de
+pool zitten (`spendTransfer`). Een tweede storting met een verouderde inventory of een verzonnen cursor-stack wordt dus
+geweigerd (`result.ok = false` plus een `state`-correctie). Smelten telt niet meer als recept voor de guard: oven-output komt
+als overdracht binnen. De client wacht per klik op het antwoord (geen voorspelling), wat bij gewone ping niet merkbaar is.
+Lit/unlit-wissels van ovens en het losmaken van een dubbele kist gaan als `blocks`-bericht naar iedereen. Grenzen: één open
+container per speler, 20 open/klik-berichten per seconde, maximaal 20000 block entities per wereld, slot-rijen zoals de inventory.
+
 ## Netcode
 
 1. **Client-side prediction:** de eigen speler beweegt direct lokaal. De server rekent met dezelfde `Player`-code en corrigeert bij afwijkingen.

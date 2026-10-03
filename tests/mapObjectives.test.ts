@@ -41,10 +41,12 @@ describe('map objectives: zones', () => {
       }
     });
 
-    it(`${map.id}: the zone set is mirror symmetric and alternates sides in play order`, () => {
+    it(`${map.id}: the zone set is symmetric like the map and alternates sides in play order`, () => {
+      // Mirrored maps: the twin is mirrored over x; free maps are point symmetric around the centre.
+      const twinZ = (z: number) => (map.mirrored ? z : -z);
       for (const z of zones) {
-        const twin = zones.find((o) => near(o.x, -z.x) && near(o.z, z.z));
-        expect(twin, `${z.name} has an x-mirror`).toBeDefined();
+        const twin = zones.find((o) => near(o.x, -z.x) && near(o.z, twinZ(z.z)));
+        expect(twin, `${z.name} has a twin`).toBeDefined();
         expect(twin!.r).toBe(z.r);
         expect(twin!.y).toBe(z.y);
       }
@@ -86,7 +88,7 @@ describe('map objectives: flags', () => {
       expect(map.flags).toHaveLength(2);
       expect(red.x).toBeLessThan(0);
       expect(near(red.x, -blue.x)).toBe(true);
-      expect(near(red.z, blue.z)).toBe(true);
+      expect(near(red.z, map.mirrored ? blue.z : -blue.z)).toBe(true);
       expect(red.y).toBe(blue.y);
       for (const f of [red, blue]) {
         expect(map.inBounds(f.x, f.z)).toBe(true);

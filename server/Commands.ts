@@ -215,7 +215,7 @@ const COMMANDS: Record<string, Def> = {
     usage: '/time set day|noon|night|midnight', level: 'op', run: (h, a, args) => {
       if (h.arcade) return h.reply(a.name, 'The time is fixed in this game type');
       const key = (args[1] ?? '').toLowerCase();
-      if (args[0]?.toLowerCase() === 'set' && key in TIME_PRESETS) {
+      if (args[0]?.toLowerCase() === 'set' && Object.hasOwn(TIME_PRESETS, key)) {
         h.setTime(TIME_PRESETS[key]);
         h.broadcastSystem(`${a.name} set the time to ${key}`);
         return;

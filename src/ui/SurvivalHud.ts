@@ -55,6 +55,17 @@ const EMPTY: Record<string, string> = { r: '#3a2424', R: '#3a2424', w: '#3a2424'
 // The armor icon's highlight is white where the hearts' is pink.
 const ARMOR_PALETTE: Record<string, string> = { ...PALETTE, w: '#ffffff' };
 
+/** Colour-blind-safe heart and hunger colours (see core/Accessibility.ts). */
+const SAFE: Record<string, string> = { r: '#d6217f', R: '#ff6fb3', w: '#ffd6ea', b: '#e8c61c', B: '#fff07a' };
+const NORMAL: Record<string, string> = { r: PALETTE.r, R: PALETTE.R, w: PALETTE.w, b: PALETTE.b, B: PALETTE.B };
+let paletteVersion = 0;
+
+/** Switch the hearts and hunger icons to the colour-blind-safe palette (and back). */
+export function setSurvivalColorBlind(on: boolean): void {
+  Object.assign(PALETTE, on ? SAFE : NORMAL);
+  paletteVersion++;
+}
+
 export interface SurvivalValues {
   health: number;
   hunger: number;
@@ -86,7 +97,7 @@ export class SurvivalHud {
   update(v: SurvivalValues, time: number): void {
     const lowHealth = v.health <= 4;
     // Shaking hearts at low health need a redraw every few frames.
-    const key = `${v.health}|${v.hunger}|${Math.ceil(v.air / 30)}|${lowHealth ? Math.floor(time * 12) : 0}|${v.armor ?? 0}`;
+    const key = `${paletteVersion}|${v.health}|${v.hunger}|${Math.ceil(v.air / 30)}|${lowHealth ? Math.floor(time * 12) : 0}|${v.armor ?? 0}`;
     if (key === this.last) return;
     this.last = key;
     const ctx = this.ctx;

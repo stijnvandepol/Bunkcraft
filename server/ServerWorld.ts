@@ -3,6 +3,7 @@ import {
   BLOCK, LIGHT_EMIT, OPAQUE, SHAPE, SHAPE_CROSS, SHAPE_DOOR, SHAPE_MODEL,
 } from '../src/world/BlockRegistry';
 import { packState, stateId, stateMeta } from '../src/world/BlockStates';
+import { BlockEntityStore } from '../src/world/BlockEntities';
 import { LAVA_TICK_DELAY, LiquidSim, WATER_TICK_DELAY, isLiquid } from '../src/world/Liquids';
 import { CHUNK_HEIGHT, CHUNK_VOLUME, blockIndex, chunkKey } from '../src/world/constants';
 import { GEN_VERSION_CURRENT } from '../src/world/GenVersion';
@@ -48,6 +49,17 @@ export class ServerWorld implements EntityWorld {
   private readonly simEdits: number[] = [];
   onChunkReady: ((chunk: ChunkLike) => void) | null = null;
   onChunkUnloaded: ((key: number) => void) | null = null;
+  /**
+   * Chests and furnaces: the server owns them in multiplayer (saved in world.json). Block changes they make
+   * themselves (a furnace lighting up, the other half of a broken double chest) go out with the simulation edits.
+   */
+  readonly blockEntities: BlockEntityStore = new BlockEntityStore({
+    getBlock: (x, y, z) => this.getBlock(x, y, z),
+    getMeta: (x, y, z) => this.getMeta(x, y, z),
+    setState: (x, y, z, id, meta) => {
+      if (this.setBlock(x, y, z, id, meta) >= 0) this.simEdits.push(x, y, z, id, meta);
+    },
+  });
 
   constructor(readonly seed: number, edits: Record<string, number>, readonly worldType: WorldType = 'terrain', readonly genVersion: number = GEN_VERSION_CURRENT) {
     this.generator = createGenerator(worldType, seed, genVersion);
@@ -159,7 +171,8 @@ export class ServerWorld implements EntityWorld {
       return BLOCK.UNLOADED;
     }
     const prev = c.blocks[i];
-    if (prev === id && (c.meta ? c.meta[i] : 0) === meta) return -1;
+    const prevMeta = c.meta ? c.meta[i] : 0;
+    if (prev === id && prevMeta === meta) return -1;
     c.blocks[i] = id;
     if (meta !== 0 && !c.meta) c.meta = new Uint8Array(CHUNK_VOLUME);
     if (c.meta) c.meta[i] = meta;
@@ -172,6 +185,7 @@ export class ServerWorld implements EntityWorld {
     }
     this.onEdit?.(x, y, z, id, meta);
     this.liquids.notify(x, y, z);
+    this.blockEntities.onBlockChange(x, y, z, prev, prevMeta, id, meta);
     return prev;
   }
 
