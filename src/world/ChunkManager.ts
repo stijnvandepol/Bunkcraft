@@ -5,6 +5,7 @@ import type { GenerateResponse, MeshResponse } from '../workers/protocol';
 import { PACK_BASE_BYTES, PACK_CHUNKS } from '../workers/protocol';
 import { CHUNK_EMPTY, CHUNK_GENERATING, CHUNK_READY, Chunk } from './Chunk';
 import { CHUNK_AREA, CHUNK_HEIGHT, CHUNK_SIZE, CHUNK_VOLUME, chunkKey } from './constants';
+import { GEN_VERSION_CURRENT } from './GenVersion';
 import type { WorldType } from './WorldGenerator';
 
 export interface ChunkMaterials {
@@ -27,6 +28,8 @@ function resultBytes(r: MeshResult): number {
   return geometryBytes(r.opaque) + geometryBytes(r.cutout) + geometryBytes(r.water);
 }
 
+const GRID_BITS = 7;
+const GRID_MASK = (1 << GRID_BITS) - 1;
 /** Per-frame upload budget at full speed. */
 const UPLOAD_BYTES = 1.5 * 1024 * 1024;
 const UPLOAD_MS = 2;
@@ -68,6 +71,7 @@ export class ChunkManager {
   private readonly fresh: THREE.Mesh[] = [];
   /** Chunks that own at least one mesh (flat array: no iterator garbage in the per-frame cull). */
   private readonly drawList: Chunk[] = [];
+  private readonly grid: (Chunk | undefined)[] = new Array(1 << (GRID_BITS * 2)).fill(undefined);
   private readonly planes = new Float64Array(24);
   private readonly cullKey = new Float64Array(20).fill(NaN);
   private readonly projView = new THREE.Matrix4();
@@ -92,6 +96,7 @@ export class ChunkManager {
     private readonly pool: WorkerPool,
     private readonly materials: ChunkMaterials,
     private readonly worldType: WorldType = 'terrain',
+    private readonly genVersion: number = GEN_VERSION_CURRENT,
   ) {
     // The groups never move and chunk meshes have their matrixWorld set once: keep the per-frame
     // updateMatrixWorld traversal out of ~1000 children.
@@ -104,7 +109,14 @@ export class ChunkManager {
   }
 
   get(cx: number, cz: number): Chunk | undefined {
-    return this.chunks.get(chunkKey(cx, cz));
+    // Toroidal grid in front of the Map: the loaded window (< 2 x 35 chunks) never wraps onto itself.
+    // Computed keys exceed 2^31, so every Map lookup with one would box a heap number.
+    const i = (cx & GRID_MASK) | ((cz & GRID_MASK) << GRID_BITS);
+    const g = this.grid[i];
+    if (g !== undefined && g.cx === cx && g.cz === cz) return g;
+    const c = this.chunks.get(chunkKey(cx, cz));
+    if (c) this.grid[i] = c;
+    return c;
   }
 
   /** Square spiral offsets sorted by distance, filtered to a circle. */
@@ -181,11 +193,12 @@ export class ChunkManager {
         const front = d2 <= 4 || dx * vx + dz * vz > -0.3 * Math.sqrt(d2);
         if (front !== (pass === 0)) continue;
         const cx = pcx + dx, cz = pcz + dz;
-        const key = chunkKey(cx, cz);
-        let chunk = this.chunks.get(key);
+        let chunk = this.get(cx, cz);
         if (!chunk) {
+          const key = chunkKey(cx, cz);
           chunk = new Chunk(cx, cz, key);
           this.chunks.set(key, chunk);
+          this.grid[(cx & GRID_MASK) | ((cz & GRID_MASK) << GRID_BITS)] = chunk;
           this.epoch++;
         }
         if (chunk.state === CHUNK_EMPTY) {
@@ -204,7 +217,7 @@ export class ChunkManager {
   private neighboursReady(c: Chunk): boolean {
     for (let dz = -1; dz <= 1; dz++) {
       for (let dx = -1; dx <= 1; dx++) {
-        const n = this.chunks.get(chunkKey(c.cx + dx, c.cz + dz));
+        const n = this.get(c.cx + dx, c.cz + dz);
         if (!n || n.state !== CHUNK_READY) return false;
       }
     }
@@ -214,7 +227,7 @@ export class ChunkManager {
   private requestGenerate(chunk: Chunk): void {
     chunk.state = CHUNK_GENERATING;
     this.genInFlight++;
-    this.pool.submit({ type: 'generate', id: 0, seed: this.seed, worldType: this.worldType, cx: chunk.cx, cz: chunk.cz }, (res) => {
+    this.pool.submit({ type: 'generate', id: 0, seed: this.seed, worldType: this.worldType, genVersion: this.genVersion, cx: chunk.cx, cz: chunk.cz }, (res) => {
       this.genInFlight--;
       if (this.disposed || this.chunks.get(chunk.key) !== chunk) return;
       chunk.blocks = (res as GenerateResponse).blocks;
@@ -245,7 +258,7 @@ export class ChunkManager {
     for (let dz = -1; dz <= 1; dz++) {
       for (let dx = -1; dx <= 1; dx++) {
         const n = (dz + 1) * 3 + dx + 1;
-        const c = this.chunks.get(chunkKey(chunk.cx + dx, chunk.cz + dz))!;
+        const c = this.get(chunk.cx + dx, chunk.cz + dz)!;
         around[n] = c;
         if (c.meta) { metaMask |= 1 << n; metaCount++; }
       }
@@ -524,6 +537,8 @@ export class ChunkManager {
       if (dx * dx + dz * dz > limit) {
         this.disposeChunk(c);
         this.chunks.delete(key);
+        const gi = (c.cx & GRID_MASK) | ((c.cz & GRID_MASK) << GRID_BITS);
+        if (this.grid[gi] === c) this.grid[gi] = undefined;
         this.epoch++;
         this.onUnloaded?.(key);
       }
@@ -583,7 +598,7 @@ export class ChunkManager {
     const pcx = Math.floor(px / CHUNK_SIZE), pcz = Math.floor(pz / CHUNK_SIZE);
     for (let dz = -radius; dz <= radius; dz++) {
       for (let dx = -radius; dx <= radius; dx++) {
-        const c = this.chunks.get(chunkKey(pcx + dx, pcz + dz));
+        const c = this.get(pcx + dx, pcz + dz);
         if (!c || c.meshedVersion < 0) return false;
       }
     }
@@ -594,6 +609,7 @@ export class ChunkManager {
     this.disposed = true;
     for (const c of this.chunks.values()) this.disposeChunk(c);
     this.chunks.clear();
+    this.grid.fill(undefined);
     this.drawList.length = 0;
     this.epoch++;
     this.results.length = 0;

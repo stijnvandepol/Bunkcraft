@@ -86,7 +86,8 @@ describe('door geometry', () => {
 
   it('validates the state byte', () => {
     expect(isValidMeta(DOOR, 31)).toBe(true);
-    expect(isValidMeta(DOOR, 32)).toBe(false);
+    expect(isValidMeta(DOOR, 256)).toBe(false);
+    expect(isValidMeta(DOOR, 32)).toBe(true); // bits 5-7 are the wood
     expect(getBlockDef(DOOR)).toMatchObject({ name: 'oak_door', displayName: 'Oak Door', shape: 'door' });
   });
 });

@@ -1,30 +1,40 @@
+import { enableRedstone, redstoneSound } from './RedstoneHooks';
 import * as THREE from 'three';
+import { MobSteps } from './audio/mobSteps';
+import { PlayerSounds, surfaceLookup } from './audio/playerSounds';
+import { WorldAudioProbe } from './audio/worldProbe';
+import { bindUiSounds } from '../ui/uiSound';
 import { EntityManager } from '../entities/EntityManager';
 import { ItemRenderer } from '../entities/ItemRenderer';
 import { TntRenderer } from '../entities/TntRenderer';
+import { FallingBlockRenderer } from '../entities/FallingBlockRenderer';
+import { NetFalling } from '../net/NetFalling';
+import type { FallingBlock } from '../world/BlockUpdates';
 import { ArrowRenderer } from '../entities/ArrowRenderer';
 import type { Mob, MobEvents } from '../entities/Mob';
+import { explosionDamage, explosionDropChance } from '../entities/Explosion';
 import { MobRenderer } from '../entities/MobRenderer';
 import { NetClient, type WelcomeMessage } from '../net/NetClient';
 import { NetEntities } from '../net/NetEntities';
+import { useBoneMeal } from '../world/Growth';
 import { type ClientMessage, type ServerMessage, formatCode, normalizeCode } from '../net/protocol';
-import { gameTypeDef } from '../modes/GameTypes';
+import { type GameType, TEAM_COLORS, gameTypeDef } from '../modes/GameTypes';
 import { inviteLink, inviteText, rememberGame } from '../net/RoomApi';
 import { RemotePlayers } from '../net/RemotePlayers';
 import { Chat } from '../ui/Chat';
 import { PlayerInventory } from '../items/Inventory';
-import { ITEM, type ItemStack, blockDrop, getItemDef } from '../items/ItemRegistry';
+import { ITEM, type ItemStack, blockDrop, decodeData, encodeData, getItemDef } from '../items/ItemRegistry';
 import type { Station } from '../items/Recipes';
 import { type GameMode, GAME_MODE_NAMES, canFly, hasSurvivalRules } from '../player/GameMode';
 import { PHYSICS } from '../player/Physics';
 import { type MoveInput, Player } from '../player/Player';
 import { MAX_AIR, PlayerStats } from '../player/PlayerStats';
-import { DayCycle } from '../rendering/DayCycle';
+import { DayCycle, MOON_PHASE_NAMES } from '../rendering/DayCycle';
 import { HandRenderer } from '../rendering/HandRenderer';
 import {
   IMPORTED_PREFIX, MINECRAFT_LAYOUT, type PackImage, builtinResolver, findBuiltinPack, importMinecraftArchive, importedResolver, loadPack,
 } from '../rendering/TexturePacks';
-import { type WorldMeta, SaveSystem, newWorldId } from '../save/SaveSystem';
+import { type WorldMeta, SaveSystem, cheatsAllowed, newWorldId } from '../save/SaveSystem';
 import { BlockIcons } from '../ui/BlockIcons';
 import { DebugOverlay } from '../ui/DebugOverlay';
 import { h } from '../ui/dom';
@@ -36,11 +46,17 @@ import { createLogo } from '../ui/Logo';
 import { AdvancementTracker } from '../player/Advancements';
 import { AdvancementToasts } from '../ui/AdvancementToasts';
 import { advancementsScreen } from '../ui/AdvancementsScreen';
+import { statisticsScreen } from '../ui/StatisticsScreen';
+import { initKeyboardLock, keyboardLockActive } from '../pwa/KeyboardLock';
+import { showToast } from '../pwa/Toast';
+import { parseShareParams } from '../save/share';
+import { WorldTransfer } from '../save/WorldTransfer';
+import { downloadBlob } from '../ui/download';
 import { MainMenu, VERSION, deathScreen, inviteScreen, pauseScreen } from '../ui/MainMenu';
 import { resourcePacksScreen } from '../ui/ResourcePacksMenu';
 import { ScreenStack } from '../ui/Screens';
-import { optionsScreen } from '../ui/SettingsMenu';
-import { KB, resolveKeybinds } from './Keybinds';
+import { type OptionsNav, languageScreen, optionsScreen } from '../ui/SettingsMenu';
+import { KB, keyDisplayName, resolveKeybinds } from './Keybinds';
 import { SurvivalInventory } from '../ui/SurvivalInventory';
 import { WorkerPool } from '../workers/WorkerPool';
 import { BLOCK, SOLID, getBlockDef } from '../world/BlockRegistry';
@@ -50,17 +66,40 @@ import { CHUNK_VOLUME, blockIndex, chunkKey } from '../world/constants';
 import { hashString } from '../world/Noise';
 import { BIOME_NAMES } from '../world/TerrainGenerator';
 import { DEFAULT_MAP, getMap, parseMapId } from '../modes/maps';
+import { GEN_VERSION_CURRENT, normalizeGenVersion } from '../world/GenVersion';
 import { type WorldType, arenaWorldType } from '../world/WorldGenerator';
 import { createRayHit, raycast } from '../world/Raycast';
 import { World } from '../world/World';
-import { type ArcadeFrame, ArcadeSession } from './ArcadeSession';
+import type { ArcadeFrame, ArcadeSession } from './ArcadeSession';
 import { AudioEngine } from './Audio';
 import { CameraController } from './Camera';
 import { Input } from './Input';
+import { type StationKind } from './Interaction';
+import { Progression } from './Progression';
+import { encodeData as encodeItemData } from '../items/ItemRegistry';
+import { hasEnchants, powerBonus, punchKnockback } from '../items/EnchantRules';
+import type { ContainerView } from '../ui/SurvivalInventory';
 import { Interaction } from './Interaction';
+import { ContainerScreens } from './ContainerScreens';
 import { Renderer } from './Renderer';
+import { WorldRules } from './WorldRules';
+import { blocksFromDirection } from '../player/Melee';
+import { gameRulesScreen } from '../ui/GameRulesScreen';
+import type { Difficulty } from '../world/Difficulty';
+import { WeatherSystem } from './WeatherSystem';
 import { DynamicResolution, MIN_ADAPTIVE_DISTANCE, suggestPreset } from './AdaptiveQuality';
-import { SettingsStore } from './Settings';
+import { MAX_FPS_UNLIMITED, type Settings, SettingsStore } from './Settings';
+import { applyAccessibilityDocument, effectiveParticles, limitFlash, mobSoundLabel, paletteFor } from './Accessibility';
+import { GamepadController, type PadContext, cleanName } from './Gamepad';
+import { needsAutoJump } from './InputMath';
+import { TouchControls, type TouchContext } from './TouchControls';
+import { announce } from '../ui/Announcer';
+import { MenuNav } from '../ui/MenuNav';
+import { Subtitles } from '../ui/Subtitles';
+import { setSurvivalColorBlind } from '../ui/SurvivalHud';
+import { detectLanguage, setLanguage, t } from '../ui/i18n';
+import { StatTracker } from '../player/StatTracker';
+import { LOCAL_COMMAND_USAGE, SERVER_COMMAND_USAGE } from '../ui/chatLogic';
 
 type GameState = 'menu' | 'loading' | 'playing' | 'paused' | 'inventory' | 'dead' | 'chat';
 
@@ -85,9 +124,16 @@ export class Game {
   private readonly input: Input;
   private readonly cam = new CameraController();
   private readonly audio = new AudioEngine();
+  private playerSounds!: PlayerSounds;
+  private mobSteps!: MobSteps;
+  private audioProbe!: WorldAudioProbe;
   private readonly save = new SaveSystem();
   private readonly pool: WorkerPool;
   private readonly cycle = new DayCycle();
+  /** Weather: simulation (singleplayer) or server follower (multiplayer), rendering inputs and lightning. */
+  private readonly weatherSys: WeatherSystem;
+  /** Difficulty, game rules, respawn point and sleeping (WorldRules.ts). */
+  private readonly worldRules: WorldRules;
   readonly player = new Player();
   private readonly stats = new PlayerStats();
   private readonly advancements = new AdvancementTracker();
@@ -98,21 +144,46 @@ export class Game {
   private readonly hud: HUD;
   private readonly inventory: Inventory;
   private readonly survivalInventory: SurvivalInventory;
+  /** Chest and furnace screens (singleplayer block entities or the server's containers). */
+  private readonly containers: ContainerScreens;
+  /** Experience handed out by a furnace (the XP system hooks in here; amount in points). */
+  onFurnaceXp: ((amount: number) => void) | null = null;
   private readonly hand: HandRenderer;
   private readonly mobRenderer: MobRenderer;
   private readonly itemRenderer: ItemRenderer;
   private readonly tntRenderer: TntRenderer;
+  private readonly fallingRenderer: FallingBlockRenderer;
+  private netFalling: NetFalling | null = null;
+  private static readonly NO_FALLING: FallingBlock[] = [];
   private readonly arrowRenderer: ArrowRenderer;
+  /** Experience, orbs, armor enchantments and the enchanting screens. */
+  private readonly progression: Progression;
   private readonly tmpDir = new THREE.Vector3();
   private readonly debug = new DebugOverlay();
   private readonly remote = new RemotePlayers();
   private readonly chat = new Chat();
+  private readonly subtitles = new Subtitles();
+  private readonly touch: TouchControls;
+  private readonly pad: GamepadController;
+  private readonly menuNav: MenuNav;
+  private readonly touchCtx: TouchContext = { playing: false, arcade: false, chat: false, overlay: false };
+  private readonly padCtx: PadContext = { state: 'menu', playing: false, arcade: false };
+  /** Was the player walking forward last frame (releases a toggled sprint when they stop). */
+  private wasMovingForward = false;
+  private readonly solidAt = (x: number, y: number, z: number): boolean => !!SOLID[this.getBlock(x, y, z)];
+  /** Feedback channels for the arcade session: captions and controller rumble. */
+  private readonly feedback = {
+    caption: (label: string, x: number, z: number) => this.caption(label, x, z),
+    haptic: (strong: number, weak: number, ms: number) => this.pad.rumble(strong, weak, ms),
+  };
   /** Mobs plus remote players, handed to the mob renderer each frame. */
   private readonly renderMobs: Mob[] = [];
   /** Multiplayer connection (null in singleplayer). */
   private net: NetClient | null = null;
   /** Arcade game types (team deathmatch, free for all): match state, weapons and HUD; null in the Minecraft sandbox. */
   private arcade: ArcadeSession | null = null;
+  /** The arcade client (HUD, weapons, viewmodels) is a separate chunk: singleplayer never downloads it. */
+  private arcadeModule: typeof import('./ArcadeSession') | null = null;
   private readonly root: HTMLElement;
   private arcadeHint = '';
   /** Reused every frame (no allocations in the frame loop). */
@@ -136,11 +207,18 @@ export class Game {
   private hudHidden = false;
   /** Capture a world icon from the next rendered frame (like Minecraft's world screenshot). */
   private wantThumbnail = false;
+  /** F2: save the next rendered frame as a PNG. */
+  private wantScreenshot = false;
   private packCredit = 'Procedural textures';
   private score = 0;
 
   private last = 0;
   private frameDt = 0;
+  /** Statistics screen counters (saved in WorldMeta.statistics). */
+  readonly statTracker = new StatTracker();
+  private statLast: { x: number; z: number; ground: boolean } | null = null;
+  /** Frame limiter (Options > Max Framerate); 0 = unlimited. */
+  private minFrameMs = 0;
   private time = 0;
   private accumulator = 0;
   private stepCount = 0;
@@ -185,14 +263,74 @@ export class Game {
       drop: (s) => this.throwStack(s),
       close: () => void this.resumeGame(),
     });
+    this.containers = new ContainerScreens({
+      world: () => this.world,
+      net: () => this.net,
+      inventory: this.playerInventory,
+      show: (view) => {
+        if (this.state !== 'playing') return;
+        this.state = 'inventory';
+        this.suppressPause = this.input.locked;
+        this.input.exitLock();
+        this.survivalInventory.open(this.nearbyStations(), view);
+      },
+      current: () => this.survivalInventory.container,
+      cursor: () => this.survivalInventory.cursorStack,
+      setCursor: (s) => this.survivalInventory.setCursor(s),
+      refresh: () => this.survivalInventory.refreshBox(),
+      close: () => { if (this.state === 'inventory') void this.resumeGame(); },
+      message: (text) => this.chat.add(text, true),
+      drop: (s) => this.throwStack(s),
+      awardXp: (amount) => this.onFurnaceXp?.(amount),
+    });
     this.playerInventory.onAdd = (id) => this.advancements.onItemGained(id);
     this.playerInventory.onChange = () => {
       this.hotbar.refresh();
       this.survivalInventory.refresh();
+      const armor = this.playerInventory.armorTotals();
+      this.stats.armorPoints = armor.points;
+      this.stats.armorToughness = armor.toughness;
+      this.progression?.onArmorChanged();
+    };
+    this.stats.onArmorHit = (wear) => void this.playerInventory.wearArmor(wear);
+    // Shield: a raised shield blocks hits from a 100 degree arc in front (mob and explosion yaw points from the source to
+    // the player, arrow yaw back along the flight, towards the shooter).
+    this.stats.blocker = (src, amount) => {
+      const it = this.interaction;
+      if (!it?.blocking || src.yaw === undefined) return false;
+      const s = Math.sin(src.yaw), c = Math.cos(src.yaw);
+      const p = this.player;
+      const tx = src.kind === 'arrow' ? s : -s, tz = src.kind === 'arrow' ? c : -c;
+      if (!blocksFromDirection(p.yaw, p.x + tx, p.z + tz, p.x, p.z)) return false;
+      it.onShieldBlock(amount);
+      return true;
     };
     this.stack = new ScreenStack(root.querySelector<HTMLElement>('#screens')!);
     root.append(this.toasts.el, this.remote.el, this.chat.el, this.hud.el, this.debug.el, this.inventory.el, this.survivalInventory.el);
-    this.chat.onSend = (text) => this.net?.sendChat(text);
+    this.weatherSys = new WeatherSystem({
+      cycle: this.cycle, renderer: this.renderer, audio: this.audio, player: this.player, stats: this.stats,
+      world: () => this.world, mode: () => this.mode, entities: () => this.entities,
+      multiplayer: () => this.net !== null, arcade: () => this.arcade !== null || this.meta?.worldType === 'arena',
+    });
+    this.worldRules = new WorldRules({
+      stats: this.stats, player: this.player, cycle: this.cycle, input: this.input, overlayParent: this.hud.el,
+      world: () => this.world, entities: () => this.entities, meta: () => this.meta, net: () => this.net, mode: () => this.mode,
+      weather: () => this.weatherSys.weather, chat: (line) => this.chat.add(line, true),
+    });
+    this.chat.onSend = (text) => {
+      // /enchant and /xp change only this player's items and bar: handled here, also on a server.
+      const own = text.startsWith('/') ? this.progression.command(text) : null;
+      if (own) {
+        for (const line of own) this.chat.add(line, true);
+        return;
+      }
+      if (this.net) return this.net.sendChat(text);
+      // Singleplayer has no server: messages are echoed and the slash commands run locally (with Allow Cheats).
+      if (!text.startsWith('/')) return this.chat.add(`<Player> ${text}`);
+      if (!this.meta || !cheatsAllowed(this.meta)) return this.chat.add(t('chat.noCheats'), true);
+      const lines = this.weatherSys.localCommand(text) ?? this.worldRules.localCommand(text) ?? [`Unknown command: ${text.split(/\s+/)[0]}. Type /help for help.`];
+      for (const line of lines) this.chat.add(line, true);
+    };
     this.chat.onClose = () => {
       if (this.state === 'chat') void this.resumeGame();
     };
@@ -203,7 +341,22 @@ export class Game {
     this.itemRenderer = new ItemRenderer(this.renderer.uniforms, this.icons);
     this.tntRenderer = new TntRenderer(this.renderer.uniforms);
     this.arrowRenderer = new ArrowRenderer(this.renderer.uniforms);
-    this.renderer.scene.add(this.mobRenderer.group, this.itemRenderer.mesh, this.tntRenderer.mesh, this.arrowRenderer.mesh);
+    this.progression = new Progression({
+      stats: this.stats, inventory: this.playerInventory, hotbar: this.hotbar, player: this.player, audio: this.audio,
+      uniforms: this.renderer.uniforms, world: () => this.world, entities: () => this.entities, mode: () => this.mode,
+      openView: (view) => this.openStationView(view), multiplayer: () => this.net !== null,
+      rules: () => ({ keepInventory: !!this.worldRules?.rules.get('keepInventory') }),
+    });
+    this.renderer.scene.add(this.mobRenderer.group, this.itemRenderer.mesh, this.tntRenderer.mesh, this.arrowRenderer.mesh, this.progression.orbRenderer.mesh);
+    this.renderer.shadowExcluded.push(this.progression.orbRenderer.mesh);
+    // Furnace experience (taking the output) falls as orbs at the player, like Minecraft.
+    this.onFurnaceXp = (amount) => {
+      const p = this.player;
+      if (amount > 0) this.entities?.spawnXp(p.x, p.y + 0.5, p.z, amount);
+    };
+    this.fallingRenderer = new FallingBlockRenderer(this.renderer.uniforms);
+    this.renderer.scene.add(this.fallingRenderer.mesh);
+    this.renderer.shadowExcluded.push(this.fallingRenderer.mesh);
     this.renderer.scene.add(this.remote.weapons);
     this.renderer.shadowExcluded.push(this.mobRenderer.group, this.itemRenderer.mesh, this.tntRenderer.mesh, this.arrowRenderer.mesh, this.remote.weapons);
     this.renderer.afterMain = (three) => {
@@ -216,8 +369,12 @@ export class Game {
     this.menu = new MainMenu(this.stack, {
       listWorlds: () => this.save.listWorlds(),
       playWorld: (m) => void this.enterWorld(m),
-      createWorld: (name, seed, mode) => void this.createWorld(name, seed, mode),
+      createWorld: (name, seed, mode, extra) => void this.createWorld(name, seed, mode, extra),
+      openLanguage: () => this.stack.push(languageScreen(this.settings, { ...this.optionsNav(), languageChanged: () => this.menu.showTitle() })),
+      tipKeys: () => this.tipKeys(),
       deleteWorld: (id) => this.save.deleteWorld(id),
+      saveWorld: (meta) => this.save.saveWorld(meta),
+      transfer: new WorldTransfer(this.save),
       openOptions: () => this.openOptions(),
       joinServer: (name, address, room) => void this.joinServer(name, address, room),
       logo: () => createLogo('BUNKCRAFT', this.renderer.textures.canvas('stone')),
@@ -225,8 +382,35 @@ export class Game {
     });
 
     this.inventory.onClose = () => void this.resumeGame();
-    this.stats.onHurt = () => this.audio.playHurt();
+    this.inventory.onSurvival = () => {
+      this.inventory.close();
+      this.survivalInventory.open(this.nearbyStations());
+    };
+    this.stats.onHurt = () => {
+      this.audio.playHurt();
+      this.pad.rumble(0.7, 0.5, 200);
+    };
+    this.initAudioHooks();
     this.input.onKeyDown = (code) => this.onKey(code);
+    // Touch, gamepad and keyboard menus: virtual presses go through the same shortcuts as keys.
+    this.input.onAction = (action) => this.onKey(`Virtual${action}`);
+    this.touch = new TouchControls(root, this.input, this.hotbar);
+    this.touch.onPause = () => this.input.exitLock();
+    this.touch.onClose = () => this.padBack();
+    this.touch.onModeChange = () => applyGuiScale(this.settings.values.guiScale);
+    this.menuNav = new MenuNav(() => this.stack.top, () => this.settings.values.menuRepeatDelay);
+    this.menuNav.attachKeyboard();
+    this.pad = new GamepadController(this.input, this.settings.values, this.menuNav, {
+      start: () => this.padStart(),
+      back: () => this.padBack(),
+      onConnection: (name, connected) => announce(connected ? `Controller connected: ${name}` : 'Controller disconnected', true),
+    });
+    root.append(this.subtitles.el);
+    // Screen readers: chat and advancement toasts are live regions, the canvas has a name.
+    this.chat.el.setAttribute('aria-live', 'polite');
+    this.toasts.el.setAttribute('aria-live', 'polite');
+    canvas.setAttribute('role', 'img');
+    canvas.setAttribute('aria-label', 'BunkCraft game view');
     this.input.onLockChange = (locked) => this.onLockChange(locked);
     this.settings.onChange((_, key) => this.applySettings(key));
     this.applySettings();
@@ -257,13 +441,13 @@ export class Game {
     });
     window.addEventListener('pagehide', () => void this.saveGame());
     // Audio needs a user gesture before it may start.
-    window.addEventListener('pointerdown', () => this.audio.unlock());
-    window.addEventListener('keydown', () => this.audio.unlock());
+    this.audio.installGestureUnlock();
 
     const gl = this.renderer.three.getContext();
     const info = gl.getExtension('WEBGL_debug_renderer_info');
     this.gpuName = info ? String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL)) : 'WebGL2';
     if (this.settings.fresh) {
+      this.settings.set('language', detectLanguage());
       const memory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
       this.settings.setMany(suggestPreset(this.gpuName, navigator.hardwareConcurrency || 0, memory).values);
     }
@@ -279,6 +463,12 @@ export class Game {
     // An invite link (?join=CODE) goes straight to the join screen with the code filled in.
     const invited = normalizeCode(new URLSearchParams(location.search).get('join') ?? '');
     if (invited) void this.menu.showMultiplayer(invited);
+    // A share link (?seed=…&mode=…) opens Create World prefilled.
+    else {
+      const share = parseShareParams(location.search);
+      if (share) void this.menu.showWorlds().then(() => this.menu.showCreate(share));
+    }
+    initKeyboardLock();
     this.last = performance.now();
     requestAnimationFrame(this.frame);
   }
@@ -286,10 +476,15 @@ export class Game {
   // ---------------------------------------------------------------- settings
 
   private openOptions(): void {
-    this.stack.push(optionsScreen(this.settings, {
+    this.stack.push(optionsScreen(this.settings, this.optionsNav()));
+  }
+
+  private optionsNav(): OptionsNav {
+    return {
       push: (el) => this.stack.push(el),
       pop: () => this.stack.pop(),
       openResourcePacks: () => this.openResourcePacks(),
+      padName: () => (this.pad.connected ? cleanName(this.pad.name) : ''),
       credits: () => [
         VERSION,
         `Textures: ${this.packCredit}`,
@@ -298,7 +493,13 @@ export class Game {
         'Terrain, mobs, sounds, music, sky and procedural textures: generated in code',
         'Not affiliated with Mojang or Microsoft',
       ],
-    }));
+      languageChanged: () => {
+        // Rebuild what sits below Options (title or pause menu) in the new language, then reopen Options.
+        if (this.state === 'menu') this.menu.showTitle();
+        else this.showPauseMenu();
+        this.openOptions();
+      },
+    };
   }
 
   private openResourcePacks(): void {
@@ -357,17 +558,26 @@ export class Game {
     if (key === 'texturePack') void this.applyTexturePack();
     const s = this.settings.values;
     this.renderer.applySettings(s);
+    this.applyAccessibility(s, key);
     this.dynamicResolution.enabled = s.dynamicResolution;
     this.dynamicResolution.maxDistanceDrop = Math.max(0, s.renderDistance - MIN_ADAPTIVE_DISTANCE);
     if (!s.dynamicResolution) this.renderer.setDynamicScale(1);
     this.updateMenuBlur();
     this.cam.baseFov = s.fov;
-    this.cam.viewBobbing = s.viewBobbing;
+    this.cam.viewBobbing = s.viewBobbing && !s.reducedMotion;
+    setLanguage(s.language);
+    this.chat.applySettings(s);
+    this.hud.setAttackIndicator(s.attackIndicator);
+    this.input.rawInput = s.rawInput;
+    this.mobRenderer.distanceScale = s.entityDistance / 100;
+    this.minFrameMs = s.maxFps >= MAX_FPS_UNLIMITED ? 0 : 1000 / s.maxFps;
     if (!key || key === 'keybinds') {
       this.input.setBindings(resolveKeybinds(s.keybinds));
       this.arcade?.setBindings(this.input);
     }
-    this.audio.setVolumes((s.soundVolume * s.masterVolume) / 100, (s.musicVolume * s.masterVolume) / 100);
+    const master = s.masterVolume / 100;
+    this.audio.setVolumes(s.soundVolume * master, s.musicVolume * master, s.ambientVolume * master, s.uiVolume * master);
+    this.audio.setSpatialMode(s.spatialAudio);
     applyGuiScale(s.guiScale);
     if (this.world) {
       this.applyRenderDistance();
@@ -390,7 +600,68 @@ export class Game {
     }
   }
 
+  /** Accessibility, touch and controller options that act outside the renderer. */
+  private applyAccessibility(s: Settings, key?: string): void {
+    const input = this.input;
+    if (!key || key === 'touchControls') input.applyTouchSetting(s.touchControls);
+    input.setToggle(KB.SNEAK, s.toggleSneak);
+    input.setToggle(KB.SPRINT, s.toggleSprint);
+    input.setToggle(KB.ATTACK, s.toggleAttack);
+    input.setToggle(KB.USE, s.toggleUse);
+    this.cam.reducedMotion = s.reducedMotion;
+    this.cam.fovEffects = s.fovEffects / 100;
+    this.renderer.particles.density = { all: 1, decreased: 0.5, minimal: 0.25 }[effectiveParticles(s)];
+    if (s.reducedMotion) this.renderer.uniforms.uSway.value = 0;
+    applyAccessibilityDocument(s);
+    this.subtitles.setEnabled(s.subtitles);
+    const palette = paletteFor(s.colorBlindSafe);
+    TEAM_COLORS.red = palette.teamA;
+    TEAM_COLORS.blue = palette.teamB;
+    setSurvivalColorBlind(s.colorBlindSafe);
+    this.touch.applySettings(s);
+    this.pad.applySettings(s);
+  }
+
+  /** Sound caption with a direction arrow (Subtitles option); x/z are the sound's world position. */
+  private caption(label: string, x?: number, z?: number): void {
+    if (!this.subtitles.enabled) return;
+    const p = this.player;
+    this.subtitles.push(label, x === undefined ? 0 : x - p.x, z === undefined ? 0 : z - p.z, p.yaw);
+  }
+
+  /** Start button: pause in the world, resume from the pause screen or an overlay. */
+  private padStart(): void {
+    if (this.state === 'playing' && this.input.locked) this.input.exitLock();
+    else if (this.state === 'inventory' || this.state === 'chat' || (this.state === 'paused' && this.stack.depth === 1)) void this.resumeGame();
+  }
+
+  /** B button: one screen back, or back to the game. */
+  private padBack(): void {
+    if ((this.state === 'paused' || this.state === 'menu') && this.stack.depth > 1) this.stack.pop();
+    else if (this.state === 'paused' || this.state === 'inventory') void this.resumeGame();
+    else if (this.state === 'chat') this.chat.close();
+  }
+
   /** Menu backdrop blur only when the GPU has headroom (Fancy, full dynamic resolution). */
+  /** Movement sounds, mob footsteps, ambience probe, occlusion and interface sounds. */
+  private initAudioHooks(): void {
+    const solid = (x: number, y: number, z: number): boolean => {
+      const id = this.getBlock(x, y, z);
+      return id !== BLOCK.UNLOADED && SOLID[id] === 1;
+    };
+    const surface = surfaceLookup(this.getBlock);
+    this.playerSounds = new PlayerSounds(this.audio, surface);
+    this.mobSteps = new MobSteps(this.audio, surface);
+    this.audioProbe = new WorldAudioProbe({
+      getBlock: this.getBlock,
+      getMeta: this.getMeta,
+      getLight: (x, y, z) => (this.world ? this.world.getLight(x, y, z) : 0xf0),
+      biomeAt: (x, z) => (this.world ? this.world.biomeName(x, z) : 2),
+    }, solid, { water: BLOCK.WATER, lava: BLOCK.LAVA });
+    this.audio.setOcclusionProbe(this.audioProbe.occlusion);
+    bindUiSounds(this.root, (name) => this.audio.playUi(name));
+  }
+
   private updateMenuBlur(): void {
     const weak = this.settings.values.graphics === 'fast' || this.dynamicResolution.scale < 1;
     document.body.classList.toggle('no-blur', weak);
@@ -415,9 +686,9 @@ export class Game {
 
   // ---------------------------------------------------------------- world lifecycle
 
-  private createWorldInstance(seed: number, edits?: Map<number, Map<number, number>>, worldType: WorldType = 'terrain'): World {
+  private createWorldInstance(seed: number, edits?: Map<number, Map<number, number>>, worldType: WorldType = 'terrain', genVersion = GEN_VERSION_CURRENT): World {
     this.world?.dispose();
-    const world = new World(seed, this.pool, { opaque: this.renderer.chunkMaterial, cutout: this.renderer.cutoutMaterial, water: this.renderer.waterMaterial }, edits, worldType);
+    const world = new World(seed, this.pool, { opaque: this.renderer.chunkMaterial, cutout: this.renderer.cutoutMaterial, water: this.renderer.waterMaterial }, edits, worldType, genVersion);
     world.chunks.fancyLeaves = this.settings.values.graphics === 'fancy';
     world.chunks.renderDistance = this.settings.values.renderDistance;
     this.world = world;
@@ -427,6 +698,13 @@ export class Game {
     world.onChunkReady = (c) => entities.onChunkReady(c);
     world.onChunkUnloaded = (k) => entities.onChunkUnloaded(k);
     this.entities = entities;
+    // Chests and furnaces: singleplayer owns them; on a server the server does and this store stays empty.
+    world.blockEntities.enabled = !this.net;
+    world.blockEntities.onDrops = (x, y, z, stacks) => {
+      if (!hasSurvivalRules(this.mode)) return;
+      for (const st of stacks) entities.dropItem(st, x + 0.5, y + 0.5, z + 0.5, 10, undefined, true);
+    };
+    world.blockEntities.onXpAwarded = (amount) => this.onFurnaceXp?.(amount);
     // Water and lava flow in singleplayer; on a server the server simulates and sends the changes.
     if (!this.net) {
       const sim = world.enableLiquids();
@@ -435,15 +713,28 @@ export class Game {
         const drop = hasSurvivalRules(this.mode) ? blockDrop(id, 0) : null;
         if (drop) entities.dropItem(drop, x + 0.5, y + 0.3, z + 0.5);
       };
+      // Plants grow, leaves decay and sand falls (random ticks and block updates); what they break drops as items.
+      world.enableGrowth();
+      world.skyDarkness = () => Math.round((1 - this.cycle.dayFactor) * 11 + this.weatherSys.weather.skyDarkness);
+      world.onBlockDrop = (id, meta, x, y, z) => {
+        const drop = hasSurvivalRules(this.mode) ? blockDrop(id, 0, meta) : null;
+        if (drop) entities.dropItem(drop, x + 0.5, y + 0.3, z + 0.5);
+      };
       sim.onFizz = (x, y, z) => {
         const p = this.player;
         this.audio.playFizz(Math.max(0, 1 - Math.hypot(x - p.x, y - p.y, z - p.z) / 20));
       };
     }
+    // Redstone: simulated here in singleplayer (not in arenas); in multiplayer the server's changes arrive as edits.
+    if (!this.net && worldType === 'terrain') {
+      enableRedstone(world, { entities, player: this.player, survival: () => hasSurvivalRules(this.mode) });
+    }
+    world.onRedstoneChange = (x, y, z, prevId, prevMeta, id, meta) => redstoneSound(this.audio, world, x, y, z, prevId, prevMeta, id, meta);
     this.interaction = new Interaction({
       world, player: this.player, stats: this.stats, inventory: this.playerInventory, hotbar: this.hotbar,
       entities, renderer: this.renderer, hand: this.hand, audio: this.audio, camera: this.cam.camera,
-      attackRemote: (id) => this.net?.sendAttack(id),
+      attackRemote: (id, data) => this.net?.sendAttack(id, encodeItemData(data)),
+      onStat: (key) => this.statTracker.add(key),
       igniteTnt: (x, y, z) => {
         if (this.net) {
           // The server validates, removes the block and simulates the fuse.
@@ -454,16 +745,34 @@ export class Game {
         entities.primeTnt(x, y, z);
         return true;
       },
-      shootArrow: (power, pickup) => {
+      openStation: (kind, x, y, z) => this.openStation(kind, x, y, z),
+      openContainer: (x, y, z) => this.containers.open(x, y, z),
+      useBed: (x, y, z) => this.useBed(x, y, z),
+      boneMeal: (x, y, z) => {
+        // Multiplayer: the server grows it (and broadcasts the blocks); the item is used up here right away.
+        if (this.net) { this.net.sendBoneMeal(x, y, z); return true; }
+        const ticker = world.randomTicker;
+        if (!ticker) return false;
+        let used = false;
+        world.batch(() => { used = useBoneMeal(ticker, x, y, z); });
+        return used;
+      },
+      shootArrow: (power, pickup, ench) => {
         const cam = this.cam.camera;
         const dir = cam.getWorldDirection(this.tmpDir);
         if (this.net) {
-          this.net.sendShoot(cam.position.x, cam.position.y - 0.1, cam.position.z, dir.x, dir.y, dir.z, power);
+          this.net.sendShoot(cam.position.x, cam.position.y - 0.1, cam.position.z, dir.x, dir.y, dir.z, power,
+            encodeItemData(this.hotbar.selectedStack.data));
           return;
         }
         // Player bow: speed 3 × power blocks/tick, inaccuracy 1, critical at full draw.
-        entities.shootArrow(cam.position.x, cam.position.y - 0.1, cam.position.z, dir.x, dir.y, dir.z,
+        const arrow = entities.shootArrow(cam.position.x, cam.position.y - 0.1, cam.position.z, dir.x, dir.y, dir.z,
           power * 3, 1, null, true, power >= 1, pickup);
+        if (arrow && ench) {
+          arrow.powerBonus = powerBonus(ench.power);
+          arrow.punch = punchKnockback(ench.punch);
+          arrow.flame = ench.flame > 0;
+        }
       },
     });
     return world;
@@ -472,7 +781,10 @@ export class Game {
   private enterMenu(): void {
     this.stopArcade();
     this.state = 'menu';
+    this.chat.close();
+    this.chat.setVisible(false);
     this.meta = null;
+    this.weatherSys.stop();
     this.hud.setVisible(false);
     this.inventory.close();
     this.survivalInventory.close();
@@ -486,15 +798,23 @@ export class Game {
     this.menu.showTitle();
   }
 
-  private async createWorld(name: string, seedText: string, mode: GameMode): Promise<void> {
+  /** Key names for the loading tips (the player's own bindings). */
+  private tipKeys(): Record<string, string> {
+    const key = (kb: number) => keyDisplayName(this.input.bound(kb));
+    return { inventory: key(KB.INVENTORY), chat: key(KB.CHAT), command: key(KB.COMMAND), sprint: key(KB.SPRINT), drop: key(KB.DROP) };
+  }
+
+  private async createWorld(name: string, seedText: string, mode: GameMode, extra?: { difficulty: Difficulty; rules?: Record<string, boolean | number>; cheats?: boolean }): Promise<void> {
     let seed: number;
     if (!seedText) seed = (Math.random() * 4294967296) >>> 0;
     else if (/^-?\d+$/.test(seedText)) seed = Number(BigInt.asUintN(32, BigInt(seedText)));
     else seed = hashString(seedText);
     const meta: WorldMeta = {
       id: newWorldId(), name, seed, seedText: seedText || String(seed),
-      created: Date.now(), lastPlayed: Date.now(), player: null,
+      created: Date.now(), lastPlayed: Date.now(), player: null, genVersion: GEN_VERSION_CURRENT,
       hotbar: [...DEFAULT_HOTBAR], selectedSlot: 0, time: 0.08, gameMode: mode,
+      difficulty: extra?.difficulty, rules: extra?.rules,
+      ...(extra?.cheats === undefined ? {} : { cheats: extra.cheats }),
     };
     await this.save.saveWorld(meta);
     await this.enterWorld(meta);
@@ -502,8 +822,8 @@ export class Game {
 
   private async enterWorld(meta: WorldMeta): Promise<void> {
     this.audio.unlock();
-    this.loadingProgress = this.menu.showLoading('Loading world');
-    this.loadingProgress('Reading save data...', 0);
+    this.loadingProgress = this.menu.showLoading(t('loading.world'));
+    this.loadingProgress(t('loading.reading'), 0);
     const edits = await this.save.loadEdits(meta.id);
     this.startSession(meta, edits);
   }
@@ -512,8 +832,10 @@ export class Game {
   private startSession(meta: WorldMeta, edits: Map<number, Map<number, number>>): void {
     this.meta = meta;
     const worldType: WorldType | undefined = meta.worldType === 'arena' ? arenaWorldType(parseMapId(this.arenaMap) ?? DEFAULT_MAP) : meta.worldType;
-    const world = this.createWorldInstance(meta.seed, edits, worldType);
+    const world = this.createWorldInstance(meta.seed, edits, worldType, normalizeGenVersion(meta.genVersion));
     this.cycle.time = meta.time;
+    this.weatherSys.start(meta, this.net !== null);
+    world.blockEntities.load(meta.blockEntities);
     const mode = meta.gameMode ?? 'creative';
     // Inventory: saved stacks, else creative gets the default hotbar and survival starts empty.
     if (meta.inventory) this.playerInventory.load(meta.inventory);
@@ -522,7 +844,16 @@ export class Game {
       if (!hasSurvivalRules(mode)) meta.hotbar.forEach((id, i) => this.playerInventory.set(i, { id, count: id ? 1 : 0 }));
     }
     this.stats.load(meta.stats);
+    this.stats.effects.load(meta.effects, this.stats);
+    this.worldRules.load(meta);
     this.advancements.load(meta.advancements);
+    this.statTracker.load(meta.statistics);
+    this.statLast = null;
+    if (!this.net) {
+      this.chat.clear();
+      this.chat.setCommands(LOCAL_COMMAND_USAGE);
+      this.chat.setVisible(true);
+    }
     this.score = 0;
     // A save made on the death screen: hardcore becomes spectator, others respawn at spawn.
     const diedBeforeSave = this.stats.wasDead;
@@ -570,6 +901,20 @@ export class Game {
 
   private finishLoading(): void {
     const world = this.world!;
+    if (this.worldRules.pendingBed) {
+      // Respawn at the bed: next to it, or back to the world spawn when it is gone or blocked.
+      const spot = this.worldRules.resolveBedRespawn();
+      if (spot) {
+        this.player.setPosition(spot.x, spot.y, spot.z);
+        this.needsSurface = false;
+      } else {
+        const s = this.meta?.spawn ?? { ...world.findSpawn(), y: 100 };
+        this.player.setPosition(s.x, s.y, s.z);
+        this.needsSurface = true;
+        this.state = 'loading';
+        return;
+      }
+    }
     if (this.needsSurface) {
       const x = Math.floor(this.player.x), z = Math.floor(this.player.z);
       this.player.setPosition(this.player.x, world.surfaceY(x, z) + 1, this.player.z);
@@ -598,18 +943,24 @@ export class Game {
     this.survivalInventory.flushCursor();
     if (this.net) {
       // Multiplayer: the server stores position, inventory and health per player.
-      this.net.sendState(this.playerInventory.serialize(), this.stats.serialize());
+      this.net.sendState(this.playerInventory.serialize(), this.stats.serialize(), this.stats.effects.serialize() ?? []);
       return;
     }
     const p = this.player;
     meta.player = { x: p.x, y: p.y, z: p.z, yaw: p.yaw, pitch: p.pitch, flying: p.flying };
     meta.hotbar = Array.from({ length: 9 }, (_, i) => this.playerInventory.get(i).id);
     meta.inventory = this.playerInventory.serialize();
+    meta.blockEntities = world.blockEntities.serialize();
+    delete meta.containers;
     meta.stats = this.stats.serialize();
+    meta.effects = this.stats.effects.serialize();
+    this.worldRules.save(meta);
     meta.advancements = this.advancements.serialize();
+    meta.statistics = this.statTracker.serialize();
     meta.gameMode = this.mode;
     meta.selectedSlot = this.hotbar.selected;
     meta.time = this.cycle.time;
+    this.weatherSys.save(meta);
     meta.lastPlayed = Date.now();
     if (thumbnail || !meta.icon) this.wantThumbnail = true;
     try {
@@ -634,7 +985,41 @@ export class Game {
     void this.save.saveWorld(meta);
   }
 
+  /** F2: the rendered 3D view (hand included, DOM HUD excluded) as a timestamped PNG download. */
+  private captureScreenshot(): void {
+    this.wantScreenshot = false;
+    const d = new Date();
+    const p = (n: number) => String(n).padStart(2, '0');
+    const name = `bunkcraft-${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}.${p(d.getMinutes())}.${p(d.getSeconds())}.png`;
+    this.renderer.three.domElement.toBlob((blob) => {
+      if (!blob) return;
+      downloadBlob(blob, name);
+      showToast(t('hud.screenshot', name));
+    }, 'image/png');
+  }
+
+  /** Opens an enchanting table, anvil or grindstone (singleplayer and multiplayer: nothing is stored in the block). */
+  private openStation(kind: StationKind, x: number, y: number, z: number): void {
+    if (!this.world || this.state !== 'playing') return;
+    this.progression.open(kind, x, y, z);
+  }
+
+  /** Shows a station's slots above the inventory, like a chest. */
+  private openStationView(view: ContainerView): void {
+    this.state = 'inventory';
+    this.suppressPause = this.input.locked;
+    this.input.exitLock();
+    this.survivalInventory.open(this.nearbyStations(), view);
+  }
+
+  /** A bed sets the respawn point and sleeps at night (WorldRules: monsters, multiplayer sleeping rule). */
+  private useBed(x: number, y: number, z: number): void {
+    if (!this.meta || this.arcade) return;
+    this.worldRules.useBed(x, y, z);
+  }
+
   private async quitToTitle(): Promise<void> {
+    window.clearTimeout(this.reconnectTimer);
     await this.saveGame(true);
     this.disconnect();
     this.input.exitLock();
@@ -644,17 +1029,39 @@ export class Game {
 
   // ---------------------------------------------------------------- multiplayer
 
-  private async joinServer(name: string, address: string, room?: string): Promise<void> {
+  /** Pending automatic reconnect after a server restart. */
+  private reconnectTimer = 0;
+
+  /** The server said it is restarting: try to rejoin a few times with growing pauses. */
+  private scheduleReconnect(join: { name: string; address: string; room?: string }, delayMs: number, attempt = 1): void {
+    window.clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = window.setTimeout(() => {
+      void this.joinServer(join.name, join.address, join.room).then((ok) => {
+        if (!ok && attempt < 5) this.scheduleReconnect(join, delayMs * 1.5, attempt + 1);
+      });
+    }, delayMs);
+  }
+
+  private async joinServer(name: string, address: string, room?: string): Promise<boolean> {
+    window.clearTimeout(this.reconnectTimer);
     this.audio.unlock();
     const progress = this.menu.showLoading('Connecting to the server...');
     progress('Logging in...', 0);
+    // Load the arcade client first: the welcome may start a match, and messages arriving while a
+    // module still loads would have no handler yet.
+    try {
+      await this.loadArcade();
+    } catch (e) {
+      this.menu.showDisconnected(e instanceof Error ? e.message : String(e));
+      return false;
+    }
     const net = new NetClient();
     let welcome;
     try {
       welcome = await net.connect(address, name, room);
     } catch (e) {
       this.menu.showDisconnected(e instanceof Error ? e.message : String(e));
-      return;
+      return false;
     }
     this.net = net;
     // Terrain comes from the seed; only the server's edit list is transferred.
@@ -669,14 +1076,17 @@ export class Game {
     }
     const rec = welcome.player;
     const meta: WorldMeta = {
-      id: 'mp:' + address + (room ?? ''), name: welcome.worldName, seed: welcome.seed, seedText: '', created: 0, lastPlayed: Date.now(),
+      id: 'mp:' + address + (room ?? ''), name: welcome.worldName, seed: welcome.seed, genVersion: normalizeGenVersion(welcome.genVersion), seedText: '', created: 0, lastPlayed: Date.now(),
       player: rec ? { x: rec.x, y: rec.y, z: rec.z, yaw: rec.yaw, pitch: rec.pitch, flying: false } : null,
-      hotbar: [...DEFAULT_HOTBAR], selectedSlot: 0, time: welcome.time, gameMode: welcome.gameMode,
+      hotbar: [...DEFAULT_HOTBAR], selectedSlot: 0, time: welcome.time, day: welcome.day, gameMode: welcome.gameMode,
       inventory: rec?.inventory, stats: rec?.stats, spawn: welcome.spawn, worldType: welcome.worldType,
+      difficulty: welcome.difficulty, rules: welcome.rules, bed: rec?.bed, effects: rec?.effects,
     };
+    this.stats.playerName = name;
     this.loadingProgress = progress;
     this.arenaMap = welcome.match?.map ?? DEFAULT_MAP;
     this.lastJoin = { name, address, room };
+    this.containers.serverSupport = welcome.containers === true;
     this.startSession(meta, edits);
     const world = this.world!;
     // The server simulates the mobs, items, arrows and TNT; we only mirror them.
@@ -685,9 +1095,13 @@ export class Game {
     entities.hostileSpawning = false;
     const mirror = new NetEntities(entities);
     this.netEntities = mirror;
+    this.netFalling = new NetFalling();
     entities.dropHook = (stack, x, y, z, delay, yaw) => {
-      net.sendDrop(stack.id, stack.count, stack.damage, x, y, z, yaw, delay);
+      net.sendDrop(stack.id, stack.count, stack.damage, x, y, z, yaw, delay, encodeData(stack.data));
       return true;
+    };
+    entities.xpTakeHook = (orb) => {
+      if (mirror.shouldTakeOrb(orb, performance.now() / 1000)) net.sendTake(orb.netId);
     };
     entities.takeHook = (item) => {
       // Only ask when the whole stack fits; the server hands it to the first asker.
@@ -696,11 +1110,17 @@ export class Game {
     world.onEdit = (x, y, z, id, meta, prev, prevMeta) => net.sendBlock(x, y, z, id, meta, prev, prevMeta);
     net.onRevert = (x, y, z, id, meta) => world.applyRemoteEdit(x, y, z, id, meta);
     net.onMessage = (msg) => this.onServerMessage(msg);
-    net.onClose = (reason) => {
+    net.onClose = (reason, reconnectMs) => {
       if (this.net !== net) return;
       this.disconnect();
       this.input.exitLock();
       this.enterMenu();
+      if (reconnectMs) {
+        // The server is restarting (update or maintenance): come back by ourselves.
+        this.menu.showDisconnected(`${reason}. Reconnecting automatically...`);
+        this.scheduleReconnect({ name, address, room }, Math.max(1500, reconnectMs));
+        return;
+      }
       this.menu.showDisconnected(reason);
     };
     this.roomCode = room ?? null;
@@ -713,10 +1133,12 @@ export class Game {
     if (welcome.gameType === 'minecraft') for (const p of welcome.players) this.remote.add(p.id, p.name);
     if (welcome.gameType !== 'minecraft') this.startArcade(welcome, (m) => net.send(m), name);
     this.chat.clear();
+    this.chat.setCommands(SERVER_COMMAND_USAGE);
     this.chat.setVisible(true);
     if (welcome.motd) this.chat.add(welcome.motd, true);
     if (this.arcade) this.chat.add(this.arcadeHint, true);
     if (room) this.chat.add(`Game code: ${formatCode(room)}. Press Esc, then Invite Friends, to share it.`, true);
+    return true;
   }
 
   /** Leaves and joins the same game again (new welcome, so the arena is rebuilt for the map the server now plays). */
@@ -729,7 +1151,12 @@ export class Game {
   }
 
   /** Switches this session to an arcade game type: no building, no survival, weapons and the arcade HUD. */
+  private async loadArcade(): Promise<void> {
+    this.arcadeModule ??= await import('./ArcadeSession');
+  }
+
   private startArcade(welcome: WelcomeMessage, send: (msg: ClientMessage) => void, name: string): void {
+    const { ArcadeSession } = this.arcadeModule!; // loaded by joinServer / arcadePreview
     this.stopArcade();
     // Fixed arena: spawn where the server says; the next `spawn` message places us for real.
     this.setMode('creative');
@@ -751,6 +1178,7 @@ export class Game {
       getBlock: this.getBlock,
       getLight: (x, y, z) => this.world ? this.world.getLight(x, y, z) : 0xf0,
       selfId: welcome.id, selfName: name, info,
+      feedback: this.feedback,
       // The next match is on another map: this world is wrong now, so join the game again.
       onMapChange: () => this.rejoinServer(),
     });
@@ -759,10 +1187,12 @@ export class Game {
     session.setBindings(this.input);
     this.renderer.scene.add(session.tracers.mesh);
     this.renderer.shadowExcluded.push(session.tracers.mesh);
+    this.renderer.scene.add(session.modeVisuals.group);
+    this.renderer.shadowExcluded.push(session.modeVisuals.group);
     this.root.append(session.hud.el, session.hud.loadoutEl);
     session.setHudVisible(false);
     for (const pl of welcome.players) session.addPlayer(pl.id, pl.name, pl.team ?? '');
-    this.arcadeHint = `${def.name}: first to ${info.scoreLimit} wins. Tab = scoreboard, B = loadout, R = reload.`;
+    this.arcadeHint = `${def.name}: ${def.description}. Tab = scoreboard,${def.loadout === 'ladder' ? '' : ' B = loadout,'} R = reload.`;
   }
 
   private stopArcade(): void {
@@ -774,8 +1204,10 @@ export class Game {
     this.remote.clear();
     session.dispose();
     session.tracers.mesh.removeFromParent();
-    const i = this.renderer.shadowExcluded.indexOf(session.tracers.mesh);
-    if (i >= 0) this.renderer.shadowExcluded.splice(i, 1);
+    for (const o of [session.tracers.mesh, session.modeVisuals.group]) {
+      const i = this.renderer.shadowExcluded.indexOf(o);
+      if (i >= 0) this.renderer.shadowExcluded.splice(i, 1);
+    }
     session.hud.el.remove();
     session.hud.loadoutEl.remove();
     this.hud.setArcade(false);
@@ -789,6 +1221,7 @@ export class Game {
     switch (msg.t) {
       case 'snap': this.remote.snapshot(msg.players, this.net?.id ?? -1, performance.now() / 1000); break;
       case 'ent': this.netEntities?.apply(msg, performance.now() / 1000); break;
+      case 'fall': this.netFalling?.apply(msg.f, performance.now() / 1000); break;
       case 'hurt': this.hurtByServer(msg.cause, msg.amount, msg.by, msg.yaw); break;
       case 'boom':
         world?.applyRemoteRemovals(msg.blocks);
@@ -797,18 +1230,26 @@ export class Game {
       case 'msound': {
         const p = this.player;
         const volume = Math.max(0, 1 - Math.hypot(msg.x - p.x, msg.y - p.y, msg.z - p.z) / 16);
-        if (msg.event === 'arrow') this.audio.playArrowHit(volume);
-        else this.audio.playMob(msg.kind, msg.event, volume);
+        if (msg.event === 'arrow') this.audio.playArrowHit(volume, msg);
+        else if (msg.event === 'shoot') this.audio.playBow(volume * 0.6);
+        else this.audio.playMob(msg.kind, msg.event, volume, msg);
+        if (volume > 0.05) this.caption(msg.event === 'arrow' ? 'Arrow hits' : mobSoundLabel(msg.kind, msg.event), msg.x, msg.z);
         break;
       }
       case 'taken': {
         this.netEntities?.taken(msg.id);
-        const left = this.playerInventory.add({ id: msg.itemId, count: msg.count, damage: msg.damage });
+        const data = decodeData(msg.data);
+        const left = this.playerInventory.add({ id: msg.itemId, count: msg.count, damage: msg.damage, data });
         if (left < msg.count) this.audio.playPop();
         // A race filled the inventory: hand the rest back to the world.
-        if (left > 0) this.entities?.dropItem({ id: msg.itemId, count: left, damage: msg.damage }, this.player.x, this.player.y + 1, this.player.z, 40, undefined, true);
+        if (left > 0) this.entities?.dropItem({ id: msg.itemId, count: left, damage: msg.damage, data }, this.player.x, this.player.y + 1, this.player.z, 40, undefined, true);
         break;
       }
+      case 'orbs': this.netEntities?.applyOrbs(msg, performance.now() / 1000); break;
+      case 'xpgain':
+        this.netEntities?.orbTaken(msg.id);
+        if (Number.isFinite(msg.value) && msg.value > 0) this.progression.pickupXp(Math.min(msg.value, 100_000));
+        break;
       case 'block': world?.applyRemoteEdit(msg.x, msg.y, msg.z, msg.id, msg.meta ?? 0); break;
       case 'blocks':
         for (let i = 0; i + 4 < msg.edits.length; i += 5) {
@@ -824,10 +1265,23 @@ export class Game {
         if (this.arcade) this.arcade.removePlayer(msg.id);
         else this.remote.remove(msg.id);
         break;
-      case 'chat': this.chat.add(msg.system ? msg.text : '<' + msg.from + '> ' + msg.text, msg.system); break;
-      case 'time': this.cycle.time = msg.time; break;
+      case 'chat':
+        this.chat.add(msg.system ? msg.text : '<' + msg.from + '> ' + msg.text, msg.system);
+        if (!msg.system) this.audio.playUi('chat');
+        break;
+      case 'time':
+        this.cycle.time = msg.time;
+        if (msg.day !== undefined) this.cycle.day = msg.day;
+        break;
       case 'teleport': this.player.setPosition(msg.x, msg.y, msg.z); break;
-      default: this.arcade?.handle(msg, performance.now() / 1000); break;
+      case 'state':
+        // The server did not accept our last inventory (it did not add up): take its version.
+        this.playerInventory.load(msg.inventory);
+        this.chat.add('The server corrected your inventory.', true);
+        break;
+      case 'gamemode': this.setMode(msg.mode); break;
+      case 'container': this.containers.onMessage(msg); break;
+      default: if (!this.weatherSys.onServerMessage(msg) && !this.worldRules.onServerMessage(msg)) this.arcade?.handle(msg, performance.now() / 1000); break;
     }
   }
 
@@ -836,9 +1290,12 @@ export class Game {
     this.roomCode = null;
     this.netEntities?.clear();
     this.netEntities = null;
+    this.netFalling?.clear();
+    this.netFalling = null;
     if (!this.net) return;
     const net = this.net;
     this.net = null;
+    this.containers.reset();
     net.close();
     this.remote.clear();
     this.chat.close();
@@ -853,9 +1310,10 @@ export class Game {
    * real server. With a map id (`arcadePreview('tdm', 'You', 'canyon')`) it plays on the real arena
    * of that map instead of a fake one. The fake server is `game.previewServer` (see ArcadePreview.ts for scripted events).
    */
-  async arcadePreview(type: 'tdm' | 'ffa' = 'tdm', name = 'You', mapId?: string): Promise<void> {
+  async arcadePreview(type: GameType = 'tdm', name = 'You', mapId?: string): Promise<void> {
     if (!import.meta.env.DEV) return;
     const { ArcadePreviewServer } = await import('./ArcadePreview');
+    await this.loadArcade();
     this.audio.unlock();
     this.disconnect();
     this.loadingProgress = this.menu.showLoading('Loading arena preview');
@@ -875,7 +1333,7 @@ export class Game {
         const hit = raycast(this.getBlock, ox, oy, oz, dx, dy, dz, max, ray);
         return hit.hit ? hit.distance : max;
       },
-    }, type, name);
+    }, type, name, 10, mapId);
     const welcome = {
       t: 'welcome', id: server.selfId, worldName: 'Arcade preview', seed: meta.seed, gameMode: 'creative', time: 0.3,
       gameType: type, worldType: 'arena', match: server.info, spawn: { x: 8, y: 100, z: 8 }, edits: [], player: null,
@@ -921,22 +1379,30 @@ export class Game {
   // ---------------------------------------------------------------- death
 
   private onDeath(): void {
+    this.statTracker.add('deaths');
     this.inventory.close();
     this.survivalInventory.close();
     this.chat.close();
     this.state = 'dead';
+    announce(`You died. ${this.stats.deathMessage}`);
     if (this.input.locked) {
       this.suppressPause = true;
       this.input.exitLock();
     }
     this.interaction?.reset();
-    // Drop the whole inventory where the player died.
+    this.progression.onDeath();
+    this.worldRules.stopSleeping(false);
+    if (!this.net && this.worldRules.rules.get('showDeathMessages') && this.stats.deathMessage) this.chat.add(this.stats.deathMessage, true);
+    // Drop the whole inventory where the player died (unless keepInventory).
     const p = this.player;
-    for (let i = 0; i < 36; i++) {
-      const s = this.playerInventory.get(i);
-      if (s.count > 0) this.entities?.dropItem(s, p.x, p.y + 1, p.z, 40, undefined, true);
+    if (!this.worldRules.rules.get('keepInventory')) {
+      for (let i = 0; i < 36; i++) {
+        const s = this.playerInventory.get(i);
+        if (s.count > 0) this.entities?.dropItem(s, p.x, p.y + 1, p.z, 40, undefined, true);
+      }
+      for (const s of this.playerInventory.armor) if (s.count > 0) this.entities?.dropItem(s, p.x, p.y + 1, p.z, 40, undefined, true);
+      this.playerInventory.clear();
     }
-    this.playerInventory.clear();
     const hardcore = this.mode === 'hardcore';
     // Hardcore: the single life is gone even if the tab is closed now.
     if (hardcore && this.meta) this.meta.gameMode = 'spectator';
@@ -969,12 +1435,13 @@ export class Game {
    */
   private respawn(): void {
     this.stats.reset();
-    const s = this.meta?.spawn ?? { x: this.player.x, y: this.player.y, z: this.player.z };
-    this.player.setPosition(s.x, s.y, s.z);
+    const t = this.worldRules.respawnTarget(this.meta?.spawn ?? { x: this.player.x, y: this.player.y, z: this.player.z });
+    this.worldRules.pendingBed = t.checkBed ? this.worldRules.bed : null;
+    this.player.setPosition(t.x, t.y, t.z);
     this.player.vx = this.player.vy = this.player.vz = 0;
     this.player.fallDistance = 0;
     this.player.landedFall = 0;
-    this.needsSurface = true;
+    this.needsSurface = !this.worldRules.bed?.point; // a /spawnpoint position is kept as it is
     this.stack.clear();
     this.state = 'loading';
   }
@@ -1000,8 +1467,9 @@ export class Game {
 
   private showClickToPlay(): void {
     this.stack.clear();
-    this.stack.push(h('div', { class: 'screen click-to-play', onclick: () => void this.resumeGame() },
-      h('div', { class: 'click-hint', text: 'Click to play' })));
+    const hint = this.input.touchMode ? 'Tap to play' : this.input.padMode ? 'Press A to play' : 'Click to play';
+    this.stack.push(h('div', { class: 'screen click-to-play', tabIndex: 0, role: 'button', 'aria-label': hint, onclick: () => void this.resumeGame() },
+      h('div', { class: 'click-hint', text: hint })));
   }
 
   private onLockChange(locked: boolean): void {
@@ -1021,15 +1489,29 @@ export class Game {
 
   private pause(): void {
     this.state = 'paused';
+    announce('Game paused');
     void this.saveGame(true);
+    this.showPauseMenu();
+  }
+
+  private showPauseMenu(): void {
     this.stack.clear();
     this.stack.push(pauseScreen({
       resume: () => void this.resumeGame(),
       options: () => this.openOptions(),
       quit: () => void this.quitToTitle(),
       multiplayer: this.net !== null,
+      statistics: this.net ? undefined : () => this.stack.push(statisticsScreen(this.statTracker, () => this.stack.pop())),
       advancements: this.net ? undefined : () => this.stack.push(advancementsScreen(this.advancements, this.icons, () => this.stack.pop())),
       invite: this.roomCode ? () => this.openInvite(this.roomCode!) : undefined,
+      seed: !this.net && this.meta && this.meta.worldType !== 'arena' ? this.meta.seedText || String(this.meta.seed) : undefined,
+      difficulty: this.arcade ? undefined : {
+        get: () => this.worldRules.difficulty,
+        set: (d) => this.worldRules.setDifficulty(d),
+        // Servers change it with /difficulty; Hardcore is always Hard.
+        locked: this.net !== null || this.mode === 'hardcore' || this.meta?.gameMode === 'hardcore',
+      },
+      gameRules: this.net || this.arcade ? undefined : () => this.stack.push(gameRulesScreen(this.worldRules.rules, () => this.stack.pop(), () => this.worldRules.apply())),
     }));
   }
 
@@ -1044,16 +1526,21 @@ export class Game {
     for (let y = -2; y <= 3; y++) for (let z = -4; z <= 4; z++) for (let x = -4; x <= 4; x++) {
       const b = this.getBlock(Math.floor(p.x) + x, Math.floor(p.y) + y, Math.floor(p.z) + z);
       if (b === BLOCK.CRAFTING_TABLE) s.add('table');
-      else if (b === BLOCK.FURNACE) s.add('furnace');
+      else if (b === BLOCK.FURNACE || b === BLOCK.LIT_FURNACE) s.add('furnace');
     }
     return s;
   }
 
+  /** Is this key event the action's bound key, or a virtual press (touch button, gamepad)? */
+  private keyIs(code: string, action: number): boolean {
+    return this.input.matches(code, action) || code === `Virtual${action}`;
+  }
+
   private onKey(code: string): void {
     if (this.chat.isOpen) return;
-    const input = this.input;
-    const command = code === input.bound(KB.COMMAND);
-    if ((command || code === input.bound(KB.CHAT)) && this.net && this.state === 'playing' && this.input.locked) {
+    const command = this.keyIs(code, KB.COMMAND);
+    const chatAvailable = this.net !== null || (this.meta !== null && !this.arcade);
+    if ((command || this.keyIs(code, KB.CHAT)) && chatAvailable && this.state === 'playing' && this.input.locked) {
       this.state = 'chat';
       this.suppressPause = this.input.locked;
       this.input.exitLock();
@@ -1061,12 +1548,20 @@ export class Game {
       return;
     }
     if (code === 'F3') this.debug.toggle();
+    if (code === 'F2' && this.world) this.wantScreenshot = true;
+    // F11: fullscreen like Minecraft (the page's own fullscreen; the browser's F11 is a different mode).
+    if (code === 'F11') {
+      if (document.fullscreenElement) void document.exitFullscreen();
+      else void document.documentElement.requestFullscreen().catch(() => undefined);
+    }
+    // With keyboard lock (fullscreen) Esc arrives as a key press instead of ending pointer lock.
+    if (code === 'Escape' && keyboardLockActive() && this.state === 'playing') this.input.exitLock();
     if (code === 'F1' && this.state === 'playing') {
       this.hudHidden = !this.hudHidden;
       this.hud.setVisible(!this.hudHidden);
       this.arcade?.setHudVisible(!this.hudHidden);
     }
-    if (this.arcade && code === input.bound(KB.LOADOUT)) {
+    if (this.arcade && this.arcade.def.loadout !== 'ladder' && this.keyIs(code, KB.LOADOUT)) {
       // The loadout menu needs the mouse, like the inventory.
       if (this.state === 'playing' && this.input.locked) {
         this.state = 'inventory';
@@ -1077,7 +1572,7 @@ export class Game {
         void this.resumeGame();
       }
     }
-    if (!this.arcade && code === input.bound(KB.INVENTORY)) {
+    if (!this.arcade && this.keyIs(code, KB.INVENTORY)) {
       if (this.state === 'playing' && this.input.locked && this.mode !== 'spectator') {
         this.state = 'inventory';
         this.suppressPause = this.input.locked;
@@ -1088,7 +1583,7 @@ export class Game {
         void this.resumeGame();
       }
     }
-    if (!this.arcade && code === input.bound(KB.DROP) && this.state === 'playing' && this.input.locked && this.mode !== 'spectator') {
+    if (!this.arcade && this.keyIs(code, KB.DROP) && this.state === 'playing' && this.input.locked && this.mode !== 'spectator') {
       // Drop one item from the selected slot (Q), like Minecraft.
       const s = this.hotbar.selectedStack;
       if (s.count > 0) {
@@ -1112,6 +1607,8 @@ export class Game {
 
   private readonly frame = (now: number): void => {
     requestAnimationFrame(this.frame);
+    // Max Framerate: skip this display refresh while the previous frame is too recent.
+    if (this.minFrameMs > 0 && now - this.last < this.minFrameMs - 1.5) return;
     const rawDt = (now - this.last) / 1000;
     this.frameDt = Math.min(rawDt, 0.1);
     const dt = Math.min(rawDt, 0.1);
@@ -1119,6 +1616,7 @@ export class Game {
     const cpuStart = performance.now();
     this.time += dt;
 
+    this.updateInputDevices(dt);
     switch (this.state) {
       case 'menu': this.updateMenu(dt); break;
       case 'loading': this.updateLoading(); break;
@@ -1133,13 +1631,34 @@ export class Game {
       this.updateMenuBlur();
     }
     if (this.wantThumbnail) this.captureThumbnail();
+    if (this.wantScreenshot) this.captureScreenshot();
     this.world?.chunks.afterRender();
+    this.audio.setMusicMode(this.state === 'menu' || this.state === 'loading' ? 'menu' : this.arcade ? 'arcade' : 'game');
+    this.audio.setMusicIntensity(this.arcade?.phase === 'live' ? 1 : 0);
     this.audio.update(dt);
     const cpuMs = performance.now() - cpuStart;
     if (this.state === 'playing') this.world?.chunks.adapt(cpuMs);
     if (this.debug.tick(dt, cpuMs)) this.updateDebug();
     this.input.endFrame();
   };
+
+  /** Touch HUD, controller and captions: run before the game reads the input. */
+  private updateInputDevices(dt: number): void {
+    const playing = this.state === 'playing' && this.input.locked;
+    const arcade = this.arcade !== null;
+    const t = this.touchCtx;
+    t.playing = playing;
+    t.arcade = arcade;
+    t.chat = this.net !== null && !arcade;
+    t.overlay = this.state === 'inventory' || this.state === 'chat';
+    this.touch.update(dt, t);
+    const c = this.padCtx;
+    c.state = this.state;
+    c.playing = playing;
+    c.arcade = arcade;
+    this.pad.update(dt, c);
+    this.subtitles.update(dt);
+  }
 
   private updateEntitiesRender(): void {
     const e = this.entities, world = this.world;
@@ -1156,6 +1675,9 @@ export class Game {
     this.itemRenderer.update(e.items, alpha, this.time, world);
     this.tntRenderer.update(e.tnt, alpha, world);
     this.arrowRenderer.update(e.arrows, alpha, world);
+    this.progression.update(alpha, this.time, hasSurvivalRules(this.mode) && !this.arcade);
+    this.netFalling?.update(performance.now() / 1000);
+    this.fallingRenderer.update(this.netFalling ? this.netFalling.list : world.updates?.falling ?? Game.NO_FALLING, alpha, world);
   }
 
   private updateMenu(dt: number): void {
@@ -1189,14 +1711,14 @@ export class Game {
       }
     }
     const total = (r * 2 + 1) ** 2;
-    this.loadingProgress?.(ready === 0 ? 'Generating terrain...' : 'Building chunk meshes...', ready / total);
+    this.loadingProgress?.(ready === 0 ? t('loading.terrain') : t('loading.meshes'), ready / total);
     // Keep the camera at the spawn so the first frame after loading is correct.
     this.cam.camera.position.set(this.player.x, this.player.y + PHYSICS.EYE_HEIGHT, this.player.z);
     if (world.chunks.isAreaReady(this.player.x, this.player.z, r)) this.finishLoading();
   }
 
   /** Reused every game tick (no per-tick allocations). */
-  private readonly mobTarget = { x: 0, y: 0, z: 0, attackable: false };
+  private readonly mobTarget = { x: 0, y: 0, z: 0, attackable: false, collects: true };
 
   private readonly pickupItem = (s: ItemStack): number => {
     const left = this.playerInventory.add(s);
@@ -1208,7 +1730,8 @@ export class Game {
     attack: (mob, damage) => {
       const p = this.player;
       const yaw = Math.atan2(p.x - mob.x, p.z - mob.z);
-      if (this.stats.damage(damage, 'mob', this.mode, mob.type.name, yaw)) {
+      if (this.stats.hurt(damage, { kind: 'mob', attacker: mob.type.name, yaw }, this.mode).hurt) {
+        this.progression.thorns(mob);
         // Knockback away from the attacker.
         const d = Math.hypot(p.x - mob.x, p.z - mob.z) || 1;
         p.vx += ((p.x - mob.x) / d) * 8;
@@ -1217,7 +1740,10 @@ export class Game {
         this.cam.hurtSide = Math.sin(yaw - p.yaw) >= 0 ? 1 : -1;
       }
     },
-    killed: (mob) => this.advancements.onMobKilled(mob.type.hostile),
+    killed: (mob) => {
+      this.statTracker.add('killed');
+      this.advancements.onMobKilled(mob.type.hostile);
+    },
     playerArrowHit: () => this.advancements.onArrowHitMob(),
     explode: (mob) => this.explode(mob, mob.x, mob.y + 0.5, mob.z, 3),
     shoot: (mob) => {
@@ -1225,11 +1751,12 @@ export class Game {
       this.entities?.skeletonShoot(mob, p.x, p.y, p.z);
       const d = Math.hypot(mob.x - p.x, mob.y - p.y, mob.z - p.z);
       this.audio.playBow(Math.max(0, 1 - d / 16) * 0.6);
+      if (d < 16) this.caption('Skeleton shoots', mob.x, mob.z);
     },
     arrowHit: (arrow, damage) => {
       const p = this.player;
       const yaw = Math.atan2(-arrow.vx, -arrow.vz);
-      if (this.stats.damage(damage, 'arrow', this.mode, arrow.shooter ? arrow.shooter.type.name : '', yaw)) {
+      if (this.stats.hurt(damage, { kind: 'arrow', attacker: arrow.shooter ? arrow.shooter.type.name : undefined, yaw }, this.mode).hurt) {
         // Knockback along the arrow's direction.
         const h = Math.hypot(arrow.vx, arrow.vz) || 1;
         p.vx += (arrow.vx / h) * 3;
@@ -1240,12 +1767,16 @@ export class Game {
     },
     arrowImpact: (arrow) => {
       const p = this.player;
-      this.audio.playArrowHit(1 - Math.hypot(arrow.x - p.x, arrow.y - p.y, arrow.z - p.z) / 16);
+      const vol = 1 - Math.hypot(arrow.x - p.x, arrow.y - p.y, arrow.z - p.z) / 16;
+      this.audio.playArrowHit(vol);
+      if (vol > 0.05) this.caption('Arrow hits', arrow.x, arrow.z);
     },
     tntExplode: (t) => this.explode(null, t.x, t.y + 0.49, t.z, 4, t.inWater),
     sound: (mob, kind) => {
       const d = Math.hypot(mob.x - this.player.x, mob.y - this.player.y, mob.z - this.player.z);
-      this.audio.playMob(mob.type.kind, kind, Math.max(0, 1 - d / 16));
+      const vol = Math.max(0, 1 - d / 16);
+      this.audio.playMob(mob.type.kind, kind, vol, mob);
+      if (vol > 0.05) this.caption(mobSoundLabel(mob.type.kind, kind), mob.x, mob.z);
     },
   };
 
@@ -1256,25 +1787,27 @@ export class Game {
   private explode(source: Mob | null, x: number, y: number, z: number, power: number, inWater = false): void {
     const world = this.world!, entities = this.entities!;
     const positions: number[] = [];
-    const destroyed = inWater ? [] : world.explode(x, y, z, power * 1.3, positions);
-    // Drop roughly 1/power of the destroyed blocks, like Minecraft; caught TNT lights with a short fuse.
+    // Creepers break blocks only with the mobGriefing rule; TNT always does.
+    const grief = !source || this.worldRules.rules.get('mobGriefing');
+    const destroyed = inWater || !grief ? [] : world.explode(x, y, z, power * 1.3, positions);
+    // Blocks drop with chance 1/power (TNT: all of them), like Minecraft; caught TNT lights with a short fuse.
+    const dropChance = explosionDropChance(power, source === null);
     for (let i = 0; i < destroyed.length; i++) {
       const id = destroyed[i];
       if (id === BLOCK.TNT) {
         entities.primeTnt(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2], 10 + Math.floor(Math.random() * 20));
         continue;
       }
-      if (Math.random() < 1 / power && getBlockDef(id)?.inInventory) {
+      if (Math.random() < dropChance && getBlockDef(id)?.inInventory) {
         const drop = blockDrop(id, ITEM.DIAMOND_PICKAXE);
         if (drop) entities.dropItem(drop,
           x + (Math.random() - 0.5) * power, y + Math.random() * power * 0.5, z + (Math.random() - 0.5) * power);
       }
     }
     this.explosionEffects(source ? source.type.name : '', x, y, z, power);
-    const reach = power * 2;
     for (const m of entities.mobs) {
-      const md = Math.hypot(m.x - x, m.y - y, m.z - z);
-      if (m !== source && md < reach) m.hurt(Math.floor((1 - md / reach) * 7 * power), x, z, 1.5);
+      const dmg = explosionDamage(Math.hypot(m.x - x, m.y - y, m.z - z), power);
+      if (m !== source && dmg > 0) m.hurt(dmg, x, z, 1.5);
     }
   }
 
@@ -1286,12 +1819,14 @@ export class Game {
     }
     const p = this.player;
     const d = Math.hypot(p.x - x, p.y + 0.9 - y, p.z - z);
-    this.audio.playExplosion(Math.max(0.2, 1 - d / 40));
+    this.audio.playExplosion(1, { x, y, z });
+    this.caption('Explosion', x, z);
+    if (d < 40) this.pad.rumble(Math.min(1, 1.2 - d / 40), 0.7, 350);
     const reach = power * 2;
     if (d < reach) {
       const impact = 1 - d / reach;
-      const dmg = Math.floor(((impact * impact + impact) / 2) * 7 * reach + 1);
-      this.stats.damage(dmg, 'explosion', this.mode, by, Math.atan2(p.x - x, p.z - z));
+      const dmg = explosionDamage(d, power);
+      this.stats.hurt(dmg, { kind: 'explosion', attacker: by || undefined, yaw: Math.atan2(p.x - x, p.z - z) }, this.mode);
       const len = d || 1;
       p.vx += ((p.x - x) / len) * impact * 14;
       p.vz += ((p.z - z) / len) * impact * 14;
@@ -1302,7 +1837,7 @@ export class Game {
   /** Damage from a server mob or arrow: same hurt camera, knockback and rules as a local hit. */
   private hurtByServer(cause: 'mob' | 'arrow', amount: number, by: string, yaw: number): void {
     const p = this.player;
-    if (!this.stats.damage(amount, cause, this.mode, by, yaw)) return;
+    if (!this.stats.hurt(amount, { kind: cause, attacker: by || undefined, yaw }, this.mode).hurt) return;
     // yaw points from the attacker to the player (mob) or along the arrow's flight (arrow).
     const sin = Math.sin(yaw), cos = Math.cos(yaw);
     if (cause === 'mob') {
@@ -1329,9 +1864,9 @@ export class Game {
     }
     // Fall damage on landing (distance − 3), not in creative or water.
     if (p.landedFall > 0) {
-      const dmg = Math.ceil(p.landedFall - 3);
+      const dmg = Math.ceil(p.landedFall - 3 - stats.effects.jumpBoost());
       if (dmg > 0 && !p.inWater) {
-        if (this.stats.damage(dmg, 'fall', this.mode)) this.cam.hurtSide = 1;
+        if (stats.hurt(dmg, { kind: 'fall' }, this.mode).hurt) this.cam.hurtSide = 1;
       }
       p.landedFall = 0;
     }
@@ -1341,7 +1876,13 @@ export class Game {
     }
     p.sprintDistance = p.swimDistance = 0;
     p.jumps = 0;
+    this.weatherSys.gameTick();
+    this.worldRules.gameTick();
     this.world?.tickLiquids();
+    this.world?.tickRedstone();
+    this.world?.tickGrowth(p.x, p.z);
+    this.world?.blockEntities.tick();
+    this.containers.tick();
     stats.tick(p, this.getBlock, this.mode);
     p.canSprint = !hasSurvivalRules(this.mode) || stats.canSprint;
 
@@ -1349,14 +1890,35 @@ export class Game {
     const target = this.mobTarget;
     target.x = p.x; target.y = p.y; target.z = p.z;
     target.attackable = alive && hasSurvivalRules(this.mode);
+    target.collects = alive && this.mode !== 'spectator';
+    if (this.entities) this.entities.xpPickup = target.collects ? this.progression.pickupXp : null;
     this.entities?.tick(
       target,
-      Math.round((1 - this.cycle.dayFactor) * 11),
+      // Rain and thunder count as extra darkness for the spawn rules.
+      Math.round((1 - this.cycle.dayFactor) * 11 + this.weatherSys.weather.skyDarkness),
       this.mobEvents,
       alive && this.mode !== 'spectator' ? this.pickupItem : null,
       this.cycle.dayFactor > 0.6,
     );
+    if (this.entities) this.mobSteps.update(this.entities.mobs, p.x, p.z);
     if (stats.dead && (this.state === 'playing' || this.state === 'inventory' || this.state === 'chat' || this.state === 'paused')) this.onDeath();
+  }
+
+  /** Statistics: time played, distance walked (not flying) and jumps, from per-frame position changes. */
+  private trackStats(dt: number): void {
+    const p = this.player, st = this.statTracker;
+    st.add('playMs', dt * 1000);
+    const last = this.statLast;
+    if (last) {
+      if (!p.flying && !p.noclip) st.addWalk(Math.hypot(p.x - last.x, p.z - last.z));
+      if (last.ground && !p.onGround && p.vy > 4) st.add('jumps');
+    }
+    if (!last) this.statLast = { x: p.x, z: p.z, ground: p.onGround };
+    else {
+      last.x = p.x;
+      last.z = p.z;
+      last.ground = p.onGround;
+    }
   }
 
   private updatePlaying(dt: number): void {
@@ -1377,30 +1939,55 @@ export class Game {
       }
     }
 
+    if (this.state === 'playing' && !this.arcade) this.trackStats(dt);
+
     if (this.state !== 'paused') {
       // Fixed-step simulation, rendered with interpolation.
       this.accumulator = Math.min(this.accumulator + dt, 0.25);
       const move = this.move;
       const arcade = this.arcade;
       const control = active && this.state !== 'dead' && !arcade?.dead;
-      move.forward = control ? (input.actionDown(KB.FORWARD) ? 1 : 0) - (input.actionDown(KB.BACK) ? 1 : 0) : 0;
-      move.strafe = control ? (input.actionDown(KB.RIGHT) ? 1 : 0) - (input.actionDown(KB.LEFT) ? 1 : 0) : 0;
+      // Keys give -1/0/1; sticks and the touch joystick add analog values on top.
+      const keyFwd = (input.actionDown(KB.FORWARD) ? 1 : 0) - (input.actionDown(KB.BACK) ? 1 : 0);
+      const keyStrafe = (input.actionDown(KB.RIGHT) ? 1 : 0) - (input.actionDown(KB.LEFT) ? 1 : 0);
+      move.forward = control ? Math.max(-1, Math.min(1, keyFwd + input.axisForward)) : 0;
+      move.strafe = control ? Math.max(-1, Math.min(1, keyStrafe + input.axisStrafe)) : 0;
       move.jump = control && input.actionDown(KB.JUMP);
       move.jumpPressed = control && input.actionPressed(KB.JUMP);
       // Arcade: always sprinting at the weapon's pace, bunny hop friendly air control, no sneaking.
-      move.sprint = control && (arcade !== null || input.actionDown(KB.SPRINT));
+      move.sprint = control && (arcade !== null || input.actionDown(KB.SPRINT) || input.sprintAxis);
+      // A toggled sprint ends when the player stops walking forward.
+      if (this.wasMovingForward && move.forward <= 0) input.releaseLatch(KB.SPRINT);
+      this.wasMovingForward = move.forward > 0;
+      // Auto-jump: walking into a one-block step (touch setting, or Options > Controls > Auto-Jump).
+      if (control && !arcade && (input.touchMode ? this.settings.values.touchAutoJump : this.settings.values.autoJump) && p.onGround && p.horizontalCollision
+        && (move.forward !== 0 || move.strafe !== 0)) {
+        const sin = Math.sin(p.yaw), cos = Math.cos(p.yaw);
+        if (needsAutoJump(this.solidAt, p.x, p.y, p.z, -sin * move.forward + cos * move.strafe, -cos * move.forward - sin * move.strafe)) move.jump = true;
+      }
       move.descend = control && arcade === null && input.actionDown(KB.SNEAK);
       if (arcade) {
         p.speedMultiplier = arcade.speedMultiplier;
         p.airAccel = arcade.airAccel;
+      } else {
+        // Status effects: Speed/Slowness, Jump Boost, Levitation.
+        const fx = this.stats.effects;
+        p.speedMultiplier = fx.speedMultiplier();
+        p.jumpBoost = fx.jumpBoost();
+        p.levitation = fx.level('levitation');
+        // A raised shield slows you down to sneaking speed.
+        if (this.interaction?.blocking) p.speedMultiplier *= 0.3;
       }
+      const asleep = this.worldRules.sleeping;
       while (this.accumulator >= PHYSICS.STEP) {
-        p.step(move, this.getBlock, this.getMeta);
+        if (!asleep) p.step(move, this.getBlock, this.getMeta);
         move.jumpPressed = false;
         this.accumulator -= PHYSICS.STEP;
         if (++this.stepCount % STEPS_PER_TICK === 0) this.gameTick();
       }
-      this.cycle.update(dt);
+      if (this.arcade || this.worldRules.daylightCycle) this.cycle.update(dt);
+      this.worldRules.update(dt);
+      this.weatherSys.update(dt);
       this.autosave += dt;
       if (this.autosave > AUTOSAVE_INTERVAL) {
         this.autosave = 0;
@@ -1418,17 +2005,27 @@ export class Game {
     } else this.cam.hurt = Math.max(0, (this.stats.hurtTime - this.accumulator / PHYSICS.STEP / STEPS_PER_TICK) / 10);
     this.cam.bowPull = this.interaction?.bowPull ?? 0;
     this.cam.update(p, this.accumulator / PHYSICS.STEP, dt);
-    if (this.cam.stepped && !p.inWater && !p.noclip) {
-      const below = world.getBlock(Math.floor(p.x), Math.floor(p.y - 0.1), Math.floor(p.z));
-      const def = getBlockDef(below);
-      if (def && SOLID[below]) this.audio.play('step', def.sound);
-    }
-
     const eye = this.cam.camera.position;
     this.underwater = pointInLiquid(this.getBlock, this.getMeta, BLOCK.WATER, eye.x, eye.y, eye.z);
+    this.playerSounds.update(p);
+    this.audio.setListener(eye.x, eye.y, eye.z, p.yaw);
+    this.audioProbe.update(dt, this.audio.env, eye.x, eye.y, eye.z, this.cycle.dayFactor, this.underwater);
     this.hud.setUnderwater(this.underwater);
-    this.hud.setHurt(this.arcade ? this.arcade.hurt * 0.8 : this.stats.hurtTime / 10);
-    if (!this.arcade) this.hud.survival.update({ health: this.stats.health, hunger: this.stats.hunger, air: this.stats.air, maxAir: MAX_AIR }, this.time);
+    this.hud.setHurt(limitFlash(this.arcade ? this.arcade.hurt * 0.8 : this.stats.hurtTime / 10, this.settings.values));
+    if (!this.arcade) this.hud.survival.update({
+      health: Math.ceil(this.stats.health), hunger: this.stats.hunger, air: this.stats.air, maxAir: MAX_AIR, armor: this.stats.armorPoints,
+      hardcore: this.mode === 'hardcore', poison: this.stats.effects.level('poison') > 0, wither: this.stats.effects.level('wither') > 0,
+      hurtTime: this.stats.hurtTime, saturation: this.stats.saturation,
+    }, this.time);
+    if (!this.arcade) {
+      const fx = this.hud.effects;
+      fx.updateEffects(this.stats.effects, this.time);
+      fx.updateAbsorption(hasSurvivalRules(this.mode) ? this.stats.absorption : 0);
+      const charge = this.interaction?.cooldown.charge ?? 1;
+      const showCooldown = this.state === 'playing' && this.mode !== 'spectator';
+      fx.updateCooldown(charge, showCooldown && this.settings.values.attackIndicator === 'crosshair');
+      this.hud.setAttackCharge(showCooldown ? charge : 1);
+    }
 
     if (this.net) {
       const flags = (p.sprinting ? 1 : 0) | (p.flying ? 2 : 0) | (p.onGround ? 4 : 0);
@@ -1449,18 +2046,34 @@ export class Game {
       f.bobStrength = this.cam.bobStrength;
       f.light = Math.max(0.35, Math.min(1, ((light >> 4) / 15) * this.cycle.daylight + (light & 15) / 15));
       f.aspect = window.innerWidth / Math.max(1, window.innerHeight);
-      f.lookX = input.mouseDX;
-      f.lookY = input.mouseDY;
+      // Weapon sway follows the look input; Reduced Motion turns it off.
+      const sway = this.settings.values.reducedMotion ? 0 : 1;
+      f.lookX = input.mouseDX * sway;
+      f.lookY = input.mouseDY * sway;
       this.arcade.update(f, input);
     } else {
       this.hand.update(dt, this.hotbar.selectedBlock, this.cam.bobPhase, this.cam.bobStrength, light,
-        this.interaction!.eating, window.innerWidth / Math.max(1, window.innerHeight));
+        this.interaction!.eating, window.innerWidth / Math.max(1, window.innerHeight), hasEnchants(this.hotbar.selectedStack.data), this.time);
     }
     this.renderer.particles.update(dt, world);
     this.renderer.clouds.update(dt, this.cycle);
   }
 
   // ---------------------------------------------------------------- debug
+
+  /** Living mobs around a point (in multiplayer the mirror of the server mobs), for F3. */
+  private countMobsNear(x: number, z: number, radius: number): { hostile: number; passive: number } {
+    const r2 = radius * radius;
+    let hostile = 0, passive = 0;
+    const count = (list: readonly Mob[]) => {
+      for (const m of list) {
+        if (m.removed || m.dead || (m.x - x) ** 2 + (m.z - z) ** 2 > r2) continue;
+        if (m.type.hostile) hostile++; else passive++;
+      }
+    };
+    if (this.entities) count(this.entities.mobs);
+    return { hostile, passive };
+  }
 
   private updateDebug(): void {
     const world = this.world;
@@ -1482,34 +2095,41 @@ export class Game {
     const ray = this.interaction?.ray;
     const target = ray?.hit ? `${getBlockDef(ray.id)?.displayName} @ ${ray.x}, ${ray.y}, ${ray.z}` : '—';
     const e = this.entities;
+    const near = this.countMobsNear(p.x, p.z, 64);
+    // Grouped like Minecraft 1.21's F3: left = version, performance, renderer counts, then position and world
+    // state; right = memory, system/display, then the targeted block. F3 text stays English, as in Minecraft.
+    const towards: Record<string, string> = { north: 'Towards negative Z', south: 'Towards positive Z', east: 'Towards positive X', west: 'Towards negative X' };
     d.set([
       `BunkCraft 1.0 (WebGL2 · three.js r${THREE.REVISION})`,
       `${d.fps} fps · frame ${d.frameMs.toFixed(2)} ms CPU · worst ${d.worstMs.toFixed(1)} ms`,
-      `Chunks: ${stats.loaded} loaded · ${stats.meshed} meshed · ${visible} rendered`,
-      `Draw calls: ${r.drawCalls} (+${r.shadowCalls} shadow) · Triangles: ${(r.triangles / 1000).toFixed(1)}k`,
+      `C: ${visible}/${stats.loaded} (meshed ${stats.meshed}) D: ${world.chunks.renderDistance}${this.dynamicResolution.distanceDrop > 0 ? ` (adaptive -${this.dynamicResolution.distanceDrop})` : ''} · Draw calls: ${r.drawCalls} (+${r.shadowCalls} shadow)`,
+      `E: ${e?.mobs.length ?? 0} mobs, ${e?.items.length ?? 0} items · P: ${this.renderer.particles.active}${this.renderer.precipitation.count > 0 ? ` · Rain: ${this.renderer.precipitation.count}` : ''} · Tris: ${(r.triangles / 1000).toFixed(1)}k`,
       `Workers: ${this.pool.size} · queue ${this.pool.queued} · gen ${this.pool.genMs.toFixed(1)} ms · mesh ${this.pool.meshMs.toFixed(1)} ms`,
-      `Entities: ${e?.mobs.length ?? 0} mobs · ${e?.items.length ?? 0} items · Particles: ${this.renderer.particles.active}`,
       '',
-      `XYZ: ${p.x.toFixed(3)} / ${p.y.toFixed(3)} / ${p.z.toFixed(3)}`,
+      `XYZ: ${p.x.toFixed(3)} / ${p.y.toFixed(5)} / ${p.z.toFixed(3)}`,
       `Block: ${bx} ${by} ${bz}`,
-      `Chunk: ${bx >> 4} ${bz >> 4} (in chunk ${bx & 15} ${by} ${bz & 15})`,
-      `Facing: ${facing} (${yawDeg.toFixed(1)} / ${((-p.pitch * 180) / Math.PI).toFixed(1)})`,
+      `Chunk: ${bx & 15} ${by} ${bz & 15} in ${bx >> 4} ${bz >> 4}`,
+      `Facing: ${facing} (${towards[facing] ?? ''}) (${yawDeg.toFixed(1)} / ${((-p.pitch * 180) / Math.PI).toFixed(1)})`,
+      `Light: ${Math.max(light >> 4, light & 15)} (${light >> 4} sky, ${light & 15} block)`,
       `Biome: ${BIOME_NAMES[world.biomeName(bx, bz)]}`,
-      `Light: ${light >> 4} sky, ${light & 15} block`,
-      `Time: ${this.cycle.clock()} · Render distance: ${world.chunks.renderDistance} chunks${this.dynamicResolution.distanceDrop > 0 ? ` (adaptive -${this.dynamicResolution.distanceDrop})` : ''}`,
+      `Day ${this.cycle.day + 1} · ${this.cycle.clock()} · Moon: ${MOON_PHASE_NAMES[this.cycle.moonPhase]}`,
+      this.weatherSys.debugLine(),
+      `Mobs within 64: ${near.hostile} hostile · ${near.passive} passive${this.net ? ' (server)' : ''}`,
+      '',
       `${GAME_MODE_NAMES[this.mode]} · ${p.flying ? 'Flying' : p.onGround ? 'On ground' : 'Airborne'}${p.sprinting ? ' · Sprinting' : ''}${p.inWater ? ' · In water' : ''}`,
       `Health ${this.stats.health} · Food ${this.stats.hunger} (sat ${this.stats.saturation.toFixed(1)}) · Air ${this.stats.air}`,
+      `${this.audio.debugLine()} · enclosure ${this.audio.env.enclosure.toFixed(2)}`,
     ], [
-      mem ? `JS heap: ${(mem.usedJSHeapSize / 1048576).toFixed(0)} / ${(mem.totalJSHeapSize / 1048576).toFixed(0)} MB` : 'JS heap: n/a',
-      `World blocks: ${(worldBlocks / 1e6).toFixed(2)}M (${(worldBlocks / 1048576).toFixed(1)} MB)`,
-      `Edited chunks: ${world.edits.size}`,
+      mem ? `Mem: ${Math.round((mem.usedJSHeapSize / mem.totalJSHeapSize) * 100)}% ${(mem.usedJSHeapSize / 1048576).toFixed(0)}/${(mem.totalJSHeapSize / 1048576).toFixed(0)}MB` : 'Mem: n/a',
+      `World blocks: ${(worldBlocks / 1e6).toFixed(2)}M (${(worldBlocks / 1048576).toFixed(1)} MB) · edited chunks ${world.edits.size}`,
       `Upload queue: ${stats.uploadQueue} · in flight ${stats.genInFlight}g/${stats.meshInFlight}m`,
       '',
-      `Display: ${window.innerWidth}×${window.innerHeight} @ ${this.renderer.three.getPixelRatio().toFixed(2)}x`
+      `CPU: ${navigator.hardwareConcurrency || '?'} threads`,
+      `Display: ${window.innerWidth}x${window.innerHeight} @ ${this.renderer.three.getPixelRatio().toFixed(2)}x`
         + (this.dynamicResolution.enabled ? ` (dynamic ${Math.round(this.dynamicResolution.scale * 100)}%)` : ''),
-      `GPU: ${this.gpuName.replace(/^ANGLE \(|\)$/g, '').split(',').slice(0, 2).join(',')}`,
+      `${this.gpuName.replace(/^ANGLE \(|\)$/g, '').split(',').slice(0, 2).join(',')}`,
       '',
-      `Targeted: ${target}`,
+      `Targeted Block: ${target}`,
       `Holding: ${getItemDef(this.hotbar.selectedBlock)?.displayName ?? 'Empty hand'}`,
       `Seed: ${world.seed}`,
     ]);

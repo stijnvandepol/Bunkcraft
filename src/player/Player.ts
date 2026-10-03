@@ -28,9 +28,13 @@ export class Player {
   pitch = 0;
   onGround = false;
   inWater = false;
+  /** Depth Strider of the worn boots as 0..1 (see EnchantRules.depthStriderFactor). */
+  depthStrider = 0;
   headInWater = false;
   flying = false;
   sprinting = false;
+  /** Sneaking on the ground or in the air (slow walk, no sprint); not while flying or swimming. */
+  sneaking = false;
   horizontalCollision = false;
   /** Distance walked on the ground, drives head bob and footsteps. */
   walkDistance = 0;
@@ -46,6 +50,9 @@ export class Player {
   canSprint = true;
   /** Arcade: scales walking and sprinting speed on the ground and in the air (1 = Minecraft). */
   speedMultiplier = 1;
+  /** Jump Boost levels (+0.1 blocks/tick of jump speed each) and Levitation levels (rise 0.9 blocks/s each). */
+  jumpBoost = 0;
+  levitation = 0;
   /** Horizontal acceleration in the air (arcade raises it for bunny hopping). */
   airAccel: number = PHYSICS.AIR_ACCEL;
   /** Spectator: fly through blocks. */
@@ -112,11 +119,13 @@ export class Player {
     let f = input.forward, s = input.strafe;
     const len = Math.hypot(f, s);
     if (len > 1) { f /= len; s /= len; }
-    this.sprinting = input.sprint && f > 0 && !this.inWater && this.canSprint;
+    this.sneaking = input.descend && !this.flying && !this.inWater && !this.noclip;
+    this.sprinting = input.sprint && f > 0 && !this.inWater && this.canSprint && !this.sneaking;
     let speed: number;
     if (this.flying) speed = this.sprinting ? PHYSICS.FLY_SPRINT_SPEED : PHYSICS.FLY_SPEED;
-    else if (this.inWater) speed = this.inLava ? PHYSICS.SWIM_SPEED * 0.5 : PHYSICS.SWIM_SPEED;
-    else speed = (this.sprinting ? PHYSICS.SPRINT_SPEED : PHYSICS.WALK_SPEED) * this.speedMultiplier;
+    // Depth Strider (boots) brings the water speed up towards the walking speed, a third per level.
+    else if (this.inWater) speed = this.inLava ? PHYSICS.SWIM_SPEED * 0.5 : PHYSICS.SWIM_SPEED + (PHYSICS.WALK_SPEED - PHYSICS.SWIM_SPEED) * this.depthStrider;
+    else speed = (this.sprinting ? PHYSICS.SPRINT_SPEED : PHYSICS.WALK_SPEED) * this.speedMultiplier * (this.sneaking ? PHYSICS.SNEAK_FACTOR : 1);
     const sin = Math.sin(this.yaw), cos = Math.cos(this.yaw);
     const tx = (-sin * f + cos * s) * speed;
     const tz = (-cos * f - sin * s) * speed;
@@ -124,8 +133,15 @@ export class Player {
     this.vx = approach(this.vx, tx, accel, dt);
     this.vz = approach(this.vz, tz, accel, dt);
 
+    // Ladders: climb while holding jump or pushing into the wall, hold still while sneaking, otherwise slide down.
+    const onLadder = !this.flying && !this.inWater && !this.noclip
+      && (getBlock(Math.floor(this.x), Math.floor(this.y + 0.1), Math.floor(this.z)) === BLOCK.LADDER
+        || getBlock(Math.floor(this.x), Math.floor(this.y + 1), Math.floor(this.z)) === BLOCK.LADDER);
     // Vertical.
-    if (this.flying) {
+    if (onLadder) {
+      this.vy = input.jump || this.horizontalCollision ? 3.5 : input.descend ? 0 : -3;
+      this.fallDistance = 0;
+    } else if (this.flying) {
       const target = ((input.jump ? 1 : 0) - (input.descend ? 1 : 0)) * PHYSICS.FLY_VERTICAL;
       this.vy = approach(this.vy, target, 10, dt);
     } else if (this.inWater) {
@@ -136,10 +152,13 @@ export class Player {
       if (input.jump && this.horizontalCollision) this.vy = Math.max(this.vy, 5.5);
     } else {
       if (input.jump && this.onGround) {
-        this.vy = PHYSICS.JUMP_VELOCITY;
+        this.vy = PHYSICS.JUMP_VELOCITY + this.jumpBoost * 2.1;
         this.jumps++;
       }
-      this.vy = Math.max(this.vy - PHYSICS.GRAVITY * dt, -PHYSICS.TERMINAL_VELOCITY);
+      if (this.levitation > 0) {
+        this.vy = approach(this.vy, 0.9 * this.levitation, 5, dt);
+        this.fallDistance = 0;
+      } else this.vy = Math.max(this.vy - PHYSICS.GRAVITY * dt, -PHYSICS.TERMINAL_VELOCITY);
     }
 
     if (this.noclip) {

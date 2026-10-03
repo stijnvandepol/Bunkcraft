@@ -89,8 +89,25 @@ describe('ServerEntities', () => {
     ents.attack(player, mob.netId);
     expect(mob.health).toBe(hp);
     player.x = mob.x + 1; player.y = mob.y; player.z = mob.z;
+    player.flags = 4; // on the ground: no critical
     ents.attack(player, mob.netId);
     expect(mob.health).toBe(hp - 1); // bare hand
+  });
+
+  it('lightning hurts and ignites mobs within 3 blocks, not further away', () => {
+    const { ents, player } = setup();
+    for (let i = 0; i < 300; i++) ents.tick([player]);
+    const mobs = ents.manager.mobs.filter((m) => !m.type.hostile);
+    expect(mobs.length).toBeGreaterThan(1);
+    const [near, far] = mobs;
+    const hpNear = near.health, hpFar = far.health;
+    // Make sure the second mob is far from the strike.
+    far.x = near.x + 30;
+    ents.lightning(near.x + 1, near.y, near.z);
+    expect(near.health).toBe(hpNear - 5);
+    expect(near.burning).toBeGreaterThanOrEqual(160);
+    expect(far.health).toBe(hpFar);
+    expect(far.burning).toBe(0);
   });
 
   it('only shoots with a bow in hand and only ignites with flint and steel', () => {

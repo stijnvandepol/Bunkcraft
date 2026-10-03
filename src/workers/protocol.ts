@@ -8,6 +8,8 @@ export interface GenerateRequest {
   seed: number;
   /** Absent = terrain. */
   worldType?: WorldType;
+  /** Terrain generator version; absent = 1 (requests from before versioning). */
+  genVersion?: number;
   cx: number;
   cz: number;
 }

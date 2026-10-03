@@ -1,8 +1,16 @@
 node_modules
 dist
+dist-static
+bunkcraft-static.zip
 .playwright-mcp
 data
 data-test
 
 # Claude Code agent worktrees
 .claude/worktrees/
+tests/audio-previews/*.wav
+
+# UI screenshot suite: the full matrix and check runs are regenerated, not committed
+docs/screenshots/ui/matrix/
+docs/screenshots/ui/_check/
+vite.shots.config.ts

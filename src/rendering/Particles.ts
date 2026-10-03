@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { FACE_LAYER, OPAQUE, SOLID } from '../world/BlockRegistry';
+import { BLOCK, FACE_LAYER, OPAQUE, SOLID } from '../world/BlockRegistry';
 import { FOG_GLSL, LIGHT_GLSL, type WorldUniforms } from './Materials';
 
 const MAX = 1024;
@@ -108,6 +108,15 @@ export class Particles {
       const face = Math.random() < 0.3 ? 2 : 0;
       this.emit(px, py, pz, (px - x - 0.5) * 3 + (Math.random() - 0.5), (py - y - 0.5) * 3 + 2 + Math.random() * 2,
         (pz - z - 0.5) * 3 + (Math.random() - 0.5), blockId, face, light, 0.6 + Math.random() * 0.6, tint);
+    }
+  }
+
+  /** Critical hit: a short burst of bright sparks around a point. */
+  spawnCrit(x: number, y: number, z: number): void {
+    const n = Math.max(4, Math.round(14 * this.density));
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * Math.PI * 2, r = 1 + Math.random() * 2;
+      this.emit(x, y, z, Math.cos(a) * r, 1 + Math.random() * 2.5, Math.sin(a) * r, BLOCK.GLOWSTONE, 0, 0xff, 0.3 + Math.random() * 0.3, 0xfff0c0);
     }
   }
 

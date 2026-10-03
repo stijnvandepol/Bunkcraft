@@ -1,4 +1,4 @@
-import { ITEM, type ItemStack } from '../items/ItemRegistry';
+import { ITEM, type ItemStack, itemId } from '../items/ItemRegistry';
 import { BLOCK } from '../world/BlockRegistry';
 
 export type MobKind = 'pig' | 'cow' | 'sheep' | 'chicken' | 'zombie' | 'creeper' | 'skeleton' | 'spider' | 'player' | 'player_red' | 'player_blue';
@@ -39,6 +39,8 @@ export interface MobType {
   hostile: boolean;
   /** Melee damage (Normal difficulty). */
   attack: number;
+  /** Blocks within which a hostile mob notices the player (attribute follow_range): 16 unless set (zombie 35). */
+  followRange?: number;
   /** Zombie pose: arms held straight forward. */
   armsForward?: boolean;
   /** Burns in direct sunlight (zombie, skeleton). */
@@ -57,17 +59,36 @@ export interface MobType {
 const rnd = (min: number, max: number) => min + Math.floor(Math.random() * (max - min + 1));
 const stack = (id: number, count: number): ItemStack[] => (count > 0 ? [{ id, count }] : []);
 
-const eyes = (white: string, pupil: string, y: number) => (px: (x: number, y: number, c: string) => void, w: number) => {
-  px(1, y, white); px(2, y, pupil);
-  px(w - 3, y, pupil); px(w - 2, y, white);
+type FacePainter = (px: (x: number, y: number, c: string) => void, w: number) => void;
+
+/**
+ * Two eyes on the front face of a head that is `w` texture pixels wide, always symmetric.
+ * Wide faces (≥ 8 px) get a white of the eye on the outside and a pupil inside; narrow faces
+ * (sheep 6 px, chicken 4 px) have no room for that, so the pupils sit at the outer columns and
+ * the whites are skipped. The old fixed layout made the pupils of a 6 px face touch (one wide
+ * eye) and overwrote one eye of a 4 px face completely. `tall` paints the pupil two rows high.
+ */
+const eyes = (white: string, pupil: string, y: number, tall = false): FacePainter => (px, w) => {
+  const eye = (x: number, x2: number) => {
+    px(x, y, pupil);
+    if (tall) px(x, y + 1, pupil);
+    if (x2 >= 0) { px(x2, y, white); if (tall) px(x2, y + 1, white); }
+  };
+  if (w >= 8) { eye(2, 1); eye(w - 3, w - 2); }
+  else if (w >= 6) { eye(1, 0); eye(w - 2, w - 1); }
+  else { eye(0, -1); eye(w - 1, -1); }
 };
 
 // Four-legged layout helper: legs at the corners with pivots at their tops.
-function quadLegs(w: number, h: number, xOff: number, zFront: number, zBack: number, colors: string[]): ModelPart[] {
+function quadLegs(w: number, h: number, xOff: number, zFront: number, zBack: number, colors: string[], sleeve?: string[], sleeveH = 6): ModelPart[] {
   const leg = (x: number, z: number, anim: PartAnim): ModelPart => ({
     anim,
     pivot: [x + w / 2, h, z + w / 2],
-    boxes: [{ from: [x, 0, z], to: [x + w, h, z + w], colors }],
+    boxes: [
+      { from: [x, 0, z], to: [x + w, h, z + w], colors },
+      // Wool sleeve around the upper part of the leg (sheep), slightly larger than the leg.
+      ...(sleeve ? [{ from: [x - 0.5, h - sleeveH, z - 0.5] as [number, number, number], to: [x + w + 0.5, h, z + w + 0.5] as [number, number, number], colors: sleeve }] : []),
+    ],
   });
   return [
     leg(-xOff - w, zFront, 'legA'), leg(xOff, zFront, 'legB'),
@@ -113,7 +134,7 @@ export const MOB_TYPES = {
       { anim: 'none', pivot: [0, 0, 0], boxes: [{ from: [-5, 6, -8], to: [5, 14, 8], colors: PIG_SKIN }] },
       {
         anim: 'head', pivot: [0, 12, -8], boxes: [
-          { from: [-4, 8, -15], to: [4, 16, -7], colors: PIG_SKIN, face: eyes('#ffffff', '#1f1f1f', 3) },
+          { from: [-4, 8, -15], to: [4, 16, -7], colors: PIG_SKIN, face: eyes('#ffffff', '#1f1f1f', 3, true) },
           { from: [-2, 9, -16], to: [2, 12, -15], colors: ['#e28a86'], face: (px) => { px(1, 1, '#8a4a48'); px(2, 1, '#8a4a48'); } },
         ],
       },
@@ -126,36 +147,38 @@ export const MOB_TYPES = {
     parts: [
       {
         anim: 'none', pivot: [0, 0, 0], boxes: [
-          { from: [-6, 10, -9], to: [6, 20, 9], colors: COW_HIDE, patches: '#e6e3da' },
-          { from: [-2, 8, 3], to: [2, 10, 8], colors: ['#e8a7a3'] },
+          { from: [-6, 12, -9], to: [6, 22, 9], colors: COW_HIDE, patches: '#e6e3da' },
+          { from: [-2, 10, 3], to: [2, 12, 8], colors: ['#e8a7a3', '#dc9894'] },
         ],
       },
       {
-        anim: 'head', pivot: [0, 18, -9], boxes: [
-          { from: [-4, 14, -15], to: [4, 22, -9], colors: ['#3c291c', '#4a3324'], face: (px, w) => {
-            eyes('#ffffff', '#111111', 3)(px, w);
+        anim: 'head', pivot: [0, 20, -9], boxes: [
+          { from: [-4, 16, -15], to: [4, 24, -9], colors: ['#3c291c', '#4a3324'], face: (px, w) => {
+            eyes('#ffffff', '#111111', 2, true)(px, w);
             for (let x = 2; x < w - 2; x++) for (let y = 5; y < 8; y++) px(x, y, '#d9d6cc');
             px(3, 6, '#5a5550'); px(w - 4, 6, '#5a5550');
           } },
-          { from: [-5, 20, -13], to: [-4, 23, -12], colors: ['#d7d2c4'] },
-          { from: [4, 20, -13], to: [5, 23, -12], colors: ['#d7d2c4'] },
+          { from: [-5, 22, -13], to: [-4, 25, -12], colors: ['#d7d2c4'] },
+          { from: [4, 22, -13], to: [5, 25, -12], colors: ['#d7d2c4'] },
         ],
       },
-      ...quadLegs(4, 10, 2, -8, 4, ['#3c291c', '#4a3324']),
+      ...quadLegs(4, 12, 2, -8, 4, ['#3c291c', '#4a3324']),
     ],
-    drops: () => [...stack(ITEM.BEEF, rnd(1, 3))],
+    drops: () => [...stack(ITEM.BEEF, rnd(1, 3)), ...stack(itemId('leather'), rnd(0, 2))],
   },
   sheep: {
     kind: 'sheep', name: 'Sheep', health: 8, width: 0.9, height: 1.3, walkSpeed: 1.2, runSpeed: 2.4, hostile: false, attack: 0,
     parts: [
-      { anim: 'none', pivot: [0, 0, 0], boxes: [{ from: [-6, 10, -9], to: [6, 20, 9], colors: WOOL }] },
+      // Wool layer: a larger box around the (hidden) skin body, like Minecraft's fleece model.
+      { anim: 'none', pivot: [0, 0, 0], boxes: [{ from: [-6, 11, -9], to: [6, 21, 9], colors: WOOL }] },
       {
         anim: 'head', pivot: [0, 18, -8], boxes: [
-          { from: [-3, 15, -14], to: [3, 21, -7], colors: SHEEP_SKIN, face: eyes('#ffffff', '#2a2a2a', 2) },
-          { from: [-3.5, 19, -13], to: [3.5, 22, -7], colors: WOOL },
+          { from: [-3, 15, -16], to: [3, 21, -8], colors: SHEEP_SKIN, face: eyes('#ffffff', '#2a2a2a', 2, true) },
+          // Fleece on the back of the head and the forehead.
+          { from: [-3.6, 14.6, -12], to: [3.6, 21.8, -7.4], colors: WOOL },
         ],
       },
-      ...quadLegs(4, 11, 1, -7, 3, SHEEP_SKIN),
+      ...quadLegs(4, 12, 1, -7, 3, SHEEP_SKIN, WOOL, 6),
     ],
     drops: () => [...stack(BLOCK.WHITE_WOOL, 1), ...stack(ITEM.MUTTON, rnd(1, 2))],
   },
@@ -178,7 +201,7 @@ export const MOB_TYPES = {
     drops: () => [...stack(ITEM.CHICKEN, 1), ...stack(ITEM.FEATHER, rnd(0, 2))],
   },
   zombie: {
-    kind: 'zombie', name: 'Zombie', health: 20, width: 0.6, height: 1.95, walkSpeed: 1.0, runSpeed: 2.6, hostile: true, attack: 3, armsForward: true, burnsInDaylight: true,
+    kind: 'zombie', name: 'Zombie', health: 20, width: 0.6, height: 1.95, walkSpeed: 1.0, runSpeed: 2.6, hostile: true, attack: 3, followRange: 35, armsForward: true, burnsInDaylight: true,
     parts: [
       {
         anim: 'head', pivot: [0, 24, 0], boxes: [{ from: [-4, 24, -4], to: [4, 32, 4], colors: ZOMBIE_SKIN, face: (px, w) => {
@@ -219,7 +242,10 @@ export const MOB_TYPES = {
           for (let x = 1; x < w - 1; x++) px(x, 6, x % 2 ? '#3a3a3a' : '#8a8a8a');
         } }],
       },
-      { anim: 'none', pivot: [0, 0, 0], boxes: [{ from: [-4, 12, -1], to: [4, 24, 1], colors: BONE }] },
+      { anim: 'none', pivot: [0, 0, 0], boxes: [{ from: [-4, 12, -2], to: [4, 24, 2], colors: BONE, face: (px, w, h) => {
+        // Ribcage: dark gaps between bone ribs, a spine in the middle.
+        for (let y = 1; y < h - 3; y += 2) for (let x = 0; x < w; x++) px(x, y, x === w / 2 - 1 || x === w / 2 ? '#d8d8d8' : '#4a4a4a');
+      } }] },
       { anim: 'armL', pivot: [-5, 22, 0], boxes: [{ from: [-6, 12, -1], to: [-4, 24, 1], colors: BONE }] },
       { anim: 'armR', pivot: [5, 22, 0], boxes: [{ from: [4, 12, -1], to: [6, 24, 1], colors: BONE }] },
       { anim: 'legA', pivot: [-2, 12, 0], boxes: [{ from: [-3, 0, -1], to: [-1, 12, 1], colors: BONE }] },
@@ -239,7 +265,9 @@ export const MOB_TYPES = {
       },
       {
         anim: 'head', pivot: [0, 9, -3], boxes: [{ from: [-4, 5, -11], to: [4, 13, -3], colors: SPIDER, face: (px) => {
-          for (const [x, y] of [[1, 2], [2, 2], [5, 2], [6, 2], [2, 3], [5, 3], [3, 3], [4, 3]]) px(x, y, '#c41414');
+          // Two large eyes and six small ones, like the vanilla spider.
+          for (const [x, y] of [[1, 2], [2, 2], [1, 3], [2, 3], [5, 2], [6, 2], [5, 3], [6, 3]]) px(x, y, '#c41414');
+          for (const [x, y] of [[3, 1], [4, 1], [0, 4], [7, 4], [3, 4], [4, 4]]) px(x, y, '#8a1010');
         } }],
       },
       ...spiderLegs(),

@@ -4,6 +4,9 @@
 > externe dienst. Eén proces serveert de game en de WebSocket (`server/`), zodat alles op één webserver
 > draait. Zie [`SERVER.md`](SERVER.md). De WebRTC-variant (fase 1) is niet meer nodig.
 
+> **Beheer en vertrouwen (oktober 2026):** wachtwoorden, operators, een publieke serverlijst, `/admin`, metrics, back-ups,
+> controle van survival-inventories en binaire `snap`/`ent`-frames staan beschreven in [`SERVER.md`](SERVER.md).
+
 Samenvatting van het multiplayer-onderzoek (oktober 2026). Bronnen staan onderaan.
 
 ## Wat de huidige code al meebrengt
@@ -43,6 +46,31 @@ UDP (Geckos.io) is niet nodig: een blokkengame op 20 Hz werkt prima met betrouwb
 
 Bij 8 spelers is dat ongeveer 19 KB/s upload voor de host: prima voor een gewone internetverbinding.
 
+## Kisten en ovens (containers)
+
+De server is eigenaar van kisten en ovens (`ServerWorld.blockEntities`, opgeslagen in `world.json` onder `blockEntities`).
+Het protocol is additief (`PROTOCOL_VERSION` blijft 4); `welcome.containers: true` zegt dat de server het kent. Een oude
+server negeert de berichten en de client meldt dan dat de server geen kisten opslaat.
+
+| Bericht | Richting | Inhoud |
+|---|---|---|
+| `{t:'container', op:'open', x,y,z}` | client → server | openen; binnen 8 blokken, één container tegelijk per speler |
+| `{op:'open', kind, title, slots, props?}` | server → client | inhoud (`[]` = leeg slot), oven-`props` = [brandtijd, totaal, kooktijd, totaal] |
+| `{op:'deny', reason}` | server → client | te ver, geen container, limiet |
+| `{op:'click', seq, slot, button, shift?, from?, inv, cursor}` | client → server | klik op slot (of shift vanuit inventory-slot `from` met `slot: -1`), met de inventory-rijen en de cursor-stack |
+| `{op:'result', seq, ok, cursor, toInv?, fromInv?, xp?}` | server → client | nieuwe cursor, wat er naar/uit de inventory gaat, oven-XP |
+| `{op:'slots', slots, props?}` | server → iedereen die hem open heeft | nieuwe inhoud (meteen bij wijziging, oven-voortgang max 2×/s) |
+| `{op:'close'}` | beide | sluiten; de server sluit ook bij breken of weglopen |
+
+Omdat de inventory bij de client hoort, stuurt elke klik de inventory en cursor mee. De server controleert die met de
+inventory guard (de cursor telt als "in bezit"), past de klik toe op een kopie van de slots en neemt hem pas over als de
+guard de overdracht accepteert: wat uit de container komt gaat de pool in (`creditTransfer`), wat erin gaat moet in de
+pool zitten (`spendTransfer`). Een tweede storting met een verouderde inventory of een verzonnen cursor-stack wordt dus
+geweigerd (`result.ok = false` plus een `state`-correctie). Smelten telt niet meer als recept voor de guard: oven-output komt
+als overdracht binnen. De client wacht per klik op het antwoord (geen voorspelling), wat bij gewone ping niet merkbaar is.
+Lit/unlit-wissels van ovens en het losmaken van een dubbele kist gaan als `blocks`-bericht naar iedereen. Grenzen: één open
+container per speler, 20 open/klik-berichten per seconde, maximaal 20000 block entities per wereld, slot-rijen zoals de inventory.
+
 ## Netcode
 
 1. **Client-side prediction:** de eigen speler beweegt direct lokaal. De server rekent met dezelfde `Player`-code en corrigeert bij afwijkingen.
@@ -51,6 +79,7 @@ Bij 8 spelers is dat ongeveer 19 KB/s upload voor de host: prima voor een gewone
 4. **Conflicten:** de server verwerkt edits op volgorde van aankomst. Met `prevId` worden verouderde edits geweigerd.
 5. **Block states (protocol 4):** een `block`-bericht heeft een optionele `meta` (weggelaten = 0); de server weigert een meta die het blok niet kan hebben (`isValidMeta`). `welcome.edits` is een platte lijst `x, y, z, id, meta`. Een oudere client krijgt "Outdated client".
 6. **Vloeistoffen:** de server simuleert water en lava (`LiquidSim` in `ServerWorld`, alleen terwijl er spelers zijn) met een budget van 600 updates en 200 blokwijzigingen per tick. De wijzigingen gaan als `blocks`-berichten (`x, y, z, id, meta, …`, hoogstens 100 per bericht) naar alle clients, dus maximaal ~4000 wijzigingen per seconde in een extreme vloed; een client simuleert zelf niet.
+7. **Generatorversie:** `welcome.genVersion` (optioneel, weggelaten = 1) zegt met welke terreingenerator de seed gelezen moet worden. De server bewaart hem in `world.json` (een bestand zonder veld is een wereld van versie 1 en blijft dat), een nieuwe wereld krijgt de huidige versie. Een client die het veld niet kent genereert versie 1: daarom blijft de versie van een bestaande wereld staan en is er geen protocolversie voor nodig. Arena's negeren het veld.
 
 ## Aanbevolen plan
 
@@ -98,3 +127,13 @@ src/ui/        MultiplayerMenu.ts (serverlijst, Direct Connect, deelnemen via li
 - [ClassiCube hosting](https://www.classicube.net/server/host/)
 - [Voxelize](https://github.com/voxelize/voxelize)
 - [Hathora shutdown](https://gameye.com/blog/game-server-shake-up-2026/)
+
+## Ervaring en enchantments (protocol, additief, PROTOCOL_VERSION ongewijzigd)
+
+- `orbs` (server → client): `[id, waarde, x, y, z]` per XP-orb in de buurt, 10 Hz zolang er orbs zijn en één lege lijst daarna. Apart van
+  het binaire `ent`-frame, zodat oude clients het negeren.
+- Oppakken gaat via het bestaande `take` met het orb-id; de server antwoordt met `xpgain { id, value }` (bereik 2,6 blokken, één keer).
+- `attack` en `shoot` krijgen optioneel `e`: de enchantments van het wapen als sleutel/level-paren. De server klemt levels op het maximum en
+  laat alleen enchantments toe die het vastgehouden item kan dragen (Sharpness, Smite, Bane, Knockback, Fire Aspect, Looting; Power, Punch, Flame).
+- XP-punten en de enchant-seed reizen mee in `state.stats` (index 5 en 6) en staan in het spelersrecord.
+- Item-rijen mogen 40 getallen lang zijn (enchantments, repair cost, eigen naam).

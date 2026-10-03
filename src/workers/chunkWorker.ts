@@ -1,5 +1,6 @@
 /// <reference lib="webworker" />
 import { ChunkMesher, type GeometryData } from '../rendering/ChunkMesher';
+import { normalizeGenVersion } from '../world/GenVersion';
 import { type WorldGenerator, type WorldType, createGenerator } from '../world/WorldGenerator';
 import { CHUNK_AREA, CHUNK_VOLUME } from '../world/constants';
 import { BufferPool } from './BufferPool';
@@ -9,6 +10,7 @@ declare const self: DedicatedWorkerGlobalScope;
 
 let generator: WorldGenerator | null = null;
 let generatorType: WorldType = 'terrain';
+let generatorVersion = 1;
 const mesher = new ChunkMesher();
 /** Result buffers come back from the main thread (`recycle`) once their data is on the GPU. */
 const pool = new BufferPool();
@@ -30,9 +32,11 @@ self.onmessage = (e: MessageEvent<WorkerRequest>) => {
     for (const b of msg.buffers) pool.release(b);
   } else if (msg.type === 'generate') {
     const type = msg.worldType ?? 'terrain';
-    if (!generator || generator.seed !== msg.seed || generatorType !== type) {
-      generator = createGenerator(type, msg.seed);
+    const version = normalizeGenVersion(msg.genVersion);
+    if (!generator || generator.seed !== msg.seed || generatorType !== type || generatorVersion !== version) {
+      generator = createGenerator(type, msg.seed, version);
       generatorType = type;
+      generatorVersion = version;
     }
     const blocks = new Uint8Array(pool.acquire(CHUNK_VOLUME), 0, CHUNK_VOLUME).fill(0);
     const biomes = new Uint8Array(CHUNK_AREA);

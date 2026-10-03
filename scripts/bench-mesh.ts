@@ -2,7 +2,7 @@
  * Chunk meshing cost on a fixed seed: generates a 7×7 area and meshes the inner 5×5 chunks
  * (several rounds, after a warm-up), printing the mean and p95 per chunk.
  *
- *   npx tsx scripts/bench-mesh.ts [seed=12345] [rounds=5]
+ *   npx tsx scripts/bench-mesh.ts [seed=12345] [rounds=5] [genVersion=2]
  */
 import { ChunkMesher } from '../src/rendering/ChunkMesher';
 import { CHUNK_AREA, CHUNK_VOLUME } from '../src/world/constants';
@@ -10,7 +10,8 @@ import { TerrainGenerator } from '../src/world/TerrainGenerator';
 
 const seed = Number(process.argv[2] ?? 12345);
 const rounds = Number(process.argv[3] ?? 5);
-const gen = new TerrainGenerator(seed);
+const genVersion = Number(process.argv[4] ?? 2);
+const gen = new TerrainGenerator(seed, genVersion);
 const R = 3;
 const blocks = new Map<number, Uint8Array>();
 const biomes = new Map<number, Uint8Array>();
@@ -45,4 +46,4 @@ for (let round = -1; round < rounds; round++) {
 }
 times.sort((a, b) => a - b);
 const mean = times.reduce((s, t) => s + t, 0) / times.length;
-console.log(`seed ${seed}: ${times.length} meshes, mean ${mean.toFixed(2)} ms, p95 ${times[Math.floor(times.length * 0.95)].toFixed(2)} ms, ${Math.round(tris / 25)} triangles/chunk`);
+console.log(`seed ${seed} gen v${genVersion}: ${times.length} meshes, mean ${mean.toFixed(2)} ms, p95 ${times[Math.floor(times.length * 0.95)].toFixed(2)} ms, ${Math.round(tris / 25)} triangles/chunk`);

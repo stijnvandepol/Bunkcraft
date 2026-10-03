@@ -24,6 +24,7 @@ Server configuration uses environment variables (`PORT`, `DATA_DIR`, `SEED`, `GA
 - `src/world/`:
   - `BlockRegistry.ts` is data-driven: ids < 256, face order +X −X +Y −Y +Z −Z, flat lookup tables.
   - `TerrainGenerator.ts` is deterministic from the seed and runs in workers *and* on the server.
+    Generator output must never change for an existing world: every world has a `genVersion` (`GenVersion.ts`; saves, `world.json`, `welcome`, worker requests). Change terrain by adding a version, keep the old path and its golden hashes in `tests/terrain.test.ts`. Caves, ravines and ores (v2) live in `CaveCarver.ts` and `OreTable.ts`.
   - `ChunkManager.ts` handles streaming, priority meshing and upload budgets.
   - `World.ts` covers get/setBlock, sparse edits, explosions and `onEdit` for network sync.
   - Chunks are 16×16×128 `Uint8Array`, index `x | z<<4 | y<<8`.
@@ -72,6 +73,7 @@ Docs:
 - **Playwright Chromium on macOS renders in software (SwiftShader) by default.** Launch with `args=['--use-angle=metal']` for real GPU numbers (M1 Pro: ~120 FPS vs ~33 FPS in SwiftShader). Without it every FPS/frame-time measurement is a worst-case-GPU measurement.
 - **Pointer lock fails in automated browsers.** Tests set `game.input.locked = true; game.state = 'playing'`. Never call `page.mouse.move` while `locked` is forced: the mousemove deltas spin the camera. Click through the input state instead: `game.input.pressed.add('Mouse0')` / `game.input.down.add('KeyW')`.
 - **Vite reloads the page mid-test** after merges or worktree changes. For long tests run Vite with a temporary config that sets `server: { hmr: false, watch: null }` (plus the `/ws` and `/api` proxies for multiplayer).
+  With `watch: null` Vite keeps serving the modules it transformed first: restart it after every code change, or you measure old code.
 - **Game creation is rate-limited (6 per hour per visitor).** Start the test server with `ROOM_CREATE_LIMIT=1000`.
 - **`window.game` is a debug hook in dev builds only (`npm run dev`).** In production `window.game` is the `<canvas id="game">` element (named access). Test multiplayer through the Vite dev server (:5173), which proxies `/ws` to :3000.
 - **World generation is asynchronous.** Wait until `game.state !== 'loading'` before manipulating the world.

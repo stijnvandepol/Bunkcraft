@@ -1,6 +1,10 @@
 import { BLOCK } from './BlockRegistry';
 import { CHUNK_HEIGHT, CHUNK_SIZE, SEA_LEVEL, blockIndex } from './constants';
+import { CaveCarver } from './CaveCarver';
+import { GEN_VERSION_CURRENT, normalizeGenVersion } from './GenVersion';
+import { oakTree, spruceTree, type TreeSink } from './Trees';
 import { SimplexNoise, hash2, hash3, lerp, mulberry32, smoothstep } from './Noise';
+import { placeOreBlobs, resolveOres } from './OreTable';
 
 import { BIOME } from './Biomes';
 
@@ -55,7 +59,18 @@ export class TerrainGenerator {
   private readonly caveFieldB = new Float32Array(CAVE_NX * CAVE_NX * CAVE_NY);
   private readonly caveFieldC = new Float32Array(CAVE_NX * CAVE_NX * CAVE_NY);
 
-  constructor(readonly seed: number) {
+  /** Version 2+: noise caves, ravines, aquifers and ore blobs (see GenVersion.ts). */
+  /** @internal exposed for tests */
+  readonly carver: CaveCarver | null;
+  private readonly ores: ReturnType<typeof resolveOres>;
+  readonly genVersion: number;
+  private originX = 0;
+  private originZ = 0;
+
+  constructor(readonly seed: number, genVersion: number = GEN_VERSION_CURRENT) {
+    this.genVersion = normalizeGenVersion(genVersion);
+    this.carver = this.genVersion >= 2 ? new CaveCarver(seed) : null;
+    this.ores = this.genVersion >= 2 ? resolveOres(this.genVersion) : [];
     let s = seed;
     const next = () => (s = (Math.imul(s ^ (s >>> 15), 2246822519) + 0x9e3779b9) >>> 0);
     this.continental = new SimplexNoise(next());
@@ -96,11 +111,21 @@ export class TerrainGenerator {
     return BIOME.PLAINS;
   }
 
+  /** True when the surface block of this column is carved away by a cave or ravine (always false in version 1). */
+  surfaceOpen(x: number, z: number): boolean {
+    if (!this.carver) return false;
+    const h = Math.floor(this.heightAt(x, z));
+    const mn = Math.floor(Math.min(this.heightAt(x + 1, z), this.heightAt(x - 1, z), this.heightAt(x, z + 1), this.heightAt(x, z - 1)));
+    return this.carver.carvedAt(x, h, z, h, mn);
+  }
+
   /** Fills `blocks` (length CHUNK_VOLUME) and `biomesOut` (16×16, x + z*16) for chunk (cx, cz). */
   generate(cx: number, cz: number, blocks: Uint8Array, biomesOut?: Uint8Array): void {
     blocks.fill(0);
     const ox = cx * CHUNK_SIZE;
     const oz = cz * CHUNK_SIZE;
+    this.originX = ox;
+    this.originZ = oz;
     const heights = this.heights;
     const biomes = this.biomes;
 
@@ -116,7 +141,7 @@ export class TerrainGenerator {
       }
     }
 
-    this.sampleCaves(ox, oz, Math.min(CHUNK_HEIGHT - 1, maxH + 2));
+    if (!this.carver) this.sampleCaves(ox, oz, Math.min(CHUNK_HEIGHT - 1, maxH + 2));
 
     for (let z = 0; z < CHUNK_SIZE; z++) {
       for (let x = 0; x < CHUNK_SIZE; x++) {
@@ -137,7 +162,10 @@ export class TerrainGenerator {
       }
     }
 
-    this.placeOres(blocks, cx, cz);
+    if (this.carver) {
+      this.carver.carve(blocks, ox, oz, heights, W, PAD);
+      placeOreBlobs(blocks, this.seed, cx, cz, this.ores);
+    } else this.placeOres(blocks, cx, cz);
     this.placeVegetation(blocks, ox, oz);
   }
 
@@ -192,7 +220,7 @@ export class TerrainGenerator {
       else id = BLOCK.STONE;
 
       // Caves: keep a solid lid under oceans/lakes so water never hangs in mid-air.
-      if (y > 4 && !(underwater && y > h - 7) && this.isCave(x, y, z, depth)) {
+      if (!this.carver && y > 4 && !(underwater && y > h - 7) && this.isCave(x, y, z, depth)) {
         // Deep caves fill with lava up to y = 10 (pre-1.18 Minecraft style lava lakes).
         blocks[i] = y <= 10 ? BLOCK.LAVA : BLOCK.AIR;
         continue;
@@ -303,6 +331,9 @@ export class TerrainGenerator {
         const kind = hash2(seed + 19, gx, gz);
         const size = hash2(seed + 23, gx, gz);
         const bx = tx - ox, bz = tz - oz;
+        // Version 2: no trees or cacti over a cave mouth or ravine (decided by the owner of the trunk
+        // column and, for leaves reaching into this chunk, by the carve function: same answer everywhere).
+        if (this.carver && !this.grounded(blocks, bx, bz, h, pi)) continue;
         switch (biome) {
           case BIOME.FOREST:
             if (roll < 0.8) {
@@ -355,6 +386,17 @@ export class TerrainGenerator {
     }
   }
 
+  /** Is the surface block at (bx, h, bz) (chunk-local, possibly outside the chunk) still there after carving? */
+  private grounded(blocks: Uint8Array, bx: number, bz: number, h: number, pi: number): boolean {
+    if (bx >= 0 && bx < CHUNK_SIZE && bz >= 0 && bz < CHUNK_SIZE) {
+      const b = blocks[blockIndex(bx, h, bz)];
+      return b !== BLOCK.AIR && b !== BLOCK.WATER && b !== BLOCK.LAVA;
+    }
+    const hs = this.heights;
+    const mn = Math.min(hs[pi + 1], hs[pi - 1], hs[pi + W], hs[pi - W]);
+    return !this.carver!.carvedAt(this.originX + bx, h, this.originZ + bz, h, mn);
+  }
+
   private setIfAir(blocks: Uint8Array, x: number, y: number, z: number, id: number): void {
     if (x < 0 || x >= 16 || z < 0 || z >= 16 || y < 0 || y >= CHUNK_HEIGHT) return;
     const i = blockIndex(x, y, z);
@@ -370,45 +412,31 @@ export class TerrainGenerator {
       || cur === BLOCK.TALL_GRASS || cur === BLOCK.DANDELION || cur === BLOCK.POPPY) blocks[i] = id;
   }
 
+  /** Tree shapes live in Trees.ts (shared with plant growth); this sink writes them into the chunk buffer being generated. */
+  private treeBlocks: Uint8Array = new Uint8Array(0);
+  private readonly treeSink: TreeSink = {
+    leaf: (x, y, z, id) => this.setIfAir(this.treeBlocks, x, y, z, id),
+    log: (x, y, z, id) => this.setLog(this.treeBlocks, x, y, z, id),
+    trunkBase: (x, y, z) => {
+      const blocks = this.treeBlocks;
+      if (x >= 0 && x < 16 && z >= 0 && z < 16 && y > 0) {
+        const under = blockIndex(x, y - 1, z);
+        if (blocks[under] === BLOCK.GRASS || blocks[under] === BLOCK.SNOWY_GRASS) blocks[under] = BLOCK.DIRT;
+      }
+    },
+  };
+
   /** Classic blob tree (oak/birch). (x, z) are chunk-local and may lie outside 0..15. */
   private oakTree(
     blocks: Uint8Array, x: number, y: number, z: number, height: number,
     log: number, leaves: number, wx: number, wz: number,
   ): void {
-    if (y + height + 1 >= CHUNK_HEIGHT) return;
-    const top = y + height - 1;
-    for (let ly = top - 2; ly <= top + 1; ly++) {
-      const r = ly >= top ? 1 : 2;
-      for (let dz = -r; dz <= r; dz++) {
-        for (let dx = -r; dx <= r; dx++) {
-          const corner = Math.abs(dx) === r && Math.abs(dz) === r;
-          if (corner && (ly === top + 1 || hash3(this.seed + 31, wx + dx, ly, wz + dz) < 0.5)) continue;
-          this.setIfAir(blocks, x + dx, ly, z + dz, leaves);
-        }
-      }
-    }
-    for (let i = 0; i < height; i++) this.setLog(blocks, x, y + i, z, log);
-    if (x >= 0 && x < 16 && z >= 0 && z < 16 && y > 0) {
-      const under = blockIndex(x, y - 1, z);
-      if (blocks[under] === BLOCK.GRASS || blocks[under] === BLOCK.SNOWY_GRASS) blocks[under] = BLOCK.DIRT;
-    }
+    this.treeBlocks = blocks;
+    oakTree(this.treeSink, this.seed, x, y, z, height, log, leaves, wx, wz, CHUNK_HEIGHT);
   }
 
   private spruceTree(blocks: Uint8Array, x: number, y: number, z: number, height: number): void {
-    if (y + height + 1 >= CHUNK_HEIGHT) return;
-    const top = y + height;
-    this.setIfAir(blocks, x, top, z, BLOCK.SPRUCE_LEAVES);
-    // Conical shape, alternating radii from the tip down: 1, 0, 1, 2, 1, 2, ...
-    for (let ly = top - 1; ly >= y + 2; ly--) {
-      const k = top - 1 - ly;
-      const r = k === 0 ? 1 : k === 1 ? 0 : k % 2 === 0 ? 1 : 2;
-      for (let dz = -r; dz <= r; dz++) {
-        for (let dx = -r; dx <= r; dx++) {
-          if (r > 0 && Math.abs(dx) === r && Math.abs(dz) === r) continue;
-          this.setIfAir(blocks, x + dx, ly, z + dz, BLOCK.SPRUCE_LEAVES);
-        }
-      }
-    }
-    for (let i = 0; i < height; i++) this.setLog(blocks, x, y + i, z, BLOCK.SPRUCE_LOG);
+    this.treeBlocks = blocks;
+    spruceTree(this.treeSink, x, y, z, height, CHUNK_HEIGHT);
   }
 }

@@ -1,4 +1,6 @@
-import { type ClientMessage, PROTOCOL_VERSION, type ServerMessage } from './protocol';
+import { decodeBinary } from './binary';
+import { type ClientMessage, type ContainerClientMessage, PROTOCOL_VERSION, type ServerMessage } from './protocol';
+import { identityKey, ownerToken, roomPassword } from './RoomApi';
 
 export type WelcomeMessage = Extract<ServerMessage, { t: 'welcome' }>;
 
@@ -26,7 +28,8 @@ export class NetClient {
   onMessage: ((msg: ServerMessage) => void) | null = null;
   /** Rollback of a rejected local edit. */
   onRevert: ((x: number, y: number, z: number, id: number, meta: number) => void) | null = null;
-  onClose: ((reason: string) => void) | null = null;
+  /** The connection ended; `reconnectMs` is set when the server said it is restarting and will be back. */
+  onClose: ((reason: string, reconnectMs?: number) => void) | null = null;
 
   /**
    * Accepts "host:port", a full ws(s):// URL, or empty for the page's own server.
@@ -50,18 +53,31 @@ export class NetClient {
         reject(e instanceof Error ? e : new Error(String(e)));
         return;
       }
+      ws.binaryType = 'arraybuffer';
       this.ws = ws;
       let welcomed = false;
       const timeout = window.setTimeout(() => {
         if (!welcomed) { ws.close(); reject(new Error('Connection timed out')); }
       }, 10_000);
-      ws.onopen = () => this.send({ t: 'hello', v: PROTOCOL_VERSION, name });
+      const host = address.trim() || location.host;
+      ws.onopen = () => {
+        const owner = room ? ownerToken(room) : undefined;
+        const password = room ? roomPassword(room) : undefined;
+        // `bin`: this client understands binary snap/ent frames (older servers ignore the field).
+        this.send({ t: 'hello', v: PROTOCOL_VERSION, name, key: identityKey(host, room), bin: true, ...(owner ? { owner } : {}), ...(password ? { password } : {}) });
+      };
       ws.onmessage = (e) => {
         let msg: ServerMessage;
-        try {
-          msg = JSON.parse(String(e.data)) as ServerMessage;
-        } catch {
-          return;
+        if (typeof e.data === 'string') {
+          try {
+            msg = JSON.parse(e.data) as ServerMessage;
+          } catch {
+            return;
+          }
+        } else {
+          const decoded = decodeBinary(e.data as ArrayBuffer);
+          if (!decoded) return;
+          msg = decoded;
         }
         if (!welcomed) {
           if (msg.t === 'welcome') {
@@ -83,7 +99,7 @@ export class NetClient {
         }
         if (msg.t === 'kick') {
           this.closedByUser = true;
-          this.onClose?.(msg.reason);
+          this.onClose?.(msg.reason, msg.reconnect);
           return;
         }
         this.onMessage?.(msg);
@@ -124,32 +140,42 @@ export class NetClient {
     this.send({ t: 'pos', x, y, z, yaw, pitch, flags, held });
   }
 
-  sendAttack(id: number): void {
-    this.send({ t: 'attack', id });
+  sendAttack(id: number, e?: number[]): void {
+    this.send(e ? { t: 'attack', id, e } : { t: 'attack', id });
   }
 
-  sendShoot(x: number, y: number, z: number, dx: number, dy: number, dz: number, power: number): void {
-    this.send({ t: 'shoot', x, y, z, dx, dy, dz, power });
+  sendShoot(x: number, y: number, z: number, dx: number, dy: number, dz: number, power: number, e?: number[]): void {
+    this.send(e ? { t: 'shoot', x, y, z, dx, dy, dz, power, e } : { t: 'shoot', x, y, z, dx, dy, dz, power });
   }
 
   sendIgnite(x: number, y: number, z: number): void {
     this.send({ t: 'ignite', x, y, z });
   }
 
+  /** Bone meal on a block (the server checks the held item and reach, then grows it). */
+  sendBoneMeal(x: number, y: number, z: number): void {
+    this.send({ t: 'bonemeal', x, y, z });
+  }
+
   sendTake(id: number): void {
     this.send({ t: 'take', id });
   }
 
-  sendDrop(id: number, count: number, damage: number | undefined, x: number, y: number, z: number, yaw: number | undefined, delay: number): void {
-    this.send({ t: 'drop', id, count, damage, x, y, z, yaw, delay });
+  sendDrop(id: number, count: number, damage: number | undefined, x: number, y: number, z: number, yaw: number | undefined, delay: number, data?: number[]): void {
+    this.send({ t: 'drop', id, count, damage, data, x, y, z, yaw, delay });
   }
 
   sendChat(text: string): void {
     this.send({ t: 'chat', text });
   }
 
-  sendState(inventory: number[][], stats: number[]): void {
-    this.send({ t: 'state', inventory, stats });
+  /** Chest and furnace screens (see ContainerScreens). */
+  sendContainer(msg: ContainerClientMessage): void {
+    this.send(msg);
+  }
+
+  sendState(inventory: number[][], stats: number[], effects?: number[][]): void {
+    this.send({ t: 'state', inventory, stats, ...(effects ? { effects } : {}) });
   }
 
   close(): void {

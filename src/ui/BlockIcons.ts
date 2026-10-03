@@ -1,6 +1,8 @@
 import type { TextureSet } from '../rendering/TextureAtlas';
-import { getItemDef } from '../items/ItemRegistry';
-import { getBlockDef } from '../world/BlockRegistry';
+import { VARIANT_ITEM_BASE, getItemDef, itemBlock, itemMeta } from '../items/ItemRegistry';
+import { DYE_RGB, getBlockDef, stateTextures } from '../world/BlockRegistry';
+import { BOX_FENCE, BOX_LADDER, BOX_PANE, BOX_WALL, SIDE_BIT, visualBoxes } from '../world/BoxShapes';
+import { BOX_BUTTON, BOX_LEVER, BOX_RTORCH } from '../world/RedstoneShapes';
 import { EAST, OCT_BOTTOM, STAIR_STRAIGHT, octantBoxes, stairMeta, stairOctants } from '../world/BlockStates';
 import { paintItemSprite } from './ItemSprites';
 
@@ -77,18 +79,37 @@ export class BlockIcons {
     canvas.width = canvas.height = SIZE;
     const ctx = canvas.getContext('2d')!;
     ctx.imageSmoothingEnabled = false;
-    if (id >= 256) {
+    if (id >= 256 && id < VARIANT_ITEM_BASE) {
       const sprite = getItemDef(id)?.sprite;
       if (sprite) ctx.drawImage(paintItemSprite(sprite), 4, 4, 56, 56);
       return canvas;
     }
-    const def = getBlockDef(id);
+    const def = getBlockDef(itemBlock(id));
     if (!def) return canvas;
-    const t = def.textures;
+    const meta = itemMeta(id);
+    this.drawBlock(ctx, def, meta);
+    if (def.dye) {
+      // Dye families are one grey texture: multiply the icon by the colour of this variant (keeps the icon's alpha).
+      const copy = document.createElement('canvas');
+      copy.width = copy.height = SIZE;
+      copy.getContext('2d')!.drawImage(canvas, 0, 0);
+      ctx.globalCompositeOperation = 'multiply';
+      ctx.fillStyle = `#${DYE_RGB[meta & 15].toString(16).padStart(6, '0')}`;
+      ctx.fillRect(0, 0, SIZE, SIZE);
+      ctx.globalCompositeOperation = 'destination-in';
+      ctx.drawImage(copy, 0, 0);
+      ctx.globalCompositeOperation = 'source-over';
+    }
+    return canvas;
+  }
+
+  private drawBlock(ctx: CanvasRenderingContext2D, def: NonNullable<ReturnType<typeof getBlockDef>>, meta: number): void {
+    const canvas = ctx.canvas;
+    const t = stateTextures(def, meta);
 
     if (def.shape === 'cross' || def.shape === 'model') {
       ctx.drawImage(this.textures.canvas(t.all!), 4, 4, 56, 56);
-      return canvas;
+      return;
     }
 
     const top = this.textures.canvas(t.top ?? t.all!);
@@ -98,13 +119,27 @@ export class BlockIcons {
       const boxes: number[] = [];
       const n = octantBoxes(def.shape === 'slab' ? OCT_BOTTOM : stairOctants(stairMeta(EAST, false), STAIR_STRAIGHT), boxes);
       this.drawBoxes(ctx, top, side, boxes, n);
-      return canvas;
+      return;
+    }
+    if (def.shape === 'box') {
+      if (def.boxKind === BOX_LADDER || def.boxKind === BOX_RTORCH) {
+        ctx.drawImage(this.textures.canvas(t.all!), 4, 4, 56, 56);
+        return;
+      }
+      // Fences, walls and panes are shown joined to a neighbour on each side along x, like Minecraft's item.
+      const joins = def.boxKind === BOX_FENCE || def.boxKind === BOX_WALL || def.boxKind === BOX_PANE ? SIDE_BIT[2] | SIDE_BIT[3] : 0;
+      const boxes: number[] = [];
+      // Levers and buttons are shown standing on the floor (attached downwards), the lever switched on.
+      const pose = def.boxKind === BOX_LEVER ? 3 | 8 : def.boxKind === BOX_BUTTON ? 3 : 0;
+      const n = visualBoxes(def.boxKind!, (meta & ((def.variant ? (1 << 8) - 1 : 0))) | pose, joins, boxes);
+      this.drawBoxes(ctx, top, side, boxes, n);
+      return;
     }
     if (def.shape === 'door') {
       // Like Minecraft's item: the flat door, upper half over the lower half.
       ctx.drawImage(this.textures.canvas(t.top!), 12, 2, 40, 30);
       ctx.drawImage(this.textures.canvas(t.side!), 12, 32, 40, 30);
-      return canvas;
+      return;
     }
     const s = 1.75; // 16 px texture → 28 px wide face
     // Left face.
@@ -112,15 +147,15 @@ export class BlockIcons {
     ctx.drawImage(side, 0, 0);
     ctx.fillStyle = 'rgba(0,0,0,0.22)';
     ctx.fillRect(0, 0, 16, 16);
-    // Right face.
+    // Right face (the front of a furnace, chest or pumpkin).
     ctx.setTransform(s, -s / 2, 0, s, 32, 32);
-    ctx.drawImage(side, 0, 0);
+    ctx.drawImage(def.facing && t.front ? this.textures.canvas(t.front) : side, 0, 0);
     ctx.fillStyle = 'rgba(0,0,0,0.42)';
     ctx.fillRect(0, 0, 16, 16);
     // Top face.
     ctx.setTransform(s, -s / 2, s, s / 2, 4, 18);
     ctx.drawImage(top, 0, 0);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    return canvas;
+    void canvas;
   }
 }

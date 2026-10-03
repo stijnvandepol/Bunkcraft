@@ -17,6 +17,11 @@ export interface Settings {
   sensitivity: number;
   soundVolume: number;
   musicVolume: number;
+  /** Ambience (wind, rain, caves, birds) and interface sounds, 0..100. */
+  ambientVolume: number;
+  uiVolume: number;
+  /** Positional audio: simple stereo pan or HRTF (best on headphones). */
+  spatialAudio: 'stereo' | 'hrtf';
   viewBobbing: boolean;
   /** 0 = Auto (largest whole scale that fits 320×240 GUI pixels), otherwise 1–4. */
   guiScale: number;
@@ -29,7 +34,72 @@ export interface Settings {
   texturePack: string;
   /** Action id → key code or "Mouse<n>" ('' = Not Bound); see Keybinds.ts. */
   keybinds: KeybindMap;
+  /** UI language (see src/ui/i18n.ts). */
+  language: 'en' | 'nl';
+  /** Frame limiter in frames per second; MAX_FPS_UNLIMITED (260) = no limit. */
+  maxFps: number;
+  /** Mob render distance in % (Minecraft's Entity Distance, 50–500%). */
+  entityDistance: number;
+  /** Where the attack cooldown indicator is drawn. */
+  attackIndicator: 'crosshair' | 'hotbar' | 'off';
+  /** Raw (unaccelerated) mouse input where the browser supports it. */
+  rawInput: boolean;
+  /** Jump automatically onto one-block ledges while moving. */
+  autoJump: boolean;
+  /** Chat settings (Minecraft's Chat Settings screen). */
+  chatOpacity: number;
+  chatTextSize: number;
+  chatLineSpacing: number;
+  chatWidth: number;
+  chatColors: boolean;
+  chatSuggestions: boolean;
+
+  // ---- Accessibility & comfort
+  /** Captions for sounds ("[Zombie groans] ←"). */
+  subtitles: boolean;
+  /** No hurt-cam tilt, view bobbing, FOV kick, screen shake or hand sway; fewer particles. Defaults from prefers-reduced-motion. */
+  reducedMotion: boolean;
+  /** Caps flash intensity and rate (lightning, explosions): photosensitivity. */
+  reduceFlashes: boolean;
+  /** Colour-blind-safe palette (blue/orange instead of red/green) with extra shapes. */
+  colorBlindSafe: boolean;
+  highContrast: boolean;
+  /** Text-only scale in %, on top of the GUI scale. */
+  textScale: number;
+  toggleSneak: boolean;
+  toggleSprint: boolean;
+  toggleAttack: boolean;
+  toggleUse: boolean;
+  /** Strength of the response curve of analog sticks, 0 = linear. */
+  stickCurve: number;
+  /** How much of the sprint/underwater/bow FOV change is applied, in %. */
+  fovEffects: number;
+  /** Controller menu navigation: delay before a held direction repeats, in ms. */
+  menuRepeatDelay: number;
+
+  // ---- Touch
+  touchControls: 'auto' | 'on' | 'off';
+  touchSensitivity: number;
+  touchAutoJump: boolean;
+  /** Tap on the view places/uses, press and hold breaks/attacks. */
+  touchGestures: boolean;
+  touchButtonScale: number;
+  touchOpacity: number;
+  touchLeftHanded: boolean;
+  /** Pushing the joystick fully forward sprints. */
+  touchSprintPush: boolean;
+
+  // ---- Gamepad
+  padEnabled: boolean;
+  padSensitivity: number;
+  /** Stick dead zone in %. */
+  padDeadZone: number;
+  padInvertY: boolean;
+  padRumble: boolean;
+  padLayout: 'default' | 'southpaw';
 }
+
+export const MAX_FPS_UNLIMITED = 260;
 
 export const DEFAULT_SETTINGS: Settings = {
   renderDistance: 8,
@@ -42,6 +112,9 @@ export const DEFAULT_SETTINGS: Settings = {
   sensitivity: 100,
   soundVolume: 80,
   musicVolume: 50,
+  ambientVolume: 80,
+  uiVolume: 80,
+  spatialAudio: 'stereo',
   viewBobbing: true,
   guiScale: 0,
   brightness: 50,
@@ -50,6 +123,45 @@ export const DEFAULT_SETTINGS: Settings = {
   invertMouse: false,
   texturePack: 'pixel-perfection',
   keybinds: defaultKeybinds(),
+  language: 'en',
+  maxFps: MAX_FPS_UNLIMITED,
+  entityDistance: 100,
+  attackIndicator: 'crosshair',
+  rawInput: true,
+  autoJump: false,
+  chatOpacity: 100,
+  chatTextSize: 100,
+  chatLineSpacing: 0,
+  chatWidth: 100,
+  chatColors: true,
+  chatSuggestions: true,
+  subtitles: false,
+  reducedMotion: false,
+  reduceFlashes: false,
+  colorBlindSafe: false,
+  highContrast: false,
+  textScale: 100,
+  toggleSneak: false,
+  toggleSprint: false,
+  toggleAttack: false,
+  toggleUse: false,
+  stickCurve: 30,
+  fovEffects: 100,
+  menuRepeatDelay: 400,
+  touchControls: 'auto',
+  touchSensitivity: 100,
+  touchAutoJump: true,
+  touchGestures: true,
+  touchButtonScale: 100,
+  touchOpacity: 65,
+  touchLeftHanded: false,
+  touchSprintPush: true,
+  padEnabled: true,
+  padSensitivity: 100,
+  padDeadZone: 15,
+  padInvertY: false,
+  padRumble: true,
+  padLayout: 'default',
 };
 
 export const RENDER_DISTANCE_PRESETS: [string, number][] = [['Low', 4], ['Medium', 8], ['High', 12], ['Ultra', 16], ['Extreme', 20]];
@@ -104,9 +216,26 @@ const NUMBER_RANGES = {
   sensitivity: [10, 200],
   soundVolume: [0, 100],
   musicVolume: [0, 100],
+  ambientVolume: [0, 100],
+  uiVolume: [0, 100],
   masterVolume: [0, 100],
   brightness: [0, 100],
   guiScale: [0, 4],
+  maxFps: [30, MAX_FPS_UNLIMITED],
+  entityDistance: [50, 500],
+  chatOpacity: [0, 100],
+  chatTextSize: [50, 100],
+  chatLineSpacing: [0, 100],
+  chatWidth: [40, 100],
+  textScale: [100, 200],
+  stickCurve: [0, 100],
+  fovEffects: [0, 100],
+  menuRepeatDelay: [150, 800],
+  touchSensitivity: [10, 300],
+  touchButtonScale: [60, 160],
+  touchOpacity: [20, 100],
+  padSensitivity: [10, 300],
+  padDeadZone: [0, 50],
 } as const satisfies Partial<Record<keyof Settings, readonly [number, number]>>;
 
 const ENUM_VALUES = {
@@ -114,9 +243,20 @@ const ENUM_VALUES = {
   shadows: ['off', 'low', 'high', 'ultra'],
   particles: ['all', 'decreased', 'minimal'],
   clouds: ['fancy', 'off'],
+  spatialAudio: ['stereo', 'hrtf'],
+  language: ['en', 'nl'],
+  attackIndicator: ['crosshair', 'hotbar', 'off'],
+  touchControls: ['auto', 'on', 'off'],
+  padLayout: ['default', 'southpaw'],
 } as const satisfies Partial<Record<keyof Settings, readonly string[]>>;
 
-const BOOLEAN_KEYS = ['dynamicResolution', 'viewBobbing', 'invertMouse'] as const;
+const BOOLEAN_KEYS = [
+  'dynamicResolution', 'viewBobbing', 'invertMouse', 'rawInput', 'autoJump', 'chatColors', 'chatSuggestions',
+  'subtitles', 'reducedMotion', 'reduceFlashes', 'colorBlindSafe', 'highContrast',
+  'toggleSneak', 'toggleSprint', 'toggleAttack', 'toggleUse',
+  'touchAutoJump', 'touchGestures', 'touchLeftHanded', 'touchSprintPush',
+  'padEnabled', 'padInvertY', 'padRumble',
+] as const;
 
 /**
  * A complete, valid Settings object from untrusted stored data: numbers are clamped to the menu's
@@ -143,6 +283,25 @@ export function sanitizeSettings(raw: unknown): Settings {
   return out;
 }
 
+/**
+ * First-launch defaults taken from the operating system's accessibility preferences
+ * (prefers-reduced-motion, prefers-contrast). Empty where matchMedia is unavailable.
+ */
+export function systemAccessibilityDefaults(): Partial<Settings> {
+  const out: Partial<Settings> = {};
+  if (typeof matchMedia !== 'function') return out;
+  try {
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      out.reducedMotion = true;
+      out.viewBobbing = false;
+    }
+    if (matchMedia('(prefers-contrast: more)').matches || matchMedia('(forced-colors: active)').matches) out.highContrast = true;
+  } catch {
+    // Old browsers: keep the defaults.
+  }
+  return out;
+}
+
 /** Settings persisted in localStorage, with change listeners. */
 export class SettingsStore {
   readonly values: Settings;
@@ -161,6 +320,7 @@ export class SettingsStore {
     this.fresh = stored === null || typeof stored !== 'object' || Array.isArray(stored);
     // Stored values are untrusted: clamp, validate and drop unknown keys (keybinds included).
     this.values = sanitizeSettings(stored);
+    if (this.fresh) Object.assign(this.values, systemAccessibilityDefaults());
   }
 
   set<K extends keyof Settings>(key: K, value: Settings[K]): void {

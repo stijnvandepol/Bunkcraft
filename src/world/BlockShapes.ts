@@ -1,6 +1,7 @@
-import { META_MASK, SHAPE, SHAPE_DOOR, SHAPE_SLAB, SHAPE_STAIRS } from './BlockRegistry';
+import { BOX_KIND, META_MASK, OPAQUE, SHAPE, SHAPE_BOX, SHAPE_DOOR, SHAPE_SLAB, SHAPE_STAIRS } from './BlockRegistry';
+import { BOX_FENCE, BOX_GATE, BOX_PANE, BOX_WALL, SIDE_BIT, boxCollision, gateConnects } from './BoxShapes';
 import {
-  DOOR_HINGE_RIGHT_BIT, DOOR_OPEN_BIT, DOOR_META_MASK, OCT_ALL, STAIR_META_MASK, octantBoxes, slabOctants, stairOctants, stairShape,
+  DOOR_HINGE_RIGHT_BIT, DOOR_OPEN_BIT, DOOR_META_MASK, FACING_DX, FACING_DZ, FACING_OPPOSITE, OCT_ALL, STAIR_META_MASK, octantBoxes, slabOctants, stairOctants, stairShape,
   validSlabMeta,
 } from './BlockStates';
 
@@ -17,6 +18,30 @@ export function isValidMeta(id: number, meta: number): boolean {
   if (meta === 0) return true;
   if ((meta & ~META_MASK[id]) !== 0) return false;
   return SHAPE[id] === SHAPE_SLAB ? validSlabMeta(meta) : true;
+}
+
+/**
+ * Does a fence, wall or glass pane (`kind`) join the neighbour on `side` (0 north, 1 south, 2 west, 3 east)?
+ * Solid blocks, its own kind and gates that run towards it. Shared by collision and the mesher.
+ */
+export function connectsTo(kind: number, nbId: number, nbMeta: number, side: number): boolean {
+  if (kind !== BOX_FENCE && kind !== BOX_WALL && kind !== BOX_PANE) return false;
+  if (OPAQUE[nbId]) return true;
+  const nk = BOX_KIND[nbId];
+  if (kind === BOX_PANE) return nk === BOX_PANE;
+  if (nk === BOX_GATE) return gateConnects(nbMeta, FACING_OPPOSITE[side]);
+  return nk === kind;
+}
+
+/** Connection bits (see SIDE_BIT) of the fence, wall or pane at (x, y, z). */
+export function connectMask(kind: number, getBlock: BlockGetter, getMeta: BlockGetter, x: number, y: number, z: number): number {
+  if (kind !== BOX_FENCE && kind !== BOX_WALL && kind !== BOX_PANE) return 0;
+  let mask = 0;
+  for (let s = 0; s < 4; s++) {
+    const nx = x + FACING_DX[s], nz = z + FACING_DZ[s];
+    if (connectsTo(kind, getBlock(nx, y, nz), getMeta(nx, y, nz), s)) mask |= SIDE_BIT[s];
+  }
+  return mask;
 }
 
 /** Stair meta of the neighbour at (x, y, z), or −1 when it is not a stairs block. */
@@ -72,6 +97,10 @@ export function doorBox(meta: number, out: Float64Array | number[], at = 0): voi
 export function collisionBoxes(
   id: number, meta: number, getBlock: BlockGetter, getMeta: BlockGetter, x: number, y: number, z: number, out: Float64Array,
 ): number {
+  if (SHAPE[id] === SHAPE_BOX) {
+    const kind = BOX_KIND[id];
+    return boxCollision(kind, meta, connectMask(kind, getBlock, getMeta, x, y, z), out);
+  }
   if (SHAPE[id] === SHAPE_DOOR) {
     doorBox(meta, out, 0);
     return 1;

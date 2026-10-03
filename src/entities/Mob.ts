@@ -1,9 +1,19 @@
 import type { BlockGetter } from '../player/Collision';
-import { OPAQUE, SOLID } from '../world/BlockRegistry';
+import { type DamageSource, type DamageTarget, dealDamage } from '../player/Damage';
+import { OPAQUE, PARTIAL, SOLID } from '../world/BlockRegistry';
+import { collisionBoxes } from '../world/BlockShapes';
 import { Entity } from './Entity';
 import type { MobType } from './MobTypes';
 import type { Arrow } from './Arrow';
 import type { PrimedTnt } from './PrimedTnt';
+
+/** Ticks a skeleton waits after a shot before it draws again (Minecraft: 40 on Easy/Normal, 20 on Hard). */
+export const SKELETON_SHOT_INTERVAL = 40;
+
+/** Blocks within which a hostile mob notices its target (Minecraft's follow_range: 16, zombies 35). */
+export function followRange(type: MobType): number {
+  return type.followRange ?? 16;
+}
 
 export interface MobTarget {
   x: number;
@@ -13,6 +23,8 @@ export interface MobTarget {
   attackable: boolean;
   /** Which player this is (multiplayer server); echoed back in attack and shoot events. */
   id?: number;
+  /** Experience orbs fly to this player (false for spectators). */
+  collects?: boolean;
 }
 
 export interface MobEvents {
@@ -40,9 +52,19 @@ export interface MobEvents {
  * their distance and shoot, spiders climb walls, leap and are neutral in bright light.
  * Steering is greedy (head for the target, jump over 1-block steps).
  */
-export class Mob extends Entity {
+/** Natural armor points of mobs (Minecraft: zombies 2). */
+const NATURAL_ARMOR: Partial<Record<string, number>> = { zombie: 2 };
+
+export class Mob extends Entity implements DamageTarget {
   health: number;
   hurtTime = 0;
+  /** DamageTarget (Damage.ts): the hurt timer doubles as the 10 tick invulnerability frames. */
+  absorption = 0;
+  lastDamage = 0;
+  armorPoints = 0;
+  armorToughness = 0;
+  get invulnerableTicks(): number { return this.hurtTime; }
+  set invulnerableTicks(v: number) { this.hurtTime = v; }
   deathTime = 0;
   limbSwing = 0;
   limbAmount = 0;
@@ -64,6 +86,10 @@ export class Mob extends Entity {
   provoked = false;
   /** Ticks since the player last hurt this mob (player-kill drops). */
   hurtByPlayer = 0;
+  /** Ticks of fire left from Fire Aspect or a Flame arrow (1 damage a second). */
+  igniteTicks = 0;
+  /** Looting level of the last player weapon that hit it (extra drops). */
+  looting = 0;
   /** Bow draw progress in ticks (skeleton). */
   aimTicks = 0;
   private targetX = 0;
@@ -77,6 +103,7 @@ export class Mob extends Entity {
   constructor(readonly type: MobType) {
     super(type.width, type.height);
     this.health = type.health;
+    this.armorPoints = NATURAL_ARMOR[type.kind] ?? 0;
     this.yaw = Math.random() * Math.PI * 2;
   }
 
@@ -85,10 +112,10 @@ export class Mob extends Entity {
   }
 
   /** Damage from the player, an arrow or an explosion; knockback away from (fromX, fromZ). */
-  hurt(amount: number, fromX: number, fromZ: number, knockback = 1, byPlayer = false): boolean {
-    if (this.dead || this.hurtTime > 0) return false;
-    this.health -= amount;
-    this.hurtTime = 10;
+  hurt(amount: number, fromX: number, fromZ: number, knockback = 1, byPlayer = false, source?: DamageSource): boolean {
+    if (this.dead) return false;
+    // Same pipeline as the player: invulnerability frames (a bigger hit still counts for the difference), armor, hooks.
+    if (!dealDamage(this, source ?? { kind: byPlayer ? 'player' : 'generic', byPlayer }, amount).hurt) return false;
     if (byPlayer) {
       this.hurtByPlayer = 100;
       this.provoked = true;
@@ -96,8 +123,8 @@ export class Mob extends Entity {
     const dx = this.x - fromX, dz = this.z - fromZ;
     const d = Math.hypot(dx, dz) || 1;
     if (knockback > 0) {
-      this.vx += (dx / d) * 8 * knockback;
-      this.vz += (dz / d) * 8 * knockback;
+      this.vx += (dx / d) * 6 * knockback;
+      this.vz += (dz / d) * 6 * knockback;
       this.vy = 6;
     }
     if (!this.type.hostile) this.panic = 100;
@@ -128,8 +155,8 @@ export class Mob extends Entity {
     const distT = Math.hypot(dxT, dzT, target.y - this.y);
     let speed = 0;
 
-    // Follow range like Minecraft's: zombies and spiders notice players from 32 blocks, creepers and skeletons from 16.
-    const follow = t.ranged || t.kind === 'creeper' ? 16 : 32;
+    // Follow range like Minecraft's (attribute follow_range): zombies notice players from 35 blocks, the others from 16.
+    const follow = followRange(t);
     const hunting = t.hostile && target.attackable && distT < follow && !(t.neutralInLight && this.calm && !this.provoked);
     if (!hunting) this.aimTicks = 0;
     if (hunting) {
@@ -140,13 +167,14 @@ export class Mob extends Entity {
       this.lookAt(target.x, target.y + 1.5, target.z);
       const sees = distT < (t.ranged ? 16 : 4) ? this.canSee(getBlock, target) : false;
       if (t.ranged) {
-        // Skeleton: stop within 15 blocks with line of sight, draw for 1 s, shoot every 2 s.
+        // Skeleton (RangedBowAttackGoal): stop within 15 blocks with line of sight, wait 40 ticks after a shot, then
+        // draw for 20 ticks: one arrow every 3 s (Easy and Normal).
         if (sees && distT < 15) {
           speed = distT < 4 ? -t.walkSpeed : 0;
-          if (++this.aimTicks >= 20 && this.attackCooldown === 0) {
+          if (this.attackCooldown === 0 && ++this.aimTicks >= 20) {
             events.shoot(this, target);
             this.aimTicks = 0;
-            this.attackCooldown = 20;
+            this.attackCooldown = SKELETON_SHOT_INTERVAL;
           }
         } else {
           this.aimTicks = 0;
@@ -183,7 +211,11 @@ export class Mob extends Entity {
       } else if (Math.random() < 1 / 100) {
         this.pickWanderTarget(8);
       }
-      if (Math.random() < 0.02) this.headYaw = (Math.random() - 0.5) * 1.2;
+      // Idle glances stay within ~20° and fade back to the front (the old ±35° that stuck made
+      // pigs look sideways most of the time, so one eye was always out of sight).
+      if (Math.random() < 0.02) this.headYaw = (Math.random() - 0.5) * 0.7;
+      else this.headYaw *= 0.97;
+      this.headPitch *= 0.9;
     }
 
     // Steering towards the current target point.
@@ -230,18 +262,9 @@ export class Mob extends Entity {
     this.limbSwing += this.limbAmount;
   }
 
-  /** Line of sight from the mob's eyes to the player's eyes (no attacks through walls). */
+  /** Line of sight from the mob's eyes to the player's eyes (no attacks through walls, glass or closed doors). */
   private canSee(getBlock: BlockGetter, target: MobTarget): boolean {
-    const ex = this.x, ey = this.y + this.height * 0.85, ez = this.z;
-    const dx = target.x - ex, dy = target.y + 1.62 - ey, dz = target.z - ez;
-    const len = Math.hypot(dx, dy, dz);
-    const steps = Math.ceil(len / 0.25);
-    for (let i = 1; i < steps; i++) {
-      const f = i / steps;
-      const b = getBlock(Math.floor(ex + dx * f), Math.floor(ey + dy * f), Math.floor(ez + dz * f));
-      if (OPAQUE[b]) return false;
-    }
-    return true;
+    return lineOfSight(getBlock, Entity.metaGetter, this.x, this.y + this.height * 0.85, this.z, target.x, target.y + 1.62, target.z);
   }
 
   private pickWanderTarget(range: number): void {
@@ -271,4 +294,78 @@ export class Mob extends Entity {
   protected override onLand(fall: number): void {
     if (this.type.kind !== 'chicken' && fall > 3) this.health -= Math.ceil(fall - 3);
   }
+}
+
+const losBoxes = new Float64Array(64);
+
+/**
+ * Minecraft's `hasLineOfSight` (a COLLIDER clip): every block with a collision shape blocks the view, so glass,
+ * leaves and closed doors stop melee attacks too, while the open half of a slab or the gaps beside a fence post do
+ * not. Voxel traversal (Amanatides & Woo) visits every cell on the segment, so thin panes are never skipped.
+ * Without block states (`getMeta` null) partial blocks count as full, like the collision code.
+ */
+export function lineOfSight(
+  getBlock: BlockGetter, getMeta: BlockGetter | null,
+  ax: number, ay: number, az: number, bx: number, by: number, bz: number,
+): boolean {
+  const dx = bx - ax, dy = by - ay, dz = bz - az;
+  let x = Math.floor(ax), y = Math.floor(ay), z = Math.floor(az);
+  const ex = Math.floor(bx), ey = Math.floor(by), ez = Math.floor(bz);
+  const stepX = dx > 0 ? 1 : -1, stepY = dy > 0 ? 1 : -1, stepZ = dz > 0 ? 1 : -1;
+  const tdX = dx !== 0 ? Math.abs(1 / dx) : Infinity;
+  const tdY = dy !== 0 ? Math.abs(1 / dy) : Infinity;
+  const tdZ = dz !== 0 ? Math.abs(1 / dz) : Infinity;
+  let tmX = dx !== 0 ? (dx > 0 ? x + 1 - ax : ax - x) * tdX : Infinity;
+  let tmY = dy !== 0 ? (dy > 0 ? y + 1 - ay : ay - y) * tdY : Infinity;
+  let tmZ = dz !== 0 ? (dz > 0 ? z + 1 - az : az - z) * tdZ : Infinity;
+  // t runs 0..1 along the segment. The two end cells hold the eyes themselves, so only a partial block there (a door
+  // the mob or player stands in) can block; any block counts in the cells in between.
+  if (blocksEndCell(getBlock, getMeta, x, y, z, ax, ay, az, dx, dy, dz)) return false;
+  for (let guard = 0; guard < 512; guard++) {
+    if (tmX < tmY && tmX < tmZ) { if (tmX > 1) return true; x += stepX; tmX += tdX; }
+    else if (tmY < tmZ) { if (tmY > 1) return true; y += stepY; tmY += tdY; }
+    else { if (tmZ > 1) return true; z += stepZ; tmZ += tdZ; }
+    if (x === ex && y === ey && z === ez) return !blocksEndCell(getBlock, getMeta, x, y, z, ax, ay, az, dx, dy, dz);
+    const id = getBlock(x, y, z);
+    if (OPAQUE[id]) return false;
+    if (!SOLID[id]) continue;
+    if (!PARTIAL[id] || !getMeta) return false;
+    const n = collisionBoxes(id, getMeta(x, y, z), getBlock, getMeta, x, y, z, losBoxes);
+    if (segmentHitsBoxes(n, x, y, z, ax, ay, az, dx, dy, dz)) return false;
+  }
+  return true;
+}
+
+function blocksEndCell(
+  getBlock: BlockGetter, getMeta: BlockGetter | null, x: number, y: number, z: number,
+  ax: number, ay: number, az: number, dx: number, dy: number, dz: number,
+): boolean {
+  const id = getBlock(x, y, z);
+  if (!PARTIAL[id] || !SOLID[id] || !getMeta) return false;
+  const n = collisionBoxes(id, getMeta(x, y, z), getBlock, getMeta, x, y, z, losBoxes);
+  return segmentHitsBoxes(n, x, y, z, ax, ay, az, dx, dy, dz);
+}
+
+/** Does the segment a + t·d (t in 0..1) cross one of the first `n` boxes in `losBoxes` (cell-relative, at x, y, z)? */
+function segmentHitsBoxes(n: number, x: number, y: number, z: number, ax: number, ay: number, az: number, dx: number, dy: number, dz: number): boolean {
+  for (let k = 0; k < n; k++) {
+    const o = k * 6;
+    let tmin = 0, tmax = 1;
+    for (let axis = 0; axis < 3 && tmin <= tmax; axis++) {
+      const org = axis === 0 ? ax : axis === 1 ? ay : az;
+      const dir = axis === 0 ? dx : axis === 1 ? dy : dz;
+      const base = axis === 0 ? x : axis === 1 ? y : z;
+      const lo = base + losBoxes[o + axis], hi = base + losBoxes[o + 3 + axis];
+      if (dir === 0) {
+        if (org < lo || org > hi) tmin = 2;
+        continue;
+      }
+      let t1 = (lo - org) / dir, t2 = (hi - org) / dir;
+      if (t1 > t2) { const t = t1; t1 = t2; t2 = t; }
+      if (t1 > tmin) tmin = t1;
+      if (t2 < tmax) tmax = t2;
+    }
+    if (tmin <= tmax) return true;
+  }
+  return false;
 }

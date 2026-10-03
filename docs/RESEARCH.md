@@ -112,3 +112,83 @@ De CPU kost per frame ~0,4–0,8 ms (renderen) en vrijwel niets voor chunks; de 
 - Textures: [Pixel Perfection](https://github.com/minetest-texture-packs/Pixel-Perfection), [Minetest Game license](https://github.com/minetest/minetest_game/blob/master/mods/default/license.txt), [Faithful License](https://faithfulpack.net/license)
 - Performance: [ANGLE performance](https://github.com/microsoft/angle/wiki/Getting-Good-Performance-From-ANGLE), [Tommo's cave culling](https://tomcc.github.io/2014/08/31/visibility-2.html), [Sodium pipeline](https://deepwiki.com/CaffeineMC/sodium/3.1-chunk-rendering-pipeline), [Vertex pooling](https://nickmcd.me/2021/04/04/high-performance-voxel-engine/), [Binary greedy meshing](https://github.com/cgerikj/binary-greedy-meshing), [EXT_disjoint_timer_query_webgl2](https://registry.khronos.org/webgl/extensions/EXT_disjoint_timer_query_webgl2/)
 - Technologie: [WebGPU support](https://web.dev/blog/webgpu-supported-major-browsers), [Three.js WebGPU vs WebGL](https://discourse.threejs.org/t/why-webgpurenderer-performance-significantly-lower-than-webglrenderer/77629), [BatchedMesh](https://threejs.org/docs/pages/BatchedMesh.html), [caniuse WEBGL_multi_draw](https://caniuse.com/wf-webgl-multi-draw), [minecraft-web-client](https://github.com/zardoy/minecraft-web-client), [noa](https://github.com/VoxelSrv/noa-engine), [Godot web export](https://docs.godotengine.org/en/stable/tutorials/export/exporting_for_web.html)
+
+---
+
+## 4. Ondergrond: grotten, ravijnen en ertsen (generator versie 2)
+
+Feedback: "er zijn geen grotten en geen grotingangen te zien". Versie 1 had een grof 3D-rooster (`sampleCaves`, elke 4 blokken)
+met te smalle tunnels en een deksel van 7 blokken onder zee en land; ertsen waren losse random walks per chunk. Versie 2
+(`src/world/CaveCarver.ts`, `OreTable.ts`, `GenVersion.ts`) volgt de noise-grotten van Minecraft 1.18+ op onze wereldhoogte
+(0..127, zeeniveau 62; Minecraft −64..320 komt ondergronds ruwweg overeen met y_onze = (y_mc + 64) · 0,49).
+
+### Ontwerp
+
+Alles is een pure functie van seed en wereldpositie. Er zijn geen random walks per chunk, dus chunks sluiten op hun randen
+op elkaar aan en de volgorde van genereren doet er niet toe (Vitest: andere volgorde, verse generator, andere seed).
+
+| Onderdeel | Hoe |
+|---|---|
+| Cheese (grote holen) | 3D-noise (freq 0,010 / 0,019 verticaal): hol waar de waarde boven een drempel komt. De drempel zakt onder y 22 (grotere holen diep), stijgt vlak onder het oppervlak, en zakt in "entrancezones" |
+| Spaghetti (lange tunnels) | Twee 3D-noises: tunnel waar `a² + b² < w²` (snijlijn van twee nulvlakken). Dikte `w` wisselt langzaam via een derde noise; vlak onder het oppervlak dunner, maar ze breken er nog door |
+| Noodle (dunne tunnels) | Zelfde, hogere frequentie (0,03), alleen y 8..100 en niet in de bovenste 3 blokken |
+| Ingangen | Brede spaghetti in alleen de bovenste 28 blokken en alleen in zones die een 2D-noise kiest (grotingangen in heuvels komen in clusters voor) |
+| Ravijnen | Nulcontouren van een 2D-noise (freq 0,0045 + wat 0,016 voor kronkels), via een tweede noise geselecteerd (~25 % van de contouren). De afstand tot de middenlijn komt uit `|r| / |∇r|`. Doorsnede: breed boven (tot ±5), smal onder, wand-jitter per kolom. Vloer y 7..34 en nooit dieper dan 56 onder het oppervlak; soms een waterplas (+3) en soms lava op de bodem |
+| Aquifers | Zones (2D-noise) met een waterstand per kwartslag-niveau (y 18, 24, … 42): grotlucht eronder wordt water. Op de rand van een zone en bij een niveausprong blijft een "barrière" van steen staan (onder y 48), zodat een meer altijd door rots wordt vastgehouden in plaats van door een muur van water in een open grot (zoals de barrières in Minecraft) |
+| Lavameren | Grotlucht op y ≤ 10 wordt lava (ons y −54 van Minecraft). Nooit bedrock (y < 5 wordt niet geraakt) |
+| Zee en kust | `carveLimit`: onder een oceaankolom, of naast een oceaankolom, wordt vanaf 3 blokken onder de bodem niet gegraven. Grotten onder zee bestaan dus nog wel, maar de zeebodem blijft heel en er komt nooit zeewater naast lucht (Vitest) |
+
+Prestaties per chunk: de noises worden op een rooster van 4 blokken (uitgelijnd op wereldcoördinaten, dus gedeeld met de
+buurchunk) gesampled en trilineair geïnterpoleerd. Een cel van 4×4×4 waarvan de acht hoekwaarden een familie niet kunnen
+laten toeslaan (trilineair blijft binnen min/max van de hoeken) wordt overgeslagen zonder zijn 64 voxels te bekijken. Het
+rooster loopt alleen tot de hoogste plek waar gegraven mag worden; noodle en ingangen worden alleen in hun hoogtebereik gesampled.
+
+**Bomen en ondersteuning.** Een boom of cactus wordt niet geplaatst als zijn stamkolom is weggegraven. Bladeren van
+een boom in de buurchunk komen alleen mee als die stam wel staat: de buurchunk vraagt dat via `CaveCarver.carvedAt()`, dat
+dezelfde hoekwaarden door dezelfde rekenstappen haalt als de chunk-generatie (Vitest vergelijkt duizenden voxels incl. chunkranden,
+0 afwijkingen). `TerrainGenerator.surfaceOpen()` doet hetzelfde voor de spawn-zoektocht, zodat niemand in een gat spawnt.
+
+**Ertsen.** Eén tabel (`ORE_TABLE`): blok, pogingen per chunk (breuk = kans), blobgrootte (Minecraft-veingrootte), y-bereik,
+uniform of driehoek, `discardOnAir` (kans dat een blok naast lucht wordt overgeslagen; 1 = alleen ingebedde ertsen) en
+`minGen`. Blobs zijn ellipsoïdes langs een lijnstuk (zoals Minecraft). Elke chunk speelt de pogingen van zichzelf én de
+8 buren opnieuw af en houdt alleen zijn eigen blokken, dus blobs lopen over chunkranden zonder afhankelijkheid van de
+volgorde. De pogingen per laag zijn die van Minecraft (onze laag telt voor twee van hen, de veingrootte blijft), zodat het
+percentage erts in het gesteente ongeveer gelijk blijft. Rijen voor blokken die nog niet bestaan (lapis, redstone, koper,
+smaragd) staan er al in en doen niets zolang het blok ontbreekt of `minGen` hoger is dan de wereldversie. Ertsen vervangen
+alleen steen, dus ze liggen ook in de wand van grotten en ravijnen.
+
+### Versies en bestaande werelden
+
+Chunks worden bij elke keer laden opnieuw uit de seed gegenereerd; alleen bewerkingen staan in de save. Een nieuwe generator
+verandert dus bestaande werelden. Daarom heeft elke wereld een `genVersion` (`GenVersion.ts`): 1 = oude generator
+(onveranderd, golden hashes in `tests/terrain.test.ts` bewijzen dat), 2 = deze. Het oppervlak (hoogte, biome, bomen) is in
+beide versies hetzelfde, alleen de ondergrond verschilt. De versie zit in `WorldMeta.genVersion` (save-versie 3: een wereld
+zonder wordt 1), in het `world.json` van de server (zonder = 1), optioneel in `welcome.genVersion` (zonder = 1, geen
+protocolversie nodig) en in elk `generate`-verzoek aan de workers. Arena's negeren hem.
+
+### Gemeten (`scripts/gen-stats.ts`, 4 seeds × 24×24 chunks, `scripts/bench-gen.ts`)
+
+| | versie 1 | versie 2 |
+|---|---|---|
+| Lucht onder zeeniveau (landkolommen) | 7,4 % | 11,7 % |
+| Grotopeningen aan het oppervlak per 100 landchunks | 13 | 56 |
+| Grotlucht per chunk (blokken) | 1095 | 2016 |
+| Lava / ondergronds water per chunk (blokken) | 187 / 0 | 332 / 449 |
+| Lava boven y 10 | 0 | 0 |
+| Kolen / ijzer / goud / diamant per chunk | 38 / 27 / 5,9 / 2,7 | 62 / 43 / 9,4 / 10,9 |
+| Diamant per laag | y 1..15 | y 1..38 (de meeste onder 32) |
+| `generate` per chunk (stille machine) | 0,82–1,09 ms | 1,13–1,67 ms (1,4–1,6×) |
+| `heightAt` + `biomeAt` (+ `surfaceOpen`) per kolom | 0,8 µs | 0,8 µs (+ ~6 µs `surfaceOpen`, alleen bij de spawn-zoektocht) |
+| Meshtijd (`bench-mesh.ts`, seed 12345) | 3,47 ms, 3492 driehoeken | 3,61 ms, 4286 driehoeken |
+
+Een "opening" is een landkolom waarvan het oppervlakteblok weg is en waaronder minstens 3 blokken lucht volgen; geteld per chunk
+als samenhangende groep kolommen. Het licht (`Lighting.ts`: 48×48 regio, BFS-wachtrij 2^19 tegen 300 000 cellen) heeft geen
+aanpassing nodig: de skylight daalt door ingangen en ravijnen naar beneden en de regio is groot genoeg voor de holen. Mobs
+spawnen ondergronds via de bestaande regel (twee blokken lucht boven een massief blok, licht 0).
+
+### Niet gedaan / ideeën
+
+- Ertsen: lapis, redstone, koper, smaragd, deepslate en tuff wachten op de blokken (zie `OreTable.ts`). Granite, diorite en andesite ook.
+- Dripstone, mos, lush/dripstone-caves en glow berries.
+- Stilstaand water in grotten stroomt pas als iemand het aanraakt (de vloeistofsimulatie draait alleen bij bewerkingen).
+- De rand van een grotingang wordt niet opnieuw begroeid (kale dirt/steen in de wand; Minecraft zet daar gras).

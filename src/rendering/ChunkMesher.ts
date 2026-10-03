@@ -1,8 +1,12 @@
 import {
-  CULL_SELF, FACE_LAYER, MODELS, OPAQUE, PARTIAL, SHAPE_DOOR, SHAPE_MODEL, SHAPE_SLAB, SHAPE_STAIRS, SOLID, TINT, SHAPE, SHAPE_CROSS, SHAPE_CUBE,
-  SHAPE_LIQUID, SWAY,
+  BOX_KIND, CULL_SELF, DYE, DYE_RGB, FACE_LAYER, FACING, FRONT_FACE, MODELS, OPAQUE, PARTIAL, SHAPE_DOOR, SHAPE_MODEL, SHAPE_SLAB, SHAPE_STAIRS, SOLID, TINT, SHAPE, SHAPE_CROSS, SHAPE_CUBE,
+  SHAPE_BOX, SHAPE_LIQUID, SWAY, VARIANT_LAYER, VARIANT_SHIFT, VARIANT_SLOT,
 } from '../world/BlockRegistry';
 import { liquidHeight } from '../world/Liquids';
+import { BED_HEAD_BIT, BOX_BED, SIDE_BIT, visualBoxes } from '../world/BoxShapes';
+import { connectsTo } from '../world/BlockShapes';
+import { DUST_COLORS, dustConnectMask } from '../world/Redstone';
+import { BOX_DUST, redstoneFaceSlot } from '../world/RedstoneShapes';
 import { doorBox } from '../world/BlockShapes';
 import {
   DOOR_UPPER_BIT, FACE_OCTANTS, OCT_ALL, STAIR_META_MASK, slabOctants, stairOctants, stairShape,
@@ -362,7 +366,8 @@ export class ChunkMesher {
 
           // Per-corner ambient occlusion and smooth light, sampled in the air cell q.
           const c4 = n * 4;
-          this.cellTint[n] = this.tintFor(id, nAxis === 0 ? s : uAxis === 0 ? a : b, nAxis === 2 ? s : uAxis === 2 ? a : b);
+          this.cellTint[n] = DYE[id] ? DYE_RGB[this.metaRegion[i] & 15]
+            : this.tintFor(id, nAxis === 0 ? s : uAxis === 0 ? a : b, nAxis === 2 ? s : uAxis === 2 ? a : b);
           let uniform = true;
           for (let k = 0; k < 4; k++) {
             const du = CU[k] ? uOff : -uOff;
@@ -383,7 +388,8 @@ export class ChunkMesher {
               uniform = false;
             }
           }
-          const layer = FACE_LAYER[id * 6 + f];
+          // Blocks with a front (furnace, chest, pumpkin) show it on the face their state points at.
+          const layer = FACING[id] ? FACE_LAYER[id * 6 + (FRONT_FACE[this.metaRegion[i] & 3] === f ? 4 : 0)] : FACE_LAYER[id * 6 + f];
           const flags = SWAY[id] && fancyLeaves ? FLAG_SWAY : 0;
           this.cellLayer[n] = layer;
           this.cellFlags[n] = flags;
@@ -621,7 +627,8 @@ export class ChunkMesher {
       const face = FACES[f];
       const a = face.nAxis, s = face.nSign;
       const nOff = s * STRIDE[a];
-      const layer = FACE_LAYER[id * 6 + f];
+      const slot = VARIANT_SLOT[id];
+      const layer = slot ? VARIANT_LAYER[(slot * 32 + ((this.metaRegion[i] >> VARIANT_SHIFT[id]) & 31)) * 6 + f] : FACE_LAYER[id * 6 + f];
       let nmask = -1;
       for (let h = 0; h < 2; h++) {
         // Octants of layer h along the normal whose face is not hidden by a neighbouring octant.
@@ -666,7 +673,9 @@ export class ChunkMesher {
     const box = this.doorScratch;
     doorBox(meta, box);
     // The lower half uses the "side" texture slot and the upper half the "top" slot (see the door's BlockDef).
-    const layer = FACE_LAYER[id * 6 + ((meta & DOOR_UPPER_BIT) ? 2 : 0)];
+    const face = (meta & DOOR_UPPER_BIT) ? 2 : 0;
+    const slot = VARIANT_SLOT[id];
+    const layer = slot ? VARIANT_LAYER[(slot * 32 + ((meta >> VARIANT_SHIFT[id]) & 31)) * 6 + face] : FACE_LAYER[id * 6 + face];
     const geo = this.cutout;
     geo.currentTint = 0xffffff;
     const region = this.region;
@@ -682,6 +691,57 @@ export class ChunkMesher {
       const va = Math.round(box[face.vAxis] * 16), vb = Math.round(box[3 + face.vAxis] * 16);
       // The two big faces mirror with the hinge so the handle is always on the side away from it.
       this.emitRect(geo, f, plane, ua, ub, va, vb, layer, x, y, z, a !== 1 && (meta & 8) !== 0 && ub - ua > 8);
+    }
+  }
+
+  private readonly boxScratch = new Float64Array(64);
+  /** Region index of the dust being meshed; the getters read its neighbours by offset (no allocation per block). */
+  private dustCenter = 0;
+  private readonly dustGet = (dx: number, dy: number, dz: number): number => this.region[this.dustCenter + dx * SX + dy * SY + dz * SZ];
+  private readonly dustMeta = (dx: number, dy: number, dz: number): number => this.metaRegion[this.dustCenter + dx * SX + dy * SY + dz * SZ];
+
+  /**
+   * Carpets, trapdoors, gates, fences, walls, panes, ladders and beds: a few boxes (BoxShapes), each face textured with
+   * the part of the texture it covers. Fences, walls and panes join the neighbours they connect to.
+   */
+  private emitBoxShape(id: number, x: number, y: number, z: number, i: number): void {
+    const kind = BOX_KIND[id];
+    const meta = this.metaRegion[i];
+    const region = this.region;
+    let connect = 0;
+    if (kind === BOX_DUST) {
+      this.dustCenter = i;
+      connect = dustConnectMask(this.dustGet, this.dustMeta, 0, 0, 0);
+    } else {
+      for (let s = 0; s < 4; s++) {
+        const j = i + (s === 0 ? -SZ : s === 1 ? SZ : s === 2 ? -SX : SX);
+        if (connectsTo(kind, region[j], this.metaRegion[j], s)) connect |= SIDE_BIT[s];
+      }
+    }
+    const boxes = this.boxScratch;
+    const n = visualBoxes(kind, meta, connect, boxes);
+    const geo = this.cutout;
+    geo.currentTint = DYE[id] ? DYE_RGB[meta & 15] : kind === BOX_DUST ? DUST_COLORS[meta & 15] : 0xffffff;
+    const redstone = kind >= BOX_DUST;
+    const slot = VARIANT_SLOT[id];
+    const variant = slot ? slot * 32 + ((meta >> VARIANT_SHIFT[id]) & 31) : 0;
+    for (let k = 0; k < n; k++) {
+      const o = k * 6;
+      for (let f = 0; f < 6; f++) {
+        const face = FACES[f];
+        const a = face.nAxis;
+        const plane = Math.round((face.nSign > 0 ? boxes[o + 3 + a] : boxes[o + a]) * 16);
+        const boundary = plane === 0 || plane === 16;
+        const nOff = face.nSign * STRIDE[a];
+        if (boundary && OPAQUE[region[i + nOff]]) continue;
+        // The head half of a bed shows the pillow on top (its texture is in the bottom slot).
+        const layerFace = redstone ? redstoneFaceSlot(kind, meta, k, f) : kind === BOX_BED && f === 2 && (meta & BED_HEAD_BIT) ? 3 : f;
+        const layer = variant ? VARIANT_LAYER[variant * 6 + f] : FACE_LAYER[id * 6 + layerFace];
+        this.cornerSample(f, boundary ? i + nOff : i);
+        const ua = Math.round(boxes[o + face.uAxis] * 16), ub = Math.round(boxes[o + 3 + face.uAxis] * 16);
+        const va = Math.round(boxes[o + face.vAxis] * 16), vb = Math.round(boxes[o + 3 + face.vAxis] * 16);
+        this.emitRect(geo, f, plane, ua, ub, va, vb, layer, x, y, z);
+      }
     }
   }
 
@@ -701,6 +761,7 @@ export class ChunkMesher {
           }
           if (shape >= SHAPE_SLAB) {
             if (shape === SHAPE_DOOR) this.emitDoor(id, x, y, z, i);
+            else if (shape === SHAPE_BOX) this.emitBoxShape(id, x, y, z, i);
             else this.emitOctants(id, x, y, z, i);
             continue;
           }
@@ -709,7 +770,8 @@ export class ChunkMesher {
             continue;
           }
           if (SHAPE[id] !== SHAPE_CROSS) continue;
-          const layer = FACE_LAYER[id * 6];
+          const slot = VARIANT_SLOT[id];
+          const layer = slot ? VARIANT_LAYER[(slot * 32 + ((this.metaRegion[i] >> VARIANT_SHIFT[id]) & 31)) * 6] : FACE_LAYER[id * 6];
           geo.currentTint = this.tintFor(id, x, z);
           const ls = sky[i] * 17, lb = blk[i] * 17;
           const sway = SWAY[id] ? FLAG_SWAY << 5 : 0;

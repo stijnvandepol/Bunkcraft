@@ -20,6 +20,7 @@ function packRegions(boxes: ModelBox[]): Region[] {
     const r = { u, v, w, h, d };
     u += rw;
     rowH = Math.max(rowH, rh);
+    if (v + rowH > TEX_H) console.warn('Mob texture overflow: a box does not fit in the atlas');
     return r;
   });
 }
@@ -154,10 +155,13 @@ export class MobRenderer {
     }
   }
 
+  /** Options > Entity Distance (0.5–5): scales how far mobs are drawn. */
+  distanceScale = 1;
+
   update(mobs: Mob[], alpha: number, world: World, cam: THREE.Vector3): void {
     const all = this.all;
     this.frame++;
-    const cullR = this.fogFar.value + 8;
+    const cullR = (this.fogFar.value + 8) * this.distanceScale;
     const cull2 = cullR * cullR;
     for (let i = 0; i < all.length; i++) all[i].mesh.count = 0;
     for (let mi = 0; mi < mobs.length; mi++) {
