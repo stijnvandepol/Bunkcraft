@@ -118,3 +118,42 @@ describe('InventoryGuard: everyday item changes without a recipe (QA: the server
     expect(accepts(inv(), inv([ITEM.WATER_BUCKET, 1, 0]))).toBe(false);
   });
 });
+
+describe('locked game: a typo in the password (QA: the wrong password was reused forever, never asked again)', () => {
+  it('forgets a password the server refused, keeps one that worked', async () => {
+    const { NetClient } = await import('../src/net/NetClient');
+    const { roomPassword, setRoomPassword } = await import('../src/net/RoomApi');
+    /** Minimal browser WebSocket: answers the hello with the scripted message. */
+    class StubSocket {
+      static reply: ServerMessage;
+      readyState = 0;
+      binaryType = '';
+      onopen: (() => void) | null = null;
+      onmessage: ((e: { data: string }) => void) | null = null;
+      onerror: (() => void) | null = null;
+      onclose: (() => void) | null = null;
+      constructor() { setTimeout(() => { this.readyState = 1; this.onopen?.(); }, 0); }
+      send() { setTimeout(() => this.onmessage?.({ data: JSON.stringify(StubSocket.reply) }), 0); }
+      close() { this.readyState = 3; }
+    }
+    const g = globalThis as Record<string, unknown>;
+    const saved = { WebSocket: g.WebSocket, window: g.window, location: g.location, localStorage: g.localStorage };
+    Object.assign(g, {
+      WebSocket: Object.assign(StubSocket, { OPEN: 1 }), window: globalThis, location: { protocol: 'http:', host: 'localhost' },
+      localStorage: { getItem: () => null, setItem: () => undefined },
+    });
+    try {
+      setRoomPassword('ABCDEF', 'gehiem');
+      StubSocket.reply = { t: 'kick', reason: 'Wrong password.', code: 'password' };
+      await expect(new NetClient().connect('', 'Dave', 'ABCDEF')).rejects.toThrow('Wrong password.');
+      expect(roomPassword('ABCDEF')).toBeUndefined();
+
+      setRoomPassword('ABCDEF', 'geheim');
+      StubSocket.reply = { t: 'kick', reason: 'The server is full', code: 'full' };
+      await expect(new NetClient().connect('', 'Dave', 'ABCDEF')).rejects.toThrow('full');
+      expect(roomPassword('ABCDEF')).toBe('geheim');
+    } finally {
+      Object.assign(g, saved);
+    }
+  });
+});

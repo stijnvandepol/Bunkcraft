@@ -1,6 +1,6 @@
 import { decodeBinary } from './binary';
 import { type ClientMessage, type ContainerClientMessage, PROTOCOL_VERSION, type ServerMessage } from './protocol';
-import { identityKey, ownerToken, roomPassword } from './RoomApi';
+import { forgetRoomPassword, identityKey, ownerToken, roomPassword } from './RoomApi';
 
 export type WelcomeMessage = Extract<ServerMessage, { t: 'welcome' }>;
 
@@ -87,6 +87,8 @@ export class NetClient {
             resolve(msg);
           } else if (msg.t === 'kick') {
             window.clearTimeout(timeout);
+            // A refused password must not be sent again silently (the menu would never ask for it again).
+            if (msg.code === 'password' && room) forgetRoomPassword(room);
             reject(new Error(msg.reason));
           }
           return;

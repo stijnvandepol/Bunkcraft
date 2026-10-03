@@ -619,7 +619,73 @@ async function pwlimit(): Promise<void> {
   info('password: the limit is per address over ALL games', res2.ok ? 'another game still works' : `another game with the right password is also refused: "${res2.kick.reason}" (a friend typo-ing 5× locks the whole household out of every locked game for 10 min)`);
 }
 
-const SECTIONS: Record<string, () => Promise<void>> = { rooms, mod, edits, drops, guard, mobs, tnt, persist, restart, pwlimit };
+// ---------------------------------------------------------------- shared chests
+
+async function chest(): Promise<void> {
+  const { owner, friends: [friend], spawn } = await room('Chest');
+  const x = Math.floor(spawn.x) + 2, y = Math.floor(spawn.y) + 1, z = Math.floor(spawn.z);
+  const empty = Array.from({ length: 36 }, () => [0, 0, 0]);
+  const inv = (...s: number[][]) => [...s, ...empty.slice(s.length)];
+  // The owner gets 3 cobblestone the legal way (mine + pick up).
+  owner.block(x + 1, y - 1, z, BLOCK.STONE);
+  for (let i = 0; i < 3; i++) await breakAndDrop(owner, friend, x + 1, y, z, BLOCK.STONE, 0, BLOCK.COBBLESTONE, 1);
+  owner.pos(spawn.x, spawn.y, spawn.z); friend.pos(spawn.x, spawn.y, spawn.z + 1);
+  await sleep(200);
+  let t = performance.now();
+  owner.send({ t: 'state', inventory: inv([BLOCK.COBBLESTONE, 3, 0]), stats: [20, 20, 5, 300] });
+  await sleep(300);
+  check('chest: legally mined cobblestone is accepted', owner.of('state', t).length === 0);
+  owner.block(x, y - 1, z, BLOCK.STONE);
+  owner.block(x, y, z, BLOCK.CHEST);
+  await sleep(300);
+  owner.send({ t: 'container', op: 'open', x, y, z });
+  friend.send({ t: 'container', op: 'open', x, y, z });
+  const oo = await owner.waitFor('container', (m) => m.op === 'open', 1500);
+  const fo = await friend.waitFor('container', (m) => m.op === 'open', 1500);
+  check('chest: both players can open the same chest', !!oo && !!fo, JSON.stringify(oo ?? owner.of('container').at(-1)));
+  // Owner picks the stack up (cursor) and puts it in slot 0.
+  t = performance.now();
+  owner.send({ t: 'container', op: 'click', seq: 1, slot: 0, button: 0, inv: inv(), cursor: [BLOCK.COBBLESTONE, 3, 0] });
+  const r1 = await owner.waitFor('container', (m) => m.op === 'result', 1500, t);
+  const fs = await friend.waitFor('container', (m) => m.op === 'slots' && (m.slots[0]?.[0] ?? 0) === BLOCK.COBBLESTONE, 1500, t);
+  check('chest: deposit is accepted and the friend sees it live', !!r1 && (r1 as { ok?: boolean }).ok === true && !!fs, JSON.stringify(r1));
+  // Both grab slot 0 at the same moment: only one may get it.
+  t = performance.now();
+  friend.send({ t: 'container', op: 'click', seq: 1, slot: 0, button: 0, inv: inv(), cursor: [] });
+  owner.send({ t: 'container', op: 'click', seq: 2, slot: 0, button: 0, inv: inv(), cursor: [] });
+  await sleep(600);
+  const got = [owner, friend].map((b) => (b.of('container', t).find((m) => m.op === 'result') as { cursor?: number[] } | undefined)?.cursor?.[1] ?? 0);
+  check('chest: two players grabbing the same slot get it once in total', got[0] + got[1] === 3, `owner ${got[0]}, friend ${got[1]}`);
+  // The winner closes and saves the inventory: no correction.
+  const winner = got[1] ? friend : owner;
+  t = performance.now();
+  winner.send({ t: 'container', op: 'close' });
+  winner.send({ t: 'state', inventory: inv([BLOCK.COBBLESTONE, 3, 0]), stats: [20, 20, 5, 300] });
+  await sleep(400);
+  check('chest: the taken stack is accepted in the inventory', winner.of('state', t).length === 0, JSON.stringify(winner.of('state', t).at(-1)));
+  const loser = winner === owner ? friend : owner;
+  t = performance.now();
+  loser.send({ t: 'state', inventory: inv([BLOCK.COBBLESTONE, 3, 0]), stats: [20, 20, 5, 300] });
+  const corr = await loser.waitFor('state', () => true, 800, t);
+  check('chest: the other player cannot also claim it', !!corr, corr ? corr.reason : 'accepted (duplicate!)');
+  // Put it back and break the chest: the contents drop once.
+  t = performance.now();
+  winner.send({ t: 'container', op: 'open', x, y, z });
+  await winner.waitFor('container', (m) => m.op === 'open', 1000, t);
+  winner.send({ t: 'container', op: 'click', seq: 9, slot: 4, button: 0, inv: inv(), cursor: [BLOCK.COBBLESTONE, 3, 0] });
+  await sleep(300);
+  t = performance.now();
+  owner.block(x, y, z, 0);
+  owner.send({ t: 'drop', id: BLOCK.CHEST, count: 1, x: x + 0.5, y: y + 0.25, z: z + 0.5, delay: 10 });
+  const closed = await winner.waitFor('container', (m) => m.op === 'close', 1500, t);
+  await sleep(800);
+  const items = friend.of('ent').at(-1)?.i ?? [];
+  const cobble = items.filter((i) => i[1] === BLOCK.COBBLESTONE).reduce((s, i) => s + i[2], 0);
+  check('chest: breaking a full chest closes the screen and spills the contents once', !!closed && cobble === 3, `close ${!!closed}, cobblestone on the ground ${cobble}, chest items ${items.filter((i) => i[1] === BLOCK.CHEST).length}`);
+  owner.close(); friend.close();
+}
+
+const SECTIONS: Record<string, () => Promise<void>> = { rooms, mod, edits, drops, guard, chest, mobs, tnt, persist, restart, pwlimit };
 
 async function main(): Promise<void> {
   const want = process.argv.slice(2).length ? process.argv.slice(2) : Object.keys(SECTIONS);

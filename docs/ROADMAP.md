@@ -222,7 +222,11 @@ Volgende stappen:
    (`pos`) en de overige berichten zijn nog JSON; delta-compressie van `snap` (alleen wat bewoog) is de volgende stap.
 6. **Observability en beheer: Gedaan.** JSON-logs, `/metrics`, `/health`, back-ups, verbindingslimieten, `ALLOWED_ORIGINS`,
    gracieus afsluiten met reconnect-hint. Open: Grafana-dashboard als voorbeeld, rate limits per game in `/admin`, alerting.
-7. **Weer in multiplayer** (`/weather` is een stub tot het weersysteem op de server draait) (kisten en ovens zijn klaar, zie `docs/MULTIPLAYER.md`).
+7. **Weer in multiplayer: Gedaan** (regen, onweer en bliksem op de server; `/weather` werkt). Kisten en ovens zijn klaar, zie `docs/MULTIPLAYER.md`.
+8. **Uit de QA-ronde (`docs/qa/MULTIPLAYER.md`), open:** plaatsen zonder het blok te hebben maakt items uit het niets
+   (afboeken bij plaatsen), andere spelers bewegen schokkerig (`pos` en de 20 Hz-tick lopen niet in fase: tijdstempel in `pos`),
+   de nacht is drie keer zo zwaar als vrienden bij elkaar staan (extra mobcap alleen voor spelers die ver uit elkaar staan),
+   en de wachtwoordlimiet per adres geldt over alle games.
 
 ## 7b. Arcade-game types (Krunker-stijl)
 
