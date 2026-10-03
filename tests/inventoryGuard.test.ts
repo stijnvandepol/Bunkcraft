@@ -71,6 +71,18 @@ describe('InventoryGuard: items only enter through routes the server saw', () =>
     expect(g.check(inv([ITEM.DIAMOND, 1, 0])).ok).toBe(false); // no recipe at all
   });
 
+  it('crafting consumes its ingredients: keeping the log and the planks is refused', () => {
+    const g = new InventoryGuard([{ id: BLOCK.OAK_LOG, count: 1 }]);
+    expect(g.check(inv([BLOCK.OAK_LOG, 1, 0], [BLOCK.OAK_PLANKS, 4, 0])).ok).toBe(false);
+    // Repeating it would otherwise turn one log into endless planks.
+    expect(g.check(inv([BLOCK.OAK_PLANKS, 4, 0])).ok).toBe(true);
+  });
+
+  it('crafting uses the alternative the player actually spent (birch planks used, oak planks kept)', () => {
+    const g = new InventoryGuard([{ id: BLOCK.OAK_PLANKS, count: 2 }, { id: BLOCK.BIRCH_LOG, count: 1 }]);
+    expect(g.check(inv([BLOCK.OAK_PLANKS, 2, 0], [BLOCK.BIRCH_PLANKS, 2, 0], [ITEM.STICK, 4, 0])).ok).toBe(true);
+  });
+
   it('refuses stack sizes the client could not build', () => {
     const g = new InventoryGuard([{ id: BLOCK.DIRT, count: 64 }, { id: BLOCK.DIRT, count: 64 }]);
     expect(g.check(inv([BLOCK.DIRT, 100, 0])).ok).toBe(false);

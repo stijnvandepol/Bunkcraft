@@ -175,16 +175,24 @@ export class InventoryGuard {
     for (const id of gains) {
       const need = (next.get(id) ?? 0) - (work.get(id) ?? 0);
       if (need <= 0) continue;
-      if (!this.craft(id, need, work, 0)) {
+      if (!this.craft(id, need, work, 0, next)) {
         const def = getItemDef(id);
         return { ok: false, reason: `${need} x ${def?.name ?? id} appeared without a pickup or recipe`, correction: this.correction() };
+      }
+      work.set(id, (work.get(id) ?? 0) + need); // the crafted items themselves
+    }
+    // Crafting consumes its ingredients: the new state may not still hold them.
+    for (const [id, n] of next) {
+      if (n > (work.get(id) ?? 0)) {
+        const def = getItemDef(id);
+        return { ok: false, reason: `${def?.name ?? id} was used in a recipe but is still there`, correction: this.correction() };
       }
     }
     return this.accept(parsed.slots, next);
   }
 
   /** Makes `count` of `id` from the pool `work`, crafting up to a few levels deep. */
-  private craft(id: number, count: number, work: Map<number, number>, depth: number): boolean {
+  private craft(id: number, count: number, work: Map<number, number>, depth: number, keep: Map<number, number>): boolean {
     if (depth > MAX_CRAFT_DEPTH) return false;
     for (const recipe of RECIPES) {
       if (recipe.result.id !== id) continue;
@@ -194,19 +202,25 @@ export class InventoryGuard {
       for (const ing of recipe.ingredients) {
         const need = ing.count * crafts;
         let left = need;
-        // Take from the first allowed ids the player has; crafting a missing intermediate is a last resort.
-        for (const alt of ing.ids) {
-          const have = trial.get(alt) ?? 0;
-          const used = Math.min(have, left);
-          if (used > 0) { trial.set(alt, have - used); left -= used; }
-          if (left === 0) break;
-        }
+        // Take what the new state no longer holds first (oak planks kept, birch planks used), then craft a
+        // missing intermediate, and only then dip into items the new state still holds.
+        const take = (spareOnly: boolean) => {
+          for (const alt of ing.ids) {
+            const have = trial.get(alt) ?? 0;
+            const free = spareOnly ? Math.min(have, have - (keep.get(alt) ?? 0)) : have;
+            const used = Math.min(free, left);
+            if (used > 0) { trial.set(alt, have - used); left -= used; }
+            if (left === 0) break;
+          }
+        };
+        take(true);
         if (left > 0 && depth < MAX_CRAFT_DEPTH) {
           for (const alt of ing.ids) {
             if (alt === id) continue;
-            if (this.craft(alt, left, trial, depth + 1)) { left = 0; break; }
+            if (this.craft(alt, left, trial, depth + 1, keep)) { left = 0; break; }
           }
         }
+        if (left > 0) take(false);
         if (left > 0) { ok = false; break; }
       }
       if (!ok) continue;
