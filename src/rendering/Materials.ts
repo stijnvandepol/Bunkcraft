@@ -228,6 +228,7 @@ export function createWaterMaterial(u: WorldUniforms): THREE.ShaderMaterial {
       varying vec3 vNormal;
       varying float vTop;
       varying vec3 vWaterTint;
+      attribute vec4 tint;
 
       void main() {
         int ni; float ao; float flags;

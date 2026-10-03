@@ -42,9 +42,11 @@ wat al is doorgevoerd.
 | Gedeelde GLSL voor licht en mist (5 kopieën lopen nu uiteen; entities missen de onderwater-mist) | **Gedaan:** `LIGHT_GLSL`, `FOG_GLSL` en `ATLAS_GLSL` in `Materials.ts`; mobs, items, deeltjes en pijlen gebruiken nu dezelfde lichtcurve en mist (incl. zonsondergang-gloed en onderwater-mist), de hand dezelfde lichtcurve. Items zijn in schemerige gebieden iets donkerer (ze volgen nu de curve van de blokken) |
 | Worker-crash: jobs blijven "in flight" en het streamen stopt | **Gedaan:** worker vervangen, job opnieuw ingepland (max. 3 pogingen, daarna laat `ChunkManager` de chunk opnieuw proberen); Vitest met nep-worker |
 | Grotten, ravijnen en ertsen (feedback: "geen grotten en grotingangen te zien") | **Gedaan:** generator versie 2 (`CaveCarver.ts`, `OreTable.ts`): cheese, spaghetti, noodle, ingangen in heuvels, ravijnen met lava/water, aquifer-meren met barrières, lavameren onder y 10, ertsblobs uit één tabel. Grotopeningen per 100 landchunks 13 → 56, lucht onder zeeniveau 7,4 → 11,7 %, `generate` 1,4–1,6× (zie RESEARCH.md §4). Zee, kust en bedrock blijven heel; geen bomen boven gaten |
-| Generatorversies (`genVersion`) zodat een nieuwe generator bestaande werelden niet stuk maakt | **Gedaan:** `WorldMeta.genVersion` (save-versie 3, zonder = 1), `world.json`, optioneel veld in `welcome`, `generate`-verzoek. Versie 1 blijft bitgelijk (golden hashes). Nieuwe wereld = versie 2 |
-| Ertsen voor nieuwe blokken (lapis, redstone, koper, smaragd) | S: de rijen staan al in `ORE_TABLE` met `minGen: 3`; zodra de blokken bestaan `GEN_VERSION_CURRENT` op 3 zetten en golden hashes bijwerken |
-| Dripstone, mos en andere grotbiomes; deepslate-laag onder y ~8 | M (wacht op blokken) |
+| Generatorversies (`genVersion`) zodat een nieuwe generator bestaande werelden niet stuk maakt | **Gedaan:** `WorldMeta.genVersion` (save-versie 3, zonder = 1), `world.json`, optioneel veld in `welcome`, `generate`-verzoek. Versie 1 en 2 blijven bitgelijk (golden hashes). Nieuwe wereld = versie 3 |
+| Ertsen voor nieuwe blokken (lapis, redstone, koper, smaragd) | **Gedaan** in generator versie 3: koper y 24–80, lapis 8–46 (ingebed), redstone onder y 36, smaragd als losse blokken alleen in Mountains/Windswept Hills; ertsen ook in deepslate. Open: echte `deepslate_*_ore`-blokken |
+| Generator versie 3: biomes, rivieren, gesteente (feedback: "meer Minecraft-achtige variatie") | **Gedaan** (`GeneratorV3.ts`, `TreesV3.ts`, `Structures.ts`, zie RESEARCH.md §4): 27 biomes uit temperatuur/vochtigheid/continentaliteit, rivieren als domain-warped ruiscontour met zandoevers (bevroren met ijs), badlands met terracotta-banden (block states uit de generator), moeras met modder en groen water, deepslate onder y 16, granite/diorite/andesite/tuff, bronnen, grotpaddenstoelen, waterkleur per biome, woestijnputten en zwerfkeien. `generate` ~1,3–1,5× van v2 |
+| Structuren-registry (`Structures.ts`): dorpen, dungeons, mijnschachten | M per stuk: registry met chunk-geseede ankers en `place(target, ax, az, rng)` staat er; nieuwe features met `minGen` 4 en een generatorversie erbij |
+| Dripstone, mos en andere grotbiomes | M (wacht op blokken). Deepslate-laag: **gedaan** (v3, onder y 16 met overgang) |
 | `Game.ts` (~1000 regels) opsplitsen: GameStateMachine, WorldSession, SimulationLoop, Combat, DebugInfo | M |
 | Save-formaatversie en migraties, nodig vóór block states | **Gedaan:** `version` op `WorldMeta` en op de chunk-edit-records, lijst `MIGRATIONS` + `migrateMeta`, nieuwere records worden overgeslagen i.p.v. verkeerd gelezen; Vitest met `fake-indexeddb`. **Versie 2 (block states):** edit-record `index << 16 \| meta << 8 \| id`, v1-records worden met meta 0 gelezen (`decodeEdit`); `world.json` op de server bewaart `id \| meta << 8`, oude bestanden blijven geldig |
 | Meshtijd na block states (`scripts/bench-mesh.ts`, seed 12345, 25 chunks) | **Gedaan:** 3,55 ms gemiddeld per chunk tegen 3,96 ms ervoor (gemeten afwisselend op dezelfde machine): de nieuwe vormen zijn betaald met een snellere skylight-kolom (`LIGHT_COLUMN`, 1 opzoeking) en een allocatievrije regio-kopie. Meta kost niets zolang een chunk er geen heeft (lazy; altijd alloceren: 10 MB bij render distance 8 en +0,1 ms per mesh) |
@@ -109,10 +111,10 @@ Ontwerp, tellingen en tier-lijst: [`CONTENT.md`](CONTENT.md). **Gedaan:**
 |---|---|
 | ~~Grotgeluiden en muziek die per biome wisselt~~ (klaar, zie hieronder) | S |
 | Vuurvliegjes en vallende bladeren | S |
-| Suikerriet, pompoenen, meloenen, paddenstoelen, waterlelies | S–M |
+| Suikerriet, pompoenen, meloenen, paddenstoelen, waterlelies | **Gedaan** in de generator (v3), behalve waterlelies (blok bestaat nog niet). Groei via random ticks: andere ontwikkelaar |
 | Weer: regen, sneeuw, onweer, bliksem, maanfasen, sterren met twinkel | **Gedaan** (`Weather.ts`, `Precipitation.ts`, `Lightning.ts`; zie [`GAMEPLAY.md`](GAMEPLAY.md#weer-en-lucht)). Open: regengeluid en donder via `AudioEngine.setWeather`, sneeuwlagen en bevriezend water (block states + random ticks), farmland-hydratatie en vuur-blussen via `Weather.isRainingAt`, geladen creepers, onweer-slapen |
-| Rivieren | M |
-| Nieuwe biomes: moeras, savanne, jungle, badlands | M per stuk |
+| Rivieren | **Gedaan** (generator v3) |
+| Nieuwe biomes: moeras, savanne, jungle, badlands | **Gedaan** (generator v3). Open: mangrove-moeras, mushroom fields, ice spikes, jungle-lianen (geen vine-blok), waterlelies |
 
 ### Audio-herziening (klaar, `src/core/audio/*`)
 

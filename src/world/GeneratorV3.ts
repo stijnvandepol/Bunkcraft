@@ -297,6 +297,11 @@ export class GeneratorV3 {
     this.placeSprings(blocks, cx, cz);
     this.placeCaveMushrooms(blocks, ox, oz);
     this.placeVegetation(blocks, ox, oz);
+    if (this.metaUsed) {
+      // Band colours of terracotta that caves, ores or plants replaced afterwards must not stay behind.
+      const meta = this.meta;
+      for (let i = 0; i < CHUNK_VOLUME; i++) if (meta[i] !== 0 && blocks[i] !== BLOCK.STAINED_TERRACOTTA) meta[i] = 0;
+    }
     placeStructures(blocks, this.meta, () => { this.metaUsed = true; }, this.structureCtx, cx, cz, this.genVersion);
     return this.metaUsed ? this.meta.slice() : null;
   }
