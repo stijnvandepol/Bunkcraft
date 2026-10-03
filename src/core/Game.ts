@@ -8,6 +8,7 @@ import { ItemRenderer } from '../entities/ItemRenderer';
 import { TntRenderer } from '../entities/TntRenderer';
 import { ArrowRenderer } from '../entities/ArrowRenderer';
 import type { Mob, MobEvents } from '../entities/Mob';
+import { explosionDamage, explosionDropChance } from '../entities/Explosion';
 import { MobRenderer } from '../entities/MobRenderer';
 import { NetClient, type WelcomeMessage } from '../net/NetClient';
 import { NetEntities } from '../net/NetEntities';
@@ -1398,24 +1399,24 @@ export class Game {
     const world = this.world!, entities = this.entities!;
     const positions: number[] = [];
     const destroyed = inWater ? [] : world.explode(x, y, z, power * 1.3, positions);
-    // Drop roughly 1/power of the destroyed blocks, like Minecraft; caught TNT lights with a short fuse.
+    // Blocks drop with chance 1/power (TNT: all of them), like Minecraft; caught TNT lights with a short fuse.
+    const dropChance = explosionDropChance(power, source === null);
     for (let i = 0; i < destroyed.length; i++) {
       const id = destroyed[i];
       if (id === BLOCK.TNT) {
         entities.primeTnt(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2], 10 + Math.floor(Math.random() * 20));
         continue;
       }
-      if (Math.random() < 1 / power && getBlockDef(id)?.inInventory) {
+      if (Math.random() < dropChance && getBlockDef(id)?.inInventory) {
         const drop = blockDrop(id, ITEM.DIAMOND_PICKAXE);
         if (drop) entities.dropItem(drop,
           x + (Math.random() - 0.5) * power, y + Math.random() * power * 0.5, z + (Math.random() - 0.5) * power);
       }
     }
     this.explosionEffects(source ? source.type.name : '', x, y, z, power);
-    const reach = power * 2;
     for (const m of entities.mobs) {
-      const md = Math.hypot(m.x - x, m.y - y, m.z - z);
-      if (m !== source && md < reach) m.hurt(Math.floor((1 - md / reach) * 7 * power), x, z, 1.5);
+      const dmg = explosionDamage(Math.hypot(m.x - x, m.y - y, m.z - z), power);
+      if (m !== source && dmg > 0) m.hurt(dmg, x, z, 1.5);
     }
   }
 
@@ -1431,7 +1432,7 @@ export class Game {
     const reach = power * 2;
     if (d < reach) {
       const impact = 1 - d / reach;
-      const dmg = Math.floor(((impact * impact + impact) / 2) * 7 * reach + 1);
+      const dmg = explosionDamage(d, power);
       this.stats.damage(dmg, 'explosion', this.mode, by, Math.atan2(p.x - x, p.z - z));
       const len = d || 1;
       p.vx += ((p.x - x) / len) * impact * 14;

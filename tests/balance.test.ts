@@ -4,6 +4,7 @@ import { type MoveInput, Player } from '../src/player/Player';
 import { ITEM, getItemDef, itemFromState, itemId } from '../src/items/ItemRegistry';
 import { BLOCK } from '../src/world/BlockRegistry';
 import { MOB_TYPES } from '../src/entities/MobTypes';
+import { explosionDamage, explosionDropChance } from '../src/entities/Explosion';
 import { Mob, type MobEvents, SKELETON_SHOT_INTERVAL, followRange } from '../src/entities/Mob';
 import { TestWorld } from './helpers';
 
@@ -85,6 +86,21 @@ describe('balance: mob AI', () => {
     for (let i = 0; i < 300; i++) s.tick(floor.get, target, mobEvents(() => shots++));
     expect(SKELETON_SHOT_INTERVAL).toBe(40);
     expect(shots).toBe(5); // ticks 20, 80, 140, 200, 260
+  });
+});
+
+describe('balance: explosions', () => {
+  it('deals floor(7 × power × (impact² + impact) + 1) to mobs and players alike', () => {
+    expect(explosionDamage(0, 3)).toBe(43); // creeper point blank
+    expect(explosionDamage(0, 4)).toBe(57); // TNT point blank
+    expect(explosionDamage(3, 3)).toBe(Math.floor(7 * 3 * (0.25 + 0.5) + 1));
+    expect(explosionDamage(6, 3)).toBe(0);
+    expect(explosionDamage(8, 4)).toBe(0);
+  });
+
+  it('drops every block from TNT and 1/power from other explosions (Java 1.21)', () => {
+    expect(explosionDropChance(4, true)).toBe(1);
+    expect(explosionDropChance(3, false)).toBeCloseTo(1 / 3, 9);
   });
 });
 
