@@ -73,6 +73,7 @@ Docs:
 - **Playwright Chromium on macOS renders in software (SwiftShader) by default.** Launch with `args=['--use-angle=metal']` for real GPU numbers (M1 Pro: ~120 FPS vs ~33 FPS in SwiftShader). Without it every FPS/frame-time measurement is a worst-case-GPU measurement.
 - **Pointer lock fails in automated browsers.** Tests set `game.input.locked = true; game.state = 'playing'`. Never call `page.mouse.move` while `locked` is forced: the mousemove deltas spin the camera. Click through the input state instead: `game.input.pressed.add('Mouse0')` / `game.input.down.add('KeyW')`.
 - **Vite reloads the page mid-test** after merges or worktree changes. For long tests run Vite with a temporary config that sets `server: { hmr: false, watch: null }` (plus the `/ws` and `/api` proxies for multiplayer).
+  With `watch: null` Vite keeps serving the modules it transformed first: restart it after every code change, or you measure old code.
 - **Game creation is rate-limited (6 per hour per visitor).** Start the test server with `ROOM_CREATE_LIMIT=1000`.
 - **`window.game` is a debug hook in dev builds only (`npm run dev`).** In production `window.game` is the `<canvas id="game">` element (named access). Test multiplayer through the Vite dev server (:5173), which proxies `/ws` to :3000.
 - **World generation is asynchronous.** Wait until `game.state !== 'loading'` before manipulating the world.

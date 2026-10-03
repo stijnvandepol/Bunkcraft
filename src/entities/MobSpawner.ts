@@ -5,6 +5,7 @@ import { hash2, mulberry32 } from '../world/Noise';
 import type { ChunkLike, EntityWorld } from './EntityManager';
 import type { Mob, MobTarget } from './Mob';
 import type { MobKind } from './MobTypes';
+import { BIOME } from '../world/Biomes';
 
 /** Tunables, grouped so the tests and the F3 overlay can read them. */
 export const SPAWN = {
@@ -61,6 +62,42 @@ export const PASSIVE_TABLE: readonly SpawnEntry[] = [
   { kind: 'cow', weight: 8, min: 2, max: 4 },
 ];
 
+/**
+ * Rarer monsters, rolled per pack on top of the main table so its tuning stays as it is: endermen (Minecraft weight
+ * 10 against 400) and witches (5).
+ */
+export const RARE_HOSTILE_TABLE: readonly SpawnEntry[] = [
+  { kind: 'enderman', weight: 10, min: 1, max: 2 },
+  { kind: 'witch', weight: 5, min: 1, max: 1 },
+];
+/** Share of packs taken from the rare table: (10 + 5) / (400 + 15). */
+export const RARE_HOSTILE_SHARE = 15 / 415;
+
+/** Biome animals: wolves in forests and taigas (packs of 4), horses on plains (2-6). Share of herds there. */
+export const BIOME_ANIMALS: readonly { biome: number; entry: SpawnEntry; share: number }[] = [
+  { biome: BIOME.FOREST, entry: { kind: 'wolf', weight: 5, min: 4, max: 4 }, share: 0.12 },
+  { biome: BIOME.TAIGA, entry: { kind: 'wolf', weight: 8, min: 4, max: 8 }, share: 0.18 },
+  { biome: BIOME.PLAINS, entry: { kind: 'horse', weight: 5, min: 2, max: 6 }, share: 0.1 },
+];
+
+/** Chance that a naturally spawned animal is a baby (Minecraft: 5 %, onzeker for every kind). */
+export const BABY_CHANCE = 0.05;
+
+/**
+ * Slime chunks: one chunk in ten, fixed per world seed (Minecraft derives it from the seed and chunk coordinates
+ * with java.util.Random; this is a seeded hash with the same density). Slimes spawn there below y 40 in any light.
+ */
+export function isSlimeChunk(seed: number, cx: number, cz: number): boolean {
+  return hash2(seed ^ 0x3ad8025f, cx, cz) < 0.1;
+}
+
+/** Biome variants of the overworld monsters: husks replace 80 % of desert zombies, strays 80 % of snowy skeletons. */
+export function biomeVariant(kind: MobKind, biome: number, roll: number): MobKind {
+  if (kind === 'zombie' && biome === BIOME.DESERT && roll < 0.8) return 'husk';
+  if (kind === 'skeleton' && biome === BIOME.SNOWY && roll < 0.8) return 'stray';
+  return kind;
+}
+
 export function pickEntry(table: readonly SpawnEntry[], roll: number): SpawnEntry {
   let total = 0;
   for (const e of table) total += e.weight;
@@ -108,7 +145,19 @@ export class MobSpawner {
   hostileCount = 0;
   passiveCount = 0;
 
+  /** Counter for the extra rolls (rare monsters, variants, babies): hashed so the main rng sequence stays as it was. */
+  private rolls = 0;
+
   constructor(private readonly host: SpawnHost, private readonly seed: number, private readonly rng: () => number = Math.random) {}
+
+  /** A uniform 0..1 roll that does not consume the main random sequence. */
+  private roll(x: number, z: number): number {
+    return hash2(this.seed ^ 0x6d0b, x * 31 + (this.rolls++), z);
+  }
+
+  private biome(x: number, z: number): number {
+    return this.host.world.biomeName ? this.host.world.biomeName(x, z) : -1;
+  }
 
   /** Recounts the living mobs; call once per tick before spawning. */
   recount(): void {
@@ -142,8 +191,10 @@ export class MobSpawner {
     const r = this.rng;
     const a = r() * Math.PI * 2, d = 24 + r() * 40;
     const x = Math.floor(t.x + Math.cos(a) * d), z = Math.floor(t.z + Math.sin(a) * d);
-    const entry = pickEntry(PASSIVE_TABLE, r());
-    const n = entry.min + Math.floor(r() * (entry.max - entry.min + 1));
+    let entry = pickEntry(PASSIVE_TABLE, r());
+    let n = entry.min + Math.floor(r() * (entry.max - entry.min + 1));
+    const extra = this.biomeAnimal(x, z, this.roll(x, z));
+    if (extra) { entry = extra; n = extra.min + Math.floor(this.roll(z, x) * (extra.max - extra.min + 1)); }
     for (let i = 0; i < n; i++) {
       const px = i === 0 ? x : x + Math.floor((r() - 0.5) * 8), pz = i === 0 ? z : z + Math.floor((r() - 0.5) * 8);
       const y = this.floorY(px, pz, Math.min(CHUNK_HEIGHT - 3, Math.floor(t.y) + 24), 48, true);
@@ -163,8 +214,14 @@ export class MobSpawner {
     if (!chunk.blocks || this.passiveCount >= SPAWN.passiveCap) return;
     const rand = mulberry32((hash2(this.seed ^ 0x51ed, chunk.cx, chunk.cz) * 4294967296) >>> 0);
     if (rand() >= SPAWN.herdChance) return;
-    const entry = pickEntry(PASSIVE_TABLE, rand());
-    const size = entry.min + Math.floor(rand() * (entry.max - entry.min + 1));
+    let entry = pickEntry(PASSIVE_TABLE, rand());
+    let size = entry.min + Math.floor(rand() * (entry.max - entry.min + 1));
+    // Wolves and horses where their biome is (seeded by the chunk like the herd itself).
+    const extra = this.biomeAnimal(chunk.cx * 16 + 8, chunk.cz * 16 + 8, hash2(this.seed ^ 0x77a1, chunk.cx, chunk.cz));
+    if (extra) {
+      entry = extra;
+      size = extra.min + Math.floor(hash2(this.seed ^ 0x77a2, chunk.cx, chunk.cz) * (extra.max - extra.min + 1));
+    }
     // Starting point: the first of a few random columns with an open grass top.
     let sx = -1, sz = -1;
     for (let k = 0; k < 10 && sx < 0; k++) {
@@ -180,6 +237,7 @@ export class MobSpawner {
         if (y < 0) continue;
         const m = this.host.spawnMob(entry.kind, chunk.cx * 16 + lx + 0.5, y + 1, chunk.cz * 16 + lz + 0.5);
         m.homeChunk = chunk.key;
+        if (i > 0 && hash2(this.seed ^ 0x77a3, chunk.cx * 8 + i, chunk.cz) < BABY_CHANCE) m.setBaby(true);
         break;
       }
     }
@@ -196,12 +254,29 @@ export class MobSpawner {
     // Half the attempts look at the surface (scan down from above the player), half anywhere
     // underground within reach (caves), so dark places spawn in daylight as well.
     const surface = r() < 0.5;
+    // Ocean surface attempts: a quarter of them look for drowned in the water (the first measurement, all of
+    // them, made drowned two thirds of the monsters near a coast).
+    if (surface && this.biome(x, z) === BIOME.OCEAN) {
+      if (this.roll(x, z) < 0.25) this.tryDrowned(x, z, t, all, darkness, cap);
+      return;
+    }
     const y = surface
       ? this.floorY(x, z, Math.min(CHUNK_HEIGHT - 3, Math.floor(t.y) + 16), 40, false)
       : this.floorY(x, z, Math.max(6, Math.floor(t.y) - 40 + Math.floor(r() * 52)), 8, false);
     if (y < 0 || !this.darkEnough(x, y, z, darkness)) return;
-    const entry = pickEntry(HOSTILE_TABLE, r());
-    const n = entry.min + Math.floor(r() * (entry.max - entry.min + 1));
+    let entry = pickEntry(HOSTILE_TABLE, r());
+    let n = entry.min + Math.floor(r() * (entry.max - entry.min + 1));
+    // Extra rolls on top of the main table (hashed: the main random sequence is unchanged).
+    if (this.roll(x, z) < RARE_HOSTILE_SHARE) {
+      entry = pickEntry(RARE_HOSTILE_TABLE, this.roll(z, x));
+      n = entry.min + Math.floor(this.roll(x, y) * (entry.max - entry.min + 1));
+    } else if (y < 40 && isSlimeChunk(this.seed, x >> 4, z >> 4) && this.roll(x, z) < 0.3) {
+      entry = { kind: 'slime', weight: 0, min: 1, max: 1 };
+      n = 1;
+    }
+    let kind = biomeVariant(entry.kind, this.biome(x, z), this.roll(z, y));
+    // Deep caves: half the spiders are cave spiders (Minecraft keeps them to mineshaft spawners, which we lack).
+    if (kind === 'spider' && !surface && y < 40 && this.roll(y, x) < 0.5) kind = 'cave_spider';
     for (let i = 0; i < n && this.hostileCount < cap; i++) {
       // Members stand within a few blocks of the first one, on whatever floor is there; a spot
       // that is too bright, blocked or too close gets up to three retries (like Minecraft's pack walk).
@@ -214,11 +289,38 @@ export class MobSpawner {
           if (py < 0 || !this.darkEnough(px, py, pz, darkness)) continue;
         }
         if (!farFromPlayers(all, px + 0.5, py, pz + 0.5)) continue;
-        this.host.spawnMob(entry.kind, px + 0.5, py, pz + 0.5);
+        this.host.spawnMob(kind, px + 0.5, py, pz + 0.5);
         this.hostileCount++;
         break;
       }
     }
+  }
+
+  /** Drowned in the ocean: one or two in water at least 3 deep, dark enough like every monster. */
+  private tryDrowned(x: number, z: number, t: MobTarget, all: readonly MobTarget[], darkness: number, cap: number): void {
+    const w = this.host.world;
+    let top = -1;
+    for (let y = Math.min(CHUNK_HEIGHT - 2, Math.floor(t.y) + 16); y > 4; y--) {
+      const b = w.getBlock(x, y, z);
+      if (b === BLOCK.UNLOADED) return;
+      if (b === BLOCK.WATER) { top = y; break; }
+      if (b !== 0) return;
+    }
+    if (top < 0 || w.getBlock(x, top - 1, z) !== BLOCK.WATER || w.getBlock(x, top - 2, z) !== BLOCK.WATER) return;
+    const y = top - 2;
+    if (!this.darkEnough(x, y, z, darkness) || !farFromPlayers(all, x + 0.5, y, z + 0.5)) return;
+    const n = 1 + Math.floor(this.roll(x, z) * 2);
+    for (let i = 0; i < n && this.hostileCount < cap; i++) {
+      this.host.spawnMob('drowned', x + 0.5 + i, y, z + 0.5);
+      this.hostileCount++;
+    }
+  }
+
+  /** The biome's own animal for a herd at (x, z), or null (most herds stay farm animals). */
+  private biomeAnimal(x: number, z: number, roll: number): SpawnEntry | null {
+    const b = this.biome(x, z);
+    for (const e of BIOME_ANIMALS) if (e.biome === b && roll < e.share) return e.entry;
+    return null;
   }
 
   private darkEnough(x: number, y: number, z: number, darkness: number): boolean {

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { FACE_LAYER, OPAQUE, SOLID } from '../world/BlockRegistry';
+import { BLOCK, FACE_LAYER, OPAQUE, SOLID } from '../world/BlockRegistry';
 import { FOG_GLSL, LIGHT_GLSL, type WorldUniforms } from './Materials';
 
 const MAX = 1024;
@@ -111,6 +111,15 @@ export class Particles {
     }
   }
 
+  /** Critical hit: a short burst of bright sparks around a point. */
+  spawnCrit(x: number, y: number, z: number): void {
+    const n = Math.max(4, Math.round(14 * this.density));
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * Math.PI * 2, r = 1 + Math.random() * 2;
+      this.emit(x, y, z, Math.cos(a) * r, 1 + Math.random() * 2.5, Math.sin(a) * r, BLOCK.GLOWSTONE, 0, 0xff, 0.3 + Math.random() * 0.3, 0xfff0c0);
+    }
+  }
+
   /** A few fragments on the face being mined or where a block was placed. */
   spawnFace(x: number, y: number, z: number, nx: number, ny: number, nz: number, blockId: number, light: number, amount: number, tint = 0xffffff): void {
     const n = Math.max(1, Math.round(amount * this.density));
@@ -140,6 +149,9 @@ export class Particles {
     this.tint[i * 4 + 2] = (tint & 255) / 255;
     this.tint[i * 4 + 3] = OPAQUE[blockId] ? 0 : 1;
   }
+
+  /** Particle count of the last GPU upload. */
+  private uploaded = 0;
 
   update(dt: number, world: BlockQuery): void {
     const p = this.pos, v = this.vel;
@@ -173,6 +185,9 @@ export class Particles {
       i++;
     }
     const n = this.count;
+    // Nothing alive now and nothing uploaded last frame: skip the subarray views and update ranges.
+    if (n === 0 && this.uploaded === 0) return;
+    this.uploaded = n;
     (this.iPos.array as Float32Array).set(p.subarray(0, n * 3));
     (this.iData.array as Float32Array).set(this.data.subarray(0, n * 4));
     (this.iLight.array as Float32Array).set(this.light.subarray(0, n * 2));

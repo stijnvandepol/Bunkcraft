@@ -11,9 +11,9 @@ const seed = Number(process.argv[2] ?? 12345);
 const grid = Number(process.argv[3] ?? 24);
 const blocks = new Uint8Array(CHUNK_VOLUME);
 
-for (const version of [1, 2]) {
+for (const version of [1, 2, 3]) {
   const gen = new TerrainGenerator(seed, version);
-  for (let i = 0; i < 40; i++) gen.generate(i, -i, blocks);
+  for (let i = 0; i < 150; i++) gen.generate(i, -i, blocks);
   const times: number[] = [];
   for (let cz = 0; cz < grid; cz++) {
     for (let cx = 0; cx < grid; cx++) {
@@ -31,5 +31,8 @@ for (const version of [1, 2]) {
     acc += gen.biomeAt(i * 7, -i * 3, Math.floor(h)) + (gen.surfaceOpen(i * 7, -i * 3) ? 1 : 0);
   }
   const spawn = (performance.now() - t0) / 20000 * 1000;
-  console.log(`gen v${version}: mean ${mean.toFixed(2)} ms, p50 ${times[times.length >> 1].toFixed(2)}, p95 ${times[Math.floor(times.length * 0.95)].toFixed(2)}, max ${times[times.length - 1].toFixed(2)} (${times.length} chunks); heightAt+biomeAt+surfaceOpen ${spawn.toFixed(1)} us per column${acc < 0 ? '!' : ''}`);
+  const t1 = performance.now();
+  for (let i = 0; i < 20000; i++) acc += gen.biomeAt(i * 5, i * 3, Math.floor(gen.heightAt(i * 5, i * 3)));
+  const column = (performance.now() - t1) / 20000 * 1000;
+  console.log(`gen v${version}: mean ${mean.toFixed(2)} ms, p50 ${times[times.length >> 1].toFixed(2)}, p95 ${times[Math.floor(times.length * 0.95)].toFixed(2)}, max ${times[times.length - 1].toFixed(2)} (${times.length} chunks); heightAt+biomeAt ${column.toFixed(2)} us, +surfaceOpen ${spawn.toFixed(1)} us per column${acc < 0 ? '!' : ''}`);
 }

@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { ARENA_FLOOR_Y, ARENA_SPAWNS, ArenaGenerator } from '../src/modes/arena';
+import { TEAM } from '../src/modes/maps/ArenaMap';
 import { DEFAULT_MAP, MAPS, MAP_IDS, getMap, nextMap, parseMapId, parseMapSetting } from '../src/modes/maps';
 import { traceBlocks } from '../server/Combat';
-import { BLOCK, SOLID } from '../src/world/BlockRegistry';
+import { BLOCK, BLOCK_DEFS, SOLID } from '../src/world/BlockRegistry';
 import { CHUNK_SIZE, CHUNK_VOLUME, blockIndex } from '../src/world/constants';
 import { arenaMapOf, arenaWorldType, createGenerator, isArenaWorld } from '../src/world/WorldGenerator';
 
@@ -11,10 +12,10 @@ const swapTeam = (id: number) => (id === BLOCK.RED_WOOL ? BLOCK.BLUE_WOOL : id =
 
 describe('arena maps', () => {
   it('has at least three maps with unique ids and a default', () => {
-    expect(MAPS.length).toBe(5);
+    expect(MAPS.length).toBe(11);
     expect(new Set(MAP_IDS).size).toBe(MAP_IDS.length);
     expect(MAP_IDS).toContain(DEFAULT_MAP);
-    expect(MAP_IDS).toEqual(['classic', 'suburb', 'quarter', 'dockyard', 'desert']);
+    expect(MAP_IDS).toEqual(['classic', 'suburb', 'quarter', 'dockyard', 'desert', 'atomic', 'bunker', 'villa', 'yacht', 'town', 'station']);
   });
 
   for (const map of MAPS) {
@@ -24,7 +25,15 @@ describe('arena maps', () => {
       const solid = (x: number, y: number, z: number) => SOLID[at(Math.floor(x), y, Math.floor(z))] === 1;
       const b = map.bounds;
 
-      it(`${label} is mirror symmetric (colours swap left/right)`, () => {
+      if (!map.mirrored) {
+        it(`${label} is fair: the teams get equally many spawns at the same distance from the centre`, () => {
+          expect(map.spawns.blue.length).toBe(map.spawns.red.length);
+          const mean = (s: { x: number; z: number }[]) => s.reduce((a, p) => a + Math.hypot(p.x, p.z), 0) / s.length;
+          expect(Math.abs(mean(map.spawns.red) - mean(map.spawns.blue))).toBeLessThan(1);
+        });
+      }
+
+      if (map.mirrored) it(`${label} is mirror symmetric (colours swap left/right)`, () => {
         let mismatches = 0;
         for (let y = ARENA_FLOOR_Y - 1; y <= ARENA_FLOOR_Y + map.wallHeight + 1; y++) {
           for (let x = b.minX; x < b.maxX; x++) {
@@ -148,6 +157,11 @@ describe('arena maps', () => {
     }
   }
 
+  it('the TEAM placeholder is not a real block id', () => {
+    expect(BLOCK_DEFS.some((d) => d.id === TEAM)).toBe(false);
+    expect(Object.values(BLOCK)).not.toContain(TEAM);
+  });
+
   it('only uses blocks that exist', () => {
     for (const map of MAPS) {
       const b = map.bounds;
@@ -161,7 +175,7 @@ describe('arena maps', () => {
         }
       }
     }
-  }, 60000);
+  }, 180000);
 
   it('maps differ from each other', () => {
     const sig = (id: string) => {

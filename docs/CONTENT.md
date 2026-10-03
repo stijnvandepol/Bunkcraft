@@ -12,7 +12,7 @@ eindtelling per groep staat onderaan bij **Status**.
 | Colored Blocks | 250+ (wol, beton, terracotta, glas, tapijt, bedden, kaarsen, banners, shulkers) | Tier 1: wol, beton, terracotta, geglazuurd terracotta, gekleurd glas + ruiten, tapijt, bedden (16 kleuren). Tier 2: kaarsen, banners, shulkerkisten, concrete powder (zwaartekracht) |
 | Natural Blocks | 250+ (grond, erts, planten, bloemen, koraal) | Tier 1: aarde-varianten, zand, erts (kool, ijzer, goud, diamant, koper, lapis, redstone, smaragd), bladeren (8), saplings (7), bloemen, pompoen, meloen, sneeuw, ijs, klei, mos, hooibaal. Tier 2: koraal, amethist, dripstone, azalea, kelp, bamboe. Nooit: Nether-erts en -planten |
 | Functional Blocks | 150 (torches, kisten, ovens, tafels, borden, deuren) | Tier 1: crafting table, furnace, kist (27 slots), boekenkast, ladder, fakkel, lantaarn, zeelantaarn, glowstone, TNT. Tier 2: blast furnace, smoker, anvil, grindstone, enchanting, brewing, borden, vaten (container-systemen) |
-| Redstone Blocks | 50 | Alleen lijst: knoppen, drukplaten, hendels, repeaters, comparators, zuigers, dispensers, hoppers, rails, observers, redstone lamp. Tier 2 (redstone-systeem ontbreekt). Redstone stof en redstoneblok zijn wel items/blokken |
+| Redstone Blocks | 50 | Alleen lijst: knoppen, drukplaten, hendels, repeaters, comparators, zuigers, dispensers, hoppers, rails, observers, redstone lamp. Minimaal systeem gebouwd (zie hieronder, Redstone); comparators, observers, hoppers, dispensers en rails nog niet |
 | Tools & Utilities | 80 | Tier 1: houweel, bijl, schop, schoffel (5 tiers), schaar, emmers, vuur-en-staal. Tier 2: hengel, kompas, klok, kaart, boten, minecarts |
 | Combat | 60 | Tier 1: zwaarden (5 tiers), harnas (leer, maliën, ijzer, goud, diamant: 20 stukken), boog, pijl, bijl. Tier 2: schild, kruisboog, trident, enchanting, totem. Nooit: netherite (smithing), elytra |
 | Food & Drinks | 70 | Tier 1: brood, appel, gouden appel, koekje, gebakken aardappel, wortel, aardappel, vlees (rauw en gebakken), meloen, pompoentaart, stoofpot, vis. Tier 2: potions, melk, honing (brewing, vee). Nooit: Nether/End-voedsel |
@@ -86,7 +86,7 @@ Duurzaamheid = basis (11/16/15/13) × multiplier (leer 5, maliën 15, ijzer 15, 
 | Colored Blocks | 129 | 16 × (wol, tapijt, bed, terracotta, geglazuurd, beton, glas, glasruit) + terracotta |
 | Natural Blocks | 70 | grond, erts, logs, 8 bladsoorten, 7 saplings, 10 bloemen, paddenstoelen, suikerriet, pompoen, meloen, hooibaal, spinnenweb |
 | Functional Blocks | 15 | werkbank, oven, kist, boekenkast, ladder, fakkel, lantaarn, glowstone, zeelantaarn, uitgesneden pompoen, TNT, tralies, glasruit |
-| Redstone Blocks | 3 | alleen redstone-stof, redstoneblok en TNT: de rest is tier 2 |
+| Redstone Blocks | 19 | stof, fakkel, redstoneblok, repeater, (sticky) zuiger, hendel, knoppen, drukplaten, nootblok, lamp, TNT, deur, luik, hekpoort |
 | Tools & Utilities | 26 | schop, houweel, bijl, schoffel (5 tiers), schaar, vuur-en-staal, emmers, kom |
 | Combat | 32 | zwaarden en bijlen (5 tiers), boog, pijl, 20 harnasstukken |
 | Food & Drinks | 29 | 10 vleessoorten, appel, gouden appel, brood, koekje, aardappel, wortel, meloen, taart, stoofpot, vis, bessen |
@@ -111,27 +111,49 @@ Totaal: **182 bloktypes** (hoogste id 185 van 254, dus nog ruim 60 vrij), ~480 u
   hekken en muren zijn 1,5 hoog (de botsing kijkt daarom één cel lager). Een bed is twee blokken, een ladder klimt via `Player.step`.
 - **Furnace, kist en pompoenen** hebben een richting (`meta & 3` bepaalt welke zijde de voorkant toont). `meta 0` is de oude vaste voorkant, dus
   bestaande ovens veranderen niet.
-- **Chests** (`ContainerStore`, `WorldMeta.containers`): de inhoud staat los van de chunks en wordt met de wereld opgeslagen. In multiplayer slaat de server
-  geen containers op; kisten zijn daar niet te plaatsen.
+- **Block entities** (`src/world/BlockEntities.ts`): kist en oven bewaren hun inhoud per positie in een `BlockEntityStore`
+  per wereld. Ze ontstaan bij plaatsen, verdwijnen bij breken (inhoud valt eruit in survival) en tikken alleen als ze iets
+  te doen hebben en hun chunk geladen is. Opslag: singleplayer `WorldMeta.blockEntities` (save-versie 4; de oude
+  `WorldMeta.containers` wordt bij het laden omgezet), de server in `world.json` (`blockEntities`). Andere soorten (spawner,
+  bord, bed, banner) registreren zich met `registerBlockEntityKind`.
+- **Dubbele kist:** een kist naast een kist met dezelfde richting wordt één kist van 54 slots. State-bits: 0-1 richting,
+  bit 2 = linker/lage helft (houdt de 54 slots), bit 3 = rechter/hoge helft. Breek je één helft, dan vallen de 27 slots van
+  die helft eruit en blijft de andere een enkele kist. Een helft zonder echte partner telt als enkele kist. Beide helften
+  zien er nog uit als twee enkele kisten (geen eigen textuur).
+- **Oven** (`src/items/Smelting.ts`): input-, brandstof- en outputslot, kooktijd 200 ticks (blast furnace en smoker 100,
+  klaar in de code maar nog zonder blok), brandstoftabel van de wiki (lavaemmer 20000 → lege emmer, kolenblok 16000, kool en
+  houtskool 1600, hout 300, houten gereedschap 200, stok 100, ...), voortgang zakt 2 per tick zonder vuur. XP per recept
+  wordt in de oven bewaard (`xpStored`) en bij het pakken van de output uitgedeeld (`takeXp()`, hook `onXpAwarded` /
+  `Game.onFurnaceXp` voor het XP-systeem). Brandend is een eigen blok-id `lit_furnace` (86) met licht 13 en een gloeiende
+  voorkant; het valt als gewone oven. De smelt-recepten in het receptenboek zijn naslag: smelten gaat alleen in een oven.
+- **Loot-tabellen** (`src/items/Loot.ts`): pools met rolls, gewogen entries, aantallen en condities (`killed_by_player`,
+  `chance`, `looting_chance`), deterministisch met `seededRng(hashSeed(...))`. `fillContainer` strooit de stacks over
+  willekeurige vrije slots zoals Minecraft.
 - **Per-stack data:** `ItemStack.data?: Record<string, number>` met een append-only sleutellijst (`ITEM_DATA_KEYS`). Opslagformaat
   `[id, count, damage, sleutel, waarde, ...]`, dus oude saves (3 getallen) blijven geldig; `drop` en `taken` dragen `data` mee.
 - **Harnas** zit als 4 extra records (slot 36-39) in `PlayerInventory.serialize()`: oude saves en de server (limiet 64 records) blijven werken.
+
+- **Enchantments en naam** staan in dezelfde `data`: elke enchantment is een sleutel met het level, `repair_cost` is de prior-work-straf
+  van de anvil en een eigen naam staat in `custom_name` t/m `custom_name_7` (drie UTF-16-tekens per getal, max 24 tekens; `EnchantRules.customName`).
+  Een rij mag daarom 40 getallen lang zijn (server: `InventoryGuard`, `drop`). Het **enchanted book** is item 900 met zijn enchantments in `data`.
+  Enchanting table (250), anvil (251, variant: chipped/damaged in bits 2-3) en grindstone (252) hebben id's bovenin het bereik zodat de
+  append-only content-tabellen eronder kunnen groeien.
 
 ### Wat bewust anders is dan vanilla
 
 - Beton heeft geen poeder (4 zand + 4 grind + kleurstof → 8 beton); kleurstoffen: bruin (cacao), zwart (inktzak) en grijs (heeft zwart nodig) hebben nog geen bron.
 - Een bed zet je respawnpunt en slaapt 's nachts door, zonder spelers-in-bed-telling of monstercheck.
-- Mud bricks en hooi vragen tarwe, dus landbouw (tier 2). Het brood-, koekje-, taart- en leerrecept zijn er, maar wat ze als grondstof nodig hebben ontbreekt nog in de wereld
-  (tarwe, cacao, eieren, leer van koeien). `tests/recipes.test.ts` houdt dit lijstje bij ("OUT_OF_REACH").
+- Mud bricks en hooi vragen tarwe, dus landbouw (tier 2). Het brood-, koekje- en taartrecept zijn er, maar wat ze als grondstof nodig hebben ontbreekt nog in de wereld
+  (tarwe, cacao, eieren). Koeien laten sinds de balans-audit 0–2 leer vallen (`docs/qa/BALANCE.md`). `tests/recipes.test.ts` houdt dit lijstje bij ("OUT_OF_REACH").
 - Een kist is een volle kubus (geen kleinere kist met deksel) en heeft geen dubbele variant.
-- Boekenkast blijft 6 planken (vanilla: + 3 boeken), omdat leer nog geen bron heeft.
+- Boekenkast blijft 6 planken (vanilla: + 3 boeken); nu leer van koeien komt, kan het vanilla-recept terug.
 - Gouden appel geeft honger en saturatie maar nog geen Absorption en Regeneration (geen effectensysteem).
 - Het bed, de kist en de lantaarn hebben procedurele texturen (in een Minecraft-jar zijn ze entity-textures); de rest wordt wel uit een geïmporteerd jar geladen.
 - Een ontploft blok laat een gekleurd blok als witte wol vallen (`World.explode` kent de state van vernietigde blokken niet).
 
 ### Tier 2 en nooit
 
-Tier 2: redstone en alles ervan, landbouw met groeifases en random ticks, enchanting, brouwen, smithing en netherite, anvil, grindstone, blast furnace, smoker,
+Tier 2: comparator, observer, hopper, dispenser, rails, landbouw met groeifases en random ticks, brouwen, smithing en netherite, blast furnace, smoker,
 stonecutter, schild, kruisboog, hengel en vis, boten en minecarts, kaarsen, banners, borden, koraal, amethist, dripstone, azalea, kelp en bamboe, concrete powder,
 doorzichtig glas en ijs, kisten in multiplayer, dubbele kisten, vallende blokken. Nooit: Nether en End (blackstone, crimson/warped, quartz, purpur, end stone,
 prismarine), Deep Dark, Trial Chambers, spawn eggs en operator-blokken.
@@ -141,3 +163,20 @@ prismarine), Deep Dark, Trial Chambers, spawn eggs en operator-blokken.
 Voor de nieuwe blokken zijn uit de Pixel Perfection-repo (CC BY-SA 4.0) 38 textures toegevoegd in `public/texturepacks/pixel-perfection/`: jungle- en acaciahout, kistzijden,
 metaalblokken, rood zand, ijs, ladder, suikerriet, hooi, paddenstoelen, tulp en saplings. Alles wat het pack niet heeft blijft procedureel
 (`src/rendering/ContentPainters.ts`). De namen voor een Minecraft-jar staan in `MINECRAFT_LAYOUT` (`MINECRAFT_SAME_NAME` voor de textures met dezelfde naam).
+
+### Redstone
+
+Zie `ROADMAP.md` 4d voor gedrag en vereenvoudigingen. Blok-ids: stof 87, hendel 88, knop 89 (de vrije ids na `LIT_FURNACE`), repeater 241,
+drukplaat 242, onderdeel 243–249 (zuigerkop 243, sticky zuiger 244, zuiger 245, nootblok 246, lamp aan 247, lamp 248, fakkel 249).
+Box-vormen 12–19 (`RedstoneShapes.ts`). State bytes:
+
+| Blok | Bits |
+|---|---|
+| stof | 0-3 signaal (verbindingen afgeleid uit de buren) |
+| hendel, knop, fakkel | 0-2 richting van het blok waaraan hij vastzit (vlakvolgorde +X −X +Y −Y +Z −Z), bit 3 aan/ingedrukt/uit (fakkel), knop bit 4 eik |
+| drukplaat | 0 ingedrukt, 1 eik |
+| repeater | 0-1 richting van het signaal, 2-3 vertraging − 1, 4 aan |
+| nootblok | 0-4 toon, 5 gevoed |
+| zuiger / kop | 0-2 richting, bit 3 uitgeschoven / sticky |
+
+Textures procedureel (`RedstonePainters.ts`, 14 lagen); de Minetest-`mesecons`-textures zijn niet gebruikt (andere stijl, niet in Pixel Perfection).

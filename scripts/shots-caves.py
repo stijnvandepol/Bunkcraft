@@ -16,7 +16,7 @@ spots_file, out = sys.argv[1], sys.argv[2]
 port = sys.argv[3] if len(sys.argv) > 3 else '5188'
 seed = sys.argv[4] if len(sys.argv) > 4 else '12345'
 spots = json.load(open(spots_file))
-VIEWS = [(k, spots[k]) for k in ('entrance', 'ravineAbove', 'ravineInside', 'cavernLava', 'lake', 'ore') if spots.get(k)]
+VIEWS = [(k, spots[k]) for k in ('entrance', 'ravineAbove', 'ravineInside', 'cavernLava', 'lake', 'ore', 'deepOre') if spots.get(k)]
 
 with sync_playwright() as p:
     browser = p.chromium.launch(args=['--use-angle=metal', '--ignore-gpu-blocklist'])
@@ -49,7 +49,7 @@ with sync_playwright() as p:
             g.input.locked = true; g.state = 'playing';
             document.querySelector('.click-to-play')?.remove();
             // Caves are pitch dark: a glowstone above the camera lights the view (interior shots only).
-            if ({'true' if name in ('ravineInside', 'cavernLava', 'lake', 'ore') else 'false'}) {{
+            if ({'true' if name in ('ravineInside', 'cavernLava', 'lake', 'ore', 'deepOre') else 'false'}) {{
                 g.world.setBlock(Math.floor({v['x']}), Math.floor({v['y']}) + 3, Math.floor({v['z']}), 28);
             }}
         }}""")

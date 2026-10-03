@@ -1,5 +1,5 @@
 import { ARMOR_MATERIALS, FOODS, MATERIALS } from '../items/ItemContent';
-import { ITEM, ITEM_ID, ALL_ITEMS, getItemDef, itemFromState } from '../items/ItemRegistry';
+import { ITEM, ITEM_ID, ALL_ITEMS, getItemDef, itemFromState, SHIELD } from '../items/ItemRegistry';
 import { BLOCK, BLOCK_DEFS, CUBE_ID, PARTIAL_MATERIALS, SLAB_FIRST, STAIRS_FIRST } from '../world/BlockRegistry';
 import { DYES, WOODS } from '../world/Content';
 
@@ -87,19 +87,23 @@ export function buildCreativeTabs(): CreativeTab[] {
   const functional = ids([
     B.CRAFTING_TABLE, B.FURNACE, byName('chest'), B.BOOKSHELF, byName('ladder'), B.TORCH, byName('lantern'), B.GLOWSTONE, blk('sea_lantern'),
     blk('carved_pumpkin'), blk('jack_o_lantern'), byName('bed'), B.TNT, byName('iron_bars'), byName('glass_pane'),
+    B.ENCHANTING_TABLE, ...variants(B.ANVIL), B.GRINDSTONE,
   ]);
 
-  const redstone = ids([itm('redstone'), blk('redstone_block'), B.TNT]);
+  const redstone = ids([
+    itm('redstone'), B.REDSTONE_TORCH, blk('redstone_block'), B.REPEATER, B.PISTON, B.STICKY_PISTON, B.LEVER, ...variants(B.BUTTON),
+    ...variants(B.PRESSURE_PLATE), B.NOTE_BLOCK, B.REDSTONE_LAMP, B.TNT, ...variants(B.OAK_DOOR).slice(0, 1), byName('trapdoor'), byName('fence_gate'),
+  ]);
 
   const tiers = ['wooden', 'stone', 'iron', 'diamond', 'golden'];
   const tool = (kind: string): number[] => tiers.map((t) => ITEM_ID[`${t}_${kind}`]);
   const tools = ids([
     ...tool('shovel'), ...tool('pickaxe'), ...tool('axe'), ...tool('hoe'), ITEM.SHEARS, ITEM.FLINT_AND_STEEL,
-    ITEM.BUCKET, ITEM.WATER_BUCKET, ITEM.LAVA_BUCKET, itm('bowl'),
+    ITEM.BUCKET, ITEM.WATER_BUCKET, ITEM.LAVA_BUCKET, ITEM_ID.milk_bucket, ITEM_ID.saddle, ITEM_ID.ender_pearl, itm('bowl'),
   ]);
 
   const armorIds = ARMOR_MATERIALS.flatMap((m) => ['helmet', 'chestplate', 'leggings', 'boots'].map((s) => ITEM_ID[`${m.name}_${s}`]));
-  const combat = ids([...tool('sword'), ...tool('axe'), ITEM.BOW, ITEM.ARROW, ...armorIds]);
+  const combat = ids([...tool('sword'), ...tool('axe'), ITEM.BOW, ITEM.ARROW, SHIELD, ...armorIds]);
 
   const meat = ['porkchop', 'cooked_porkchop', 'beef', 'steak', 'mutton', 'cooked_mutton', 'chicken', 'cooked_chicken', 'rotten_flesh', 'spider_eye'];
   const foodIds = [
@@ -110,7 +114,7 @@ export function buildCreativeTabs(): CreativeTab[] {
 
   const ingredientNames = ['coal', 'charcoal', 'raw_iron', 'raw_copper', 'raw_gold', 'iron_ingot', 'copper_ingot', 'gold_ingot', 'iron_nugget',
     'gold_nugget', 'diamond', 'emerald', 'lapis_lazuli', 'redstone', 'flint', 'stick', 'string', 'feather', 'bone', 'bone_meal', 'gunpowder',
-    'leather', 'paper', 'book', 'clay_ball', 'brick', 'snowball', 'glowstone_dust', 'sugar', 'wheat', 'wheat_seeds', 'pumpkin_seeds', 'melon_seeds',
+    'egg', 'slime_ball', 'leather', 'paper', 'book', 'clay_ball', 'brick', 'snowball', 'glowstone_dust', 'sugar', 'wheat', 'wheat_seeds', 'pumpkin_seeds', 'melon_seeds',
     'ink_sac', ...DYES.map((d) => `${d.name}_dye`)];
   const ingredients = ids(ingredientNames.map((n) => ITEM_ID[n]));
 

@@ -1,4 +1,5 @@
 import { FACING_DX, FACING_DZ, NORTH, SOUTH, WEST, EAST } from './BlockStates';
+import { redstoneBoxes } from './RedstoneShapes';
 
 /**
  * Thin and connecting blocks built from a few boxes: carpets, trapdoors, fence gates, fences, walls, glass panes,
@@ -11,7 +12,10 @@ import { FACING_DX, FACING_DZ, NORTH, SOUTH, WEST, EAST } from './BlockStates';
  *  - fence: bits 0-2 wood (variant); wall: bits 0-4 material (variant); the connections are derived from the neighbours;
  *  - pane: bits 0-3 colour (stained glass pane) or nothing; iron bars: nothing;
  *  - ladder: bits 0-1 the side of the wall it is fixed to;
- *  - bed: bits 0-1 the way from foot to head, bit 2 head half, bits 3-6 colour (variant).
+ *  - bed: bits 0-1 the way from foot to head, bit 2 head half, bits 3-6 colour (variant);
+ *  - enchanting table: nothing (a 12 px high slab);
+ *  - anvil: bits 0-1 facing (east/west turn it), bits 2-3 damage: anvil, chipped, damaged (variant);
+ *  - grindstone: bits 0-1 facing (east/west turn it).
  */
 
 export const BOX_NONE = 0;
@@ -23,6 +27,9 @@ export const BOX_WALL = 5;
 export const BOX_PANE = 6;
 export const BOX_LADDER = 7;
 export const BOX_BED = 8;
+export const BOX_TABLE = 9;
+export const BOX_ANVIL = 10;
+export const BOX_GRINDSTONE = 11;
 
 export const TRAPDOOR_TOP_BIT = 4;
 export const TRAPDOOR_OPEN_BIT = 8;
@@ -84,9 +91,31 @@ export function visualBoxes(kind: number, meta: number, connect: number, out: Fl
       for (let s = 0; s < 4; s++) if (connect & SIDE_BIT[s]) n = arm(out, n, s, 7 * P, 9 * P, 0, 1, 7 * P);
       return n;
     }
+    case BOX_TABLE:
+    case BOX_ANVIL:
+    case BOX_GRINDSTONE:
+      return stationBoxes(kind, meta, out);
     default:
-      return 0;
+      return redstoneBoxes(kind, meta, connect, out, true);
   }
+}
+
+/** Boxes of the enchanting table, anvil and grindstone in 1/16 units, the long side along z; east/west facing turns them. */
+const STATION_MODELS: Record<number, number[][]> = {
+  [BOX_TABLE]: [[0, 0, 0, 16, 12, 16]],
+  // Minecraft's anvil: foot, two neck pieces and the long top.
+  [BOX_ANVIL]: [[2, 0, 2, 14, 4, 14], [4, 4, 3, 12, 5, 13], [6, 5, 4, 10, 10, 12], [3, 10, 0, 13, 16, 16]],
+  // Grindstone: the wheel between two posts, with the pivots.
+  [BOX_GRINDSTONE]: [[6, 4, 2, 10, 16, 14], [2, 0, 6, 4, 13, 10], [12, 0, 6, 14, 13, 10], [4, 7, 7, 6, 11, 9], [10, 7, 7, 12, 11, 9]],
+};
+
+function stationBoxes(kind: number, meta: number, out: Float64Array | number[]): number {
+  const turn = kind !== BOX_TABLE && ((meta & FACING_MASK) === EAST || (meta & FACING_MASK) === WEST);
+  let n = 0;
+  for (const [x0, y0, z0, x1, y1, z1] of STATION_MODELS[kind]) {
+    n = turn ? put(out, n, z0 * P, y0 * P, x0 * P, z1 * P, y1 * P, x1 * P) : put(out, n, x0 * P, y0 * P, z0 * P, x1 * P, y1 * P, z1 * P);
+  }
+  return n;
 }
 
 /** Collision boxes: like the visual ones, but fences, walls and gates are 1.5 blocks tall and arms are merged. */
@@ -112,8 +141,12 @@ export function boxCollision(kind: number, meta: number, connect: number, out: F
       for (let s = 0; s < 4; s++) if (connect & SIDE_BIT[s]) n = arm(out, n, s, 7 * P, 9 * P, 0, 1, 7 * P);
       return n;
     }
+    case BOX_TABLE:
+    case BOX_ANVIL:
+    case BOX_GRINDSTONE:
+      return stationBoxes(kind, meta, out);
     default:
-      return 0;
+      return redstoneBoxes(kind, meta, connect, out, false);
   }
 }
 

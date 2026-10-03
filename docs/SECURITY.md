@@ -64,6 +64,89 @@ kamernamen, MOTD, wereldnamen, packnamen en advancements gebruiken `textContent`
 `normalizeCode` en worden daarna uit de URL gehaald. `npm audit`: 0 kwetsbaarheden; alle 131 pakketten in
 `package-lock.json` hebben `resolved` (npmjs.org) en `integrity`.
 
+## Arcade: anti-cheat en netcode (`server/anticheat/`)
+
+De arcade-modes vertrouwden de client tot nu toe bijna volledig (zie `docs/research/ARCADE.md` §5: geen botsing met
+blokken, y tot vloer+40, `dt` geklemd op 0,05 s, iedereen kreeg iedereen in `snap`, schoten tot 1,6 blok naast de
+server-positie, 350 ms lag-compensatie). Nu geldt per arcade-kamer:
+
+**Bewegingscontrole** (`Movement.ts`, DOM-vrij). Elke `pos` gaat langs dezelfde botsingscode als de client
+(`boxIntersectsSolid` uit `src/player/Collision.ts`, met blokstanden), tegen de arena van de server:
+
+| Regel | Wat | Drempel |
+|---|---|---|
+| `noclip` | positie in een vast blok | spelerbox 0,6 × 1,8, 0,03 marge |
+| `wall` | geen botsingsvrije route van de laatste geldige positie (verticaal/horizontaal in beide volgordes, recht of om een hoek), of buiten de kaart | monsters per 0,25 blok |
+| `speed` / `teleport` | horizontale afstand tegen een token bucket die met *echte* tijd vult | `sprint × 1,3 × moveSpeed van het wapen × 1,03`; bucket 0,5 s + 0,75 blok; > 10 blok in één keer = teleport |
+| `rise` / `fall` | verticale snelheid | sprong 8,9 b/s (+0,6 step-up), val ≤ 60 b/s |
+| `fly` | zonder ondergrond (of water/ladder) moet de speler de sprongparabool volgen: niet zweven, glijden of klimmen | apex 1,32 blok, 0,2 s timing-marge, bunny hops herkend via de grond onder de afzet |
+
+Wapenwissel: een seconde lang geldt de hoogste van oude en nieuwe snelheid. CTF: de vlagdrager mag 10 % langzamer
+(`params.carrySlow`), ook op de server. Een overtreding zet de speler terug op de laatste geldige positie
+(`teleport`; latere `pos` worden genegeerd tot hij daar is) en geeft strafpunten per regel (noclip/teleport/wall 3,
+fly/rise 2, speed 1) die met 0,2 per seconde afnemen. Bij 10 punten volgt een kick, na drie kicks binnen 30 minuten een
+ban in die kamer (alleen op naam, geen IP-hash: gedeelde netwerken). Ops houden hun kick, de eigenaar wordt nooit
+gekickt. Een lag-piek (stilte > 150 ms, daarna een burst) wordt wel gecorrigeerd maar telt niet, zolang de afstand
+binnen de looptijd sinds de laatste geldige positie past en het niet vaker dan 4× kort na elkaar gebeurt.
+Logregel `cheat` (`kind: movement`, `rule`, `strikes`, `action`), `/metrics`: `bunkcraft_cheat_events_total{rule}`,
+`bunkcraft_cheat_kicks_total`, `bunkcraft_cheat_bans_total`.
+
+*Vals-positiefvrij*: `tests/anticheatMovement.test.ts` speelt willekeurige invoer (lopen, strafen, draaien, bunny hops,
+tegen muren aan) door de echte `Player.step` op alle arcade-kaarten en een Minecraft-wereld met trappen, slabs,
+ladders, water en vliegen, met 20-30 Hz `pos`, jitter tot 60 ms en bursts van 4 pakketten. Standaard 24 seeds per
+kaart; met `MOVE_SEEDS=300` (60 000 s spel) nul overtredingen. `scripts/cheat-bots.ts`: twee eerlijke bots lopen en
+vechten 120 s, 0 correcties, 0 strafpunten.
+
+**Schoten** (`AimCheck.ts`, `LagComp.ts`, `Suspicion.ts`).
+- De richting moet een eenheidsvector zijn (|d| = 1 ± 0,02), anders wordt het schot genegeerd (`aim-vector`).
+- De oorsprong mag hoogstens 0,6 blok van het server-oog liggen, geëxtrapoleerd langs de laatste snelheid over de
+  tijd sinds de laatste `pos` (max 0,1 s); anders schiet de server vanuit zijn eigen oog (`origin`).
+- Lag-compensatie: `min(250 ms, RTT/2 + interpolatievertraging)` (was RTT + 100 ms, max 350 ms).
+- Peeker's advantage: een slachtoffer dat 150 ms vóór het schot al achter dekking stond (gezien vanuit de oorsprong,
+  drie lichaamspunten) wordt niet verder teruggespoeld. Test: slachtoffer rent achter dekking, schutter met 200 ms
+  ping schiet 200 ms later: mis; 100 ms later: nog raak (normale lag-compensatie).
+- Verdenkingsscore 0-100 per speler over de laatste 40 schoten: headshot-ratio van de treffers, trefkans op meer
+  dan 30 blok, "snap"-treffers (≥ 20° en ≥ 600°/s sinds het vorige schot) en schoten waarvan de richting > 25° afwijkt
+  van de kijkrichting uit de laatste `pos`. Vanaf 40: logregel `cheat` (`kind: aim`) en
+  `bunkcraft_suspicion_flags_total`; zichtbaar (alleen-lezen) in `/admin` per speler. Nooit een automatische ban;
+  een kick alleen met `ARCADE_AUTOKICK_SCORE` (standaard uit). Eerlijke bots: 0, de aimbot in `cheat-bots.ts`: 40-55.
+
+**Informatie verbergen (anti-wallhack)** (`Visibility.ts`). Tijdens een lopende match krijgt elke speler alleen
+vijanden die hij kan zien: zichtlijn (alleen ondoorzichtige volle blokken blokkeren; glas, slabs, hekken niet) van
+zijn oog nu of in de laatste 0,5 s naar voeten, borst of hoofd, met 0,45 blok zijmarge rond borst en hoofd; of
+binnen 12 blok; of de vijand schoot in de laatste 0,5 s. Teamgenoten en spelers die dood zijn (toeschouwer) krijgen
+iedereen. Een vijand die uit beeld raakt gaat 300 ms met vlag 8 (`stale`, laatste zichtbare positie) mee, daarna
+niet meer; de client verbergt naamlabel, model en wapen en begint de interpolatie opnieuw als hij terugkomt (geen
+glijden door muren). De roster en het scorebord blijven compleet. Zichtlijnen worden per paar op 10 Hz gecached
+(gespreid); kosten met 16 spelers ongeveer 0,03-0,1 ms per tick (`scripts/bench-arena.ts`). `ARCADE_CULLING=off`
+schakelt het uit.
+
+**Tickrate en snapshotgrootte.** Arcade-kamers tikken op `ARCADE_TICK_HZ` (standaard 30); clients interpoleren twee
+ticks terug (67 ms) en sturen hun positie tot 30 Hz. Binair formaat versie 2 (`binv: 2` in `hello`,
+`binaryVersion: 2` in `welcome`): posities als int16 in 1/32 blok rond een kamer-oorsprong, hoeken als u16, een
+vlaggenbyte: 13 i.p.v. 21 bytes per speler. Oude clients houden versie 1 of JSON. Meting (16 spelers, tdm op classic,
+60 s, eerlijke bots, `scripts/bench-arena.ts`; tijden zijn ruisig op een gedeelde machine):
+
+| Configuratie | `snap` B/s per speler | totaal uit per speler | tick() gemiddeld | CPU per seconde |
+|---|---|---|---|---|
+| vóór: 20 Hz, JSON, geen culling | 8 625 | 14,9 KiB/s | 0,073 ms | 6,7 ms |
+| 20 Hz, binair v1 | 6 780 | 13,2 KiB/s | 0,033 ms | 5,2 ms |
+| 30 Hz, binair v1 | 10 170 | 18,4 KiB/s | 0,032 ms | 6,8 ms |
+| 30 Hz, binair v2 (gekwantiseerd) | 6 510 | 14,4 KiB/s | 0,053 ms | 6,4-12,6 ms |
+| **na: 30 Hz, binair v2, culling** | **5 937** | **14,2 KiB/s** | 0,053-0,113 ms | 7,2-11,2 ms |
+| 30 Hz, JSON-client, culling | 11 763 | 19,9 KiB/s | 0,305 ms | 21,5 ms |
+
+Dus 1,5× zo vaak bijwerken voor ~30 % minder snapshotbytes dan vroeger. De rest van het verkeer (tracers, ammo,
+treffers) is nu groter dan de snapshots. Culling bespaart op open kaarten weinig bytes; het doel is dat een wallhack
+niets ziet.
+
+**Wat er nog openstaat.** Geen server-side simulatie van invoer (de server controleert wat mogelijk is, niet wat
+de toetsen deden): een speedhack binnen 3 % of een mini-zweef < 0,9 blok boven de grond blijft onopgemerkt. Positie-
+en aim-gegevens van teamgenoten gaan naar iedereen in het team. Tracers (`shot`) gaan naar iedereen en onthullen de
+schutter (bewust, net als de 0,5 s-regel). De verdenkingsscore is een heuristiek met vaste drempels; met echte
+spelersdata kalibreren. Geen client-integriteit (een gemodde client kan nog steeds zijn eigen camera automatiseren
+zolang hij de kijkrichting in `pos` meestuurt).
+
 ## Content-Security-Policy
 
 ```

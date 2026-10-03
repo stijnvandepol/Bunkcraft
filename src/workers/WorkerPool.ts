@@ -74,7 +74,8 @@ export class WorkerPool {
     this.workers[idx] = fresh;
     this.idle.push(fresh);
     if (job) {
-      if (++job.attempts >= MAX_ATTEMPTS) job.onFail?.();
+      // A job with transferred buffers cannot be rerun (the buffers are detached): fail it, the caller rebuilds it.
+      if (job.transfer.length > 0 || ++job.attempts >= MAX_ATTEMPTS) job.onFail?.();
       else (job.priority ? this.high : this.normal).unshift(job);
     }
     this.pump();
@@ -93,8 +94,8 @@ export class WorkerPool {
   }
 
   /**
-   * `onFail` runs when the job crashed its worker too often and was dropped. Note that jobs with
-   * a transfer list cannot be retried meaningfully (the buffers are detached); none use one today.
+   * `onFail` runs when the job crashed its worker too often and was dropped. A job with a transfer
+   * list is never retried (its buffers are detached): it fails on the first crash.
    */
   submit(
     request: WorkerRequest, callback: Callback, transfer: Transferable[] = [], priority = false,
@@ -105,6 +106,23 @@ export class WorkerPool {
     if (priority) this.high.push(job);
     else this.normal.push(job);
     this.pump();
+  }
+
+  private recycling: ArrayBuffer[] = [];
+  private nextRecycle = 0;
+
+  /** Hand a buffer that the main thread no longer needs back to a worker's pool (sent on the next `flushRecycle`). */
+  recycle(buffer: ArrayBuffer): void {
+    if (buffer.byteLength > 0) this.recycling.push(buffer);
+  }
+
+  /** Send the collected buffers to one worker in a single zero-copy message. Call once per frame. */
+  flushRecycle(): void {
+    if (this.recycling.length === 0 || this.disposed || this.workers.length === 0) return;
+    const buffers = this.recycling;
+    this.recycling = [];
+    const w = this.workers[this.nextRecycle++ % this.workers.length];
+    w.postMessage({ type: 'recycle', id: 0, buffers }, buffers);
   }
 
   private pump(): void {
