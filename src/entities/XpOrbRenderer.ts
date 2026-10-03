@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { FOG_GLSL, type WorldUniforms } from '../rendering/Materials';
+import { FOG_GLSL, LIGHT_GLSL, type WorldUniforms } from '../rendering/Materials';
 import type { XpOrb } from './XpOrb';
 
 const MAX = 192;
@@ -77,6 +77,7 @@ export class XpOrbRenderer {
         }
       `,
       fragmentShader: /* glsl */ `
+        ${LIGHT_GLSL}
         ${FOG_GLSL}
         uniform sampler2D uOrbs;
         uniform float uTime;
