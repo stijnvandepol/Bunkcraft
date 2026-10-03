@@ -84,6 +84,9 @@ const FACES: FaceDef[] = [
 const CU = [0, 1, 1, 0];
 const CV = [0, 0, 1, 1];
 
+/** Returns an ArrayBuffer of at least the requested size (the worker recycles them through a pool). */
+export type BufferAlloc = (bytes: number) => ArrayBuffer;
+
 class GeometryBuilder {
   pos = new Uint16Array(4096 * 4);
   data = new Uint8Array(4096 * 4);
@@ -134,15 +137,19 @@ class GeometryBuilder {
     this.indexCount = n;
   }
 
-  finish(): GeometryData | null {
+  finish(alloc: BufferAlloc): GeometryData | null {
     if (this.indexCount === 0) return null;
-    const v = this.vertexCount;
-    const index = v <= 65535 ? Uint16Array.from(this.idx.subarray(0, this.indexCount)) : this.idx.slice(0, this.indexCount);
+    const v = this.vertexCount, n = this.indexCount;
+    const packed = new Uint16Array(alloc(v * 8), 0, v * 4);
+    packed.set(this.pos.subarray(0, v * 4));
+    const data = new Uint8Array(alloc(v * 4), 0, v * 4);
+    data.set(this.data.subarray(0, v * 4));
+    const tint = new Uint8Array(alloc(v * 4), 0, v * 4);
+    tint.set(this.tint.subarray(0, v * 4));
+    const index = v <= 65535 ? new Uint16Array(alloc(n * 2), 0, n) : new Uint32Array(alloc(n * 4), 0, n);
+    index.set(this.idx.subarray(0, n));
     return {
-      packed: this.pos.slice(0, v * 4),
-      data: this.data.slice(0, v * 4),
-      tint: this.tint.slice(0, v * 4),
-      index,
+      packed, data, tint, index,
       minY: this.minY / 16,
       maxY: this.maxY / 16,
     };
@@ -153,6 +160,8 @@ const MASK_SIZE = CHUNK_SIZE * CHUNK_HEIGHT;
 const MAX_MERGE = 15;
 
 export class ChunkMesher {
+  /** Output buffers come from here: exact-size by default, pooled power-of-two buffers in the worker. */
+  alloc: BufferAlloc = (bytes) => new ArrayBuffer(bytes);
   private readonly region = new Uint8Array(REGION_VOLUME);
   /** 32-bit views of the region arrays: chunk rows (16 bytes, 4-byte aligned) are copied as four words, without allocating. */
   private readonly region32 = new Uint32Array(this.region.buffer);
@@ -194,9 +203,9 @@ export class ChunkMesher {
     for (let f = 0; f < 6; f++) this.meshFace(f, fancyLeaves);
     this.meshCrosses();
     return {
-      opaque: this.opaque.finish(),
-      cutout: this.cutout.finish(),
-      water: this.water.finish(),
+      opaque: this.opaque.finish(this.alloc),
+      cutout: this.cutout.finish(this.alloc),
+      water: this.water.finish(this.alloc),
       light: this.extractLight(),
     };
   }
@@ -312,7 +321,7 @@ export class ChunkMesher {
   }
 
   private extractLight(): Uint8Array {
-    const out = new Uint8Array(CHUNK_VOLUME);
+    const out = new Uint8Array(this.alloc(CHUNK_VOLUME), 0, CHUNK_VOLUME);
     const sky = this.lighting.sky, blk = this.lighting.block;
     for (let y = 0; y < CHUNK_HEIGHT; y++) {
       for (let z = 0; z < CHUNK_SIZE; z++) {
