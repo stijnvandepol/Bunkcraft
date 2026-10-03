@@ -39,6 +39,8 @@ export interface MobType {
   hostile: boolean;
   /** Melee damage (Normal difficulty). */
   attack: number;
+  /** Blocks within which a hostile mob notices the player (attribute follow_range): 16 unless set (zombie 35). */
+  followRange?: number;
   /** Zombie pose: arms held straight forward. */
   armsForward?: boolean;
   /** Burns in direct sunlight (zombie, skeleton). */
@@ -199,7 +201,7 @@ export const MOB_TYPES = {
     drops: () => [...stack(ITEM.CHICKEN, 1), ...stack(ITEM.FEATHER, rnd(0, 2))],
   },
   zombie: {
-    kind: 'zombie', name: 'Zombie', health: 20, width: 0.6, height: 1.95, walkSpeed: 1.0, runSpeed: 2.6, hostile: true, attack: 3, armsForward: true, burnsInDaylight: true,
+    kind: 'zombie', name: 'Zombie', health: 20, width: 0.6, height: 1.95, walkSpeed: 1.0, runSpeed: 2.6, hostile: true, attack: 3, followRange: 35, armsForward: true, burnsInDaylight: true,
     parts: [
       {
         anim: 'head', pivot: [0, 24, 0], boxes: [{ from: [-4, 24, -4], to: [4, 32, 4], colors: ZOMBIE_SKIN, face: (px, w) => {

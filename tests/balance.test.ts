@@ -4,6 +4,7 @@ import { type MoveInput, Player } from '../src/player/Player';
 import { ITEM, getItemDef, itemFromState, itemId } from '../src/items/ItemRegistry';
 import { BLOCK } from '../src/world/BlockRegistry';
 import { MOB_TYPES } from '../src/entities/MobTypes';
+import { Mob, type MobEvents, SKELETON_SHOT_INTERVAL, followRange } from '../src/entities/Mob';
 import { TestWorld } from './helpers';
 
 /** Regression tests for the gameplay numbers checked against Minecraft Java 1.21 (docs/qa/BALANCE.md). */
@@ -52,6 +53,38 @@ describe('balance: mob drops', () => {
       seen.add(l);
     }
     expect([...seen].sort()).toEqual([0, 1, 2]);
+  });
+});
+
+function mobEvents(onShoot: () => void = () => {}): MobEvents {
+  const none = (): void => {};
+  return {
+    attack: none, explode: none, shoot: onShoot, arrowHit: none, arrowImpact: none, tntExplode: none, killed: none, playerArrowHit: none, sound: none,
+  };
+}
+
+describe('balance: mob AI', () => {
+  it('uses Minecraft follow ranges: zombie 35, the other hostiles 16', () => {
+    expect(followRange(MOB_TYPES.zombie)).toBe(35);
+    for (const kind of ['skeleton', 'creeper', 'spider'] as const) expect(followRange(MOB_TYPES[kind]), kind).toBe(16);
+  });
+
+  it('a zombie 33 blocks away comes for the player', () => {
+    const z = new Mob(MOB_TYPES.zombie);
+    z.setPosition(-15.5, 64, 0.5);
+    const target = { x: 17.5, y: 64, z: 0.5, attackable: true };
+    for (let i = 0; i < 60; i++) z.tick(floor.get, target, mobEvents());
+    expect(z.x).toBeGreaterThan(-12);
+  });
+
+  it('a skeleton shoots once every 3 seconds (40 ticks wait + 20 ticks draw)', () => {
+    const s = new Mob(MOB_TYPES.skeleton);
+    s.setPosition(0.5, 64, 0.5);
+    const target = { x: 8.5, y: 64, z: 0.5, attackable: true };
+    let shots = 0;
+    for (let i = 0; i < 300; i++) s.tick(floor.get, target, mobEvents(() => shots++));
+    expect(SKELETON_SHOT_INTERVAL).toBe(40);
+    expect(shots).toBe(5); // ticks 20, 80, 140, 200, 260
   });
 });
 
