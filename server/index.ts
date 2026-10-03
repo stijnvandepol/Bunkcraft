@@ -159,11 +159,15 @@ const http = createServer((req, res) => {
     return;
   }
   const hashed = path.startsWith('assets/');
+  // `vite build` writes brotli and gzip copies of text assets next to them (vite.config.ts).
+  const accept = String(req.headers['accept-encoding'] ?? '');
+  const encoding = hashed ? (/\bbr\b/.test(accept) && existsSync(`${file}.br`) ? 'br' : /\bgzip\b/.test(accept) && existsSync(`${file}.gz`) ? 'gzip' : null) : null;
   res.writeHead(200, {
     'content-type': MIME[extname(file)] ?? 'application/octet-stream',
     'cache-control': hashed ? 'public, max-age=31536000, immutable' : 'no-cache',
+    ...(encoding ? { 'content-encoding': encoding, vary: 'Accept-Encoding' } : {}),
   });
-  createReadStream(file).pipe(res);
+  createReadStream(encoding === 'br' ? `${file}.br` : encoding === 'gzip' ? `${file}.gz` : file).pipe(res);
 });
 
 // WebSocket on the same port: /ws (main world) and /ws/<CODE> (a room).

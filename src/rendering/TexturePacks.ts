@@ -1,4 +1,3 @@
-import { unzip } from 'fflate';
 
 /**
  * Texture packs. A layout maps engine texture names to image files using a small spec
@@ -314,6 +313,8 @@ const BLOCK_DIR = /^assets\/minecraft\/textures\/block\/([a-z0-9_]+)\.png$/;
 export async function importMinecraftArchive(file: File): Promise<ImportedPack> {
   const wanted = layoutFiles(MINECRAFT_LAYOUT);
   const buffer = new Uint8Array(await file.arrayBuffer());
+  // Only players who import their own textures need the zip reader: load it on demand.
+  const { unzip } = await import('fflate');
   const files = await new Promise<Record<string, Uint8Array>>((resolve, reject) => {
     unzip(buffer, {
       filter: (f) => {
