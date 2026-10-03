@@ -152,6 +152,11 @@ export class NetClient {
     this.send({ t: 'ignite', x, y, z });
   }
 
+  /** Bone meal on a block (the server checks the held item and reach, then grows it). */
+  sendBoneMeal(x: number, y: number, z: number): void {
+    this.send({ t: 'bonemeal', x, y, z });
+  }
+
   sendTake(id: number): void {
     this.send({ t: 'take', id });
   }

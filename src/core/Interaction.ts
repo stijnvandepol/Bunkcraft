@@ -13,7 +13,9 @@ import type { Hotbar } from '../ui/Hotbar';
 import { BLOCK, BOX_KIND, PARTIAL, SHAPE, SHAPE_BOX, SHAPE_CROSS, SHAPE_DOOR, SHAPE_MODEL, SOLID, getBlockDef, stateSound } from '../world/BlockRegistry';
 import { collisionBoxes } from '../world/BlockShapes';
 import { BOX_BED, BOX_CARPET, BOX_GATE, BOX_TRAPDOOR } from '../world/BoxShapes';
+import { boneMealTarget } from '../world/Growth';
 import { isLiquid } from '../world/Liquids';
+import { needsSupport, plantCanStand } from '../world/PlantRules';
 import { resolveBucketTarget, resolvePlacement } from '../world/Placement';
 import { type RayHit, createRayHit, raycast } from '../world/Raycast';
 import type { World } from '../world/World';
@@ -54,6 +56,8 @@ export interface InteractionDeps {
   openChest?(x: number, y: number, z: number): void;
   /** Right click on a bed: sets the spawn point and sleeps through the night. */
   useBed?(x: number, y: number, z: number): void;
+  /** Bone meal on a block (grows saplings, scatters grass); true when the item is used up. */
+  boneMeal?(x: number, y: number, z: number): boolean;
 }
 
 /**
@@ -374,6 +378,10 @@ export class Interaction {
     }
     const toolKind = getItemDef(item)?.tool?.kind;
     if (toolKind && this.useToolOnBlock(toolKind, mode)) return;
+    if (item === itemId('bone_meal')) {
+      this.useBoneMeal(mode);
+      return;
+    }
     if (!item || !isBlockItem(item)) return;
     if (itemBlock(item) === BLOCK.CHEST && this.d.chestsAllowed && !this.d.chestsAllowed()) return;
     // A block item is a block id plus the variant bits of its state (colour, wood, material).
@@ -395,6 +403,8 @@ export class Interaction {
       && m.y + m.height > y && m.y < y + 1 && m.z + m.width / 2 > z && m.z - m.width / 2 < z + 1)) return;
     // Plants and torches need a solid block underneath.
     if ((SHAPE[id] === SHAPE_CROSS || SHAPE[id] === SHAPE_MODEL) && !SOLID[world.getBlock(x, y - 1, z)]) return;
+    // Saplings want soil, sugar cane water beside its ground, cactus sand and no wall beside it.
+    if (needsSupport(id) && !plantCanStand(id, this.getBlock, x, y, z)) return;
     if (placed.upper && SHAPE[id] === SHAPE_DOOR && player.intersectsBlock(x, y + 1, z)) return;
     if (placed.upper && BOX_KIND[id] === BOX_BED && player.intersectsBlock(placed.upper.x, placed.upper.y, placed.upper.z)) return;
     if (!world.setBlock(x, y, z, id, placed.meta | baseMeta)) return;
@@ -406,6 +416,17 @@ export class Interaction {
     renderer.particles.spawnFace(x - hit.nx, y - hit.ny, z - hit.nz, hit.nx, hit.ny, hit.nz, id, world.getLight(x, y, z), 3, world.tintAt(x, z, id, baseMeta));
     if (hasSurvivalRules(mode)) inventory.consumeSlot(hotbar.selected);
     this.breakProgress = 0;
+  }
+
+  /** Bone meal: only on blocks it does something to; used up in survival. */
+  private useBoneMeal(mode: GameMode): void {
+    const { hotbar, inventory, audio, hand, renderer, world } = this.d;
+    const hit = this.ray;
+    if (!boneMealTarget(hit.id) || !this.d.boneMeal?.(hit.x, hit.y, hit.z)) return;
+    hand.swingHand();
+    audio.play('place', 'grass');
+    renderer.particles.spawnFace(hit.x, hit.y, hit.z, 0, 1, 0, BLOCK.GRASS, world.getLight(hit.x, hit.y + 1, hit.z), 6, 0x80ff60);
+    if (hasSurvivalRules(mode)) inventory.consumeSlot(hotbar.selected);
   }
 
   /** Hoe, shovel and axe change the block they are used on (see items/ToolUse). */

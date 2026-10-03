@@ -110,7 +110,7 @@ export class BlockUpdates {
   readonly falling: FallingBlock[] = [];
   /** A block was destroyed by the simulation (a plant uprooted, a torch under a landing block): the host may drop its item. */
   onBroken: ((x: number, y: number, z: number, id: number, meta: number) => void) | null = null;
-  /** A falling block could not land (its cell got blocked) and becomes an item. */
+  /** A falling block could not land (its cell got blocked) and becomes an item; (x, y, z) is the block cell. */
   onDropped: ((id: number, meta: number, x: number, y: number, z: number) => void) | null = null;
   /** A falling block started or landed (sound hooks). */
   onSpawn: ((f: FallingBlock) => void) | null = null;
@@ -246,7 +246,7 @@ export class BlockUpdates {
       this.onLand?.(f, x, y, z);
     } else {
       this.stats.dropped++;
-      this.onDropped?.(f.id, f.meta, x + 0.5, y + 0.3, z + 0.5);
+      this.onDropped?.(f.id, f.meta, x, y, z);
     }
   }
 }

@@ -1,5 +1,5 @@
 import {
-  BLOCK, BOX_KIND, FACING, OPAQUE, SHAPE, VARIANT_MASK, SHAPE_CROSS, SHAPE_CUBE, SHAPE_DOOR, SHAPE_LIQUID, SHAPE_NONE, SHAPE_SLAB, SHAPE_STAIRS, SOLID,
+  BLOCK, BOX_KIND, FACING, LEAVES_PERSISTENT_BIT, OPAQUE, SHAPE, VARIANT_MASK, SHAPE_CROSS, SHAPE_CUBE, SHAPE_DOOR, SHAPE_LIQUID, SHAPE_NONE, SHAPE_SLAB, SHAPE_STAIRS, SOLID,
 } from './BlockRegistry';
 import {
   FACING_CCW, FACING_CW, FACING_DX, FACING_DZ, SLAB_BOTTOM, SLAB_DOUBLE, SLAB_HALF_MASK, SLAB_TOP, STAIR_TOP_BIT, canCombineSlab, doorMeta, facingFromYaw,
@@ -7,6 +7,7 @@ import {
 } from './BlockStates';
 import { BED_HEAD_BIT, BOX_BED, BOX_CARPET, BOX_GATE, BOX_LADDER, BOX_TRAPDOOR, TRAPDOOR_TOP_BIT, ladderSide } from './BoxShapes';
 import { CHUNK_HEIGHT } from './constants';
+import { LEAVES } from './PlantRules';
 
 /** What the player is aiming at and holding when they press Use. */
 export interface PlaceContext {
@@ -168,6 +169,6 @@ export function resolvePlacement(c: PlaceContext): Placement | null {
   }
   if (shape === SHAPE_SLAB) return { x, y, z, id, meta: upper ? SLAB_TOP : SLAB_BOTTOM };
   if (shape === SHAPE_STAIRS) return { x, y, z, id, meta: stairMeta(facingFromYaw(c.yaw), upper) };
-  // Furnaces, chests and pumpkins show their front to the player.
-  return { x, y, z, id, meta: FACING[id] ? facingFromYaw(c.yaw) : 0 };
+  // Furnaces, chests and pumpkins show their front to the player; leaves placed by a player never decay.
+  return { x, y, z, id, meta: FACING[id] ? facingFromYaw(c.yaw) : LEAVES[id] ? LEAVES_PERSISTENT_BIT : 0 };
 }

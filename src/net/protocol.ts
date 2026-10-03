@@ -61,6 +61,8 @@ export type MobEntry = [number, number, number, number, number, number, number, 
 export type ItemEntry = [number, number, number, number, number, number];
 /** Arrow: [id, x, y, z, yaw, pitch, inGround]. */
 export type ArrowEntry = [number, number, number, number, number, number, number];
+/** Falling block: [id, block id, block state, x, y, z]. */
+export type FallEntry = [number, number, number, number, number, number];
 /** Lit TNT: [id, x, y, z, fuse]. */
 export type TntEntry = [number, number, number, number, number];
 
@@ -86,6 +88,8 @@ export type ClientMessage =
   | { t: 'ignite'; x: number; y: number; z: number }
   /** Pick up a dropped item entity. */
   | { t: 'take'; id: number }
+  /** Bone meal used on a block (the server grows the sapling or grass). Optional: older servers ignore it. */
+  | { t: 'bonemeal'; x: number; y: number; z: number }
   /** Arcade: choose the primary weapon for the next life (rifle, smg, shotgun, sniper). */
   | { t: 'loadout'; primary: string }
   /** Arcade: fire the weapon in a slot. Origin is the client's eye, dir the aim; the server re-checks both. */
@@ -150,6 +154,8 @@ export type ServerMessage =
   | { t: 'gamemode'; mode: GameMode }
   /** Entities around the player (10 Hz). Lists replace what the client knows. */
   | { t: 'ent'; m: MobEntry[]; i: ItemEntry[]; a: ArrowEntry[]; b: TntEntry[] }
+  /** Falling sand and gravel around the player (10 Hz, only while there are any, plus one empty list). */
+  | { t: 'fall'; f: FallEntry[] }
   /** A mob or arrow hurt this player. */
   | { t: 'hurt'; amount: number; cause: 'mob' | 'arrow'; by: string; yaw: number }
   /** An explosion: destroyed blocks as x, y, z triples; the client plays effects and takes its own damage. */

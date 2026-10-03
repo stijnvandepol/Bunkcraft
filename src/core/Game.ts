@@ -6,11 +6,15 @@ import { bindUiSounds } from '../ui/uiSound';
 import { EntityManager } from '../entities/EntityManager';
 import { ItemRenderer } from '../entities/ItemRenderer';
 import { TntRenderer } from '../entities/TntRenderer';
+import { FallingBlockRenderer } from '../entities/FallingBlockRenderer';
+import { NetFalling } from '../net/NetFalling';
+import type { FallingBlock } from '../world/BlockUpdates';
 import { ArrowRenderer } from '../entities/ArrowRenderer';
 import type { Mob, MobEvents } from '../entities/Mob';
 import { MobRenderer } from '../entities/MobRenderer';
 import { NetClient, type WelcomeMessage } from '../net/NetClient';
 import { NetEntities } from '../net/NetEntities';
+import { useBoneMeal } from '../world/Growth';
 import { type ClientMessage, type ServerMessage, formatCode, normalizeCode } from '../net/protocol';
 import { gameTypeDef } from '../modes/GameTypes';
 import { inviteLink, inviteText, rememberGame } from '../net/RoomApi';
@@ -118,6 +122,9 @@ export class Game {
   private readonly mobRenderer: MobRenderer;
   private readonly itemRenderer: ItemRenderer;
   private readonly tntRenderer: TntRenderer;
+  private readonly fallingRenderer: FallingBlockRenderer;
+  private netFalling: NetFalling | null = null;
+  private static readonly NO_FALLING: FallingBlock[] = [];
   private readonly arrowRenderer: ArrowRenderer;
   private readonly tmpDir = new THREE.Vector3();
   private readonly debug = new DebugOverlay();
@@ -236,6 +243,9 @@ export class Game {
     this.itemRenderer = new ItemRenderer(this.renderer.uniforms, this.icons);
     this.tntRenderer = new TntRenderer(this.renderer.uniforms);
     this.arrowRenderer = new ArrowRenderer(this.renderer.uniforms);
+    this.fallingRenderer = new FallingBlockRenderer(this.renderer.uniforms);
+    this.renderer.scene.add(this.fallingRenderer.mesh);
+    this.renderer.shadowExcluded.push(this.fallingRenderer.mesh);
     this.renderer.scene.add(this.mobRenderer.group, this.itemRenderer.mesh, this.tntRenderer.mesh, this.arrowRenderer.mesh);
     this.renderer.scene.add(this.remote.weapons);
     this.renderer.shadowExcluded.push(this.mobRenderer.group, this.itemRenderer.mesh, this.tntRenderer.mesh, this.arrowRenderer.mesh, this.remote.weapons);
@@ -519,6 +529,15 @@ export class Game {
       chestsAllowed: () => !this.net,
       openChest: (x, y, z) => this.openChest(x, y, z),
       useBed: (x, y, z) => this.useBed(x, y, z),
+      boneMeal: (x, y, z) => {
+        // Multiplayer: the server grows it (and broadcasts the blocks); the item is used up here right away.
+        if (this.net) { this.net.sendBoneMeal(x, y, z); return true; }
+        const ticker = world.randomTicker;
+        if (!ticker) return false;
+        let used = false;
+        world.batch(() => { used = useBoneMeal(ticker, x, y, z); });
+        return used;
+      },
       shootArrow: (power, pickup) => {
         const cam = this.cam.camera;
         const dir = cam.getWorldDirection(this.tmpDir);
@@ -807,6 +826,7 @@ export class Game {
     entities.hostileSpawning = false;
     const mirror = new NetEntities(entities);
     this.netEntities = mirror;
+    this.netFalling = new NetFalling();
     entities.dropHook = (stack, x, y, z, delay, yaw) => {
       net.sendDrop(stack.id, stack.count, stack.damage, x, y, z, yaw, delay, encodeData(stack.data));
       return true;
@@ -918,6 +938,7 @@ export class Game {
     switch (msg.t) {
       case 'snap': this.remote.snapshot(msg.players, this.net?.id ?? -1, performance.now() / 1000); break;
       case 'ent': this.netEntities?.apply(msg, performance.now() / 1000); break;
+      case 'fall': this.netFalling?.apply(msg.f, performance.now() / 1000); break;
       case 'hurt': this.hurtByServer(msg.cause, msg.amount, msg.by, msg.yaw); break;
       case 'boom':
         world?.applyRemoteRemovals(msg.blocks);
@@ -979,6 +1000,8 @@ export class Game {
     this.roomCode = null;
     this.netEntities?.clear();
     this.netEntities = null;
+    this.netFalling?.clear();
+    this.netFalling = null;
     if (!this.net) return;
     const net = this.net;
     this.net = null;
@@ -1304,6 +1327,8 @@ export class Game {
     this.itemRenderer.update(e.items, alpha, this.time, world);
     this.tntRenderer.update(e.tnt, alpha, world);
     this.arrowRenderer.update(e.arrows, alpha, world);
+    this.netFalling?.update(performance.now() / 1000);
+    this.fallingRenderer.update(this.netFalling ? this.netFalling.list : world.updates?.falling ?? Game.NO_FALLING, alpha, world);
   }
 
   private updateMenu(dt: number): void {
