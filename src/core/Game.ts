@@ -69,6 +69,7 @@ import { CameraController } from './Camera';
 import { Input } from './Input';
 import { Interaction } from './Interaction';
 import { Renderer } from './Renderer';
+import { WorldRules } from './WorldRules';
 import { WeatherSystem } from './WeatherSystem';
 import { DynamicResolution, suggestPreset } from './AdaptiveQuality';
 import { SettingsStore } from './Settings';
@@ -104,6 +105,8 @@ export class Game {
   private readonly cycle = new DayCycle();
   /** Weather: simulation (singleplayer) or server follower (multiplayer), rendering inputs and lightning. */
   private readonly weatherSys: WeatherSystem;
+  /** Difficulty, game rules, respawn point and sleeping (WorldRules.ts). */
+  private readonly worldRules: WorldRules;
   readonly player = new Player();
   private readonly stats = new PlayerStats();
   private readonly advancements = new AdvancementTracker();
@@ -219,11 +222,16 @@ export class Game {
       world: () => this.world, mode: () => this.mode, entities: () => this.entities,
       multiplayer: () => this.net !== null, arcade: () => this.arcade !== null || this.meta?.worldType === 'arena',
     });
+    this.worldRules = new WorldRules({
+      stats: this.stats, player: this.player, cycle: this.cycle, input: this.input, overlayParent: this.hud.el,
+      world: () => this.world, entities: () => this.entities, meta: () => this.meta, net: () => this.net, mode: () => this.mode,
+      weather: () => this.weatherSys.weather, chat: (line) => this.chat.add(line, true),
+    });
     this.chat.onSend = (text) => {
       if (this.net) return this.net.sendChat(text);
       // Singleplayer has no server: the slash commands run locally.
       if (!text.startsWith('/')) return;
-      const lines = this.weatherSys.localCommand(text) ?? [`Unknown command: ${text.split(/\s+/)[0]}. Type /help for help.`];
+      const lines = this.weatherSys.localCommand(text) ?? this.worldRules.localCommand(text) ?? [`Unknown command: ${text.split(/\s+/)[0]}. Type /help for help.`];
       for (const line of lines) this.chat.add(line, true);
     };
     this.chat.onClose = () => {
@@ -583,6 +591,8 @@ export class Game {
       if (!hasSurvivalRules(mode)) meta.hotbar.forEach((id, i) => this.playerInventory.set(i, { id, count: id ? 1 : 0 }));
     }
     this.stats.load(meta.stats);
+    this.stats.effects.load(meta.effects, this.stats);
+    this.worldRules.load(meta);
     this.advancements.load(meta.advancements);
     this.score = 0;
     // A save made on the death screen: hardcore becomes spectator, others respawn at spawn.
@@ -631,6 +641,20 @@ export class Game {
 
   private finishLoading(): void {
     const world = this.world!;
+    if (this.worldRules.pendingBed) {
+      // Respawn at the bed: next to it, or back to the world spawn when it is gone or blocked.
+      const spot = this.worldRules.resolveBedRespawn();
+      if (spot) {
+        this.player.setPosition(spot.x, spot.y, spot.z);
+        this.needsSurface = false;
+      } else {
+        const s = this.meta?.spawn ?? { ...world.findSpawn(), y: 100 };
+        this.player.setPosition(s.x, s.y, s.z);
+        this.needsSurface = true;
+        this.state = 'loading';
+        return;
+      }
+    }
     if (this.needsSurface) {
       const x = Math.floor(this.player.x), z = Math.floor(this.player.z);
       this.player.setPosition(this.player.x, world.surfaceY(x, z) + 1, this.player.z);
@@ -659,7 +683,7 @@ export class Game {
     this.survivalInventory.flushCursor();
     if (this.net) {
       // Multiplayer: the server stores position, inventory and health per player.
-      this.net.sendState(this.playerInventory.serialize(), this.stats.serialize());
+      this.net.sendState(this.playerInventory.serialize(), this.stats.serialize(), this.stats.effects.serialize() ?? []);
       return;
     }
     const p = this.player;
@@ -668,6 +692,8 @@ export class Game {
     meta.inventory = this.playerInventory.serialize();
     meta.containers = world.containers.serialize();
     meta.stats = this.stats.serialize();
+    meta.effects = this.stats.effects.serialize();
+    this.worldRules.save(meta);
     meta.advancements = this.advancements.serialize();
     meta.gameMode = this.mode;
     meta.selectedSlot = this.hotbar.selected;
@@ -722,16 +748,10 @@ export class Game {
     this.survivalInventory.open(this.nearbyStations(), { title: 'Chest', slots });
   }
 
-  /** A bed sets the respawn point; at night it also sleeps until the morning (singleplayer). */
+  /** A bed sets the respawn point and sleeps at night (WorldRules: monsters, multiplayer sleeping rule). */
   private useBed(x: number, y: number, z: number): void {
     if (!this.meta || this.arcade) return;
-    this.meta.spawn = { x: x + 0.5, y: y + 0.6, z: z + 0.5 };
-    this.chat.add('Respawn point set', true);
-    if (!this.net && this.cycle.dayFactor < 0.4) {
-      this.cycle.time = 0.02;
-      this.cycle.compute();
-      this.chat.add('You slept through the night', true);
-    }
+    this.worldRules.useBed(x, y, z);
   }
 
   private async quitToTitle(): Promise<void> {
@@ -788,7 +808,9 @@ export class Game {
       player: rec ? { x: rec.x, y: rec.y, z: rec.z, yaw: rec.yaw, pitch: rec.pitch, flying: false } : null,
       hotbar: [...DEFAULT_HOTBAR], selectedSlot: 0, time: welcome.time, day: welcome.day, gameMode: welcome.gameMode,
       inventory: rec?.inventory, stats: rec?.stats, spawn: welcome.spawn, worldType: welcome.worldType,
+      difficulty: welcome.difficulty, rules: welcome.rules, bed: rec?.bed, effects: rec?.effects,
     };
+    this.stats.playerName = name;
     this.loadingProgress = progress;
     this.arenaMap = welcome.match?.map ?? DEFAULT_MAP;
     this.lastJoin = { name, address, room };
@@ -963,7 +985,7 @@ export class Game {
         this.chat.add('The server corrected your inventory.', true);
         break;
       case 'gamemode': this.setMode(msg.mode); break;
-      default: if (!this.weatherSys.onServerMessage(msg)) this.arcade?.handle(msg, performance.now() / 1000); break;
+      default: if (!this.weatherSys.onServerMessage(msg) && !this.worldRules.onServerMessage(msg)) this.arcade?.handle(msg, performance.now() / 1000); break;
     }
   }
 
@@ -1066,14 +1088,18 @@ export class Game {
       this.input.exitLock();
     }
     this.interaction?.reset();
-    // Drop the whole inventory where the player died.
+    this.worldRules.stopSleeping(false);
+    if (!this.net && this.worldRules.rules.get('showDeathMessages') && this.stats.deathMessage) this.chat.add(this.stats.deathMessage, true);
+    // Drop the whole inventory where the player died (unless keepInventory).
     const p = this.player;
-    for (let i = 0; i < 36; i++) {
-      const s = this.playerInventory.get(i);
-      if (s.count > 0) this.entities?.dropItem(s, p.x, p.y + 1, p.z, 40, undefined, true);
+    if (!this.worldRules.rules.get('keepInventory')) {
+      for (let i = 0; i < 36; i++) {
+        const s = this.playerInventory.get(i);
+        if (s.count > 0) this.entities?.dropItem(s, p.x, p.y + 1, p.z, 40, undefined, true);
+      }
+      for (const s of this.playerInventory.armor) if (s.count > 0) this.entities?.dropItem(s, p.x, p.y + 1, p.z, 40, undefined, true);
+      this.playerInventory.clear();
     }
-    for (const s of this.playerInventory.armor) if (s.count > 0) this.entities?.dropItem(s, p.x, p.y + 1, p.z, 40, undefined, true);
-    this.playerInventory.clear();
     const hardcore = this.mode === 'hardcore';
     // Hardcore: the single life is gone even if the tab is closed now.
     if (hardcore && this.meta) this.meta.gameMode = 'spectator';
@@ -1106,12 +1132,13 @@ export class Game {
    */
   private respawn(): void {
     this.stats.reset();
-    const s = this.meta?.spawn ?? { x: this.player.x, y: this.player.y, z: this.player.z };
-    this.player.setPosition(s.x, s.y, s.z);
+    const t = this.worldRules.respawnTarget(this.meta?.spawn ?? { x: this.player.x, y: this.player.y, z: this.player.z });
+    this.worldRules.pendingBed = t.checkBed ? this.worldRules.bed : null;
+    this.player.setPosition(t.x, t.y, t.z);
     this.player.vx = this.player.vy = this.player.vz = 0;
     this.player.fallDistance = 0;
     this.player.landedFall = 0;
-    this.needsSurface = true;
+    this.needsSurface = !this.worldRules.bed?.point; // a /spawnpoint position is kept as it is
     this.stack.clear();
     this.state = 'loading';
   }
@@ -1397,7 +1424,9 @@ export class Game {
   private explode(source: Mob | null, x: number, y: number, z: number, power: number, inWater = false): void {
     const world = this.world!, entities = this.entities!;
     const positions: number[] = [];
-    const destroyed = inWater ? [] : world.explode(x, y, z, power * 1.3, positions);
+    // Creepers break blocks only with the mobGriefing rule; TNT always does.
+    const grief = !source || this.worldRules.rules.get('mobGriefing');
+    const destroyed = inWater || !grief ? [] : world.explode(x, y, z, power * 1.3, positions);
     // Drop roughly 1/power of the destroyed blocks, like Minecraft; caught TNT lights with a short fuse.
     for (let i = 0; i < destroyed.length; i++) {
       const id = destroyed[i];
@@ -1483,6 +1512,7 @@ export class Game {
     p.sprintDistance = p.swimDistance = 0;
     p.jumps = 0;
     this.weatherSys.gameTick();
+    this.worldRules.gameTick();
     this.world?.tickLiquids();
     stats.tick(p, this.getBlock, this.mode);
     p.canSprint = !hasSurvivalRules(this.mode) || stats.canSprint;
@@ -1537,14 +1567,22 @@ export class Game {
       if (arcade) {
         p.speedMultiplier = arcade.speedMultiplier;
         p.airAccel = arcade.airAccel;
+      } else {
+        // Status effects: Speed/Slowness, Jump Boost, Levitation.
+        const fx = this.stats.effects;
+        p.speedMultiplier = fx.speedMultiplier();
+        p.jumpBoost = fx.jumpBoost();
+        p.levitation = fx.level('levitation');
       }
+      const asleep = this.worldRules.sleeping;
       while (this.accumulator >= PHYSICS.STEP) {
-        p.step(move, this.getBlock, this.getMeta);
+        if (!asleep) p.step(move, this.getBlock, this.getMeta);
         move.jumpPressed = false;
         this.accumulator -= PHYSICS.STEP;
         if (++this.stepCount % STEPS_PER_TICK === 0) this.gameTick();
       }
-      this.cycle.update(dt);
+      if (this.arcade || this.worldRules.daylightCycle) this.cycle.update(dt);
+      this.worldRules.update(dt);
       this.weatherSys.update(dt);
       this.autosave += dt;
       if (this.autosave > AUTOSAVE_INTERVAL) {

@@ -164,8 +164,8 @@ export class NetClient {
     this.send({ t: 'chat', text });
   }
 
-  sendState(inventory: number[][], stats: number[]): void {
-    this.send({ t: 'state', inventory, stats });
+  sendState(inventory: number[][], stats: number[], effects?: number[][]): void {
+    this.send({ t: 'state', inventory, stats, ...(effects ? { effects } : {}) });
   }
 
   close(): void {

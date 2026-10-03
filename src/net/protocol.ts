@@ -1,3 +1,4 @@
+import type { Difficulty } from '../world/Difficulty';
 import type { GameType, Team } from '../modes/GameTypes';
 import type { GameMode } from '../player/GameMode';
 
@@ -21,6 +22,10 @@ export interface PlayerRecord {
   yaw: number; pitch: number;
   inventory?: number[][];
   stats?: number[];
+  /** Respawn point at a bed (the bed block); absent = the world spawn. */
+  bed?: { x: number; y: number; z: number; point?: boolean };
+  /** Status effects as [effect index, amplifier, ticks left] (client-authoritative, like stats). */
+  effects?: number[][];
 }
 
 export interface RemotePlayerInfo {
@@ -77,7 +82,11 @@ export type ClientMessage =
   /** `meta` is the block state byte (see BlockStates); absent = 0. */
   | { t: 'block'; seq: number; x: number; y: number; z: number; id: number; meta?: number }
   | { t: 'chat'; text: string }
-  | { t: 'state'; inventory: number[][]; stats: number[] }
+  | { t: 'state'; inventory: number[][]; stats: number[]; effects?: number[][] }
+  /** Right click on a bed: set the respawn point and try to sleep (the server checks the time and monsters). */
+  | { t: 'bed'; x: number; y: number; z: number }
+  /** Leave the bed. */
+  | { t: 'wake' }
   /** Melee hit on a server mob (damage comes from the held item the server knows). */
   | { t: 'attack'; id: number }
   /** Bow shot; power 0..1. */
@@ -122,7 +131,18 @@ export type ServerMessage =
     op?: boolean;
     /** The server will send snap and ent as binary frames (negotiated by `bin` in hello). */
     binary?: boolean;
+    /** World difficulty and the game rules that differ from the defaults (absent on older servers = Normal, defaults). */
+    difficulty?: Difficulty;
+    rules?: Record<string, boolean | number>;
   }
+  /** Difficulty or game rules changed (/difficulty, /gamerule). */
+  | { t: 'rules'; difficulty: Difficulty; rules: Record<string, boolean | number> }
+  /** Sleeping: `start` you are in bed now, `wake` get up (morning came or you left); `sleeping`/`total` for the message. */
+  | { t: 'sleep'; state: 'start' | 'wake'; sleeping?: number; total?: number }
+  /** Your respawn point changed (bed, /spawnpoint); null = back to the world spawn. */
+  | { t: 'spawnpoint'; bed: { x: number; y: number; z: number; point?: boolean } | null }
+  /** /effect: give or clear status effects (the client applies them; effects are client-authoritative). */
+  | { t: 'effect'; action: 'give' | 'clear'; effect?: string; amp?: number; ticks?: number }
   | { t: 'join'; id: number; name: string }
   | { t: 'leave'; id: number; name: string }
   | { t: 'snap'; players: SnapshotEntry[] }
