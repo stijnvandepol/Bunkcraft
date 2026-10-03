@@ -72,7 +72,7 @@ maak je met `scripts/ui-shots.py`; die staat niet in git (99 MB).
 | W2 | Geen play-pijl over het icoon bij hover | **Gedaan** (ook bij toetsenbordfocus; Enter speelt, Spatie selecteert) |
 | W3 | Sortering | Laatst gespeeld eerst (zoals Minecraft); zoeken bestond al |
 | W4 | Edit World: alleen naam en modus | **Gedaan:** Allow Cheats, "Back Up World" (download), seed. "Open World Folder" kan niet in de browser |
-| W5 | Create World: tab More ontbrak, geen Allow Cheats | **Gedaan:** Game / World / More. World: type, seed, Generate Structures en Bonus Chest (uitgeschakelde placeholders). More: Allow Cheats (standaard aan in Creative, uit elders, zoals Minecraft) en Game Rules (uitgeschakeld tot dat scherm bestaat) |
+| W5 | Create World: tab More ontbrak, geen Allow Cheats | **Gedaan:** Game / World / More. World: type, seed, Generate Structures en Bonus Chest (uitgeschakelde placeholders). More: Allow Cheats (standaard aan in Creative, uit elders, zoals Minecraft) en Game Rules (het scherm van de combat-ontwikkelaar). Game: naam, modus, Difficulty |
 | W6 | Allow Cheats deed niets; singleplayer had geen chat | **Gedaan:** <kbd>T</kbd> en <kbd>/</kbd> openen nu ook in singleplayer de chat; berichten worden getoond, `/`-commando's alleen met cheats (`WorldMeta.cheats`, oude werelden: aan in Creative) |
 | W7 | Verwijderen: Minecraft bevestigt alleen met een knop | Klopte al |
 | W8 | Laadscherm: kaal, geen percentage, geen tips | **Gedaan:** dirt-achtergrond, balk van 182 breed met rand, status + percentage, elke 5 s een tip uit de echte toetsen van de speler (`tip.1`–`tip.14`) |
@@ -81,7 +81,7 @@ maak je met `scripts/ui-shots.py`; die staat niet in git (99 MB).
 
 | # | Bevinding | Status |
 |---|---|---|
-| P1 | Layout Back to Game / Advancements + Statistics / Copy Seed + Report Bugs / Options + LAN / Save and Quit | Klopte al |
+| P1 | Layout Back to Game / Advancements + Statistics / Copy Seed + Report Bugs / Options + LAN / Save and Quit | Klopte al; de Difficulty + Game Rules-rij van de combat-ontwikkelaar staat erin, vertaald |
 | P2 | Statistics was een dode knop | **Gedaan:** `StatTracker` (blokken gedolven/geplaatst, mobs gedood, doden, afstand, sprongen, speeltijd), opgeslagen in `WorldMeta.statistics`, scherm in Minecraft-stijl. Alleen singleplayer |
 | D1 | "You died!" op dubbele schaal, oorzaak wit, "Score:" grijs met geel getal, Respawn/Title Screen | Klopte al; nu vertaald |
 
@@ -94,7 +94,7 @@ maak je met `scripts/ui-shots.py`; die staat niet in git (99 MB).
 | H3 | Armor-rij boven de hearts, lucht boven honger | Klopte al |
 | H4 | XP-balk | Van de XP/enchanting-ontwikkelaar |
 | H5 | Crosshair 9×9 met difference-blend | Klopte al |
-| H6 | Attack Indicator ontbrak | **Gedaan (UI):** balkje onder de crosshair of icoon naast de hotbar via `hud.setAttackCharge(0..1)`. Er is nog geen aanvals-cooldown; de combat-ontwikkelaar hoeft alleen die aanroep toe te voegen |
+| H6 | Attack Indicator ontbrak | **Gedaan:** de instelling kiest tussen de cooldown-balk onder de crosshair (EffectsHud van de combat-ontwikkelaar), een vierkant naast de hotbar (`hud.setAttackCharge`) of Off |
 | H7 | F1 / F2 / F11 | F1 en F2 bestonden; **F11** schakelt nu volledig scherm; screenshot-toast vertaald |
 
 ### Chat
@@ -137,7 +137,7 @@ maak je met `scripts/ui-shots.py`; die staat niet in git (99 MB).
 ## 3. Afstemming met andere ontwikkelaars
 
 - **Accessibility/touch:** hun schermen (Accessibility, Touch, Controller) staan in de Options-hub; de labels in die schermen zijn nog Engels (sleutels toevoegen aan `i18n.ts`). Distortion Effects hoort daar.
-- **Combat/effects:** `hud.setAttackCharge(v)` aanroepen vanuit de aanvals-cooldown; voor wither/absorption de velden `wither` en `absorption` meegeven aan `hud.survival.update`.
+- **Combat/effects:** gekoppeld (cooldown, gif/wither-harten uit de `EffectSet`). Absorption tekent hun `EffectsHud`; het `absorption`-veld van `SurvivalHud` blijft ongebruikt. Furnace-, kist-, Game Rules- en effectteksten zijn nog Engels.
 - **Andere schermen vertalen:** sleutel toevoegen aan `EN` en `NL` in `src/ui/i18n.ts` en `t('sleutel')` gebruiken; tot dan werkt `t('sleutel', 'English')` met de fallback.
 
 ## 4. Testen
