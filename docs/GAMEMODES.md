@@ -42,7 +42,37 @@ kleurenpalet, spiegelsymmetrisch voor tdm, omheind en met spawns die ver uit elk
 | Harbor Yard | `dockyard` | Industrieel (88 × 64): containerstapels van gekleurde wol (teamkleuren aan de eigen kant), een grote loods in het midden, een kraandek op houten pilaren en een schip met een brug om vanaf te snipen. | zones, vlaggen |
 | Dust Bazaar | `desert` | Lange zichtlijnen (96 × 64): zand en zandsteen, een markt met gestreepte kramen, platte daken langs een lange open baan en een sluipschuttertoren aan elk uiteinde, achter de ommuurde teambasis. | – |
 | Atomic Lane | `atomic` | Vrije (puntsymmetrische) kaart (80 × 52): twee huizen, een bus en een rotonde. Standaard in het menu. | zones, vlaggen |
+| Skyline Villa | `villa` | Vrije (puntsymmetrische) kaart (88 × 64): een witte villa op een heuvel, zie hieronder. | zones, vlaggen |
+| Riptide | `yacht` | Vrije kaart (88 × 56): een superjacht in een jachthaven, zie hieronder. | zones, vlaggen |
+| Sundown | `town` | Vrije kaart (80 × 68): een stoffig kruispuntdorp, zie hieronder. | zones, vlaggen |
+| Terminus | `station` | Vrije kaart (84 × 68): een treinstation, zie hieronder. | zones, vlaggen |
 | Bunker Flag | `bunker` | Voor capture the flag (64 × 40): een droge rivierbedding met oevers van 2 hoog, twee oversteekplaatsen en een overdekte duiker in het midden; elke vlag in een betonnen bunker met één deur achter een scherfmuur, spawns in een ommuurde tuin erachter. | zones, vlaggen |
+
+### Vrije kaarten in BO2-stijl
+
+Net als Atomic Lane getekend met `layout: 'free'`: één helft wordt getekend en voor de andere helft 180° om het midden
+gedraaid (`turned()` in `helpers.ts`), met een eigen palet en eigen details per helft. De routes zijn daardoor eerlijk,
+maar de twee kanten zien er anders uit. Screenshots: `docs/screenshots/maps/<id>-*.png` (`python3 scripts/shots.py <id> docs/screenshots/maps <poort>`).
+
+- **Skyline Villa** (`villa`): een moderne witte villa van twee verdiepingen met glazen gevels rond een open atrium (de
+  middelste zone). Boven de begane grond een dakterras met glazen balustrade, trappen naar het platte dak van de
+  slaapvleugel. Rood heeft een leeg zwembad (een verzonken bak van blauwe wol) met ligstoelen en parasols, blauw een
+  verzonken basketbalveld met tribune; rood een garage met auto's, blauw een fitnessruimte. Spawns op een grindvoorplein
+  achter een witte muur met heg; fontein en plantenbakken op het gazon, een beplante heuvelrand langs de lange kanten.
+- **Riptide** (`yacht`): een superjacht in het midden van een beloopbare blauwe "zee". Teakdek met reling, een benedendek
+  met gang en hutten in de romp (zijdeuren vanaf het water), een salon midscheeps (de middelste zone) met een zonnedek
+  erop, de brug aan de boegkant en een sky lounge aan de achterkant. Op de puntige boeg een bubbelbad, op de vierkante
+  achtersteven een helikopterdek met helikopter. De teams spawnen op de steigers achter boeg (rood) en achtersteven
+  (blauw); steigers, speedboten, boeien en een rotseilandje geven dekking op het water.
+- **Sundown** (`town`): een stoffig dorp op een kruispunt. In het midden een tankstation met luifel en pompen, eromheen een
+  cantina van twee verdiepingen met dakterras, een marktplein met kramen en een put, smalle steegjes tussen krotten en
+  huizen met buitentrappen naar het platte dak. Rood heeft een kerk met klokkentoren (wenteltrap naar de klokkenstoel) en
+  een kerkhof, blauw een raadhuis met klokkentoren en een tuin. Spawns in een ommuurd boerenerf aan elk eind.
+- **Terminus** (`station`): twee sporen noord-zuid door het midden, elk met een trein langs een verhoogd perron. De treinen
+  staan verspringend, zodat de sporen in het midden een overweg vormen (de middelste zone); elke wagon heeft deuren aan
+  beide kanten om doorheen te rennen. Elk spoor eindigt in een tunnel in de muur. Twee loopbruggen over de sporen (met een
+  opening waar je op een treindak springt), perronkappen, en per kant een hal met balkon: de bakstenen stationshal (rood)
+  en de stenen goederenhal (blauw). Spawns op het voorplein achter de hal.
 
 **Objectives** (`objectives` in de kaartdefinitie, wereldcoördinaten): 4–5 zones in hardpoint-volgorde (midden, dan om en om
 rood en blauw; spiegel- of puntsymmetrisch zoals de kaart), welke daarvan domination-punten zijn, en per team een vlag. Een
