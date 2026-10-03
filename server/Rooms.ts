@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, s
 import { join } from 'node:path';
 import { randomInt } from 'node:crypto';
 import { type GameType, gameTypeDef, parseGameType } from '../src/modes/GameTypes';
-import { DEFAULT_MAP, type MapSetting, parseMapSetting } from '../src/modes/maps';
+import { DEFAULT_MAP, type MapSetting, mapFor, parseMapId, parseMapSetting } from '../src/modes/maps';
 import { CODE_ALPHABET, CODE_LENGTH, normalizeCode } from '../src/net/protocol';
 import { GAME_MODES, type GameMode } from '../src/player/GameMode';
 import { GameServer, parseGameMode } from './GameServer';
@@ -85,6 +85,18 @@ export interface MatchRequest {
 export const SCORE_LIMIT_RANGE = { min: 5, max: 100 };
 export const TIME_LIMIT_RANGE = { min: 120, max: 1800 };
 
+/** A map the game type can be played on: the chosen one when it has the data, "rotate" stays (the match skips maps without it). */
+function mapSettingFor(setting: MapSetting, requires: readonly ('zones' | 'flags')[] | undefined): MapSetting {
+  const id = parseMapId(setting);
+  return id ? mapFor(id, requires) : setting;
+}
+
+/** The general range, widened where a game type offers values outside it (round time 60 s, 1 capture). */
+function rangeFor(base: { min: number; max: number }, values: number[] | undefined): { min: number; max: number } {
+  if (!values || values.length === 0) return base;
+  return { min: Math.min(base.min, ...values), max: Math.max(base.max, ...values) };
+}
+
 function clampSetting(v: unknown, range: { min: number; max: number }, dflt: number): number {
   const n = typeof v === 'number' && Number.isFinite(v) ? Math.round(v) : dflt;
   return Math.min(range.max, Math.max(range.min, n));
@@ -140,9 +152,11 @@ export class Rooms {
       ownerHash: security.ownerHash, passwordHash: security.passwordHash, listed: security.listed,
       ...(type.arcade ? {
         gameType: type.id,
-        scoreLimit: clampSetting(match.scoreLimit, SCORE_LIMIT_RANGE, type.scoreLimit),
-        timeLimitSec: clampSetting(match.timeLimitSec, TIME_LIMIT_RANGE, type.timeLimitSec),
-        mapId: parseMapSetting(match.mapId) ?? DEFAULT_MAP,
+        // A type without a score option (gun game: the ladder) keeps its own limit.
+        scoreLimit: type.options && type.options.score.length === 0 ? type.scoreLimit
+          : clampSetting(match.scoreLimit, rangeFor(SCORE_LIMIT_RANGE, type.options?.score), type.scoreLimit),
+        timeLimitSec: clampSetting(match.timeLimitSec, rangeFor(TIME_LIMIT_RANGE, type.options?.time), type.timeLimitSec),
+        mapId: mapSettingFor(parseMapSetting(match.mapId) ?? DEFAULT_MAP, type.requires),
       } : {}),
     });
     this.loaded.set(code, { server, lastActive: Date.now() });

@@ -43,19 +43,17 @@ export const VERSION = 'BunkCraft 1.0';
 /** `npm run build:static`: hosted without a game server (itch.io, GitHub Pages ...). */
 const STATIC_BUILD = import.meta.env.VITE_STATIC === '1';
 
-/** Short tag for lists: "TDM", "FFA"; nothing for the Minecraft sandbox. */
-const GAME_TYPE_TAGS: Record<GameType, string> = { minecraft: '', tdm: 'TDM', ffa: 'FFA' };
-
-/** Score limit choices (kills) and time limit choices (seconds) for the arcade game types. */
-const SCORE_LIMITS = [10, 20, 30, 50];
-const TIME_LIMITS = [300, 600, 900];
+/** Short tag for lists: "TDM", "CTF"; nothing for the Minecraft sandbox. */
+const GAME_TYPE_TAGS: Record<GameType, string> = {
+  minecraft: '', tdm: 'TDM', ffa: 'FFA', gungame: 'GUN', elimination: 'ELIM', hardpoint: 'HP', domination: 'DOM', ctf: 'CTF',
+};
 
 /** "Team Deathmatch · first to 30 · 10 min · 3/12 players", shown before joining. */
 export function describeRoom(info: RoomInfo): string {
   const def = gameTypeDef(info.gameType ?? 'minecraft');
   const parts = [def.name];
   if (def.arcade) {
-    if (info.scoreLimit) parts.push(`first to ${info.scoreLimit}`);
+    if (info.scoreLimit && def.options?.score.length !== 0) parts.push(`first to ${info.scoreLimit}${def.scoreUnit && def.scoreUnit !== 'kills' ? ` ${def.scoreUnit}` : ''}`);
     if (info.timeLimitSec) parts.push(`${Math.round(info.timeLimitSec / 60)} min`);
     if (info.map) parts.push(info.map === 'rotate' ? 'Map: Rotate' : `Map: ${getMap(info.map).name}`);
   } else if (info.gameMode) {
@@ -308,25 +306,36 @@ export class MainMenu {
     });
     const scoreButton = h('button', { class: 'mc-btn' });
     const timeButton = h('button', { class: 'mc-btn' });
+    // The choices, labels and units come from the game type (src/modes/GameTypes.ts).
     const renderLimits = () => {
-      scoreButton.textContent = `Score Limit: ${scoreLimit} kills`;
-      timeButton.textContent = `Time Limit: ${timeLimit / 60} min`;
+      const def = gameTypeDef(type);
+      const o = def.options;
+      scoreButton.classList.toggle('hidden', !o || o.score.length === 0);
+      scoreButton.textContent = `${o?.scoreLabel ?? 'Score Limit'}: ${scoreLimit}${def.scoreUnit && def.scoreUnit !== 'rounds' && def.scoreUnit !== 'captures' ? ` ${def.scoreUnit}` : ''}`;
+      timeButton.textContent = `${o?.timeLabel ?? 'Time Limit'}: ${timeLimit >= 120 && timeLimit % 60 === 0 ? `${timeLimit / 60} min` : `${timeLimit} s`}`;
     };
+    const nextChoice = (list: number[], cur: number) => list[(Math.max(0, list.indexOf(cur)) + 1) % list.length];
     scoreButton.addEventListener('click', () => {
-      scoreLimit = SCORE_LIMITS[(SCORE_LIMITS.indexOf(scoreLimit) + 1) % SCORE_LIMITS.length];
+      const list = gameTypeDef(type).options?.score ?? [];
+      if (list.length) scoreLimit = nextChoice(list, scoreLimit);
       renderLimits();
     });
     timeButton.addEventListener('click', () => {
-      timeLimit = TIME_LIMITS[(TIME_LIMITS.indexOf(timeLimit) + 1) % TIME_LIMITS.length];
+      const list = gameTypeDef(type).options?.time ?? [];
+      if (list.length) timeLimit = nextChoice(list, timeLimit);
       renderLimits();
     });
     const mapHint = h('div', { class: 'hint' });
+    // Only maps that have what the game type needs (zones, flags) are offered.
+    const mapChoices = (): MapSetting[] => MAP_SETTINGS.filter((m) => m === 'rotate' || getMap(m).supports(gameTypeDef(type).requires));
     const renderMap = () => {
+      if (!mapChoices().includes(map)) map = mapChoices()[0] ?? MENU_DEFAULT_MAP;
       mapButton.textContent = `Map: ${mapName(map)}`;
       mapHint.textContent = map === 'rotate' ? 'Every match is played on the next map.' : getMap(map).description;
     };
     const mapButton = button('', () => {
-      map = MAP_SETTINGS[(MAP_SETTINGS.indexOf(map) + 1) % MAP_SETTINGS.length];
+      const list = mapChoices();
+      map = list[(Math.max(0, list.indexOf(map)) + 1) % list.length];
       renderMap();
     });
     renderMap();
@@ -342,9 +351,10 @@ export class MainMenu {
       sandboxFields.classList.toggle('hidden', def.arcade);
       arcadeFields.classList.toggle('hidden', !def.arcade);
       if (def.arcade) {
-        // Offer the type's own defaults when switching to it, snapped to the available choices.
-        scoreLimit = SCORE_LIMITS.includes(def.scoreLimit) ? def.scoreLimit : SCORE_LIMITS[0];
-        timeLimit = TIME_LIMITS.includes(def.timeLimitSec) ? def.timeLimitSec : TIME_LIMITS[1];
+        // Offer the type's own defaults when switching to it.
+        scoreLimit = def.scoreLimit;
+        timeLimit = def.timeLimitSec;
+        renderMap();
         renderLimits();
       }
     };

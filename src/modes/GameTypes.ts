@@ -1,11 +1,27 @@
 /**
  * Multiplayer game types. "minecraft" is the sandbox (survival/creative/hardcore, building,
- * mobs). The arcade types are round-based shooters on a fixed arena, in the spirit of Krunker:
- * fast movement, hitscan weapons, health that regenerates, respawns and a scoreboard.
+ * mobs). The arcade types are shooters on a fixed arena, in the spirit of Krunker: fast movement,
+ * hitscan weapons, health that regenerates, respawns and a scoreboard.
+ *
+ * Every arcade type is one `GameTypeDef` (pure data: teams, respawn rules, loadout rules, round
+ * structure, scoring, HUD widgets, menu options) plus one `ModeLogic` class on the server
+ * (`server/modes/<id>.ts`) that implements the rules the data cannot express.
  */
-export type GameType = 'minecraft' | 'tdm' | 'ffa';
+export type GameType = 'minecraft' | 'tdm' | 'ffa' | 'gungame' | 'elimination' | 'hardpoint' | 'domination' | 'ctf';
 
 export type Team = 'red' | 'blue';
+
+/** Which server class implements the rules (server/modes/*). */
+export type ModeLogicId = 'deathmatch' | 'gungame' | 'rounds' | 'zones' | 'ctf';
+
+/** What a map must define to host a type (zones, flags); other maps are hidden/skipped for it. */
+export type MapFeature = 'zones' | 'flags';
+
+/** `timer`: respawn after `seconds`. `never`: dead until the round is over (spectate). */
+export type RespawnRule = 'timer' | 'never';
+
+/** Widgets the client HUD draws for a type. */
+export type HudWidget = 'score' | 'zones' | 'flags' | 'rounds' | 'ladder' | 'alive';
 
 export interface GameTypeDef {
   id: GameType;
@@ -17,7 +33,46 @@ export interface GameTypeDef {
   /** Defaults for the match settings shown when creating a game. */
   scoreLimit: number;
   timeLimitSec: number;
+  /** Rules class; absent on the sandbox. */
+  logic?: ModeLogicId;
+  /** The unit of `scoreLimit` ("kills", "points", "captures", "rounds", "levels"). */
+  scoreUnit?: string;
+  /** Choices offered in Create Game for the score limit and the time limit (seconds). Empty score = no score option. */
+  options?: { score: number[]; scoreLabel: string; time: number[]; timeLabel: string };
+  respawn?: { rule: RespawnRule; seconds: number; protectionSec: number };
+  /** Round structure (only for round-based types), all in seconds. */
+  rounds?: {
+    /** Result banner after a round. */
+    postSec: number;
+    /** Between rounds: everybody is back at spawn and may change weapon, nobody can be hurt. */
+    intermissionSec: number;
+    /** Final "3-2-1" before the round goes live (nobody can be hurt). 0 = none. */
+    countdownSec: number;
+  };
+  /** Who chooses the weapons: `free` = the player (loadout menu), `ladder` = the mode (no choice). */
+  loadout?: 'free' | 'ladder';
+  /** Weapon ids per level (gun game); the last one must be the knife. */
+  ladder?: string[];
+  friendlyFire?: boolean;
+  /** Map data this type needs. */
+  requires?: MapFeature[];
+  /** Mode-specific numbers: capture times, flag return time, ... */
+  params?: Record<string, number>;
+  /** Points per kill / per objective action (capture, flag return). */
+  scoring?: { kill: number; objective: number };
+  /** Client HUD widgets besides the always-present health/ammo/kill feed. */
+  hud?: HudWidget[];
+  /** Header of the objective column in the scoreboard ("Caps", "Level"); absent = none. */
+  scoreColumn?: string;
 }
+
+/** The gun game weapon ladder: 16 levels, ending with the knife. Sniper and shotgun levels are never adjacent. */
+export const GUN_GAME_LADDER: string[] = [
+  'shotgun', 'smg', 'rifle', 'revolver', 'burst', 'pistol', 'dmr', 'smg',
+  'sniper', 'rifle', 'pistol', 'shotgun', 'burst', 'revolver', 'smg', 'knife',
+];
+
+const minutes = (...m: number[]) => m.map((x) => x * 60);
 
 export const GAME_TYPES: GameTypeDef[] = [
   {
@@ -27,10 +82,62 @@ export const GAME_TYPES: GameTypeDef[] = [
   {
     id: 'tdm', name: 'Team Deathmatch', description: 'Red against blue on an arena: first team to the score limit wins',
     arcade: true, teams: true, scoreLimit: 30, timeLimitSec: 600,
+    logic: 'deathmatch', scoreUnit: 'kills',
+    options: { score: [10, 20, 30, 50], scoreLabel: 'Score Limit', time: minutes(5, 10, 15), timeLabel: 'Time Limit' },
+    respawn: { rule: 'timer', seconds: 3, protectionSec: 2 }, loadout: 'free', friendlyFire: false,
+    scoring: { kill: 1, objective: 0 }, hud: ['score'],
   },
   {
     id: 'ffa', name: 'Free For All', description: 'Everyone for themselves: first to the score limit wins',
     arcade: true, teams: false, scoreLimit: 20, timeLimitSec: 600,
+    logic: 'deathmatch', scoreUnit: 'kills',
+    options: { score: [10, 20, 30, 50], scoreLabel: 'Score Limit', time: minutes(5, 10, 15), timeLabel: 'Time Limit' },
+    respawn: { rule: 'timer', seconds: 3, protectionSec: 2 }, loadout: 'free', friendlyFire: true,
+    scoring: { kill: 1, objective: 0 }, hud: ['score'],
+  },
+  {
+    id: 'gungame', name: 'Gun Game', description: 'Every kill gives you the next weapon, a knife kill sets the victim back: be first through the ladder',
+    arcade: true, teams: false, scoreLimit: GUN_GAME_LADDER.length, timeLimitSec: 600,
+    logic: 'gungame', scoreUnit: 'levels',
+    options: { score: [], scoreLabel: '', time: minutes(5, 8, 10, 15), timeLabel: 'Time Limit' },
+    respawn: { rule: 'timer', seconds: 1.5, protectionSec: 1 }, loadout: 'ladder', ladder: GUN_GAME_LADDER, friendlyFire: true,
+    scoring: { kill: 1, objective: 0 }, hud: ['ladder'], scoreColumn: 'Level',
+  },
+  {
+    id: 'elimination', name: 'Team Elimination', description: 'Rounds with one life each: wipe the other team to win the round, first to the round limit wins',
+    arcade: true, teams: true, scoreLimit: 4, timeLimitSec: 90,
+    logic: 'rounds', scoreUnit: 'rounds',
+    options: { score: [2, 3, 4, 5], scoreLabel: 'Rounds to Win', time: [60, 90, 120], timeLabel: 'Round Time' },
+    respawn: { rule: 'never', seconds: 0, protectionSec: 2 }, loadout: 'free', friendlyFire: false,
+    rounds: { postSec: 4, intermissionSec: 5, countdownSec: 3 },
+    scoring: { kill: 0, objective: 1 }, hud: ['rounds', 'alive'],
+  },
+  {
+    id: 'hardpoint', name: 'Hardpoint', description: 'Hold the hill: it moves every minute, only the team that stands alone in it scores',
+    arcade: true, teams: true, scoreLimit: 250, timeLimitSec: 600,
+    logic: 'zones', scoreUnit: 'points',
+    options: { score: [100, 150, 250], scoreLabel: 'Score Limit', time: minutes(5, 10, 15), timeLabel: 'Time Limit' },
+    respawn: { rule: 'timer', seconds: 4, protectionSec: 2 }, loadout: 'free', friendlyFire: false,
+    requires: ['zones'], params: { rotateSec: 60, gapSec: 5, pointsPerSec: 1 },
+    scoring: { kill: 0, objective: 1 }, hud: ['score', 'zones'],
+  },
+  {
+    id: 'domination', name: 'Domination', description: 'Capture and hold the points on the map: every point you own scores',
+    arcade: true, teams: true, scoreLimit: 100, timeLimitSec: 600,
+    logic: 'zones', scoreUnit: 'points',
+    options: { score: [50, 100, 150], scoreLabel: 'Score Limit', time: minutes(5, 10, 15), timeLabel: 'Time Limit' },
+    respawn: { rule: 'timer', seconds: 4, protectionSec: 2 }, loadout: 'free', friendlyFire: false,
+    requires: ['zones'], params: { captureSec: 6, pointEverySec: 2 },
+    scoring: { kill: 0, objective: 1 }, hud: ['score', 'zones'],
+  },
+  {
+    id: 'ctf', name: 'Capture the Flag', description: 'Steal the enemy flag and bring it home while yours is safe: first to the capture limit wins',
+    arcade: true, teams: true, scoreLimit: 3, timeLimitSec: 600,
+    logic: 'ctf', scoreUnit: 'captures',
+    options: { score: [1, 3, 5], scoreLabel: 'Captures to Win', time: minutes(5, 8, 10, 15), timeLabel: 'Time Limit' },
+    respawn: { rule: 'timer', seconds: 4, protectionSec: 2 }, loadout: 'free', friendlyFire: false,
+    requires: ['flags'], params: { carrySlow: 0.1, returnSec: 12, touchRadius: 1.6 },
+    scoring: { kill: 0, objective: 1 }, hud: ['score', 'flags'], scoreColumn: 'Caps',
   },
 ];
 

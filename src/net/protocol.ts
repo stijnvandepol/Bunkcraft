@@ -44,9 +44,59 @@ export interface RosterEntry {
   deaths: number;
   /** Round-trip time in ms as measured by the server, 0 if unknown. */
   ping: number;
+  /** Objective score of the mode (gun game level, captures); absent in modes without one. */
+  pts?: number;
 }
 
-export type MatchPhase = 'warmup' | 'live' | 'ended';
+/**
+ * `warmup` waits for players and counts down; `countdown`, `roundend` and `intermission` only occur in
+ * round-based modes (the nobody-can-be-hurt phases around a round); `ended` shows the result.
+ */
+export type MatchPhase = 'warmup' | 'countdown' | 'live' | 'roundend' | 'intermission' | 'ended';
+
+/** A capture zone (hardpoint hill, domination point) as the HUD needs it. */
+export interface ZoneState {
+  name: string;
+  x: number; y: number; z: number;
+  /** Capture radius in blocks. */
+  r: number;
+  /** Hardpoint: this is the hill that scores right now. Domination: always true. */
+  active: boolean;
+  /** Team that owns the point (domination) or holds the hill alone (hardpoint); '' = nobody. */
+  owner: Team | '';
+  /** Capture progress 0..1 of `progressTeam` (domination). */
+  progress: number;
+  progressTeam: Team | '';
+  contested: boolean;
+  /** Living players inside, per team. */
+  red: number;
+  blue: number;
+}
+
+/** A flag (capture the flag): at its base, carried by a player or lying where the carrier died. */
+export interface FlagState {
+  team: Team;
+  status: 'home' | 'carried' | 'dropped';
+  x: number; y: number; z: number;
+  /** Player id of the carrier, 0 when nobody carries it. */
+  carrier: number;
+  /** Seconds until a dropped flag returns by itself. */
+  returnIn: number;
+  /** Where the flag belongs (its base). */
+  hx: number; hy: number; hz: number;
+}
+
+/** Mode-specific HUD state (`mode` message), replaced as a whole on every update. */
+export type ModeState =
+  | { kind: 'zones'; variant: 'hardpoint' | 'domination'; zones: ZoneState[]; rotateIn: number; gap: boolean }
+  | { kind: 'ctf'; flags: FlagState[] }
+  | { kind: 'rounds'; round: number; need: number; wins: { red: number; blue: number }; alive: { red: number; blue: number } };
+
+/** One-off happenings the client turns into a banner and a sound. */
+export type ModeEventKind =
+  | 'flag-taken' | 'flag-dropped' | 'flag-returned' | 'flag-captured'
+  | 'zone-captured' | 'zone-lost' | 'zone-moved'
+  | 'round-start' | 'round-win' | 'level-up' | 'level-down';
 
 /** Settings the server announces for an arcade game. */
 export interface MatchInfo {
@@ -139,7 +189,7 @@ export type ClientMessage =
   /** Bone meal used on a block (the server grows the sapling or grass). Optional: older servers ignore it. */
   | { t: 'bonemeal'; x: number; y: number; z: number }
   /** Arcade: choose the primary weapon for the next life (rifle, smg, shotgun, sniper). */
-  | { t: 'loadout'; primary: string }
+  | { t: 'loadout'; primary: string; secondary?: string }
   /** Arcade: fire the weapon in a slot. Origin is the client's eye, dir the aim; the server re-checks both. */
   | { t: 'fire'; slot: 0 | 1 | 2; ox: number; oy: number; oz: number; dx: number; dy: number; dz: number; ads: boolean }
   /** Arcade: start reloading the weapon in a slot. */
@@ -225,11 +275,17 @@ export type ServerMessage =
   | { t: 'msound'; kind: string; event: 'idle' | 'hurt' | 'death' | 'fuse' | 'arrow' | 'shoot'; x: number; y: number; z: number }
   // ---- arcade game types ----
   /** Match state, about once a second and on every change. `scores` is team kills (tdm) or empty (ffa). */
-  | { t: 'match'; phase: MatchPhase; timeLeft: number; scores: { red: number; blue: number }; info: MatchInfo }
+  | { t: 'match'; phase: MatchPhase; timeLeft: number; scores: { red: number; blue: number }; info: MatchInfo; /** The mode's line under the timer ("Round 2 · first to 4"). */ text?: string }
   /** Who is on which team plus kills/deaths; sent on joins, leaves, kills and every few seconds. */
   | { t: 'roster'; players: RosterEntry[] }
   /** You (re)spawn: position, facing, team, loadout and full health. */
-  | { t: 'spawn'; x: number; y: number; z: number; yaw: number; team: Team | ''; primary: string; health: number }
+  | { t: 'spawn'; x: number; y: number; z: number; yaw: number; team: Team | ''; primary: string; health: number; secondary?: string }
+  /** The mode changed your weapons while you live (gun game level up): primary slot, optional secondary slot. */
+  | { t: 'gear'; primary: string; secondary?: string }
+  /** Mode-specific HUD state (zones, flags, round wins), about twice a second and on changes. Absent in tdm/ffa/gun game. */
+  | { t: 'mode'; state: ModeState }
+  /** A one-off happening (flag taken, zone captured, round won): `team` is the team it concerns, `id` the player. */
+  | { t: 'event'; kind: ModeEventKind; team?: Team | ''; id?: number; text?: string }
   /** Your health changed (damage, regeneration). */
   | { t: 'hp'; health: number }
   /** Your ammo is authoritative: magazine, spare bullets are unlimited, reloading flag per slot. */

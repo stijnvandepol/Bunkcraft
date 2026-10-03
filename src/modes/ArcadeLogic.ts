@@ -52,13 +52,36 @@ export class FireControl {
     return true;
   }
 
+  private burstLeft = 0;
+  private burstStart = 0;
+
+  /**
+   * Burst weapons: one press fires `count` shots `interval` apart; the next burst may start
+   * `cycleSec` after the first shot. Returns true for every shot that goes out now.
+   */
+  tryBurst(now: number, interval: number, count: number, cycleSec: number, pressed: boolean): boolean {
+    if (now < this.nextAt) return false;
+    if (this.burstLeft > 0) {
+      this.burstLeft--;
+      this.nextAt = this.burstLeft > 0 ? now + interval : Math.max(now + interval, this.burstStart + cycleSec);
+      return true;
+    }
+    if (!pressed) return false;
+    this.burstStart = now;
+    this.burstLeft = count - 1;
+    this.nextAt = this.burstLeft > 0 ? now + interval : now + cycleSec;
+    return true;
+  }
+
   /** Block the trigger for a while (weapon switch, reload). */
   delay(now: number, seconds: number): void {
     this.nextAt = Math.max(this.nextAt, now + seconds);
+    this.burstLeft = 0;
   }
 
   reset(): void {
     this.nextAt = 0;
+    this.burstLeft = 0;
   }
 }
 
@@ -80,7 +103,7 @@ export function damageAngle(dx: number, dz: number, yaw: number): number {
 
 /** Scoreboard order: most kills first, then fewest deaths, then name. Does not modify the input. */
 export function sortRoster(players: readonly RosterEntry[]): RosterEntry[] {
-  return [...players].sort((a, b) => b.kills - a.kills || a.deaths - b.deaths || a.name.localeCompare(b.name));
+  return [...players].sort((a, b) => (b.pts ?? 0) - (a.pts ?? 0) || b.kills - a.kills || a.deaths - b.deaths || a.name.localeCompare(b.name));
 }
 
 /** Total kills per team from the roster (the server also sends these in `match.scores`). */

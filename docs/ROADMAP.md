@@ -211,6 +211,14 @@ regenereert, respawns en een scoreboard. Beschrijving, besturing en wapentabel: 
 - **Naamtags: Gedaan.** Nooit door muren, met zichtlijn-raycast en fade.
 - **Spectaten na je dood: Gedaan.** Moordenaar eerst, daarna bladeren met de muis.
 - **Teambalans: Gedaan.** Late joiners naar het kleinste team; bij vertrek wisselt de laatste joiner bij de volgende respawn.
+- **Modeframework: Gedaan.** `GameTypeDef` (data) + `ModeLogic` per mode in `server/modes/`; rondefases (warm-up, countdown,
+  live, roundend, intermission, ended); Create Game toont modes, limieten en kaarten uit de registry.
+- **Nieuwe modes: Gedaan.** Gun Game, Team Elimination, Hardpoint, Domination en Capture the Flag, met objective-HUD (markeringen
+  door muren, scorebalk, vlagstatus, rondepips, ladder), vlagmodellen, geluidscues, Vitest per mode en `scripts/modes-bots.ts`.
+- **Kaartobjectives: Gedaan.** Zones en/of vlaggen op Classic, Maple Court, Old Quarter, Harbor Yard en Atomic Lane, plus de
+  nieuwe CTF-kaart Bunker Flag.
+- **Wapenherziening: Gedaan.** Shotgun 10 × 13 (one-shot dichtbij), SMG 15, nieuwe DMR, burst rifle en revolver, klassen in het
+  loadoutmenu.
 
 **Open:**
 
@@ -219,10 +227,14 @@ regenereert, respawns en een scoreboard. Beschrijving, besturing en wapentabel: 
 2. **Meer kaarten en varianten:** per kaart meerdere dekkingsindelingen via de seed (nu alleen Classic), een stemronde voor de
    volgende kaart in plaats van vast `rotate`, en bij een kaartwissel de wereld ter plekke herbouwen (nu een korte
    herverbinding met laadscherm).
-3. **Meer wapens en perks**, scorestreaks, kill cam, headshot-statistieken, teamchat.
-4. **Lag compensation** voor hitscan (server) en client-side tracer-voorspelling tegen spelers.
-5. **Bots** voor lege servers, en een snelle "Quick Play"-knop die een open arcade-game zoekt.
-6. **Mobiel:** touchbediening voor schieten en richten (hoort bij de touch-taak in 6).
+3. **Meer modes:** Infected en Block Hunt (onderzoek §2.4), Search & Destroy op een asymmetrische kaart (Foundry), en
+   Domination/Hardpoint-varianten per kaart (meer zones op kleine kaarten, spawnkeuze weg van de actieve heuvel).
+4. **Objective-afwerking:** dragerpijl met interval voor de vijand, MVP-punten (dragerkill, terugbrengen), overtime bij een
+   gelijkspel in ctf, rondes met zijwissel, granaten voor elimination, de vlag als echt derde-persoonsmodel op de rug.
+5. **Meer wapens en perks**, scorestreaks, kill cam, headshot-statistieken, teamchat.
+6. **Lag compensation** voor hitscan (server) en client-side tracer-voorspelling tegen spelers.
+7. **Bots** voor lege servers, en een snelle "Quick Play"-knop die een open arcade-game zoekt.
+8. **Mobiel:** touchbediening voor schieten en richten (hoort bij de touch-taak in 6).
 
 ## 8. Distributie
 
