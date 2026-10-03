@@ -63,8 +63,8 @@ naar clients via `welcome` en het `rules`-bericht). Hardcore staat altijd op Har
 `doMobSpawning`, `doDaylightCycle`, `doWeatherCycle`, `randomTickSpeed`, `naturalRegeneration`, `fallDamage`,
 `fireDamage`, `drowningDamage`, `mobGriefing` (creeper-blokschade; TNT breekt altijd), `showDeathMessages`,
 `playersSleepingPercentage`. `/gamerule <naam> [waarde]` in singleplayer en voor ops op de server; scherm "Game Rules"
-in Create World (tab World) en in het pauzemenu (singleplayer). `randomTickSpeed` is alleen gedefinieerd
-(`rules.get('randomTickSpeed')`) voor het random-tick-systeem.
+in Create World (tab World) en in het pauzemenu (singleplayer). `randomTickSpeed` stuurt het random-tick-systeem
+(singleplayer `world.randomTicker.speed`, server `setRandomTickSpeed`).
 
 ## Gevecht (1.9+)
 

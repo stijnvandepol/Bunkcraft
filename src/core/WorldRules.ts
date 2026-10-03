@@ -91,6 +91,8 @@ export class WorldRules {
       entities.spawningEnabled = this.rules.get('doMobSpawning');
     }
     this.host.weather().timersFrozen = !this.rules.get('doWeatherCycle');
+    const ticker = this.host.world()?.randomTicker;
+    if (ticker && !this.host.net()) ticker.speed = this.rules.get('randomTickSpeed');
   }
 
   setDifficulty(d: Difficulty): void {

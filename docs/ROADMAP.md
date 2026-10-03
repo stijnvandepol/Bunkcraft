@@ -233,7 +233,7 @@ ertsaders, `genVersion` voor bestaande werelden).
    blok-pose en model van het schild in de hand; bijl-mobs/PvP voor het uitschakelen van schilden; doodsberichten in
    multiplayer-chat (de server ziet de dood niet: health is client-autoritatief); zombies die deuren breken op Hard;
    Easy-specifieke mobregels (cave spiders); `difficulty`/`rules`/`bed`/`effects` in `.bunkworld`-export;
-   `randomTickSpeed` aansluiten zodra het random-tick-systeem er is; slapen versnelt nu direct naar de ochtend
+   slapen versnelt nu direct naar de ochtend
    (geen tijd-animatie) en de server kent geen fase "iedereen in bed maar nog geen 100 ticks" in de HUD.
 
 **Fase 1, early game loop:** ~~saplings en bladverval~~ (gedaan), landbouw (schoffel, farmland, tarwe, brood, bone meal), bed met

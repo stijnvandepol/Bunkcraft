@@ -150,6 +150,7 @@ export class ServerEntities {
   /** Re-reads the rules that switch spawning (call after /gamerule). */
   applyRules(): void {
     this.manager.spawningEnabled = this.rules ? this.rules.get('doMobSpawning') : true;
+    if (this.rules) this.setRandomTickSpeed(this.rules.get('randomTickSpeed'));
   }
 
   get mobCount(): number {
