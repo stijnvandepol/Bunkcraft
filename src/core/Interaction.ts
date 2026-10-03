@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { EntityManager } from '../entities/EntityManager';
 import type { PlayerInventory } from '../items/Inventory';
-import { ITEM, blockDrop, breakSeconds, getItemDef, isBlockItem, itemBlock, itemFromState, itemId, itemMeta } from '../items/ItemRegistry';
+import { ITEM, blockDrop, breakSeconds, getItemDef, isBlockItem, itemBlock, itemFromState, itemId, itemMeta, miningWear } from '../items/ItemRegistry';
 import { toolUse } from '../items/ToolUse';
 import { facingFromYaw } from '../world/BlockStates';
 import { type GameMode, hasSurvivalRules } from '../player/GameMode';
@@ -354,7 +354,7 @@ export class Interaction {
           if (top) entities.dropItem(top, hit.x + 0.5, hit.y + 1.3, hit.z + 0.5);
         }
         stats.addExhaustion(0.005);
-        if (getItemDef(held)?.tool) inventory.damageTool(hotbar.selected);
+        for (let w = miningWear(held, broken, brokenMeta); w > 0; w--) inventory.damageTool(hotbar.selected);
       }
     }
     this.breakProgress = 0;

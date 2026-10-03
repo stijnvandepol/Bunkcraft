@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { PHYSICS, blockReach } from '../src/player/Physics';
 import { type MoveInput, Player } from '../src/player/Player';
-import { ITEM, getItemDef, itemFromState, itemId } from '../src/items/ItemRegistry';
+import { ITEM, blockDrop, getItemDef, itemFromState, itemId, miningWear } from '../src/items/ItemRegistry';
 import { BLOCK } from '../src/world/BlockRegistry';
 import { MOB_TYPES } from '../src/entities/MobTypes';
 import { explosionDamage, explosionDropChance } from '../src/entities/Explosion';
@@ -101,6 +101,36 @@ describe('balance: explosions', () => {
   it('drops every block from TNT and 1/power from other explosions (Java 1.21)', () => {
     expect(explosionDropChance(4, true)).toBe(1);
     expect(explosionDropChance(3, false)).toBeCloseTo(1 / 3, 9);
+  });
+});
+
+describe('balance: mining', () => {
+  it('wears tools 1 per block, swords 2, and nothing on blocks that break instantly', () => {
+    expect(miningWear(ITEM.IRON_PICKAXE, BLOCK.STONE)).toBe(1);
+    expect(miningWear(ITEM.IRON_SWORD, BLOCK.DIRT)).toBe(2);
+    expect(miningWear(ITEM.IRON_SHOVEL, BLOCK.TORCH)).toBe(0);
+    expect(miningWear(ITEM.DIAMOND_AXE, BLOCK.TNT)).toBe(0);
+    expect(miningWear(ITEM.DIAMOND_AXE, BLOCK.POPPY)).toBe(0);
+    expect(miningWear(BLOCK.DIRT, BLOCK.STONE)).toBe(0);
+  });
+
+  it('dead bushes drop 0-2 sticks without shears', () => {
+    const counts = new Set<number>();
+    for (let i = 0; i < 300; i++) counts.add(blockDrop(BLOCK.DEAD_BUSH, 0)?.count ?? 0);
+    expect([...counts].sort()).toEqual([0, 1, 2]);
+  });
+
+  it('keeps vanilla tool tiers: speed, durability and attack damage', () => {
+    const tiers = [
+      ['wooden', 2, 59], ['stone', 4, 131], ['iron', 6, 250], ['diamond', 8, 1561], ['golden', 12, 32],
+    ] as const;
+    for (const [t, speed, durability] of tiers) {
+      const pick = getItemDef(itemId(`${t}_pickaxe`))!.tool!;
+      expect(pick.speed, t).toBe(speed);
+      expect(pick.durability, t).toBe(durability);
+    }
+    expect(['wooden', 'stone', 'iron', 'diamond', 'golden'].map((t) => getItemDef(itemId(`${t}_sword`))!.tool!.damage)).toEqual([4, 5, 6, 7, 4]);
+    expect(['wooden', 'stone', 'iron', 'diamond', 'golden'].map((t) => getItemDef(itemId(`${t}_axe`))!.tool!.damage)).toEqual([7, 9, 9, 9, 7]);
   });
 });
 
