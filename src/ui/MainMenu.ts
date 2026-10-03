@@ -11,13 +11,16 @@ import { installButton } from '../pwa/Pwa';
 import { button, dirtBackground, h, menuScreen, screen } from './dom';
 import { cheatsAllowed } from '../save/SaveSystem';
 import { TIP_COUNT, modeHint, modeName, t, tip } from './i18n';
+import { difficultyButton, gameRulesScreen } from './GameRulesScreen';
+import { DEFAULT_DIFFICULTY, type Difficulty } from '../world/Difficulty';
+import { GameRules } from '../world/GameRules';
 import { pickFile } from './download';
 import type { ScreenStack } from './Screens';
 
 export interface MenuActions {
   listWorlds(): Promise<WorldMeta[]>;
   playWorld(meta: WorldMeta): void;
-  createWorld(name: string, seedText: string, mode: GameMode, opts?: { cheats?: boolean }): void;
+  createWorld(name: string, seedText: string, mode: GameMode, extra?: { difficulty: Difficulty; rules?: Record<string, boolean | number>; cheats?: boolean }): void;
   deleteWorld(id: string): Promise<void>;
   /** Persists changed world metadata (rename, game mode). */
   saveWorld(meta: WorldMeta): Promise<void>;
@@ -587,7 +590,10 @@ export class MainMenu {
     // Like Minecraft, cheats default on in Creative and off elsewhere until the player picks.
     let cheats: boolean | null = null;
     const cheatsOn = () => cheats ?? mode === 'creative';
-    const create = () => this.actions.createWorld(name.value.trim() || 'New World', seed.value.trim(), mode, { cheats: cheatsOn() });
+    let difficulty: Difficulty = DEFAULT_DIFFICULTY;
+    const rules = new GameRules();
+    const create = () => this.actions.createWorld(name.value.trim() || 'New World', seed.value.trim(), mode,
+      { difficulty: mode === 'hardcore' ? 'hard' : difficulty, rules: rules.serialize(), cheats: cheatsOn() });
     for (const input of [name, seed]) input.addEventListener('keydown', (e) => { if (e.key === 'Enter') create(); });
 
     const modeHint$ = h('div', { class: 'hint', text: modeHint(mode, GAME_MODE_HINTS[mode]) });
@@ -598,12 +604,14 @@ export class MainMenu {
       modeButton.textContent = t('create.mode', modeName(mode));
       modeHint$.textContent = modeHint(mode, GAME_MODE_HINTS[mode]);
       cheatButton.textContent = cheatText();
+      (diffButton as HTMLButtonElement & { refresh?: () => void }).refresh?.();
     });
+    const diffButton = difficultyButton(() => difficulty, (d) => { difficulty = d; }, () => mode === 'hardcore');
     const gameTab = h('div', { style: COLUMN },
       h('div', { class: 'field-label', text: t('create.name') }), name,
       modeButton,
       modeHint$,
-      button(t('create.difficulty'), () => undefined, { disabled: true }),
+      diffButton,
     );
     // Placeholders for what the generator does not support yet (structures, bonus chest) stay visibly disabled.
     const worldTab = h('div', { class: 'hidden', style: COLUMN },
@@ -616,7 +624,7 @@ export class MainMenu {
     const moreTab = h('div', { class: 'hidden', style: COLUMN },
       cheatButton,
       h('div', { class: 'hint', text: t('create.cheats.hint') }),
-      button(t('create.gameRules'), () => undefined, { disabled: true }),
+      button(t('create.gameRules'), () => this.stack.push(gameRulesScreen(rules, () => this.stack.pop()))),
     );
     const tabs = [[t('create.tab.game'), gameTab], [t('create.tab.world'), worldTab], [t('create.tab.more'), moreTab]] as const;
     const tabButtons: HTMLButtonElement[] = [];
@@ -680,7 +688,12 @@ export function deathScreen(opts: {
 }
 
 /** "Game Menu" laid out like Minecraft's pause screen. */
-export function pauseScreen(actions: { resume(): void; options(): void; quit(): void; multiplayer?: boolean; advancements?: () => void; statistics?: () => void; invite?: () => void; seed?: string }): HTMLDivElement {
+export function pauseScreen(actions: {
+  resume(): void; options(): void; quit(): void; multiplayer?: boolean; advancements?: () => void; statistics?: () => void; invite?: () => void; seed?: string;
+  /** The world's difficulty (read-only on a server and in Hardcore) and the Game Rules screen (singleplayer). */
+  difficulty?: { get(): Difficulty; set(d: Difficulty): void; locked: boolean };
+  gameRules?: () => void;
+}): HTMLDivElement {
   const off = () => undefined;
   const copySeed = button(t('pause.copySeed'), () => {
     const ok = () => { copySeed.textContent = t('common.copied'); window.setTimeout(() => { copySeed.textContent = t('pause.copySeed'); }, 1500); };
@@ -695,6 +708,9 @@ export function pauseScreen(actions: { resume(): void; options(): void; quit(): 
       h('div', { class: 'row' }, button(t('pause.options'), actions.options, { cls: 'half' }), actions.invite
         ? button(t('pause.invite'), actions.invite, { cls: 'half' })
         : button(t('pause.lan'), off, { cls: 'half', disabled: true })),
+      actions.difficulty ? h('div', { class: 'row' },
+        Object.assign(difficultyButton(actions.difficulty.get, actions.difficulty.set, () => actions.difficulty!.locked), { className: 'mc-btn half' }),
+        button(t('create.gameRules'), actions.gameRules ?? off, { cls: 'half', disabled: !actions.gameRules })) : null,
       button(actions.multiplayer ? t('pause.disconnect') : t('pause.saveQuit'), actions.quit),
     ),
   );

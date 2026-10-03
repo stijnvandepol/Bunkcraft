@@ -31,6 +31,8 @@ export class Player {
   headInWater = false;
   flying = false;
   sprinting = false;
+  /** Sneaking on the ground or in the air (slow walk, no sprint); not while flying or swimming. */
+  sneaking = false;
   horizontalCollision = false;
   /** Distance walked on the ground, drives head bob and footsteps. */
   walkDistance = 0;
@@ -46,6 +48,9 @@ export class Player {
   canSprint = true;
   /** Arcade: scales walking and sprinting speed on the ground and in the air (1 = Minecraft). */
   speedMultiplier = 1;
+  /** Jump Boost levels (+0.1 blocks/tick of jump speed each) and Levitation levels (rise 0.9 blocks/s each). */
+  jumpBoost = 0;
+  levitation = 0;
   /** Horizontal acceleration in the air (arcade raises it for bunny hopping). */
   airAccel: number = PHYSICS.AIR_ACCEL;
   /** Spectator: fly through blocks. */
@@ -112,11 +117,12 @@ export class Player {
     let f = input.forward, s = input.strafe;
     const len = Math.hypot(f, s);
     if (len > 1) { f /= len; s /= len; }
-    this.sprinting = input.sprint && f > 0 && !this.inWater && this.canSprint;
+    this.sneaking = input.descend && !this.flying && !this.inWater && !this.noclip;
+    this.sprinting = input.sprint && f > 0 && !this.inWater && this.canSprint && !this.sneaking;
     let speed: number;
     if (this.flying) speed = this.sprinting ? PHYSICS.FLY_SPRINT_SPEED : PHYSICS.FLY_SPEED;
     else if (this.inWater) speed = this.inLava ? PHYSICS.SWIM_SPEED * 0.5 : PHYSICS.SWIM_SPEED;
-    else speed = (this.sprinting ? PHYSICS.SPRINT_SPEED : PHYSICS.WALK_SPEED) * this.speedMultiplier;
+    else speed = (this.sprinting ? PHYSICS.SPRINT_SPEED : PHYSICS.WALK_SPEED) * this.speedMultiplier * (this.sneaking ? PHYSICS.SNEAK_FACTOR : 1);
     const sin = Math.sin(this.yaw), cos = Math.cos(this.yaw);
     const tx = (-sin * f + cos * s) * speed;
     const tz = (-cos * f - sin * s) * speed;
@@ -143,10 +149,13 @@ export class Player {
       if (input.jump && this.horizontalCollision) this.vy = Math.max(this.vy, 5.5);
     } else {
       if (input.jump && this.onGround) {
-        this.vy = PHYSICS.JUMP_VELOCITY;
+        this.vy = PHYSICS.JUMP_VELOCITY + this.jumpBoost * 2.1;
         this.jumps++;
       }
-      this.vy = Math.max(this.vy - PHYSICS.GRAVITY * dt, -PHYSICS.TERMINAL_VELOCITY);
+      if (this.levitation > 0) {
+        this.vy = approach(this.vy, 0.9 * this.levitation, 5, dt);
+        this.fallDistance = 0;
+      } else this.vy = Math.max(this.vy - PHYSICS.GRAVITY * dt, -PHYSICS.TERMINAL_VELOCITY);
     }
 
     if (this.noclip) {

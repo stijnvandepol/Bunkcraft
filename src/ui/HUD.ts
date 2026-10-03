@@ -1,4 +1,5 @@
 import { h } from './dom';
+import { EffectsHud } from './EffectsHud';
 import type { Hotbar } from './Hotbar';
 import { SurvivalHud } from './SurvivalHud';
 
@@ -6,10 +7,11 @@ import { SurvivalHud } from './SurvivalHud';
 export class HUD {
   readonly el: HTMLDivElement;
   readonly survival = new SurvivalHud();
+  /** Status effect icons, attack cooldown bar and absorption hearts. */
+  readonly effects = new EffectsHud();
   private readonly water: HTMLDivElement;
   private readonly hurtFlash: HTMLDivElement;
   private readonly crosshair: HTMLDivElement;
-  private readonly attackXh: HTMLDivElement;
   private readonly attackBar: HTMLDivElement;
   private readonly attackFill: HTMLElement;
   private underwater = false;
@@ -21,19 +23,19 @@ export class HUD {
     this.water = h('div', { class: 'underwater' });
     this.hurtFlash = h('div', { class: 'hurt-flash' });
     this.crosshair = h('div', { class: 'crosshair' });
-    // Attack indicator (Options > Video Settings): under the crosshair or next to the hotbar while the
-    // attack cooldown recharges. The combat code reports the charge through setAttackCharge().
-    this.attackXh = h('div', { class: 'attack-xh hidden' }, h('i'));
+    // Attack Indicator "Hotbar" (Options > Video Settings): a recharging square next to the hotbar. The
+    // "Crosshair" variant is the cooldown bar of EffectsHud.
     this.attackFill = h('i');
     this.attackBar = h('div', { class: 'attack-hotbar hidden' }, this.attackFill);
     hotbar.el.append(this.attackBar);
-    hotbar.hudSlot.append(this.survival.el);
+    hotbar.hudSlot.append(this.effects.absorption, this.survival.el);
     this.el = h('div', { class: 'hud hidden' },
       h('div', { class: 'vignette' }),
       this.water,
       this.hurtFlash,
       this.crosshair,
-      this.attackXh,
+      this.effects.cooldown,
+      this.effects.el,
       hotbar.el,
     );
   }
@@ -65,17 +67,13 @@ export class HUD {
     this.setAttackCharge(1);
   }
 
-  /** Attack cooldown 0..1 (1 = fully charged, indicator hidden). DOM is touched only when the shown step changes. */
+  /** Attack cooldown 0..1 for the Hotbar indicator (1 = charged, hidden). DOM is touched only when the shown step changes. */
   setAttackCharge(v: number): void {
-    const q = v >= 1 || this.attackMode === 'off' ? 1 : Math.floor(v * 16) / 16;
+    const q = v >= 1 || this.attackMode !== 'hotbar' ? 1 : Math.floor(v * 16) / 16;
     if (q === this.attackShown) return;
     this.attackShown = q;
-    const show = q < 1;
-    this.attackXh.classList.toggle('hidden', !show || this.attackMode !== 'crosshair');
-    this.attackBar.classList.toggle('hidden', !show || this.attackMode !== 'hotbar');
-    const pct = `${Math.round(q * 100)}%`;
-    (this.attackXh.firstElementChild as HTMLElement).style.width = pct;
-    this.attackFill.style.height = pct;
+    this.attackBar.classList.toggle('hidden', q >= 1);
+    this.attackFill.style.height = `${Math.round(q * 100)}%`;
   }
 
   /** 0..1 red flash strength after taking damage. */

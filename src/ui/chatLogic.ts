@@ -21,6 +21,10 @@ export const SERVER_COMMAND_USAGE: Readonly<Record<string, string>> = {
   gamemode: '/gamemode survival|creative|hardcore|spectator',
   time: '/time set day|noon|night|midnight',
   weather: '/weather clear|rain|thunder [seconds]',
+  difficulty: '/difficulty [peaceful|easy|normal|hard]',
+  gamerule: '/gamerule <rule> [value]',
+  spawnpoint: '/spawnpoint [name]',
+  effect: '/effect give <name> <effect> [seconds] [level] | /effect clear <name> [effect]',
   give: '/give <name> <item> [count]',
 };
 
@@ -28,6 +32,10 @@ export const SERVER_COMMAND_USAGE: Readonly<Record<string, string>> = {
 export const LOCAL_COMMAND_USAGE: Readonly<Record<string, string>> = {
   help: '/help',
   weather: SERVER_COMMAND_USAGE.weather,
+  difficulty: SERVER_COMMAND_USAGE.difficulty,
+  gamerule: SERVER_COMMAND_USAGE.gamerule,
+  spawnpoint: SERVER_COMMAND_USAGE.spawnpoint,
+  effect: SERVER_COMMAND_USAGE.effect,
 };
 
 /**
@@ -43,7 +51,8 @@ export function suggestCommands(input: string, usage: Readonly<Record<string, st
   }
   const line = usage[first];
   if (!line) return [];
-  const slot = line.split(' ').slice(1)[parts.length - 2];
+  // Optional fixed words ("[peaceful|easy]") complete like required ones.
+  const slot = line.split(' ').slice(1)[parts.length - 2]?.replace(/^\[(.*)\]$/, '$1');
   if (!slot || !/^[a-z]+(\|[a-z]+)+$/.test(slot) && !/^[a-z]+$/.test(slot)) return [];
   const typed = parts[parts.length - 1].toLowerCase();
   const prefix = input.slice(0, input.length - typed.length);

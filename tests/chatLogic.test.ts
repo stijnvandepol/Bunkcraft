@@ -34,7 +34,8 @@ describe('suggestCommands', () => {
   });
 
   it('only offers local commands in singleplayer', () => {
-    expect(suggestCommands('/', LOCAL_COMMAND_USAGE)).toEqual(['/help', '/weather']);
+    expect(suggestCommands('/', LOCAL_COMMAND_USAGE)).toEqual(['/difficulty', '/effect', '/gamerule', '/help', '/spawnpoint', '/weather']);
+    expect(suggestCommands('/difficulty p', LOCAL_COMMAND_USAGE)).toEqual(['/difficulty peaceful']);
   });
 
   it('finds the common prefix', () => {

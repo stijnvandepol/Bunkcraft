@@ -6,11 +6,16 @@ import { bindUiSounds } from '../ui/uiSound';
 import { EntityManager } from '../entities/EntityManager';
 import { ItemRenderer } from '../entities/ItemRenderer';
 import { TntRenderer } from '../entities/TntRenderer';
+import { FallingBlockRenderer } from '../entities/FallingBlockRenderer';
+import { NetFalling } from '../net/NetFalling';
+import type { FallingBlock } from '../world/BlockUpdates';
 import { ArrowRenderer } from '../entities/ArrowRenderer';
 import type { Mob, MobEvents } from '../entities/Mob';
+import { explosionDamage, explosionDropChance } from '../entities/Explosion';
 import { MobRenderer } from '../entities/MobRenderer';
 import { NetClient, type WelcomeMessage } from '../net/NetClient';
 import { NetEntities } from '../net/NetEntities';
+import { useBoneMeal } from '../world/Growth';
 import { type ClientMessage, type ServerMessage, formatCode, normalizeCode } from '../net/protocol';
 import { TEAM_COLORS, gameTypeDef } from '../modes/GameTypes';
 import { inviteLink, inviteText, rememberGame } from '../net/RoomApi';
@@ -69,7 +74,12 @@ import { AudioEngine } from './Audio';
 import { CameraController } from './Camera';
 import { Input } from './Input';
 import { Interaction } from './Interaction';
+import { ContainerScreens } from './ContainerScreens';
 import { Renderer } from './Renderer';
+import { WorldRules } from './WorldRules';
+import { blocksFromDirection } from '../player/Melee';
+import { gameRulesScreen } from '../ui/GameRulesScreen';
+import type { Difficulty } from '../world/Difficulty';
 import { WeatherSystem } from './WeatherSystem';
 import { DynamicResolution, suggestPreset } from './AdaptiveQuality';
 import { MAX_FPS_UNLIMITED, type Settings, SettingsStore } from './Settings';
@@ -116,6 +126,8 @@ export class Game {
   private readonly cycle = new DayCycle();
   /** Weather: simulation (singleplayer) or server follower (multiplayer), rendering inputs and lightning. */
   private readonly weatherSys: WeatherSystem;
+  /** Difficulty, game rules, respawn point and sleeping (WorldRules.ts). */
+  private readonly worldRules: WorldRules;
   readonly player = new Player();
   private readonly stats = new PlayerStats();
   private readonly advancements = new AdvancementTracker();
@@ -126,10 +138,17 @@ export class Game {
   private readonly hud: HUD;
   private readonly inventory: Inventory;
   private readonly survivalInventory: SurvivalInventory;
+  /** Chest and furnace screens (singleplayer block entities or the server's containers). */
+  private readonly containers: ContainerScreens;
+  /** Experience handed out by a furnace (the XP system hooks in here; amount in points). */
+  onFurnaceXp: ((amount: number) => void) | null = null;
   private readonly hand: HandRenderer;
   private readonly mobRenderer: MobRenderer;
   private readonly itemRenderer: ItemRenderer;
   private readonly tntRenderer: TntRenderer;
+  private readonly fallingRenderer: FallingBlockRenderer;
+  private netFalling: NetFalling | null = null;
+  private static readonly NO_FALLING: FallingBlock[] = [];
   private readonly arrowRenderer: ArrowRenderer;
   private readonly tmpDir = new THREE.Vector3();
   private readonly debug = new DebugOverlay();
@@ -234,6 +253,26 @@ export class Game {
       drop: (s) => this.throwStack(s),
       close: () => void this.resumeGame(),
     });
+    this.containers = new ContainerScreens({
+      world: () => this.world,
+      net: () => this.net,
+      inventory: this.playerInventory,
+      show: (view) => {
+        if (this.state !== 'playing') return;
+        this.state = 'inventory';
+        this.suppressPause = this.input.locked;
+        this.input.exitLock();
+        this.survivalInventory.open(this.nearbyStations(), view);
+      },
+      current: () => this.survivalInventory.container,
+      cursor: () => this.survivalInventory.cursorStack,
+      setCursor: (s) => this.survivalInventory.setCursor(s),
+      refresh: () => this.survivalInventory.refreshBox(),
+      close: () => { if (this.state === 'inventory') void this.resumeGame(); },
+      message: (text) => this.chat.add(text, true),
+      drop: (s) => this.throwStack(s),
+      awardXp: (amount) => this.onFurnaceXp?.(amount),
+    });
     this.playerInventory.onAdd = (id) => this.advancements.onItemGained(id);
     this.playerInventory.onChange = () => {
       this.hotbar.refresh();
@@ -243,6 +282,18 @@ export class Game {
       this.stats.armorToughness = armor.toughness;
     };
     this.stats.onArmorHit = (wear) => void this.playerInventory.wearArmor(wear);
+    // Shield: a raised shield blocks hits from a 100 degree arc in front (mob and explosion yaw points from the source to
+    // the player, arrow yaw back along the flight, towards the shooter).
+    this.stats.blocker = (src, amount) => {
+      const it = this.interaction;
+      if (!it?.blocking || src.yaw === undefined) return false;
+      const s = Math.sin(src.yaw), c = Math.cos(src.yaw);
+      const p = this.player;
+      const tx = src.kind === 'arrow' ? s : -s, tz = src.kind === 'arrow' ? c : -c;
+      if (!blocksFromDirection(p.yaw, p.x + tx, p.z + tz, p.x, p.z)) return false;
+      it.onShieldBlock(amount);
+      return true;
+    };
     this.stack = new ScreenStack(root.querySelector<HTMLElement>('#screens')!);
     root.append(this.toasts.el, this.remote.el, this.chat.el, this.hud.el, this.debug.el, this.inventory.el, this.survivalInventory.el);
     this.weatherSys = new WeatherSystem({
@@ -250,12 +301,17 @@ export class Game {
       world: () => this.world, mode: () => this.mode, entities: () => this.entities,
       multiplayer: () => this.net !== null, arcade: () => this.arcade !== null || this.meta?.worldType === 'arena',
     });
+    this.worldRules = new WorldRules({
+      stats: this.stats, player: this.player, cycle: this.cycle, input: this.input, overlayParent: this.hud.el,
+      world: () => this.world, entities: () => this.entities, meta: () => this.meta, net: () => this.net, mode: () => this.mode,
+      weather: () => this.weatherSys.weather, chat: (line) => this.chat.add(line, true),
+    });
     this.chat.onSend = (text) => {
       if (this.net) return this.net.sendChat(text);
       // Singleplayer has no server: messages are echoed and the slash commands run locally (with Allow Cheats).
       if (!text.startsWith('/')) return this.chat.add(`<Player> ${text}`);
       if (!this.meta || !cheatsAllowed(this.meta)) return this.chat.add(t('chat.noCheats'), true);
-      const lines = this.weatherSys.localCommand(text) ?? [`Unknown command: ${text.split(/\s+/)[0]}. Type /help for help.`];
+      const lines = this.weatherSys.localCommand(text) ?? this.worldRules.localCommand(text) ?? [`Unknown command: ${text.split(/\s+/)[0]}. Type /help for help.`];
       for (const line of lines) this.chat.add(line, true);
     };
     this.chat.onClose = () => {
@@ -268,6 +324,9 @@ export class Game {
     this.itemRenderer = new ItemRenderer(this.renderer.uniforms, this.icons);
     this.tntRenderer = new TntRenderer(this.renderer.uniforms);
     this.arrowRenderer = new ArrowRenderer(this.renderer.uniforms);
+    this.fallingRenderer = new FallingBlockRenderer(this.renderer.uniforms);
+    this.renderer.scene.add(this.fallingRenderer.mesh);
+    this.renderer.shadowExcluded.push(this.fallingRenderer.mesh);
     this.renderer.scene.add(this.mobRenderer.group, this.itemRenderer.mesh, this.tntRenderer.mesh, this.arrowRenderer.mesh);
     this.renderer.scene.add(this.remote.weapons);
     this.renderer.shadowExcluded.push(this.mobRenderer.group, this.itemRenderer.mesh, this.tntRenderer.mesh, this.arrowRenderer.mesh, this.remote.weapons);
@@ -281,7 +340,7 @@ export class Game {
     this.menu = new MainMenu(this.stack, {
       listWorlds: () => this.save.listWorlds(),
       playWorld: (m) => void this.enterWorld(m),
-      createWorld: (name, seed, mode, opts) => void this.createWorld(name, seed, mode, opts?.cheats),
+      createWorld: (name, seed, mode, extra) => void this.createWorld(name, seed, mode, extra),
       openLanguage: () => this.stack.push(languageScreen(this.settings, { ...this.optionsNav(), languageChanged: () => this.menu.showTitle() })),
       tipKeys: () => this.tipKeys(),
       deleteWorld: (id) => this.save.deleteWorld(id),
@@ -599,12 +658,26 @@ export class Game {
     world.onChunkReady = (c) => entities.onChunkReady(c);
     world.onChunkUnloaded = (k) => entities.onChunkUnloaded(k);
     this.entities = entities;
+    // Chests and furnaces: singleplayer owns them; on a server the server does and this store stays empty.
+    world.blockEntities.enabled = !this.net;
+    world.blockEntities.onDrops = (x, y, z, stacks) => {
+      if (!hasSurvivalRules(this.mode)) return;
+      for (const st of stacks) entities.dropItem(st, x + 0.5, y + 0.5, z + 0.5, 10, undefined, true);
+    };
+    world.blockEntities.onXpAwarded = (amount) => this.onFurnaceXp?.(amount);
     // Water and lava flow in singleplayer; on a server the server simulates and sends the changes.
     if (!this.net) {
       const sim = world.enableLiquids();
       sim.onDestroyed = (x, y, z, id) => {
         // Plants and torches washed away drop themselves (survival).
         const drop = hasSurvivalRules(this.mode) ? blockDrop(id, 0) : null;
+        if (drop) entities.dropItem(drop, x + 0.5, y + 0.3, z + 0.5);
+      };
+      // Plants grow, leaves decay and sand falls (random ticks and block updates); what they break drops as items.
+      world.enableGrowth();
+      world.skyDarkness = () => Math.round((1 - this.cycle.dayFactor) * 11 + this.weatherSys.weather.skyDarkness);
+      world.onBlockDrop = (id, meta, x, y, z) => {
+        const drop = hasSurvivalRules(this.mode) ? blockDrop(id, 0, meta) : null;
         if (drop) entities.dropItem(drop, x + 0.5, y + 0.3, z + 0.5);
       };
       sim.onFizz = (x, y, z) => {
@@ -627,9 +700,17 @@ export class Game {
         entities.primeTnt(x, y, z);
         return true;
       },
-      chestsAllowed: () => !this.net,
-      openChest: (x, y, z) => this.openChest(x, y, z),
+      openContainer: (x, y, z) => this.containers.open(x, y, z),
       useBed: (x, y, z) => this.useBed(x, y, z),
+      boneMeal: (x, y, z) => {
+        // Multiplayer: the server grows it (and broadcasts the blocks); the item is used up here right away.
+        if (this.net) { this.net.sendBoneMeal(x, y, z); return true; }
+        const ticker = world.randomTicker;
+        if (!ticker) return false;
+        let used = false;
+        world.batch(() => { used = useBoneMeal(ticker, x, y, z); });
+        return used;
+      },
       shootArrow: (power, pickup) => {
         const cam = this.cam.camera;
         const dir = cam.getWorldDirection(this.tmpDir);
@@ -671,7 +752,7 @@ export class Game {
     return { inventory: key(KB.INVENTORY), chat: key(KB.CHAT), command: key(KB.COMMAND), sprint: key(KB.SPRINT), drop: key(KB.DROP) };
   }
 
-  private async createWorld(name: string, seedText: string, mode: GameMode, cheats?: boolean): Promise<void> {
+  private async createWorld(name: string, seedText: string, mode: GameMode, extra?: { difficulty: Difficulty; rules?: Record<string, boolean | number>; cheats?: boolean }): Promise<void> {
     let seed: number;
     if (!seedText) seed = (Math.random() * 4294967296) >>> 0;
     else if (/^-?\d+$/.test(seedText)) seed = Number(BigInt.asUintN(32, BigInt(seedText)));
@@ -680,7 +761,8 @@ export class Game {
       id: newWorldId(), name, seed, seedText: seedText || String(seed),
       created: Date.now(), lastPlayed: Date.now(), player: null, genVersion: GEN_VERSION_CURRENT,
       hotbar: [...DEFAULT_HOTBAR], selectedSlot: 0, time: 0.08, gameMode: mode,
-      ...(cheats === undefined ? {} : { cheats }),
+      difficulty: extra?.difficulty, rules: extra?.rules,
+      ...(extra?.cheats === undefined ? {} : { cheats: extra.cheats }),
     };
     await this.save.saveWorld(meta);
     await this.enterWorld(meta);
@@ -701,7 +783,7 @@ export class Game {
     const world = this.createWorldInstance(meta.seed, edits, worldType, normalizeGenVersion(meta.genVersion));
     this.cycle.time = meta.time;
     this.weatherSys.start(meta, this.net !== null);
-    world.containers.load(meta.containers);
+    world.blockEntities.load(meta.blockEntities);
     const mode = meta.gameMode ?? 'creative';
     // Inventory: saved stacks, else creative gets the default hotbar and survival starts empty.
     if (meta.inventory) this.playerInventory.load(meta.inventory);
@@ -710,6 +792,8 @@ export class Game {
       if (!hasSurvivalRules(mode)) meta.hotbar.forEach((id, i) => this.playerInventory.set(i, { id, count: id ? 1 : 0 }));
     }
     this.stats.load(meta.stats);
+    this.stats.effects.load(meta.effects, this.stats);
+    this.worldRules.load(meta);
     this.advancements.load(meta.advancements);
     this.statTracker.load(meta.statistics);
     this.statLast = null;
@@ -765,6 +849,20 @@ export class Game {
 
   private finishLoading(): void {
     const world = this.world!;
+    if (this.worldRules.pendingBed) {
+      // Respawn at the bed: next to it, or back to the world spawn when it is gone or blocked.
+      const spot = this.worldRules.resolveBedRespawn();
+      if (spot) {
+        this.player.setPosition(spot.x, spot.y, spot.z);
+        this.needsSurface = false;
+      } else {
+        const s = this.meta?.spawn ?? { ...world.findSpawn(), y: 100 };
+        this.player.setPosition(s.x, s.y, s.z);
+        this.needsSurface = true;
+        this.state = 'loading';
+        return;
+      }
+    }
     if (this.needsSurface) {
       const x = Math.floor(this.player.x), z = Math.floor(this.player.z);
       this.player.setPosition(this.player.x, world.surfaceY(x, z) + 1, this.player.z);
@@ -793,15 +891,18 @@ export class Game {
     this.survivalInventory.flushCursor();
     if (this.net) {
       // Multiplayer: the server stores position, inventory and health per player.
-      this.net.sendState(this.playerInventory.serialize(), this.stats.serialize());
+      this.net.sendState(this.playerInventory.serialize(), this.stats.serialize(), this.stats.effects.serialize() ?? []);
       return;
     }
     const p = this.player;
     meta.player = { x: p.x, y: p.y, z: p.z, yaw: p.yaw, pitch: p.pitch, flying: p.flying };
     meta.hotbar = Array.from({ length: 9 }, (_, i) => this.playerInventory.get(i).id);
     meta.inventory = this.playerInventory.serialize();
-    meta.containers = world.containers.serialize();
+    meta.blockEntities = world.blockEntities.serialize();
+    delete meta.containers;
     meta.stats = this.stats.serialize();
+    meta.effects = this.stats.effects.serialize();
+    this.worldRules.save(meta);
     meta.advancements = this.advancements.serialize();
     meta.statistics = this.statTracker.serialize();
     meta.gameMode = this.mode;
@@ -845,28 +946,10 @@ export class Game {
     }, 'image/png');
   }
 
-  /** Opens a chest: the container screen with the chest's 27 slots above the inventory. */
-  private openChest(x: number, y: number, z: number): void {
-    const world = this.world;
-    if (!world || this.net || this.state !== 'playing') return;
-    const slots = world.containers.slotsAt(x, y, z);
-    if (!slots) return;
-    this.state = 'inventory';
-    this.suppressPause = this.input.locked;
-    this.input.exitLock();
-    this.survivalInventory.open(this.nearbyStations(), { title: 'Chest', slots });
-  }
-
-  /** A bed sets the respawn point; at night it also sleeps until the morning (singleplayer). */
+  /** A bed sets the respawn point and sleeps at night (WorldRules: monsters, multiplayer sleeping rule). */
   private useBed(x: number, y: number, z: number): void {
     if (!this.meta || this.arcade) return;
-    this.meta.spawn = { x: x + 0.5, y: y + 0.6, z: z + 0.5 };
-    this.chat.add('Respawn point set', true);
-    if (!this.net && this.cycle.dayFactor < 0.4) {
-      this.cycle.time = 0.02;
-      this.cycle.compute();
-      this.chat.add('You slept through the night', true);
-    }
+    this.worldRules.useBed(x, y, z);
   }
 
   private async quitToTitle(): Promise<void> {
@@ -923,10 +1006,13 @@ export class Game {
       player: rec ? { x: rec.x, y: rec.y, z: rec.z, yaw: rec.yaw, pitch: rec.pitch, flying: false } : null,
       hotbar: [...DEFAULT_HOTBAR], selectedSlot: 0, time: welcome.time, day: welcome.day, gameMode: welcome.gameMode,
       inventory: rec?.inventory, stats: rec?.stats, spawn: welcome.spawn, worldType: welcome.worldType,
+      difficulty: welcome.difficulty, rules: welcome.rules, bed: rec?.bed, effects: rec?.effects,
     };
+    this.stats.playerName = name;
     this.loadingProgress = progress;
     this.arenaMap = welcome.match?.map ?? DEFAULT_MAP;
     this.lastJoin = { name, address, room };
+    this.containers.serverSupport = welcome.containers === true;
     this.startSession(meta, edits);
     const world = this.world!;
     // The server simulates the mobs, items, arrows and TNT; we only mirror them.
@@ -935,6 +1021,7 @@ export class Game {
     entities.hostileSpawning = false;
     const mirror = new NetEntities(entities);
     this.netEntities = mirror;
+    this.netFalling = new NetFalling();
     entities.dropHook = (stack, x, y, z, delay, yaw) => {
       net.sendDrop(stack.id, stack.count, stack.damage, x, y, z, yaw, delay, encodeData(stack.data));
       return true;
@@ -1048,6 +1135,7 @@ export class Game {
     switch (msg.t) {
       case 'snap': this.remote.snapshot(msg.players, this.net?.id ?? -1, performance.now() / 1000); break;
       case 'ent': this.netEntities?.apply(msg, performance.now() / 1000); break;
+      case 'fall': this.netFalling?.apply(msg.f, performance.now() / 1000); break;
       case 'hurt': this.hurtByServer(msg.cause, msg.amount, msg.by, msg.yaw); break;
       case 'boom':
         world?.applyRemoteRemovals(msg.blocks);
@@ -1101,7 +1189,8 @@ export class Game {
         this.chat.add('The server corrected your inventory.', true);
         break;
       case 'gamemode': this.setMode(msg.mode); break;
-      default: if (!this.weatherSys.onServerMessage(msg)) this.arcade?.handle(msg, performance.now() / 1000); break;
+      case 'container': this.containers.onMessage(msg); break;
+      default: if (!this.weatherSys.onServerMessage(msg) && !this.worldRules.onServerMessage(msg)) this.arcade?.handle(msg, performance.now() / 1000); break;
     }
   }
 
@@ -1110,9 +1199,12 @@ export class Game {
     this.roomCode = null;
     this.netEntities?.clear();
     this.netEntities = null;
+    this.netFalling?.clear();
+    this.netFalling = null;
     if (!this.net) return;
     const net = this.net;
     this.net = null;
+    this.containers.reset();
     net.close();
     this.remote.clear();
     this.chat.close();
@@ -1206,14 +1298,18 @@ export class Game {
       this.input.exitLock();
     }
     this.interaction?.reset();
-    // Drop the whole inventory where the player died.
+    this.worldRules.stopSleeping(false);
+    if (!this.net && this.worldRules.rules.get('showDeathMessages') && this.stats.deathMessage) this.chat.add(this.stats.deathMessage, true);
+    // Drop the whole inventory where the player died (unless keepInventory).
     const p = this.player;
-    for (let i = 0; i < 36; i++) {
-      const s = this.playerInventory.get(i);
-      if (s.count > 0) this.entities?.dropItem(s, p.x, p.y + 1, p.z, 40, undefined, true);
+    if (!this.worldRules.rules.get('keepInventory')) {
+      for (let i = 0; i < 36; i++) {
+        const s = this.playerInventory.get(i);
+        if (s.count > 0) this.entities?.dropItem(s, p.x, p.y + 1, p.z, 40, undefined, true);
+      }
+      for (const s of this.playerInventory.armor) if (s.count > 0) this.entities?.dropItem(s, p.x, p.y + 1, p.z, 40, undefined, true);
+      this.playerInventory.clear();
     }
-    for (const s of this.playerInventory.armor) if (s.count > 0) this.entities?.dropItem(s, p.x, p.y + 1, p.z, 40, undefined, true);
-    this.playerInventory.clear();
     const hardcore = this.mode === 'hardcore';
     // Hardcore: the single life is gone even if the tab is closed now.
     if (hardcore && this.meta) this.meta.gameMode = 'spectator';
@@ -1246,12 +1342,13 @@ export class Game {
    */
   private respawn(): void {
     this.stats.reset();
-    const s = this.meta?.spawn ?? { x: this.player.x, y: this.player.y, z: this.player.z };
-    this.player.setPosition(s.x, s.y, s.z);
+    const t = this.worldRules.respawnTarget(this.meta?.spawn ?? { x: this.player.x, y: this.player.y, z: this.player.z });
+    this.worldRules.pendingBed = t.checkBed ? this.worldRules.bed : null;
+    this.player.setPosition(t.x, t.y, t.z);
     this.player.vx = this.player.vy = this.player.vz = 0;
     this.player.fallDistance = 0;
     this.player.landedFall = 0;
-    this.needsSurface = true;
+    this.needsSurface = !this.worldRules.bed?.point; // a /spawnpoint position is kept as it is
     this.stack.clear();
     this.state = 'loading';
   }
@@ -1315,6 +1412,13 @@ export class Game {
       advancements: this.net ? undefined : () => this.stack.push(advancementsScreen(this.advancements, this.icons, () => this.stack.pop())),
       invite: this.roomCode ? () => this.openInvite(this.roomCode!) : undefined,
       seed: !this.net && this.meta && this.meta.worldType !== 'arena' ? this.meta.seedText || String(this.meta.seed) : undefined,
+      difficulty: this.arcade ? undefined : {
+        get: () => this.worldRules.difficulty,
+        set: (d) => this.worldRules.setDifficulty(d),
+        // Servers change it with /difficulty; Hardcore is always Hard.
+        locked: this.net !== null || this.mode === 'hardcore' || this.meta?.gameMode === 'hardcore',
+      },
+      gameRules: this.net || this.arcade ? undefined : () => this.stack.push(gameRulesScreen(this.worldRules.rules, () => this.stack.pop(), () => this.worldRules.apply())),
     }));
   }
 
@@ -1329,7 +1433,7 @@ export class Game {
     for (let y = -2; y <= 3; y++) for (let z = -4; z <= 4; z++) for (let x = -4; x <= 4; x++) {
       const b = this.getBlock(Math.floor(p.x) + x, Math.floor(p.y) + y, Math.floor(p.z) + z);
       if (b === BLOCK.CRAFTING_TABLE) s.add('table');
-      else if (b === BLOCK.FURNACE) s.add('furnace');
+      else if (b === BLOCK.FURNACE || b === BLOCK.LIT_FURNACE) s.add('furnace');
     }
     return s;
   }
@@ -1475,6 +1579,8 @@ export class Game {
     this.itemRenderer.update(e.items, alpha, this.time, world);
     this.tntRenderer.update(e.tnt, alpha, world);
     this.arrowRenderer.update(e.arrows, alpha, world);
+    this.netFalling?.update(performance.now() / 1000);
+    this.fallingRenderer.update(this.netFalling ? this.netFalling.list : world.updates?.falling ?? Game.NO_FALLING, alpha, world);
   }
 
   private updateMenu(dt: number): void {
@@ -1527,7 +1633,7 @@ export class Game {
     attack: (mob, damage) => {
       const p = this.player;
       const yaw = Math.atan2(p.x - mob.x, p.z - mob.z);
-      if (this.stats.damage(damage, 'mob', this.mode, mob.type.name, yaw)) {
+      if (this.stats.hurt(damage, { kind: 'mob', attacker: mob.type.name, yaw }, this.mode).hurt) {
         // Knockback away from the attacker.
         const d = Math.hypot(p.x - mob.x, p.z - mob.z) || 1;
         p.vx += ((p.x - mob.x) / d) * 8;
@@ -1552,7 +1658,7 @@ export class Game {
     arrowHit: (arrow, damage) => {
       const p = this.player;
       const yaw = Math.atan2(-arrow.vx, -arrow.vz);
-      if (this.stats.damage(damage, 'arrow', this.mode, arrow.shooter ? arrow.shooter.type.name : '', yaw)) {
+      if (this.stats.hurt(damage, { kind: 'arrow', attacker: arrow.shooter ? arrow.shooter.type.name : undefined, yaw }, this.mode).hurt) {
         // Knockback along the arrow's direction.
         const h = Math.hypot(arrow.vx, arrow.vz) || 1;
         p.vx += (arrow.vx / h) * 3;
@@ -1583,25 +1689,27 @@ export class Game {
   private explode(source: Mob | null, x: number, y: number, z: number, power: number, inWater = false): void {
     const world = this.world!, entities = this.entities!;
     const positions: number[] = [];
-    const destroyed = inWater ? [] : world.explode(x, y, z, power * 1.3, positions);
-    // Drop roughly 1/power of the destroyed blocks, like Minecraft; caught TNT lights with a short fuse.
+    // Creepers break blocks only with the mobGriefing rule; TNT always does.
+    const grief = !source || this.worldRules.rules.get('mobGriefing');
+    const destroyed = inWater || !grief ? [] : world.explode(x, y, z, power * 1.3, positions);
+    // Blocks drop with chance 1/power (TNT: all of them), like Minecraft; caught TNT lights with a short fuse.
+    const dropChance = explosionDropChance(power, source === null);
     for (let i = 0; i < destroyed.length; i++) {
       const id = destroyed[i];
       if (id === BLOCK.TNT) {
         entities.primeTnt(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2], 10 + Math.floor(Math.random() * 20));
         continue;
       }
-      if (Math.random() < 1 / power && getBlockDef(id)?.inInventory) {
+      if (Math.random() < dropChance && getBlockDef(id)?.inInventory) {
         const drop = blockDrop(id, ITEM.DIAMOND_PICKAXE);
         if (drop) entities.dropItem(drop,
           x + (Math.random() - 0.5) * power, y + Math.random() * power * 0.5, z + (Math.random() - 0.5) * power);
       }
     }
     this.explosionEffects(source ? source.type.name : '', x, y, z, power);
-    const reach = power * 2;
     for (const m of entities.mobs) {
-      const md = Math.hypot(m.x - x, m.y - y, m.z - z);
-      if (m !== source && md < reach) m.hurt(Math.floor((1 - md / reach) * 7 * power), x, z, 1.5);
+      const dmg = explosionDamage(Math.hypot(m.x - x, m.y - y, m.z - z), power);
+      if (m !== source && dmg > 0) m.hurt(dmg, x, z, 1.5);
     }
   }
 
@@ -1619,8 +1727,8 @@ export class Game {
     const reach = power * 2;
     if (d < reach) {
       const impact = 1 - d / reach;
-      const dmg = Math.floor(((impact * impact + impact) / 2) * 7 * reach + 1);
-      this.stats.damage(dmg, 'explosion', this.mode, by, Math.atan2(p.x - x, p.z - z));
+      const dmg = explosionDamage(d, power);
+      this.stats.hurt(dmg, { kind: 'explosion', attacker: by || undefined, yaw: Math.atan2(p.x - x, p.z - z) }, this.mode);
       const len = d || 1;
       p.vx += ((p.x - x) / len) * impact * 14;
       p.vz += ((p.z - z) / len) * impact * 14;
@@ -1631,7 +1739,7 @@ export class Game {
   /** Damage from a server mob or arrow: same hurt camera, knockback and rules as a local hit. */
   private hurtByServer(cause: 'mob' | 'arrow', amount: number, by: string, yaw: number): void {
     const p = this.player;
-    if (!this.stats.damage(amount, cause, this.mode, by, yaw)) return;
+    if (!this.stats.hurt(amount, { kind: cause, attacker: by || undefined, yaw }, this.mode).hurt) return;
     // yaw points from the attacker to the player (mob) or along the arrow's flight (arrow).
     const sin = Math.sin(yaw), cos = Math.cos(yaw);
     if (cause === 'mob') {
@@ -1658,9 +1766,9 @@ export class Game {
     }
     // Fall damage on landing (distance − 3), not in creative or water.
     if (p.landedFall > 0) {
-      const dmg = Math.ceil(p.landedFall - 3);
+      const dmg = Math.ceil(p.landedFall - 3 - stats.effects.jumpBoost());
       if (dmg > 0 && !p.inWater) {
-        if (this.stats.damage(dmg, 'fall', this.mode)) this.cam.hurtSide = 1;
+        if (stats.hurt(dmg, { kind: 'fall' }, this.mode).hurt) this.cam.hurtSide = 1;
       }
       p.landedFall = 0;
     }
@@ -1671,7 +1779,11 @@ export class Game {
     p.sprintDistance = p.swimDistance = 0;
     p.jumps = 0;
     this.weatherSys.gameTick();
+    this.worldRules.gameTick();
     this.world?.tickLiquids();
+    this.world?.tickGrowth(p.x, p.z);
+    this.world?.blockEntities.tick();
+    this.containers.tick();
     stats.tick(p, this.getBlock, this.mode);
     p.canSprint = !hasSurvivalRules(this.mode) || stats.canSprint;
 
@@ -1756,14 +1868,24 @@ export class Game {
       if (arcade) {
         p.speedMultiplier = arcade.speedMultiplier;
         p.airAccel = arcade.airAccel;
+      } else {
+        // Status effects: Speed/Slowness, Jump Boost, Levitation.
+        const fx = this.stats.effects;
+        p.speedMultiplier = fx.speedMultiplier();
+        p.jumpBoost = fx.jumpBoost();
+        p.levitation = fx.level('levitation');
+        // A raised shield slows you down to sneaking speed.
+        if (this.interaction?.blocking) p.speedMultiplier *= 0.3;
       }
+      const asleep = this.worldRules.sleeping;
       while (this.accumulator >= PHYSICS.STEP) {
-        p.step(move, this.getBlock, this.getMeta);
+        if (!asleep) p.step(move, this.getBlock, this.getMeta);
         move.jumpPressed = false;
         this.accumulator -= PHYSICS.STEP;
         if (++this.stepCount % STEPS_PER_TICK === 0) this.gameTick();
       }
-      this.cycle.update(dt);
+      if (this.arcade || this.worldRules.daylightCycle) this.cycle.update(dt);
+      this.worldRules.update(dt);
       this.weatherSys.update(dt);
       this.autosave += dt;
       if (this.autosave > AUTOSAVE_INTERVAL) {
@@ -1788,9 +1910,19 @@ export class Game {
     this.hud.setUnderwater(this.underwater);
     this.hud.setHurt(limitFlash(this.arcade ? this.arcade.hurt * 0.8 : this.stats.hurtTime / 10, this.settings.values));
     if (!this.arcade) this.hud.survival.update({
-      health: this.stats.health, hunger: this.stats.hunger, air: this.stats.air, maxAir: MAX_AIR, armor: this.stats.armorPoints,
-      hardcore: this.mode === 'hardcore', poison: this.stats.poison > 0, hurtTime: this.stats.hurtTime, saturation: this.stats.saturation,
+      health: Math.ceil(this.stats.health), hunger: this.stats.hunger, air: this.stats.air, maxAir: MAX_AIR, armor: this.stats.armorPoints,
+      hardcore: this.mode === 'hardcore', poison: this.stats.effects.level('poison') > 0, wither: this.stats.effects.level('wither') > 0,
+      hurtTime: this.stats.hurtTime, saturation: this.stats.saturation,
     }, this.time);
+    if (!this.arcade) {
+      const fx = this.hud.effects;
+      fx.updateEffects(this.stats.effects, this.time);
+      fx.updateAbsorption(hasSurvivalRules(this.mode) ? this.stats.absorption : 0);
+      const charge = this.interaction?.cooldown.charge ?? 1;
+      const showCooldown = this.state === 'playing' && this.mode !== 'spectator';
+      fx.updateCooldown(charge, showCooldown && this.settings.values.attackIndicator === 'crosshair');
+      this.hud.setAttackCharge(showCooldown ? charge : 1);
+    }
 
     if (this.net) {
       const flags = (p.sprinting ? 1 : 0) | (p.flying ? 2 : 0) | (p.onGround ? 4 : 0);

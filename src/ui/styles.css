@@ -514,11 +514,6 @@ html, body {
   box-shadow: inset 0 0 0 var(--s) #fff, inset 0 0 0 calc(var(--s) * 2) #a0a0a0;
 }
 
-.attack-xh {
-  position: absolute; left: 50%; top: calc(50% + var(--s) * 9); width: calc(var(--s) * 16); height: calc(var(--s) * 4);
-  transform: translateX(-50%); background: rgba(40, 40, 40, 0.8); mix-blend-mode: difference;
-}
-.attack-xh i { display: block; height: 100%; width: 0; background: #fff; }
 .attack-hotbar {
   position: absolute; right: calc(var(--s) * -24); bottom: calc(var(--s) * 3); width: calc(var(--s) * 18); height: calc(var(--s) * 18);
   background: rgba(20, 20, 20, 0.55); border: var(--s) solid #000; display: flex; align-items: flex-end;
@@ -1025,6 +1020,15 @@ html, body {
 /* The hotbar row lines up under the 27 storage slots, not under the armor column (Minecraft layout). */
 .inv-armor-row + .inv-hotbar { margin-left: calc(var(--s) * 22); }
 
+/* Furnace screen: input over flame over fuel, the progress arrow, the output (Minecraft's layout). */
+.furnace-ui { display: flex; align-items: center; gap: calc(var(--s) * 8); padding: calc(var(--s) * 2) calc(var(--s) * 30); }
+.furnace-ui.hidden, .inv-grid.hidden { display: none; }
+.furnace-left { display: flex; flex-direction: column; align-items: center; gap: calc(var(--s) * 2); }
+.furnace-flame { position: relative; width: calc(var(--s) * 14); height: calc(var(--s) * 14); background: #8b8b8b; clip-path: polygon(50% 0, 85% 45%, 100% 100%, 0 100%, 15% 45%); }
+.furnace-flame > i { position: absolute; left: 0; right: 0; bottom: 0; height: 0; background: linear-gradient(#ffe25a, #f08a1a 60%, #c8401a); }
+.furnace-arrow { position: relative; width: calc(var(--s) * 24); height: calc(var(--s) * 16); background: #8b8b8b; clip-path: polygon(0 30%, 60% 30%, 60% 0, 100% 50%, 60% 100%, 60% 70%, 0 70%); }
+.furnace-arrow > i { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: #fff; }
+.inv-slot.furnace-out { width: calc(var(--s) * 26); height: calc(var(--s) * 26); }
 /* ---------------------------------------------------------------- accessibility */
 
 .sr-only {
