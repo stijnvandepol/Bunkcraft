@@ -95,7 +95,7 @@ export function buildCreativeTabs(): CreativeTab[] {
   const tool = (kind: string): number[] => tiers.map((t) => ITEM_ID[`${t}_${kind}`]);
   const tools = ids([
     ...tool('shovel'), ...tool('pickaxe'), ...tool('axe'), ...tool('hoe'), ITEM.SHEARS, ITEM.FLINT_AND_STEEL,
-    ITEM.BUCKET, ITEM.WATER_BUCKET, ITEM.LAVA_BUCKET, itm('bowl'),
+    ITEM.BUCKET, ITEM.WATER_BUCKET, ITEM.LAVA_BUCKET, ITEM_ID.milk_bucket, ITEM_ID.saddle, ITEM_ID.ender_pearl, itm('bowl'),
   ]);
 
   const armorIds = ARMOR_MATERIALS.flatMap((m) => ['helmet', 'chestplate', 'leggings', 'boots'].map((s) => ITEM_ID[`${m.name}_${s}`]));
@@ -110,7 +110,7 @@ export function buildCreativeTabs(): CreativeTab[] {
 
   const ingredientNames = ['coal', 'charcoal', 'raw_iron', 'raw_copper', 'raw_gold', 'iron_ingot', 'copper_ingot', 'gold_ingot', 'iron_nugget',
     'gold_nugget', 'diamond', 'emerald', 'lapis_lazuli', 'redstone', 'flint', 'stick', 'string', 'feather', 'bone', 'bone_meal', 'gunpowder',
-    'leather', 'paper', 'book', 'clay_ball', 'brick', 'snowball', 'glowstone_dust', 'sugar', 'wheat', 'wheat_seeds', 'pumpkin_seeds', 'melon_seeds',
+    'egg', 'slime_ball', 'leather', 'paper', 'book', 'clay_ball', 'brick', 'snowball', 'glowstone_dust', 'sugar', 'wheat', 'wheat_seeds', 'pumpkin_seeds', 'melon_seeds',
     'ink_sac', ...DYES.map((d) => `${d.name}_dye`)];
   const ingredients = ids(ingredientNames.map((n) => ITEM_ID[n]));
 

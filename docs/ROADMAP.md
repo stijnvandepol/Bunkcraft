@@ -259,3 +259,21 @@ de wereld 0–127 loopt), sapling-groeilicht en de XP-tabel (zie "onzeker" in ME
    - nieuwe biomes en dorpen;
    - touch en gamepad;
    - portals.
+
+## Mobs 2 (oktober 2026)
+
+**Gedaan:** goal-AI met A* (`src/entities/ai/`), fokken en baby's, schapen scheren/verven/grazen, melk, eieren,
+wolven (temmen, zitten, volgen, meevechten, halsband), enderman, slime (splitsen, slime chunks), drowned, husk, stray,
+cave spider, witch (drankje = vergif als placeholder), paard (minimaal rijden in singleplayer), hartjes/rook boven
+mobs, blob-schaduwen, nieuwe geluiden en ondertitels, server-sync (`NET_MOB_KINDS` uitgebreid, vlaggen en variant-byte).
+
+**Open, op volgorde:**
+1. Effecten koppelen zodra het effectensysteem er is: witch-drankjes (slowness, weakness, harming), stray-pijlen
+   (slowness), husk-honger, melk die effecten wist.
+2. XP-bollen bij fokken (`MobEvents.xp` → `awardXp`) en mob-drops naar `rollLoot` (`src/items/Loot.ts`).
+3. Getemde wolven en paarden opslaan in de wereld (nu verdwijnen ze bij afsluiten; ze blijven wel geladen zolang je
+   speelt) en rijden in multiplayer (de server moet de paardsnelheid toestaan).
+4. Deuren in het pad zoeken (openen door zombies op Hard), enderman die blokken oppakt, wolf-bedel-goal, paard-
+   uitrusting en ezels/muildieren.
+5. Ambient en water: vleermuizen, inktvissen en vissen (eigen spawn-caps per categorie).
+

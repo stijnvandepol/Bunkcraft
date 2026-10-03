@@ -11,6 +11,8 @@ const TEX_W = 128;
 const TEX_H = 64;
 const MAX_SHADOWS = 160;
 const MAX_EMOTES = 96;
+/** Body tilt of a sitting wolf (radians). */
+const SIT_TILT = 0.6;
 
 interface Region { u: number; v: number; w: number; h: number; d: number }
 
@@ -259,8 +261,9 @@ export class MobRenderer {
       // A sitting wolf: the body tilts up around its hind legs.
       const sit = m.sitting && m.type.kind === 'wolf';
       if (sit) {
-        tmpPivot.makeTranslation(0, 0, 5 / 16);
-        tmpRot.makeRotationX(0.75);
+        // Lowered onto the haunches, then tilted nose-up around the hind legs.
+        tmpPivot.makeTranslation(0, -5 / 16, 5 / 16);
+        tmpRot.makeRotationX(SIT_TILT);
         tmpM.makeTranslation(0, 0, -5 / 16);
         tmpBase.multiply(tmpPivot).multiply(tmpRot).multiply(tmpM);
       }
@@ -279,8 +282,9 @@ export class MobRenderer {
           continue;
         }
         const rot = this.partRotation(part, swing, amount, m, alpha);
-        if (sit && part.anim === 'head') rot.x -= 0.75;
-        if (sit && (part.anim === 'legA' || part.anim === 'legB') && part.pivot[2] > 0) rot.x -= 1.4;
+        // Sitting: the head stays level, the front legs stand straight, the hind legs fold forward under the body.
+        if (sit && part.anim === 'head') rot.x -= SIT_TILT;
+        if (sit && (part.anim === 'legA' || part.anim === 'legB')) rot.x = part.pivot[2] > 0 ? 1.0 : -SIT_TILT;
         const pivot = part.pivot;
         const px = pivot[0], py = pivot[1], pz = pivot[2];
         tmpPivot.makeTranslation(px / 16, py / 16, pz / 16);
