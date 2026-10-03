@@ -348,7 +348,7 @@ export class GeneratorV3 {
         break;
       }
       case BIOME.SWAMP:
-        if (h <= SEA_LEVEL + 1) { top = n > 0.55 ? BLOCK.CLAY : MUD; fill = top === MUD ? MUD : BLOCK.CLAY; } else top = BLOCK.GRASS;
+        if (h <= SEA_LEVEL) { top = n > 0.62 ? BLOCK.CLAY : MUD; fill = top === MUD ? MUD : BLOCK.CLAY; } else top = BLOCK.GRASS;
         break;
       case BIOME.SNOWY:
         top = slope >= 4 ? BLOCK.STONE : BLOCK.SNOWY_GRASS; break;

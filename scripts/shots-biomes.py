@@ -39,7 +39,6 @@ with sync_playwright() as p:
         g.input.locked = true; g.state = 'playing';
         g.player.canFly = true; g.player.flying = true;
         g.settings.setMany({ clouds: 'off', renderDistance: 8, brightness: 100, shadows: '""" + shadows + """' });
-        g.world.time = 0.25;
         document.querySelector('.click-to-play')?.remove();
     }""")
     for name, v in VIEWS:
@@ -51,9 +50,11 @@ with sync_playwright() as p:
             g.input.locked = true; g.state = 'playing';
             document.querySelector('.click-to-play')?.remove();
         }}""")
+        page.evaluate("() => { window.game.cycle.time = 0.12; }")
         for _ in range(30):
             page.bring_to_front()
             time.sleep(0.5)
+            page.evaluate("() => { window.game.cycle.time = 0.12; }")  # keep it midday
         page.screenshot(path=f'{out}/{name}.png')
         print('shot', name, flush=True)
     print('\n'.join(logs[:10]))

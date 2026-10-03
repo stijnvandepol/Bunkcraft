@@ -76,10 +76,10 @@ export const ORE_TABLE: readonly OreSpec[] = [
   // ---- Generator 3: rock variety and the deepslate layer. These rows come last so that the ore rows keep their place
   // in the table (the index is part of the random stream) and ores are placed before the rock blobs. ----
   // Minecraft: granite, diorite and andesite 2 × size 64 each (rarely up to 33 in our smaller world), tuff 2 × 64 deep down.
-  { block: 'GRANITE', attempts: 1.4, size: 33, minY: 4, maxY: 90, shape: 'uniform', minGen: 3 },
-  { block: 'DIORITE', attempts: 1.4, size: 33, minY: 4, maxY: 90, shape: 'uniform', minGen: 3 },
-  { block: 'ANDESITE', attempts: 1.4, size: 33, minY: 4, maxY: 90, shape: 'uniform', minGen: 3 },
-  { block: 'TUFF', attempts: 1, size: 33, minY: 3, maxY: 40, shape: 'uniform', minGen: 3, inDeepslate: true },
+  { block: 'GRANITE', attempts: 1, size: 33, minY: 4, maxY: 90, shape: 'uniform', minGen: 3 },
+  { block: 'DIORITE', attempts: 1, size: 33, minY: 4, maxY: 90, shape: 'uniform', minGen: 3 },
+  { block: 'ANDESITE', attempts: 1, size: 33, minY: 4, maxY: 90, shape: 'uniform', minGen: 3 },
+  { block: 'TUFF', attempts: 0.8, size: 33, minY: 3, maxY: 40, shape: 'uniform', minGen: 3, inDeepslate: true },
 ];
 
 interface ResolvedOre {

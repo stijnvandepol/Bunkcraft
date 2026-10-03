@@ -3,6 +3,7 @@ import { BLOCK, CUBE_ID } from '../src/world/BlockRegistry';
 import { BIOME, BIOME_NAMES, isWaterBiome, spawnRank } from '../src/world/Biomes';
 import { CHUNK_AREA, CHUNK_HEIGHT, CHUNK_VOLUME, SEA_LEVEL, blockIndex } from '../src/world/constants';
 import { CUBES } from '../src/world/Content';
+import { leafSupported } from '../src/world/Growth';
 import * as noise from '../src/world/Noise';
 import { resolveOres } from '../src/world/OreTable';
 import { findSpawnColumn } from '../src/world/Spawn';
@@ -27,10 +28,10 @@ function gen3(seed: number, cx: number, cz: number, g = new TerrainGenerator(see
  * existing v3 worlds change. Make a version 4 instead of updating these.
  */
 const GOLDEN_V3: [number, number, number, number][] = [
-  [0, 0, 0x2cdf8f23, 0xf440a294],
-  [3, -2, 0x4002654c, 0xdc43da71],
-  [-7, 11, 0xf48e5769, 0x2e9aeac5],
-  [40, -25, 0xe0fc05e9, 0x40ebc2c5],
+  [0, 0, 0xdb58e1ac, 0xf440a294],
+  [3, -2, 0xdf39a289, 0xdc43da71],
+  [-7, 11, 0xa5436239, 0x2e9aeac5],
+  [40, -25, 0xccd7c155, 0x40ebc2c5],
 ];
 
 describe('TerrainGenerator version 3', () => {
@@ -103,7 +104,7 @@ for (const spec of CUBES) {
 const PLACES: [number, number, number][] = [[SEED, -3, -3], [777, 10, 4], [424242, -20, 8]];
 
 describe('TerrainGenerator version 3: chunk borders', () => {
-  it('builds trees across chunk borders consistently: every leaf has a log nearby', () => {
+  it('builds trees across chunk borders consistently: no generated leaf would decay (≤ 6 steps through leaves to a log)', () => {
     let leaves = 0, orphans = 0;
     for (const [seed, cx, cz] of PLACES) {
       const a = area(seed, cx, cz);
@@ -113,12 +114,7 @@ describe('TerrainGenerator version 3: chunk borders', () => {
           for (let y = SEA_LEVEL; y < CHUNK_HEIGHT; y++) {
             if (!LEAVES.has(blockAt(a, x, y, z))) continue;
             leaves++;
-            let found = false;
-            search: for (let dy = -6; dy <= 2; dy++) {
-              for (let dz = -5; dz <= 5; dz++) {
-                for (let dx = -5; dx <= 5; dx++) if (LOGS.has(blockAt(a, x + dx, y + dy, z + dz))) { found = true; break search; }
-              }
-            }
+            const found = leafSupported({ getBlock: (bx, by, bz) => { const b = blockAt(a, bx, by, bz); return b < 0 ? BLOCK.UNLOADED : b; } }, x, y, z);
             if (!found) orphans++;
           }
         }

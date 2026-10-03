@@ -208,10 +208,10 @@ de nieuwe ertsen. Versie 1 en 2 lopen nog door de oude code in `TerrainGenerator
 | Rivieren | Nulcontour van een domain-warped 2D-ruis (freq 0,0016, warp ±55 blokken): bedding y 57,6–61,4 in de geul (±5 blokken), dalwanden die meegroeien met het terrein, uitdoven boven y 84–104 (bergen). Water op zeeniveau, oevers zand/klei/grind, in koude streken Frozen River met ijs. Contouren zijn doorlopende lijnen, dus de meeste rivieren lopen door tot zee (Vitest: > 60 % van de bemonsterde rivieren bereikt via water een oceaan) |
 | Oppervlak | Per biome: podzol/coarse dirt-plekken (taiga, dark forest, savanne), modder en klei in het moeras, rood zand en coarse dirt op de badlands, sneeuwgrens = 104 + 45·temperatuur (kouder = lager) met packed ice, grind op Windswept Hills |
 | Badlands-banden | Een per-wereld tabel van 140 lagen (runs van 1–3 lagen, half gewone terracotta, half oranje/wit/geel/bruin/rood/lichtgrijs), golvend ±2 lagen. De kleur is een block state: `generate()` geeft nu de state-bytes terug (`Uint8Array \| null`), die via de worker (`GenerateResponse.meta`), `ChunkManager` en `ServerWorld` in `Chunk.meta` komen. Chunks zonder states blijven `null` (lazy, zoals voorheen) |
-| Gesteente | Deepslate onder y 7 en een willekeurige overgang tot y 16; granite/diorite/andesite-blobs (1,4 × grootte 33, y 4–90) en tuff (y 3–40, ook in deepslate) als rijen van `ORE_TABLE` achter de ertsen. Ertsen vervangen ook deepslate (geen `deepslate_*_ore` in de content; het gewone erts wordt gebruikt) |
+| Gesteente | Deepslate onder y 7 en een willekeurige overgang tot y 16; granite/diorite/andesite-blobs (1 × grootte 33 per chunk, y 4–90) en tuff (0,8 ×, y 3–40, ook in deepslate) als rijen van `ORE_TABLE` achter de ertsen. Ertsen vervangen ook deepslate (geen `deepslate_*_ore` in de content; het gewone erts wordt gebruikt) |
 | Nieuwe ertsen | Koper (driehoek y 24–80), lapis (y 8–46, alleen ingebed), redstone (onder y 36), smaragd (losse blokken, alleen kolommen met Mountains/Windswept Hills: `OreSpec.biomes`) |
 | Planten | Per biome: bloemen (alle tien soorten in Flower Forest, Meadow-mix), varens, dode struiken, blue orchid in het moeras, paddenstoelen in dark forest/moeras/taiga en op grotbodems, suikerriet naast water op zeeniveau, pompoenen- en meloenvelden per chunk |
-| Bomen (`TreesV3.ts`) | Eik, berk, spar, jungle (lange stam, takken met bladclusters), acacia (knik en platte kroon), dark oak (2×2, dicht dak), kers (roze kroon); dichtheid per biome. Kruinen tot 5 blokken buiten de chunk: stammen buiten de opgevulde hoogtekaart worden los opgevraagd, zodat bomen over chunkgrenzen kloppen (Vitest: geen blad zonder stam in de buurt) |
+| Bomen (`TreesV3.ts`) | Eik, berk en spar via de gedeelde vormen van `Trees.ts`; jungle (lange stam, takken met bladclusters), acacia (knik en platte kroon), dark oak (2×2, dicht dak), kers (roze kroon); dichtheid per biome. Kruinen tot 5 blokken buiten de chunk: stammen buiten de opgevulde hoogtekaart worden los opgevraagd, zodat bomen over chunkgrenzen kloppen. Elk blad ligt binnen 6 stappen (door bladeren) van een stam, dus leaf decay (`Growth.ts`) laat gegenereerde bomen staan (Vitest met `leafSupported`) |
 | Bronnen | Minecraft-springs: een water- of lavabron in een steenwand met precies één open zijde (22 resp. 9 pogingen per chunk) |
 | Structuren | `Structures.ts`: registry met ankers per chunk (geseed uit wereldseed, salt en chunk), elke chunk speelt de features van zichzelf en zijn buren af en houdt alleen zijn eigen blokken (zoals ertsblobs). Voorbeeld: woestijnput; daarnaast zwerfkeien van mossy cobblestone in de taiga |
 | Kleuren | Gras/blad-tinten per biome (Minecraft Java-waarden) en nu ook water (`TINT_WATER`, zelfde 5×5-vervaging als gras; de watershader deelt door #3F76E4, dus standaardbiomes zien er hetzelfde uit) |
@@ -240,16 +240,21 @@ de nieuwe ertsen. Versie 1 en 2 lopen nog door de oude code in `TerrainGenerator
 | Lucht onder zeeniveau / grotopeningen per 100 landchunks | 10,5 % / 57 | 10,4 % / 59 |
 | Kolen / ijzer / goud / diamant per chunk | 56,9 / 40,8 / 9,3 / 10,7 | 55,3 / 40,0 / 9,3 / 10,7 |
 | Koper / lapis / redstone / smaragd per chunk | – | 19,8 / 5,1 / 30,1 / 0,2 (smaragd alleen in bergchunks) |
-| Deepslate / tuff / granite / diorite / andesite per chunk | – | 2211 / 88 / 66 / 66 / 65 |
+| Deepslate / tuff / granite / diorite / andesite per chunk | – | 2215 / 70 / 47 / 47 / 48 |
 | Losse zwevende blokken per chunk | – | 0,05 (Minecraft laat die ook tussen grotten staan) |
-| `generate` per chunk | BENCH_V2 | BENCH_V3 |
-| `heightAt` + `biomeAt` per kolom | COL_V2 | COL_V3 |
+| `generate` per chunk (seeds 777 / 12345 / 424242) | 1,04 / 1,46 / 1,41 ms | 1,50 / 1,95 / 1,82 ms (1,29–1,44×) |
+| `heightAt` + `biomeAt` per kolom | 0,71 µs | 0,95–1,00 µs (1,4×; met `surfaceOpen` 5,8 → 6,3–7,4 µs) |
 
 `heightAt` en `biomeAt` rekenen samen één kolom uit (cache van de laatste kolom), dus een spawn-zoektocht betaalt het klimaat
 maar één keer.
 
+**Screenshots** (seed 12345, `scripts/gen-spots.ts --biomes` + `scripts/shots-biomes.py`; diepe ertsen met
+`gen-spots.ts --gen=3` + `shots-caves.py`, view `deepOre`): [`worldgen-v3/biomes-ground.jpg`](screenshots/worldgen-v3/biomes-ground.jpg)
+en [`worldgen-v3/biomes-above.jpg`](screenshots/worldgen-v3/biomes-above.jpg). Versie 3 voegt geen blokken of textuurlagen toe:
+alles komt uit de bestaande content (`Content.ts`, gekleurde terracotta via block states).
+
 **Niet gedaan / open:** mangrove-moeras (geen wortels/propagules), mushroom fields, ice spikes, lianen en cocoa (geen blokken),
 waterlelies (geen blok), sneeuwlagen, `deepslate_*_ore`-blokken, dripstone en amethist, fossielen, iglo's, ruïnes; dorpen,
-dungeons en mijnschachten komen via `Structures.ts` (andere ontwikkelaar, na block entities). Bomen in versie 3 staan in
-`TreesV3.ts`; de gedeelde boomfunctie van de random-tick-ontwikkelaar kan die vormen later overnemen (dezelfde namen voor
-eik/berk/spar).
+dungeons en mijnschachten komen via `Structures.ts` (andere ontwikkelaar, na block entities). De grote jungle-, acacia-, dark-oak-
+en kersvormen staan in `TreesV3.ts`; saplings groeien met de kleinere vormen van `Trees.ts` (Minecraft: dark oak/jungle
+uit 2×2 saplings met de grote vorm, nog niet gedaan).

@@ -1,3 +1,4 @@
+import type { Difficulty } from '../world/Difficulty';
 import type { GameType, Team } from '../modes/GameTypes';
 import type { GameMode } from '../player/GameMode';
 
@@ -21,6 +22,10 @@ export interface PlayerRecord {
   yaw: number; pitch: number;
   inventory?: number[][];
   stats?: number[];
+  /** Respawn point at a bed (the bed block); absent = the world spawn. */
+  bed?: { x: number; y: number; z: number; point?: boolean };
+  /** Status effects as [effect index, amplifier, ticks left] (client-authoritative, like stats). */
+  effects?: number[][];
 }
 
 export interface RemotePlayerInfo {
@@ -39,9 +44,59 @@ export interface RosterEntry {
   deaths: number;
   /** Round-trip time in ms as measured by the server, 0 if unknown. */
   ping: number;
+  /** Objective score of the mode (gun game level, captures); absent in modes without one. */
+  pts?: number;
 }
 
-export type MatchPhase = 'warmup' | 'live' | 'ended';
+/**
+ * `warmup` waits for players and counts down; `countdown`, `roundend` and `intermission` only occur in
+ * round-based modes (the nobody-can-be-hurt phases around a round); `ended` shows the result.
+ */
+export type MatchPhase = 'warmup' | 'countdown' | 'live' | 'roundend' | 'intermission' | 'ended';
+
+/** A capture zone (hardpoint hill, domination point) as the HUD needs it. */
+export interface ZoneState {
+  name: string;
+  x: number; y: number; z: number;
+  /** Capture radius in blocks. */
+  r: number;
+  /** Hardpoint: this is the hill that scores right now. Domination: always true. */
+  active: boolean;
+  /** Team that owns the point (domination) or holds the hill alone (hardpoint); '' = nobody. */
+  owner: Team | '';
+  /** Capture progress 0..1 of `progressTeam` (domination). */
+  progress: number;
+  progressTeam: Team | '';
+  contested: boolean;
+  /** Living players inside, per team. */
+  red: number;
+  blue: number;
+}
+
+/** A flag (capture the flag): at its base, carried by a player or lying where the carrier died. */
+export interface FlagState {
+  team: Team;
+  status: 'home' | 'carried' | 'dropped';
+  x: number; y: number; z: number;
+  /** Player id of the carrier, 0 when nobody carries it. */
+  carrier: number;
+  /** Seconds until a dropped flag returns by itself. */
+  returnIn: number;
+  /** Where the flag belongs (its base). */
+  hx: number; hy: number; hz: number;
+}
+
+/** Mode-specific HUD state (`mode` message), replaced as a whole on every update. */
+export type ModeState =
+  | { kind: 'zones'; variant: 'hardpoint' | 'domination'; zones: ZoneState[]; rotateIn: number; gap: boolean }
+  | { kind: 'ctf'; flags: FlagState[] }
+  | { kind: 'rounds'; round: number; need: number; wins: { red: number; blue: number }; alive: { red: number; blue: number } };
+
+/** One-off happenings the client turns into a banner and a sound. */
+export type ModeEventKind =
+  | 'flag-taken' | 'flag-dropped' | 'flag-returned' | 'flag-captured'
+  | 'zone-captured' | 'zone-lost' | 'zone-moved'
+  | 'round-start' | 'round-win' | 'level-up' | 'level-down';
 
 /** Settings the server announces for an arcade game. */
 export interface MatchInfo {
@@ -61,10 +116,48 @@ export type MobEntry = [number, number, number, number, number, number, number, 
 export type ItemEntry = [number, number, number, number, number, number];
 /** Arrow: [id, x, y, z, yaw, pitch, inGround]. */
 export type ArrowEntry = [number, number, number, number, number, number, number];
+/** Falling block: [id, block id, block state, x, y, z]. */
+export type FallEntry = [number, number, number, number, number, number];
 /** Lit TNT: [id, x, y, z, fuse]. */
 export type TntEntry = [number, number, number, number, number];
+/** Experience orb: [id, value, x, y, z]. */
+export type OrbEntry = [number, number, number, number, number];
 
 // ---------------------------------------------------------------- client → server
+
+/**
+ * Containers (chests, furnaces). The server owns their contents. A client opens one (`open`), the server replies with
+ * the contents and from then on sends `slots` whenever they change (also by other players). Every `click` carries the
+ * player's inventory rows and the stack on the cursor, because the inventory is client-owned: the server checks them
+ * with the inventory guard, applies the click to its container and answers with `result` (the new cursor and, for a
+ * shift-click, the items that move into or out of the inventory). Slots are `[id, count, damage, ...data]` rows, an
+ * empty slot is `[]`. Double chests are one container of 54 slots addressed by either half.
+ */
+export type ContainerKindName = 'chest' | 'furnace';
+
+export type ContainerClientMessage =
+  | { t: 'container'; op: 'open'; x: number; y: number; z: number }
+  | { t: 'container'; op: 'close' }
+  /**
+   * `slot` is the container slot (0-based); for a shift-click that deposits from the inventory it is -1 and `from` is
+   * the inventory slot. `inv` is the inventory as `state` sends it (36 + 4 armor rows), `cursor` the stack on the cursor.
+   */
+  | { t: 'container'; op: 'click'; seq: number; slot: number; button: 0 | 1; shift?: boolean; from?: number; inv: number[][]; cursor: number[] };
+
+export type ContainerServerMessage =
+  /** The container opened: `props` is [burnTime, burnTotal, cookTime, cookTotal] for a furnace. */
+  | { t: 'container'; op: 'open'; x: number; y: number; z: number; kind: ContainerKindName; title: string; slots: number[][]; props?: number[] }
+  /** The container could not be opened (too far, not a container, too many opened). */
+  | { t: 'container'; op: 'deny'; x: number; y: number; z: number; reason: string }
+  /** New contents of the container you have open. */
+  | { t: 'container'; op: 'slots'; slots: number[][]; props?: number[] }
+  /**
+   * Answer to a `click`: `ok` false means the server refused it (the client resets its cursor to `cursor`). `toInv`
+   * is a stack to add to the inventory, `fromInv` items to take out of an inventory slot, `xp` experience from a furnace.
+   */
+  | { t: 'container'; op: 'result'; seq: number; ok: boolean; cursor: number[]; toInv?: number[]; fromInv?: { slot: number; count: number }; xp?: number }
+  /** The container is gone (broken) or you walked away: close the screen. */
+  | { t: 'container'; op: 'close'; reason?: string };
 
 export type ClientMessage =
   /**
@@ -77,17 +170,26 @@ export type ClientMessage =
   /** `meta` is the block state byte (see BlockStates); absent = 0. */
   | { t: 'block'; seq: number; x: number; y: number; z: number; id: number; meta?: number }
   | { t: 'chat'; text: string }
-  | { t: 'state'; inventory: number[][]; stats: number[] }
-  /** Melee hit on a server mob (damage comes from the held item the server knows). */
-  | { t: 'attack'; id: number }
-  /** Bow shot; power 0..1. */
-  | { t: 'shoot'; x: number; y: number; z: number; dx: number; dy: number; dz: number; power: number }
+  | { t: 'state'; inventory: number[][]; stats: number[]; effects?: number[][] }
+  /** Right click on a bed: set the respawn point and try to sleep (the server checks the time and monsters). */
+  | { t: 'bed'; x: number; y: number; z: number }
+  /** Leave the bed. */
+  | { t: 'wake' }
+  /**
+   * Melee hit on a server mob (damage comes from the held item the server knows). `e`: the weapon's enchantments as
+   * key/level pairs (ITEM_DATA_KEYS indices, optional; the server clamps them and ignores those the weapon cannot have).
+   */
+  | { t: 'attack'; id: number; e?: number[] }
+  /** Bow shot; power 0..1. `e`: the bow's enchantments (Power, Punch, Flame), like `attack`. */
+  | { t: 'shoot'; x: number; y: number; z: number; dx: number; dy: number; dz: number; power: number; e?: number[] }
   /** Flint and steel on a TNT block. */
   | { t: 'ignite'; x: number; y: number; z: number }
-  /** Pick up a dropped item entity. */
+  /** Pick up a dropped item entity or an experience orb. */
   | { t: 'take'; id: number }
+  /** Bone meal used on a block (the server grows the sapling or grass). Optional: older servers ignore it. */
+  | { t: 'bonemeal'; x: number; y: number; z: number }
   /** Arcade: choose the primary weapon for the next life (rifle, smg, shotgun, sniper). */
-  | { t: 'loadout'; primary: string }
+  | { t: 'loadout'; primary: string; secondary?: string }
   /** Arcade: fire the weapon in a slot. Origin is the client's eye, dir the aim; the server re-checks both. */
   | { t: 'fire'; slot: 0 | 1 | 2; ox: number; oy: number; oz: number; dx: number; dy: number; dz: number; ads: boolean }
   /** Arcade: start reloading the weapon in a slot. */
@@ -95,7 +197,8 @@ export type ClientMessage =
   /** Arcade: switch weapon slot (so everyone sees what you hold). */
   | { t: 'weapon'; slot: 0 | 1 | 2 }
   /** Drop an item into the world (block drops, Q, death); yaw = throw direction. */
-  | { t: 'drop'; id: number; count: number; damage?: number; data?: number[]; x: number; y: number; z: number; yaw?: number; delay?: number };
+  | { t: 'drop'; id: number; count: number; damage?: number; data?: number[]; x: number; y: number; z: number; yaw?: number; delay?: number }
+  | ContainerClientMessage;
 
 // ---------------------------------------------------------------- server → client
 
@@ -122,7 +225,20 @@ export type ServerMessage =
     op?: boolean;
     /** The server will send snap and ent as binary frames (negotiated by `bin` in hello). */
     binary?: boolean;
+    /** World difficulty and the game rules that differ from the defaults (absent on older servers = Normal, defaults). */
+    difficulty?: Difficulty;
+    rules?: Record<string, boolean | number>;
+    /** The server stores chests and furnaces and understands `container` messages. Absent on older servers. */
+    containers?: boolean;
   }
+  /** Difficulty or game rules changed (/difficulty, /gamerule). */
+  | { t: 'rules'; difficulty: Difficulty; rules: Record<string, boolean | number> }
+  /** Sleeping: `start` you are in bed now, `wake` get up (morning came or you left); `sleeping`/`total` for the message. */
+  | { t: 'sleep'; state: 'start' | 'wake'; sleeping?: number; total?: number }
+  /** Your respawn point changed (bed, /spawnpoint); null = back to the world spawn. */
+  | { t: 'spawnpoint'; bed: { x: number; y: number; z: number; point?: boolean } | null }
+  /** /effect: give or clear status effects (the client applies them; effects are client-authoritative). */
+  | { t: 'effect'; action: 'give' | 'clear'; effect?: string; amp?: number; ticks?: number }
   | { t: 'join'; id: number; name: string }
   | { t: 'leave'; id: number; name: string }
   | { t: 'snap'; players: SnapshotEntry[] }
@@ -150,6 +266,8 @@ export type ServerMessage =
   | { t: 'gamemode'; mode: GameMode }
   /** Entities around the player (10 Hz). Lists replace what the client knows. */
   | { t: 'ent'; m: MobEntry[]; i: ItemEntry[]; a: ArrowEntry[]; b: TntEntry[] }
+  /** Falling sand and gravel around the player (10 Hz, only while there are any, plus one empty list). */
+  | { t: 'fall'; f: FallEntry[] }
   /** A mob or arrow hurt this player. */
   | { t: 'hurt'; amount: number; cause: 'mob' | 'arrow'; by: string; yaw: number }
   /** An explosion: destroyed blocks as x, y, z triples; the client plays effects and takes its own damage. */
@@ -157,11 +275,17 @@ export type ServerMessage =
   | { t: 'msound'; kind: string; event: 'idle' | 'hurt' | 'death' | 'fuse' | 'arrow' | 'shoot'; x: number; y: number; z: number }
   // ---- arcade game types ----
   /** Match state, about once a second and on every change. `scores` is team kills (tdm) or empty (ffa). */
-  | { t: 'match'; phase: MatchPhase; timeLeft: number; scores: { red: number; blue: number }; info: MatchInfo }
+  | { t: 'match'; phase: MatchPhase; timeLeft: number; scores: { red: number; blue: number }; info: MatchInfo; /** The mode's line under the timer ("Round 2 · first to 4"). */ text?: string }
   /** Who is on which team plus kills/deaths; sent on joins, leaves, kills and every few seconds. */
   | { t: 'roster'; players: RosterEntry[] }
   /** You (re)spawn: position, facing, team, loadout and full health. */
-  | { t: 'spawn'; x: number; y: number; z: number; yaw: number; team: Team | ''; primary: string; health: number }
+  | { t: 'spawn'; x: number; y: number; z: number; yaw: number; team: Team | ''; primary: string; health: number; secondary?: string }
+  /** The mode changed your weapons while you live (gun game level up): primary slot, optional secondary slot. */
+  | { t: 'gear'; primary: string; secondary?: string }
+  /** Mode-specific HUD state (zones, flags, round wins), about twice a second and on changes. Absent in tdm/ffa/gun game. */
+  | { t: 'mode'; state: ModeState }
+  /** A one-off happening (flag taken, zone captured, round won): `team` is the team it concerns, `id` the player. */
+  | { t: 'event'; kind: ModeEventKind; team?: Team | ''; id?: number; text?: string }
   /** Your health changed (damage, regeneration). */
   | { t: 'hp'; health: number }
   /** Your ammo is authoritative: magazine, spare bullets are unlimited, reloading flag per slot. */
@@ -179,7 +303,15 @@ export type ServerMessage =
   /** A weapon slot a remote player holds (third-person model). */
   | { t: 'holds'; id: number; weapon: string }
   /** The requested item entity is yours. */
-  | { t: 'taken'; id: number; itemId: number; count: number; damage?: number; data?: number[] };
+  | { t: 'taken'; id: number; itemId: number; count: number; damage?: number; data?: number[] }
+  /**
+   * Experience orbs around the player (10 Hz while there are any, one empty list when the last one is gone). A separate
+   * optional message so the binary `ent` frame stays as it is; old clients ignore it.
+   */
+  | { t: 'orbs'; o: OrbEntry[] }
+  /** The requested orb is yours: add `value` experience. */
+  | { t: 'xpgain'; id: number; value: number }
+  | ContainerServerMessage;
 
 /** No 0/O/1/I/L: game codes are read aloud and typed on phones. */
 export const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';

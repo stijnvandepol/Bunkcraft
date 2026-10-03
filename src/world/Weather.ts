@@ -61,6 +61,8 @@ export function parseWeatherCommand(args: string[]): { kind: WeatherKind; ticks?
 export class Weather {
   raining = false;
   thundering = false;
+  /** The doWeatherCycle game rule is off: the weather stays as it is (levels still fade). */
+  timersFrozen = false;
   /** Ticks of forced clear weather left (after `/weather clear`). */
   clearTime = 0;
   rainTime = 0;
@@ -115,7 +117,7 @@ export class Weather {
 
   /** One game tick. */
   tick(): void {
-    if (!this.remote) this.advanceTimers();
+    if (!this.remote && !this.timersFrozen) this.advanceTimers();
     this.rainLevel = clamp01(this.rainLevel + (this.raining ? FADE_PER_TICK : -FADE_PER_TICK));
     this.thunderLevel = clamp01(this.thunderLevel + (this.thundering ? FADE_PER_TICK : -FADE_PER_TICK));
   }

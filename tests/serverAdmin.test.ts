@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import { connect } from 'node:net';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { PROTOCOL_VERSION } from '../src/net/protocol';
@@ -161,6 +162,26 @@ describe('connection limits and origins', () => {
     const one = await joinRoom(global, room.code, 'solo');
     await expect(new TestClient(`${global.wsBase}/ws/${room.code}`).open()).rejects.toThrow(/503/);
     one.client.close();
+  });
+
+  it('a handshake that ws refuses (bad key) does not use up a per-address slot', async () => {
+    const t = await start({ MAX_CONN_PER_IP: '2' });
+    const { code } = await createRoom(t.base);
+    for (let i = 0; i < 3; i++) {
+      const res = await new Promise<string>((resolve) => {
+        const sock = connect(t.server.port, '127.0.0.1', () => {
+          sock.write(`GET /ws/${code} HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n`
+            + 'Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: not-a-key\r\n\r\n');
+        });
+        let data = '';
+        sock.on('data', (d) => { data += d.toString(); });
+        sock.on('close', () => resolve(data));
+        sock.on('error', () => resolve(data));
+      });
+      expect(res).toMatch(/^HTTP\/1\.1 400/);
+    }
+    const ok = await joinRoom(t, code, 'after');
+    ok.client.close();
   });
 
   it('enforces ALLOWED_ORIGINS for the WebSocket and answers CORS only for listed origins', async () => {

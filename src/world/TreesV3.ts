@@ -2,11 +2,13 @@ import { BLOCK, CUBE_ID } from './BlockRegistry';
 import { CHUNK_HEIGHT, blockIndex } from './constants';
 import { CUBES } from './Content';
 import { hash3 } from './Noise';
+import { type TreeSink, oakTree, spruceTree } from './Trees';
 
 /**
- * Tree shapes of generator version 3 (jungle, acacia, dark oak, cherry and the old oak/birch/spruce).
+ * Generated tree shapes of generator version 3: jungle, acacia, dark oak and cherry (big, world-generation variants;
+ * sapling growth uses the smaller shapes in Trees.ts), plus oak/birch/spruce through the shared shapes of Trees.ts.
  *
- * Kept apart from TerrainGenerator so the older generator versions stay byte-identical. Every shape is a pure function of
+ * Every leaf is at most 6 steps (through leaves) from a log, so leaf decay (Growth.ts) keeps them (Vitest). Every shape is a pure function of
  * its (world) trunk position and parameters: chunks that share a tree each build their own part of it and agree.
  * Coordinates (x, y, z) are chunk-local and may lie outside 0..15; blocks outside the chunk are skipped.
  */
@@ -26,17 +28,17 @@ export function isReplaceablePlant(id: number): boolean {
   return IS_PLANT[id] === 1;
 }
 
-export class TreeBuilder {
+export class TreeBuilder implements TreeSink {
   constructor(private readonly seed: number, public blocks: Uint8Array) {}
 
-  private leaf(x: number, y: number, z: number, id: number): void {
+  leaf(x: number, y: number, z: number, id: number): void {
     if (x < 0 || x >= 16 || z < 0 || z >= 16 || y < 0 || y >= CHUNK_HEIGHT) return;
     const i = blockIndex(x, y, z);
     const cur = this.blocks[i];
     if (cur === BLOCK.AIR || IS_PLANT[cur]) this.blocks[i] = id;
   }
 
-  private log(x: number, y: number, z: number, id: number): void {
+  log(x: number, y: number, z: number, id: number): void {
     if (x < 0 || x >= 16 || z < 0 || z >= 16 || y < 0 || y >= CHUNK_HEIGHT) return;
     const i = blockIndex(x, y, z);
     const cur = this.blocks[i];
@@ -44,6 +46,10 @@ export class TreeBuilder {
   }
 
   /** Dirt under the trunk, like Minecraft (only when the trunk column is inside this chunk). */
+  trunkBase(x: number, y: number, z: number): void {
+    this.soil(x, y, z);
+  }
+
   private soil(x: number, y: number, z: number): void {
     if (x < 0 || x >= 16 || z < 0 || z >= 16 || y <= 0) return;
     const i = blockIndex(x, y - 1, z);
@@ -65,41 +71,13 @@ export class TreeBuilder {
     }
   }
 
-  /** Classic blob tree (oak/birch). */
+  /** Classic blob tree (oak/birch), the shared shape. */
   blob(x: number, y: number, z: number, height: number, log: number, leaves: number, wx: number, wz: number): void {
-    if (y + height + 1 >= CHUNK_HEIGHT) return;
-    const top = y + height - 1;
-    for (let ly = top - 2; ly <= top + 1; ly++) {
-      const r = ly >= top ? 1 : 2;
-      for (let dz = -r; dz <= r; dz++) {
-        for (let dx = -r; dx <= r; dx++) {
-          const corner = Math.abs(dx) === r && Math.abs(dz) === r;
-          if (corner && (ly === top + 1 || this.rand(wx + dx, ly, wz + dz, 0) < 0.5)) continue;
-          this.leaf(x + dx, ly, z + dz, leaves);
-        }
-      }
-    }
-    for (let i = 0; i < height; i++) this.log(x, y + i, z, log);
-    this.soil(x, y, z);
+    oakTree(this, this.seed, x, y, z, height, log, leaves, wx, wz, CHUNK_HEIGHT);
   }
 
-  spruce(x: number, y: number, z: number, height: number, log: number = BLOCK.SPRUCE_LOG): void {
-    if (y + height + 1 >= CHUNK_HEIGHT) return;
-    const top = y + height;
-    const L = BLOCK.SPRUCE_LEAVES;
-    this.leaf(x, top, z, L);
-    // Conical shape, alternating radii from the tip down: 1, 0, 1, 2, 1, 2, ...
-    for (let ly = top - 1; ly >= y + 2; ly--) {
-      const k = top - 1 - ly;
-      const r = k === 0 ? 1 : k === 1 ? 0 : k % 2 === 0 ? 1 : 2;
-      for (let dz = -r; dz <= r; dz++) {
-        for (let dx = -r; dx <= r; dx++) {
-          if (r > 0 && Math.abs(dx) === r && Math.abs(dz) === r) continue;
-          this.leaf(x + dx, ly, z + dz, L);
-        }
-      }
-    }
-    for (let i = 0; i < height; i++) this.log(x, y + i, z, log);
+  spruce(x: number, y: number, z: number, height: number): void {
+    spruceTree(this, x, y, z, height, CHUNK_HEIGHT);
     this.soil(x, y, z);
   }
 

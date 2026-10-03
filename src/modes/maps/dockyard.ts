@@ -19,6 +19,18 @@ export const DOCKYARD: ArenaMapDef = {
   variants: 1,
   teamSpawns: [[40, 2], [39, 6], [41, 9], [37, 11]],
   ffaSpawns: [[7, 6], [28, 12], [16, 22], [38, 23], [4, 28]],
+  objectives: {
+    // Hardpoint order: under the crane, the two container yards, then the two ship decks.
+    zones: [
+      { name: 'Crane', x: 0, z: 24, r: 5 },
+      { name: 'West Yard', x: -24.5, z: 8.5, r: 5 },
+      { name: 'East Yard', x: 24.5, z: 8.5, r: 5 },
+      { name: 'West Deck', x: -18.5, z: 25, r: 5 },
+      { name: 'East Deck', x: 18.5, z: 25, r: 5 },
+    ],
+    dominationZones: [0, 1, 2],
+    flags: [{ team: 'red', x: -40.5, z: 26.5 }, { team: 'blue', x: 40.5, z: 26.5 }],
+  },
   highGround: [[22, 17], [20, 27], [30, 27], [12, 2]],
   build(_variant, b) {
     const { box, paint } = b;

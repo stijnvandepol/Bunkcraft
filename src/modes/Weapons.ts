@@ -36,6 +36,9 @@ export interface WeaponDef {
   moveSpeed: number;
   /** Camera kick per shot in degrees (vertical). */
   recoil: number;
+  /** Burst weapons fire this many shots per trigger pull, `rpm` apart; the next burst may start `burstCycleSec` after the first shot. */
+  burst?: number;
+  burstCycleSec?: number;
 }
 
 export const WEAPONS: WeaponDef[] = [
@@ -45,13 +48,13 @@ export const WEAPONS: WeaponDef[] = [
     zoom: 0.8, moveSpeed: 1, recoil: 0.9,
   },
   {
-    id: 'smg', name: 'SMG', slot: 'primary', auto: true, damage: 13, headshot: 1.8, pellets: 1, rpm: 900,
-    magazine: 25, reloadSec: 1.3, spread: 3.4, adsSpread: 1.2, range: 22, falloffEnd: 60, minDamage: 0.5, maxRange: 100,
-    zoom: 0.85, moveSpeed: 1.06, recoil: 0.6,
+    id: 'smg', name: 'SMG', slot: 'primary', auto: true, damage: 15, headshot: 1.8, pellets: 1, rpm: 900,
+    magazine: 25, reloadSec: 1.3, spread: 2.6, adsSpread: 1.2, range: 16, falloffEnd: 50, minDamage: 0.5, maxRange: 100,
+    zoom: 0.85, moveSpeed: 1.08, recoil: 0.6,
   },
   {
-    id: 'shotgun', name: 'Shotgun', slot: 'primary', auto: false, damage: 9, headshot: 1.5, pellets: 8, rpm: 75,
-    magazine: 6, reloadSec: 2.4, spread: 5.5, adsSpread: 4.2, range: 10, falloffEnd: 28, minDamage: 0.2, maxRange: 40,
+    id: 'shotgun', name: 'Shotgun', slot: 'primary', auto: false, damage: 13, headshot: 1.5, pellets: 10, rpm: 70,
+    magazine: 6, reloadSec: 2.4, spread: 4.5, adsSpread: 3.5, range: 6, falloffEnd: 20, minDamage: 0.15, maxRange: 40,
     zoom: 0.9, moveSpeed: 0.97, recoil: 4,
   },
   {
@@ -60,9 +63,24 @@ export const WEAPONS: WeaponDef[] = [
     zoom: 0.25, moveSpeed: 0.92, recoil: 3,
   },
   {
+    id: 'dmr', name: 'DMR', slot: 'primary', auto: false, damage: 34, headshot: 2, pellets: 1, rpm: 270,
+    magazine: 12, reloadSec: 2, spread: 3.5, adsSpread: 0.1, range: 60, falloffEnd: 140, minDamage: 0.7, maxRange: 250,
+    zoom: 0.55, moveSpeed: 0.96, recoil: 1.6,
+  },
+  {
+    id: 'burst', name: 'Burst Rifle', slot: 'primary', auto: false, damage: 22, headshot: 1.6, pellets: 1, rpm: 900,
+    magazine: 30, reloadSec: 1.7, spread: 2, adsSpread: 0.25, range: 45, falloffEnd: 100, minDamage: 0.6, maxRange: 160,
+    zoom: 0.8, moveSpeed: 1, recoil: 1.2, burst: 3, burstCycleSec: 0.38,
+  },
+  {
     id: 'pistol', name: 'Pistol', slot: 'secondary', auto: false, damage: 18, headshot: 2, pellets: 1, rpm: 400,
     magazine: 12, reloadSec: 1.1, spread: 1.8, adsSpread: 0.5, range: 25, falloffEnd: 60, minDamage: 0.5, maxRange: 100,
     zoom: 0.9, moveSpeed: 1.04, recoil: 1.1,
+  },
+  {
+    id: 'revolver', name: 'Revolver', slot: 'secondary', auto: false, damage: 52, headshot: 2, pellets: 1, rpm: 150,
+    magazine: 6, reloadSec: 2.4, spread: 2.5, adsSpread: 0.15, range: 30, falloffEnd: 70, minDamage: 0.6, maxRange: 120,
+    zoom: 0.85, moveSpeed: 1, recoil: 4.5,
   },
   {
     id: 'knife', name: 'Knife', slot: 'melee', auto: false, damage: 55, headshot: 1, pellets: 1, rpm: 120,
@@ -76,7 +94,9 @@ export function weaponDef(id: string): WeaponDef | undefined {
 }
 
 export const PRIMARY_WEAPONS: string[] = WEAPONS.filter((w) => w.slot === 'primary').map((w) => w.id);
+export const SECONDARY_WEAPONS: string[] = WEAPONS.filter((w) => w.slot === 'secondary').map((w) => w.id);
 export const DEFAULT_PRIMARY = 'rifle';
+export const DEFAULT_SECONDARY = 'pistol';
 
 /** Damage of one bullet at a distance, before the headshot multiplier. */
 export function damageAt(w: WeaponDef, distance: number): number {
