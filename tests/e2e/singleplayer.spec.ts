@@ -10,7 +10,7 @@ test('singleplayer: create a world, walk, break and place, craft, save and reloa
     const g = (window as any).game;
     const { BLOCK } = await import('/src/world/BlockRegistry.ts' as string);
     const x0 = Math.floor(g.player.x), z0 = Math.floor(g.player.z);
-    for (let x = -8; x <= 8; x++) for (let z = -8; z <= 8; z++) for (const y of [109, 110]) g.world.setBlock(x0 + x, y, z0 + z, BLOCK.STONE);
+    for (let x = -8; x <= 8; x++) for (let z = -8; z <= 8; z++) for (const y of [106, 107, 108, 109, 110]) g.world.setBlock(x0 + x, y, z0 + z, BLOCK.STONE);
     for (let x = -8; x <= 8; x++) for (let z = -8; z <= 8; z++) for (let y = 111; y < 115; y++) g.world.setBlock(x0 + x, y, z0 + z, 0);
     g.player.setPosition(x0 + 0.5, 111, z0 + 0.5);
     g.player.flying = false;
@@ -38,15 +38,21 @@ test('singleplayer: create a world, walk, break and place, craft, save and reloa
   expect(target.id).toBeGreaterThan(0);
   // Hold the attack button until the block is gone (creative breaks at once, then repeats while held).
   await page.evaluate(() => { const i = (window as any).game.input; i.down.add('Mouse0'); i.pressed.add('Mouse0'); });
-  await expect.poll(async () => page.evaluate((t) => (window as any).game.world.getBlock(t.x, t.y, t.z), target), { timeout: 15_000, intervals: [50] }).toBe(0);
-  await page.evaluate(() => (window as any).game.input.down.delete('Mouse0'));
+  // Release the button in the same step that sees the block gone: on a slow CI frame rate a held button breaks more.
+  await expect.poll(async () => page.evaluate((t) => {
+    const g = (window as any).game;
+    const id = g.world.getBlock(t.x, t.y, t.z);
+    if (id === 0) g.input.down.delete('Mouse0');
+    return id;
+  }, target), { timeout: 15_000, intervals: [50] }).toBe(0);
   await play(page, 300);
 
   // Place the selected hotbar block on top of whatever the crosshair now points at (looking down: the face above).
   await page.evaluate(() => { const g = (window as any).game; g.hotbar.selected = 2; g.hotbar.refresh?.(); });
   const placed = await page.evaluate(() => (window as any).game.playerInventory.get(2).id as number);
   expect(placed).toBeGreaterThan(0);
-  const below = await page.evaluate(() => { const r = (window as any).game.interaction.ray; return { x: r.x as number, y: r.y as number, z: r.z as number }; });
+  const below = await page.evaluate(() => { const r = (window as any).game.interaction.ray; return { hit: r.hit as boolean, x: r.x as number, y: r.y as number, z: r.z as number }; });
+  expect(below.hit).toBe(true);
   const spot = { x: below.x, y: below.y + 1, z: below.z };
   // A click is one frame long; re-click until it lands (a throttled or paused frame may swallow one).
   await expect.poll(async () => {
