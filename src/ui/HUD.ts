@@ -1,4 +1,5 @@
 import { h } from './dom';
+import { EffectsHud } from './EffectsHud';
 import type { Hotbar } from './Hotbar';
 import { SurvivalHud } from './SurvivalHud';
 
@@ -6,6 +7,8 @@ import { SurvivalHud } from './SurvivalHud';
 export class HUD {
   readonly el: HTMLDivElement;
   readonly survival = new SurvivalHud();
+  /** Status effect icons, attack cooldown bar and absorption hearts. */
+  readonly effects = new EffectsHud();
   private readonly water: HTMLDivElement;
   private readonly hurtFlash: HTMLDivElement;
   private readonly crosshair: HTMLDivElement;
@@ -16,12 +19,14 @@ export class HUD {
     this.water = h('div', { class: 'underwater' });
     this.hurtFlash = h('div', { class: 'hurt-flash' });
     this.crosshair = h('div', { class: 'crosshair' });
-    hotbar.hudSlot.append(this.survival.el);
+    hotbar.hudSlot.append(this.effects.absorption, this.survival.el);
     this.el = h('div', { class: 'hud hidden' },
       h('div', { class: 'vignette' }),
       this.water,
       this.hurtFlash,
       this.crosshair,
+      this.effects.cooldown,
+      this.effects.el,
       hotbar.el,
     );
   }

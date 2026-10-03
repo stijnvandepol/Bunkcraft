@@ -1,0 +1,63 @@
+/* Status effect icons, attack cooldown bar, absorption hearts, sleep overlay, game rules screen. */
+
+.effects-hud {
+  position: absolute;
+  top: calc(var(--s) * 3);
+  right: calc(var(--s) * 3);
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--s) * 2);
+  align-items: flex-end;
+  pointer-events: none;
+  text-shadow: var(--shadow);
+}
+.effects-hud.empty { display: none; }
+.effect-tile { position: relative; width: calc(var(--s) * 18); }
+.effect-icon { width: calc(var(--s) * 18); height: calc(var(--s) * 18); image-rendering: pixelated; display: block; }
+.effect-time { display: block; text-align: center; color: #fff; font-size: calc(var(--fs) * 0.8); margin-top: calc(var(--s) * 1); }
+.effect-tile.harmful .effect-time { color: #ff9a9a; }
+.effect-level { position: absolute; top: 0; right: calc(var(--s) * 1); color: #fff; font-size: calc(var(--fs) * 0.7); }
+
+.attack-indicator {
+  position: absolute;
+  left: 50%;
+  top: calc(50% + var(--s) * 9);
+  width: calc(var(--s) * 16);
+  height: calc(var(--s) * 3);
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.6);
+  border: var(--s) solid #000;
+  pointer-events: none;
+}
+.attack-indicator i { display: block; height: 100%; background: #e8e8e8; }
+
+.absorption-hud {
+  display: block;
+  width: calc(var(--s) * 82);
+  height: calc(var(--s) * 9);
+  image-rendering: pixelated;
+  margin-bottom: calc(var(--s) * 1);
+}
+
+/* Sleeping: the screen fades to black, the bed message stays readable. */
+.sleep-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  background: #000;
+  opacity: 0;
+  pointer-events: none;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: calc(var(--s) * 40);
+  color: #fff;
+  text-shadow: var(--shadow);
+}
+.sleep-overlay .sleep-hint { opacity: 0; transition: opacity 0.4s; }
+.sleep-overlay.on .sleep-hint { opacity: 1; }
+.sleep-overlay.leave { pointer-events: auto; }
+
+.rules-list { display: flex; flex-direction: column; gap: calc(var(--s) * 2); width: min(calc(var(--s) * 310), 94vw); max-height: 60vh; overflow-y: auto; }
+.rules-list .mc-btn { width: 100%; }
+.rules-hint { color: #a0a0a0; text-align: center; margin-bottom: calc(var(--s) * 4); }

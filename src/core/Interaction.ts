@@ -8,6 +8,7 @@ import { type GameMode, hasSurvivalRules } from '../player/GameMode';
 import { PHYSICS } from '../player/Physics';
 import type { Player } from '../player/Player';
 import { FOOD_EFFECTS } from '../player/Effects';
+import { AttackCooldown, attackSpeedOf, isSword, meleeDamage, planAttack, sweepDamage, sweepVictims } from '../player/Melee';
 import type { PlayerStats } from '../player/PlayerStats';
 import type { HandRenderer } from '../rendering/HandRenderer';
 import type { Hotbar } from '../ui/Hotbar';
@@ -73,6 +74,8 @@ export class Interaction {
   private placeCooldown = 0;
   private eatTime = 0;
   private eatItem = 0;
+  /** Attack cooldown of the held item (Minecraft 1.9+): the HUD shows it under the crosshair. */
+  readonly cooldown = new AttackCooldown();
   /** True while the eat animation is playing (hand renderer). */
   eating = false;
   /** Seconds the bow has been drawn (0 = not drawing). */
@@ -109,6 +112,8 @@ export class Interaction {
       return;
     }
     const { player, renderer, camera } = this.d;
+    const heldItem = this.d.hotbar.selectedBlock;
+    this.cooldown.advance(heldItem, attackSpeedOf(getItemDef(heldItem)?.name), dt * 20);
     const highlight = renderer.highlight;
     const pos = camera.position;
     camera.getWorldDirection(this.dir);
@@ -133,7 +138,10 @@ export class Interaction {
     } else {
       highlight.hide();
       this.breakProgress = 0;
-      if (input.leftClicked) this.d.hand.swingHand();
+      if (input.leftClicked) {
+        this.d.hand.swingHand();
+        this.cooldown.swing(); // swinging at the air restarts the cooldown, like Minecraft
+      }
     }
     highlight.setProgress(this.breakProgress);
 
@@ -271,11 +279,20 @@ export class Interaction {
   }
 
   private attack(mob: import('../entities/Mob').Mob, mode: GameMode): void {
-    const { player, hotbar, inventory, audio, hand, stats } = this.d;
+    const { player, hotbar, inventory, audio, hand, stats, entities, renderer } = this.d;
     hand.swingHand();
-    const tool = getItemDef(hotbar.selectedBlock)?.tool;
-    const damage = tool ? tool.damage : 1;
-    // A server mob is hit by the server (damage from the held item, sound comes back with it).
+    const def = getItemDef(hotbar.selectedBlock);
+    const tool = def?.tool;
+    const cd = this.cooldown;
+    // Minecraft 1.9+: damage scales with the swing charge, a falling hit is a critical, a charged sprint hit knocks back
+    // further and a sword on the ground sweeps its neighbours.
+    const plan = planAttack({
+      charge: cd.charge, onGround: player.onGround, fallDistance: player.fallDistance, inWater: player.inWater,
+      sprinting: player.sprinting, sword: isSword(def?.name),
+    });
+    const damage = meleeDamage({ base: tool ? tool.damage : 1, effectBonus: stats.effects.attackBonus(), scale: cd.scale, crit: plan.crit });
+    const knockback = plan.sprintKnock ? 1.6 : 1;
+    // A server mob is hit by the server (it tracks the cooldown itself and sends the sound back).
     let hit = false;
     if (mob.remote) {
       if (mob.hurtTime === 0 && !mob.dead) {
@@ -283,12 +300,19 @@ export class Interaction {
         mob.hurtTime = 10; // no second request during its invulnerability frames
         hit = true;
       }
-    } else if (mob.hurt(damage, player.x, player.z, player.sprinting ? 1.6 : 1, true)) {
-      // Sprint hits knock back further, like Minecraft.
+    } else if (mob.hurt(damage, player.x, player.z, knockback, true, { kind: 'player', byPlayer: true })) {
       audio.playMob(mob.type.kind, 'hurt', 1);
       hit = true;
+      if (plan.sweep) {
+        for (const other of sweepVictims(mob, entities.mobs)) {
+          if (other.dead || other.remote) continue;
+          other.hurt(sweepDamage(1), player.x, player.z, 0.4, true, { kind: 'player', byPlayer: true });
+        }
+      }
     }
+    cd.swing();
     if (hit) {
+      if (plan.crit) renderer.particles.spawnCrit(mob.x, mob.y + mob.height * 0.8, mob.z);
       if (hasSurvivalRules(mode)) {
         stats.addExhaustion(0.1);
         if (tool) {
@@ -318,7 +342,8 @@ export class Interaction {
     const survival = hasSurvivalRules(mode);
     const held = hotbar.selectedBlock;
     const hitMeta = this.getMeta(hit.x, hit.y, hit.z);
-    const seconds = survival ? breakSeconds(hit.id, held, player.onGround, player.headInWater, hitMeta) : 0;
+    // Haste and Mining Fatigue scale the mining speed.
+    const seconds = survival ? breakSeconds(hit.id, held, player.onGround, player.headInWater, hitMeta) / stats.effects.miningMultiplier() : 0;
     this.breakProgress = seconds <= 0 ? 1 : this.breakProgress + dt / seconds;
 
     // Arm swings continuously while mining.

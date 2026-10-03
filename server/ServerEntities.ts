@@ -5,6 +5,9 @@ import {
   type ArrowEntry, type ItemEntry, type MobEntry, NET_MOB_KINDS, type ServerMessage, type TntEntry,
 } from '../src/net/protocol';
 import { type GameMode, hasSurvivalRules } from '../src/player/GameMode';
+import { attackCharge, attackScale, attackSpeedOf, isSword, meleeDamage, planAttack, sweepDamage, sweepVictims } from '../src/player/Melee';
+import { type Difficulty, hostilesAllowed } from '../src/world/Difficulty';
+import type { RuleReader } from '../src/world/GameRules';
 import { BLOCK, getBlockDef } from '../src/world/BlockRegistry';
 import { ServerWorld } from './ServerWorld';
 
@@ -43,6 +46,16 @@ export interface EntityHost {
 
 const r2 = (v: number) => Math.round(v * 100) / 100;
 
+/** Per player: what the server needs to scale melee damage by the attack cooldown without trusting the client. */
+interface CombatRecord {
+  /** Clock time (ms) of the last attack and of the last change of the held item (both restart the cooldown). */
+  lastAttack: number;
+  heldSince: number;
+  held: number;
+  lastY: number;
+  falling: boolean;
+}
+
 /** Time of day (0 sunrise … 0.25 noon … 0.75 midnight) → 0 night … 1 day, like the client's DayCycle. */
 export function dayFactorAt(time: number): number {
   const a = time * Math.PI * 2;
@@ -62,6 +75,11 @@ export class ServerEntities {
   private players: EntityPlayer[] = [];
   private tickCount = 0;
   private sentAnything = new Set<number>();
+  private readonly combat = new Map<number, CombatRecord>();
+  /** Clock for the attack cooldown in ms (the tests replace it). */
+  attackClock: () => number = () => Date.now();
+  /** Game rules and difficulty of this world (set by GameServer; absent in the tests = defaults). */
+  rules: RuleReader | null = null;
 
   constructor(
     seed: number,
@@ -99,6 +117,16 @@ export class ServerEntities {
     this.mode = mode;
   }
 
+  /** Peaceful removes the hostile mobs and stops them spawning. */
+  setDifficulty(d: Difficulty): void {
+    this.manager.peaceful = !hostilesAllowed(d);
+  }
+
+  /** Re-reads the rules that switch spawning (call after /gamerule). */
+  applyRules(): void {
+    this.manager.spawningEnabled = this.rules ? this.rules.get('doMobSpawning') : true;
+  }
+
   get mobCount(): number {
     return this.manager.mobs.length;
   }
@@ -106,6 +134,7 @@ export class ServerEntities {
   /** One 20 Hz tick with everyone who is in the game. */
   tick(players: EntityPlayer[]): void {
     this.players = players;
+    for (const p of players) this.trackCombat(p);
     const active = players.filter((p) => p.hasPos);
     if (active.length === 0) return;
     const attackable = hasSurvivalRules(this.mode);
@@ -128,14 +157,49 @@ export class ServerEntities {
 
   // ---------------------------------------------------------------- player requests
 
+  private trackCombat(p: EntityPlayer): CombatRecord {
+    let r = this.combat.get(p.id);
+    if (!r) {
+      r = { lastAttack: -Infinity, heldSince: -Infinity, held: p.held, lastY: p.y, falling: false };
+      this.combat.set(p.id, r);
+    }
+    if (p.held !== r.held) {
+      // Switching items restarts the cooldown (no swapping between two swords for full hits).
+      r.held = p.held;
+      r.heldSince = this.attackClock();
+    }
+    r.falling = p.y < r.lastY - 1e-3;
+    r.lastY = p.y;
+    return r;
+  }
+
   attack(p: EntityPlayer, mobId: number): void {
     const m = this.manager.mobs.find((e) => e.netId === mobId);
     if (!m || m.dead || m.removed || !p.hasPos) return;
     const d = Math.hypot(m.x - p.x, m.y + m.height / 2 - (p.y + 1.62), m.z - p.z);
     if (d > ATTACK_REACH) return;
-    const damage = getItemDef(p.held)?.tool?.damage ?? 1;
+    // The client reports nothing about its cooldown: the server counts it from the attacks it has seen, so spam
+    // clicking only gets the weak, scaled hits (one tick of leniency for network jitter).
+    const rec = this.trackCombat(p);
+    const now = this.attackClock();
+    const def = getItemDef(p.held);
+    const speed = attackSpeedOf(def?.name);
+    const ticks = (now - Math.max(rec.lastAttack, rec.heldSince)) / 50 + 1;
+    rec.lastAttack = now;
+    const plan = planAttack({
+      charge: attackCharge(ticks, speed), onGround: (p.flags & 4) !== 0, fallDistance: rec.falling ? 1 : 0, inWater: false,
+      sprinting: (p.flags & 1) !== 0, sword: isSword(def?.name),
+    });
+    const damage = meleeDamage({ base: def?.tool?.damage ?? 1, scale: attackScale(ticks, speed), crit: plan.crit });
     // Sprint hits knock back further, like Minecraft.
-    if (m.hurt(damage, p.x, p.z, p.flags & 1 ? 1.6 : 1, true)) this.mobSound(m, 'hurt');
+    if (m.hurt(damage, p.x, p.z, plan.sprintKnock ? 1.6 : 1, true, { kind: 'player', byPlayer: true })) {
+      this.mobSound(m, 'hurt');
+      if (plan.sweep) {
+        for (const o of sweepVictims(m, this.manager.mobs)) {
+          if (!o.dead && !o.removed) o.hurt(sweepDamage(1), p.x, p.z, 0.4, true, { kind: 'player', byPlayer: true });
+        }
+      }
+    }
   }
 
   shoot(p: EntityPlayer, x: number, y: number, z: number, dx: number, dy: number, dz: number, power: number): void {
@@ -219,7 +283,9 @@ export class ServerEntities {
    */
   private explode(by: string, x: number, y: number, z: number, power: number, inWater: boolean): void {
     const positions: number[] = [];
-    const destroyed = inWater ? [] : this.world.explode(x, y, z, power * 1.3, positions);
+    // Creepers (they have a name) only break blocks while mobGriefing is on; TNT always does.
+    const grief = !by || !this.rules || this.rules.get('mobGriefing');
+    const destroyed = inWater || !grief ? [] : this.world.explode(x, y, z, power * 1.3, positions);
     for (let i = 0; i < destroyed.length; i++) {
       const id = destroyed[i];
       if (id === BLOCK.TNT) {
@@ -288,5 +354,6 @@ export class ServerEntities {
 
   forget(playerId: number): void {
     this.sentAnything.delete(playerId);
+    this.combat.delete(playerId);
   }
 }

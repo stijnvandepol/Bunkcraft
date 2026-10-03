@@ -1569,6 +1569,12 @@ export class Game {
     this.hud.setUnderwater(this.underwater);
     this.hud.setHurt(this.arcade ? this.arcade.hurt * 0.8 : this.stats.hurtTime / 10);
     if (!this.arcade) this.hud.survival.update({ health: this.stats.health, hunger: this.stats.hunger, air: this.stats.air, maxAir: MAX_AIR, armor: this.stats.armorPoints }, this.time);
+    if (!this.arcade) {
+      const fx = this.hud.effects;
+      fx.updateEffects(this.stats.effects, this.time);
+      fx.updateAbsorption(hasSurvivalRules(this.mode) ? this.stats.absorption : 0);
+      fx.updateCooldown(this.interaction?.cooldown.charge ?? 1, this.state === 'playing' && this.mode !== 'spectator');
+    }
 
     if (this.net) {
       const flags = (p.sprinting ? 1 : 0) | (p.flying ? 2 : 0) | (p.onGround ? 4 : 0);
