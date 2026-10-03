@@ -86,6 +86,26 @@ describe('SaveSystem', () => {
     expect((await (await openSystem()).listWorlds())[0].genVersion).toBe(GEN_VERSION_LEGACY);
   });
 
+  it('turns the chest contents of a version 3 save into block entities without losing items', async () => {
+    const s = await openSystem();
+    const old = meta({ name: 'Chests', version: 3, genVersion: GEN_VERSION_CURRENT });
+    const rows = Array.from({ length: 27 }, (_, i) => (i === 4 ? [264, 12, 0] : i === 9 ? [272, 1, 7, 6, 2] : [0, 0, 0]));
+    old.containers = { '5,64,-3': rows };
+    await putRaw('worlds', old);
+    const list = await s.listWorlds();
+    expect(list[0].version).toBe(SAVE_VERSION);
+    expect(list[0].containers).toBeUndefined();
+    const saved = list[0].blockEntities!['5,64,-3'];
+    expect(saved.k).toBe('chest');
+    // Loaded into a store, the same stacks come back (the enchanted pickaxe keeps its data).
+    const { BlockEntityStore } = await import('../src/world/BlockEntities');
+    const store = new BlockEntityStore({ getBlock: () => 82, getMeta: () => 0, setState: () => {} });
+    store.load(list[0].blockEntities);
+    const slots = store.get(5, 64, -3)!.slots;
+    expect(slots[4]).toEqual({ id: 264, count: 12 });
+    expect(slots[9]).toEqual({ id: 272, count: 1, damage: 7, data: { efficiency: 2 } });
+  });
+
   it('keeps the generator version of a new world through save and reload', async () => {
     const s = await openSystem();
     await s.saveWorld(meta({ name: 'Fresh', genVersion: GEN_VERSION_CURRENT }));

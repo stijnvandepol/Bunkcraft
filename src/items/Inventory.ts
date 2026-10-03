@@ -1,3 +1,4 @@
+import { levelOf, takesWear } from './EnchantRules';
 import { type ItemStack, cloneStack, getItemDef, maxDurability, sameItem, stackFromArray, stackToArray } from './ItemRegistry';
 
 export const HOTBAR_SLOTS = 9;
@@ -70,7 +71,11 @@ export class PlayerInventory {
       const s = this.armor[k];
       const max = s.id ? maxDurability(s.id) : 0;
       if (!max) continue;
-      s.damage = (s.damage ?? 0) + wear;
+      // Unbreaking: each point of wear is skipped with the armor chance.
+      const unbreaking = levelOf(s.data, 'unbreaking');
+      let taken = 0;
+      for (let w = 0; w < wear; w++) if (takesWear(unbreaking, true)) taken++;
+      s.damage = (s.damage ?? 0) + taken;
       if (s.damage >= max) {
         this.armor[k] = { id: 0, count: 0 };
         broke++;
@@ -162,6 +167,8 @@ export class PlayerInventory {
     const s = this.slots[i];
     const max = maxDurability(s.id);
     if (!max) return false;
+    // Unbreaking: a use costs durability only with chance 1/(level+1).
+    if (!takesWear(levelOf(s.data, 'unbreaking'), false)) return false;
     s.damage = (s.damage ?? 0) + 1;
     const broke = s.damage >= max;
     if (broke) this.slots[i] = { id: 0, count: 0 };

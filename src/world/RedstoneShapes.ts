@@ -2,6 +2,8 @@
  * Geometry of the redstone components, in the same box format as BoxShapes (block units 0..1). Pure and free of the
  * block registry, so BoxShapes can use it for the mesher, collision and the ray cast.
  *
+ * Box kinds 12-19 follow the ones in BoxShapes (1-11).
+ *
  * State byte layouts (see docs/CONTENT.md, "Redstone"). Directions `d` use the face order everywhere:
  * 0 +X, 1 −X, 2 +Y, 3 −Y, 4 +Z, 5 −Z.
  *  - dust: bits 0-3 signal strength; the connections are derived from the neighbours (like fences);
@@ -14,14 +16,14 @@
  *  - piston: bits 0-2 facing, bit 3 extended; piston head: bits 0-2 facing, bit 3 sticky.
  */
 
-export const BOX_DUST = 9;
-export const BOX_LEVER = 10;
-export const BOX_BUTTON = 11;
-export const BOX_PLATE = 12;
-export const BOX_REPEATER = 13;
-export const BOX_RTORCH = 14;
-export const BOX_PISTON = 15;
-export const BOX_PISTON_HEAD = 16;
+export const BOX_DUST = 12;
+export const BOX_LEVER = 13;
+export const BOX_BUTTON = 14;
+export const BOX_PLATE = 15;
+export const BOX_REPEATER = 16;
+export const BOX_RTORCH = 17;
+export const BOX_PISTON = 18;
+export const BOX_PISTON_HEAD = 19;
 
 /** Face order direction vectors. */
 export const DIR_X = [1, -1, 0, 0, 0, 0] as const;

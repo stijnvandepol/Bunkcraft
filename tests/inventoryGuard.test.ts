@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { ITEM } from '../src/items/ItemRegistry';
-import { BLOCK } from '../src/world/BlockRegistry';
+import { ITEM, blockDrop, itemFromState, itemId, possibleBlockDrops } from '../src/items/ItemRegistry';
+import { BLOCK, BLOCK_DEFS, VARIANT_MASK } from '../src/world/BlockRegistry';
 import { InventoryGuard, parseInventory } from '../server/InventoryGuard';
 import { KEY_A, type TestServer, cleanup, createRoom, joinGame, startTestServer } from './helpers/serverHarness';
 
@@ -71,6 +71,37 @@ describe('InventoryGuard: items only enter through routes the server saw', () =>
     expect(g.check(inv([ITEM.DIAMOND, 1, 0])).ok).toBe(false); // no recipe at all
   });
 
+  it('crafting consumes its ingredients: keeping the log and the planks is refused', () => {
+    const g = new InventoryGuard([{ id: BLOCK.OAK_LOG, count: 1 }]);
+    expect(g.check(inv([BLOCK.OAK_LOG, 1, 0], [BLOCK.OAK_PLANKS, 4, 0])).ok).toBe(false);
+    // Repeating it would otherwise turn one log into endless planks.
+    expect(g.check(inv([BLOCK.OAK_PLANKS, 4, 0])).ok).toBe(true);
+  });
+
+  it('crafting uses the alternative the player actually spent (birch planks used, oak planks kept)', () => {
+    const g = new InventoryGuard([{ id: BLOCK.OAK_PLANKS, count: 2 }, { id: BLOCK.BIRCH_LOG, count: 1 }]);
+    expect(g.check(inv([BLOCK.OAK_PLANKS, 2, 0], [BLOCK.BIRCH_PLANKS, 2, 0], [ITEM.STICK, 4, 0])).ok).toBe(true);
+  });
+
+  it('container transfers are neutral: withdrawn items pass, deposited ones leave the pool, a cursor counts as held', () => {
+    const g = new InventoryGuard([{ id: ITEM.COAL, count: 10 }]);
+    // Ten coal picked up onto the cursor: the state without them plus the cursor still adds up.
+    expect(g.check(inv(), { id: ITEM.COAL, count: 10 }).ok).toBe(true);
+    // Put into a chest: they leave the pool, so claiming them again fails.
+    expect(g.spendTransfer(ITEM.COAL, 10)).toBe(true);
+    expect(g.spendTransfer(ITEM.COAL, 1)).toBe(false);
+    expect(g.check(inv([ITEM.COAL, 10, 0])).ok).toBe(false);
+    // Taken back out: allowed again.
+    const h = new InventoryGuard([]);
+    h.creditTransfer(ITEM.IRON_INGOT, 3);
+    expect(h.check(inv([ITEM.IRON_INGOT, 3, 0])).ok).toBe(true);
+  });
+
+  it('smelting is not instant crafting any more (it goes through a furnace)', () => {
+    const g = new InventoryGuard([{ id: BLOCK.IRON_ORE, count: 1 }, { id: ITEM.COAL, count: 1 }]);
+    expect(g.check(inv([ITEM.IRON_INGOT, 1, 0])).ok).toBe(false);
+  });
+
   it('refuses stack sizes the client could not build', () => {
     const g = new InventoryGuard([{ id: BLOCK.DIRT, count: 64 }, { id: BLOCK.DIRT, count: 64 }]);
     expect(g.check(inv([BLOCK.DIRT, 100, 0])).ok).toBe(false);
@@ -133,6 +164,55 @@ describe('InventoryGuard: drops', () => {
     g.creditPickup(BLOCK.DIRT, 5); // the server item entity was taken back
     expect(g.check(inv([BLOCK.DIRT, 5, 0])).ok).toBe(true);
     expect(g.check(inv([BLOCK.DIRT, 10, 0])).ok).toBe(false);
+  });
+
+  it('a coloured block explains its own colour (the state byte is part of the drop)', () => {
+    const g = new InventoryGuard([]);
+    g.creditBreak(BLOCK.WOOL, 14); // red wool
+    expect(g.authorizeDrop(itemFromState(BLOCK.WOOL, 14), 1)).toBe(true);
+  });
+
+  it('random drops are credited at their highest roll (ores, leaves)', () => {
+    const lapisOre = BLOCK_DEFS.find((d) => d?.name === 'lapis_ore')!.id;
+    const g = new InventoryGuard([]);
+    g.creditBreak(lapisOre);
+    expect(g.authorizeDrop(itemId('lapis_lazuli'), 9)).toBe(true);
+    const leaves = new InventoryGuard([]);
+    leaves.creditBreak(BLOCK.OAK_LEAVES);
+    expect(leaves.authorizeDrop(itemFromState(BLOCK.SAPLING, 0), 1)).toBe(true);
+    leaves.creditBreak(BLOCK.OAK_LEAVES);
+    expect(leaves.authorizeDrop(ITEM.STICK, 2)).toBe(true);
+    leaves.creditBreak(BLOCK.OAK_LEAVES);
+    expect(leaves.authorizeDrop(itemId('apple'), 1)).toBe(true);
+  });
+
+  it('possibleBlockDrops covers every roll of blockDrop for every block, state and tool', () => {
+    const tools = [0, ITEM.DIAMOND_PICKAXE, ITEM.SHEARS, ITEM.DIAMOND_SHOVEL, ITEM.DIAMOND_AXE, ITEM.WOODEN_PICKAXE];
+    const misses: string[] = [];
+    for (const def of BLOCK_DEFS) {
+      if (!def) continue;
+      const mask = VARIANT_MASK[def.id];
+      for (let meta = 0; meta < 256; meta++) {
+        if ((meta & mask) !== meta) continue;
+        const possible = possibleBlockDrops(def.id, meta);
+        for (const held of tools) {
+          for (let roll = 0; roll < 30; roll++) {
+            const d = blockDrop(def.id, held, meta);
+            if (!d) continue;
+            const p = possible.find((s) => s.id === d.id);
+            if (!p || d.count > p.count) misses.push(`${def.name}:${meta} with ${held} dropped ${d.count} x ${d.id}`);
+          }
+        }
+      }
+    }
+    expect(misses.slice(0, 5)).toEqual([]);
+  });
+
+  it('a refused drop does not use up the break credit', () => {
+    const g = new InventoryGuard([]);
+    g.creditBreak(BLOCK.STONE);
+    expect(g.authorizeDrop(BLOCK.COBBLESTONE, 2)).toBe(false);
+    expect(g.authorizeDrop(BLOCK.COBBLESTONE, 1)).toBe(true);
   });
 
   it('break credits expire', () => {

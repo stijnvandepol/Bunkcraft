@@ -1,3 +1,11 @@
+/** Screen readers: every menu panel is a modal dialog named after its title. */
+function describe(el: HTMLElement): void {
+  if (!el.hasAttribute('role')) el.setAttribute('role', 'dialog');
+  el.setAttribute('aria-modal', 'true');
+  const title = el.querySelector('.screen-title, .death-title, h1, h2');
+  if (title && !el.hasAttribute('aria-label')) el.setAttribute('aria-label', title.textContent ?? 'Menu');
+}
+
 /** Stack of full-screen menu panels; only the top one is visible. */
 export class ScreenStack {
   private readonly stack: HTMLElement[] = [];
@@ -5,6 +13,7 @@ export class ScreenStack {
   constructor(readonly container: HTMLElement) {}
 
   push(el: HTMLElement): void {
+    describe(el);
     this.top?.classList.add('hidden');
     this.stack.push(el);
     this.container.append(el);
@@ -12,6 +21,7 @@ export class ScreenStack {
 
   /** Replace the top screen (e.g. refresh a list). */
   replace(el: HTMLElement): void {
+    describe(el);
     this.stack.pop()?.remove();
     this.stack.push(el);
     this.container.append(el);

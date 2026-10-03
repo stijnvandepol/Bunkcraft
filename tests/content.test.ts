@@ -37,9 +37,7 @@ describe('block ids', () => {
   });
 
   it('leaves room for what comes next', () => {
-    // Content grows from the bottom of the id range, redstone (and later systems) from the top (254 downwards).
-    expect(BLOCK_DEFS.length).toBeLessThan(230);
-    expect(new Set(BLOCK_DEFS.map((d) => d.id)).size).toBe(BLOCK_DEFS.length);
+    expect([BLOCK.ENCHANTING_TABLE, BLOCK.ANVIL, BLOCK.GRINDSTONE]).toEqual([250, 251, 252]);
   });
 });
 

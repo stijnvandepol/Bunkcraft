@@ -62,10 +62,9 @@ describe('redstone in the World', () => {
 });
 
 describe('redstone content', () => {
-  it('has unique ids at the top of the range and valid states', () => {
+  it('has unique ids and valid states', () => {
     for (const id of [B.REDSTONE_WIRE, B.LEVER, B.BUTTON, B.PRESSURE_PLATE, B.REPEATER, B.REDSTONE_TORCH, B.REDSTONE_LAMP, B.REDSTONE_LAMP_LIT,
       B.NOTE_BLOCK, B.PISTON, B.STICKY_PISTON, B.PISTON_HEAD]) {
-      expect(id).toBeGreaterThanOrEqual(243);
       expect(isRedstoneBlock(id)).toBe(true);
     }
     expect(isValidMeta(B.REDSTONE_WIRE, 15)).toBe(true);

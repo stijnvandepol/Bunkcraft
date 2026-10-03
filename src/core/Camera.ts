@@ -12,6 +12,10 @@ export class CameraController {
   /** Bow draw 0..1 (FOV zoom). */
   bowPull = 0;
   viewBobbing = true;
+  /** Accessibility: no hurt tilt, landing dip or recoil kick (Reduced Motion). */
+  reducedMotion = false;
+  /** Accessibility: share (0..1) of the sprint, underwater and bow FOV changes that is applied. */
+  fovEffects = 1;
   private bobAmount = 0;
   private fov = 70;
   private landDip = 0;
@@ -46,7 +50,7 @@ export class CameraController {
     this.bobAmount = approach(this.bobAmount, target, 10, dt);
 
     if (p.landingImpact > 0) {
-      this.landDip = Math.min(0.18, p.landingImpact * 0.012);
+      this.landDip = this.reducedMotion ? 0 : Math.min(0.18, p.landingImpact * 0.012);
       p.landingImpact = 0;
     }
     this.landDip = approach(this.landDip, 0, 9, dt);
@@ -60,21 +64,23 @@ export class CameraController {
     const bobY = Math.abs(Math.sin(phase)) * 0.055 * amt - 0.02 * amt;
     const bobSide = Math.cos(phase) * 0.028 * amt;
     // Minecraft hurt cam: a quick tilt towards the side of the hit.
-    const hurtRoll = this.hurt > 0 ? -Math.sin(this.hurt ** 4 * Math.PI) * 0.24 * this.hurtSide : 0;
+    const hurtRoll = this.hurt > 0 && !this.reducedMotion ? -Math.sin(this.hurt ** 4 * Math.PI) * 0.24 * this.hurtSide : 0;
     const roll = Math.cos(phase) * 0.0045 * amt + hurtRoll;
     this.bobPhase = phase;
     this.bobStrength = amt;
 
     const cam = this.camera;
-    cam.rotation.set(p.pitch + this.kick, p.yaw, roll, 'YXZ');
+    cam.rotation.set(p.pitch + (this.reducedMotion ? this.kick * 0.25 : this.kick), p.yaw, roll, 'YXZ');
     const cos = Math.cos(p.yaw), sin = Math.sin(p.yaw);
     cam.position.set(x + cos * bobSide, y + PHYSICS.EYE_HEIGHT + bobY - this.landDip, z - sin * bobSide);
 
     let fovTarget = this.baseFov;
-    if (p.sprinting && this.sprintFov) fovTarget *= p.flying ? 1.18 : 1.12;
-    if (p.headInWater) fovTarget *= 0.9;
+    // FOV effects scale between 1 (none) and the full change.
+    const fe = this.fovEffects;
+    if (p.sprinting && this.sprintFov) fovTarget *= 1 + (p.flying ? 0.18 : 0.12) * fe;
+    if (p.headInWater) fovTarget *= 1 - 0.1 * fe;
     // Drawing a bow zooms in (Minecraft: up to 15% at full draw).
-    if (this.bowPull > 0) fovTarget *= 1 - this.bowPull * this.bowPull * 0.15;
+    if (this.bowPull > 0) fovTarget *= 1 - this.bowPull * this.bowPull * 0.15 * fe;
     fovTarget *= this.zoom;
     this.fov = approach(this.fov, fovTarget, 8, dt);
     if (Math.abs(cam.fov - this.fov) > 0.01) {

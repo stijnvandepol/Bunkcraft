@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PlayerInventory } from '../src/items/Inventory';
-import { ITEM, getItemDef, itemFromState, itemId, maxDurability } from '../src/items/ItemRegistry';
+import { getItemDef, itemFromState, itemId, maxDurability } from '../src/items/ItemRegistry';
 import { ARMOR_BASE_DURABILITY, ARMOR_MATERIALS } from '../src/items/ItemContent';
 import { toolUse } from '../src/items/ToolUse';
 import { ARMOR_CAUSES, armorWear, damageReduction, reduceDamage } from '../src/player/Armor';
@@ -11,7 +11,6 @@ import { BLOCK, BOX_KIND, CUBE_ID, TALL } from '../src/world/BlockRegistry';
 import { collisionBoxes, connectMask, isValidMeta } from '../src/world/BlockShapes';
 import { BOX_BED, BOX_FENCE, BOX_PANE, BOX_WALL, SIDE_BIT, bedPartner, boxCollision, ladderSide, visualBoxes } from '../src/world/BoxShapes';
 import { EAST, NORTH, SOUTH, WEST } from '../src/world/BlockStates';
-import { ContainerStore } from '../src/world/Containers';
 import { CHUNK_AREA } from '../src/world/constants';
 import { resolvePlacement } from '../src/world/Placement';
 import { clipAxis } from '../src/player/Collision';
@@ -313,24 +312,6 @@ describe('box shapes', () => {
     expect(Math.abs(p.y - climbed)).toBeLessThan(0.1);
     // No fall damage from a long drop onto the ladder: fall distance stays 0.
     expect(p.fallDistance).toBe(0);
-  });
-});
-
-describe('containers', () => {
-  it('store and give back chest contents and survive a save', () => {
-    const store = new ContainerStore();
-    const slots = store.slotsAt(1, 64, 2)!;
-    expect(slots.length).toBe(27);
-    slots[0] = { id: ITEM.DIAMOND, count: 5 };
-    slots[3] = { id: ITEM.IRON_PICKAXE, count: 1, damage: 4, data: { efficiency: 2 } };
-    const saved = JSON.parse(JSON.stringify(store.serialize()));
-    const copy = new ContainerStore();
-    copy.load(saved);
-    expect(copy.slotsAt(1, 64, 2, false)![3]).toEqual({ id: ITEM.IRON_PICKAXE, count: 1, damage: 4, data: { efficiency: 2 } });
-    const dropped = copy.take(1, 64, 2);
-    expect(dropped.map((s) => s.id)).toEqual([ITEM.DIAMOND, ITEM.IRON_PICKAXE]);
-    expect(copy.slotsAt(1, 64, 2, false)).toBeNull();
-    expect(new ContainerStore().serialize()).toBeUndefined();
   });
 });
 

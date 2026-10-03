@@ -59,8 +59,13 @@ export function isConductor(id: number): boolean {
 
 /** Is `id` one of the blocks of this system (used by tests and the server to skip work in worlds without any)? */
 export function isRedstoneBlock(id: number): boolean {
-  return (id >= BLOCK.PISTON_HEAD && id <= BLOCK.REDSTONE_WIRE) || id === REDSTONE_BLOCK;
+  return REDSTONE_IDS[id] === 1;
 }
+const REDSTONE_IDS = new Uint8Array(256);
+for (const id of [
+  BLOCK.REDSTONE_WIRE, BLOCK.LEVER, BLOCK.BUTTON, BLOCK.PRESSURE_PLATE, BLOCK.REPEATER, BLOCK.REDSTONE_TORCH, BLOCK.REDSTONE_LAMP,
+  BLOCK.REDSTONE_LAMP_LIT, BLOCK.NOTE_BLOCK, BLOCK.PISTON, BLOCK.STICKY_PISTON, BLOCK.PISTON_HEAD, REDSTONE_BLOCK,
+]) REDSTONE_IDS[id] = 1;
 
 const WIRE = BLOCK.REDSTONE_WIRE;
 

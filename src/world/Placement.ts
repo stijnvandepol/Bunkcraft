@@ -1,13 +1,14 @@
 import {
-  BLOCK, BOX_KIND, FACING, OPAQUE, SHAPE, VARIANT_MASK, SHAPE_CROSS, SHAPE_CUBE, SHAPE_DOOR, SHAPE_LIQUID, SHAPE_NONE, SHAPE_SLAB, SHAPE_STAIRS, SOLID,
+  BLOCK, BOX_KIND, FACING, LEAVES_PERSISTENT_BIT, OPAQUE, SHAPE, VARIANT_MASK, SHAPE_CROSS, SHAPE_CUBE, SHAPE_DOOR, SHAPE_LIQUID, SHAPE_NONE, SHAPE_SLAB, SHAPE_STAIRS, SOLID,
 } from './BlockRegistry';
 import {
   FACING_CCW, FACING_CW, FACING_DX, FACING_DZ, SLAB_BOTTOM, SLAB_DOUBLE, SLAB_HALF_MASK, SLAB_TOP, STAIR_TOP_BIT, canCombineSlab, doorMeta, facingFromYaw,
   isDoorUpper, placedOnUpperHalf, stairMeta,
 } from './BlockStates';
-import { BED_HEAD_BIT, BOX_BED, BOX_CARPET, BOX_GATE, BOX_LADDER, BOX_TRAPDOOR, TRAPDOOR_TOP_BIT, ladderSide } from './BoxShapes';
+import { BED_HEAD_BIT, BOX_ANVIL, BOX_BED, BOX_CARPET, BOX_GATE, BOX_GRINDSTONE, BOX_LADDER, BOX_TRAPDOOR, TRAPDOOR_TOP_BIT, ladderSide } from './BoxShapes';
 import { CHUNK_HEIGHT } from './constants';
 import { redstonePlacement } from './RedstonePlacement';
+import { LEAVES } from './PlantRules';
 
 /** What the player is aiming at and holding when they press Use. */
 export interface PlaceContext {
@@ -37,6 +38,8 @@ export interface Placement {
   meta: number;
   /** A second block placed together with this one (the upper half of a door). */
   upper?: Placement;
+  /** An existing block whose state changes with this placement (the other half of a new double chest). */
+  neighbor?: Placement;
 }
 
 /** Can a block stand on top of this one: opaque blocks, double and top slabs, upside-down stairs (isFaceSturdy UP). */
@@ -153,6 +156,8 @@ export function resolvePlacement(c: PlaceContext): Placement | null {
       case BOX_TRAPDOOR:
         return { x, y, z, id, meta: facingFromYaw(c.yaw) | (upper ? TRAPDOOR_TOP_BIT : 0) };
       case BOX_GATE:
+      case BOX_ANVIL:
+      case BOX_GRINDSTONE:
         return { x, y, z, id, meta: facingFromYaw(c.yaw) };
       case BOX_LADDER: {
         // Fixed to the side of a solid block that was clicked.
@@ -174,6 +179,24 @@ export function resolvePlacement(c: PlaceContext): Placement | null {
   }
   if (shape === SHAPE_SLAB) return { x, y, z, id, meta: upper ? SLAB_TOP : SLAB_BOTTOM };
   if (shape === SHAPE_STAIRS) return { x, y, z, id, meta: stairMeta(facingFromYaw(c.yaw), upper) };
-  // Furnaces, chests and pumpkins show their front to the player.
-  return { x, y, z, id, meta: FACING[id] ? facingFromYaw(c.yaw) : 0 };
+  // Furnaces, chests and pumpkins show their front to the player; leaves placed by a player never decay.
+  const facing = FACING[id] ? facingFromYaw(c.yaw) : 0;
+  if (id === BLOCK.CHEST) return chestPlacement(c, x, y, z, facing);
+  return { x, y, z, id, meta: LEAVES[id] ? LEAVES_PERSISTENT_BIT : facing };
+}
+
+/**
+ * A chest next to a single chest that faces the same way joins it into a double chest: the one with the lower
+ * coordinate along the row is the low half (bit 4), the other the high half (bit 8). The neighbour's state changes too.
+ */
+function chestPlacement(c: PlaceContext, x: number, y: number, z: number, facing: number): Placement {
+  const dx = facing < 2 ? 1 : 0, dz = facing < 2 ? 0 : 1;
+  const single = (nx: number, nz: number): boolean => c.getBlock(nx, y, nz) === BLOCK.CHEST && (c.getMeta(nx, y, nz) & 15) === facing;
+  if (single(x + dx, z + dz)) {
+    return { x, y, z, id: BLOCK.CHEST, meta: facing | 4, neighbor: { x: x + dx, y, z: z + dz, id: BLOCK.CHEST, meta: facing | 8 } };
+  }
+  if (single(x - dx, z - dz)) {
+    return { x, y, z, id: BLOCK.CHEST, meta: facing | 8, neighbor: { x: x - dx, y, z: z - dz, id: BLOCK.CHEST, meta: facing | 4 } };
+  }
+  return { x, y, z, id: BLOCK.CHEST, meta: facing };
 }

@@ -83,3 +83,27 @@ export function menuScreen(
     h('div', { class: `screen-footer${opts.tallFooter ? ' tall' : ''}` }, ...footer),
   );
 }
+
+/**
+ * Minecraft's dirt menu background, generated (no Mojang assets): a 16×16 tile of brown noise, tiled and darkened.
+ * Sets `--dirt` on the root once; screens use `background: var(--dirt)`.
+ */
+let dirtReady = false;
+export function dirtBackground(): void {
+  if (dirtReady) return;
+  dirtReady = true;
+  const c = document.createElement('canvas');
+  c.width = c.height = 16;
+  const ctx = c.getContext('2d');
+  if (!ctx) return;
+  let seed = 1337;
+  const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+  for (let y = 0; y < 16; y++) {
+    for (let x = 0; x < 16; x++) {
+      const v = 38 + Math.floor(rnd() * 26);
+      ctx.fillStyle = `rgb(${v + 8},${v - 2},${v - 14})`;
+      ctx.fillRect(x, y, 1, 1);
+    }
+  }
+  document.documentElement.style.setProperty('--dirt', `url(${c.toDataURL()})`);
+}
