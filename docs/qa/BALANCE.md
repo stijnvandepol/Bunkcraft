@@ -219,11 +219,11 @@ kabeljauw 2/0,4 (gebakken 5/6), zalm 2/0,4 (gebakken 6/9,6), bessen 2/0,4, biet 
 ## Open punten (niet gefixt)
 
 Combat-/schade-pijplijn (andere ontwikkelaar, alleen gemeld):
-1. Geen aanvals-cooldown, crit of sweep (`Interaction.attack`).
-2. Entitybereik in creative hoort 5 te zijn (nu 3).
-3. `ARMOR_CAUSES`: branden (`'fire'`) hoort harnas te negeren, bliksem (`'lightning'`) hoort erdoor verminderd te worden.
-4. Zombies missen hun 2 natuurlijke armor; mobs hebben geen armor-model.
-5. Knockback op mobs (6 b/s) is zachter dan vanilla (~8); bewust in `b185ac0`, maar het hoort bij de combat-herziening.
+1. ~~Geen aanvals-cooldown, crit of sweep~~ **gefixt** (`src/player/Melee.ts`, client en server).
+2. ~~Entitybereik in creative hoort 5 te zijn~~ **gefixt** (`entityReach`: 3 survival, 5 creative).
+3. ~~`ARMOR_CAUSES`: branden en bliksem~~ **gefixt** (branden negeert harnas, bliksem wordt verminderd).
+4. ~~Zombies missen hun 2 natuurlijke armor~~ **gefixt** (`NATURAL_ARMOR` in `Mob.ts`; een zombie kost nu 22 vuistslagen of 6 houten-zwaardklappen).
+5. Knockback op mobs (6 b/s) is zachter dan vanilla (~8): **bewust gelaten** (`b185ac0`); sprint-knockback geldt nu alleen bij een geladen klap.
 
 Klein, buiten de pijplijn (los op te pakken):
 6. Sneaken: randbescherming, lagere ooghoogte en hitbox 1,5 ontbreken (alleen de snelheid is nu vanilla).

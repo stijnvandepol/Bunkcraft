@@ -1,19 +1,23 @@
 import * as THREE from 'three';
 import type { EntityManager } from '../entities/EntityManager';
 import type { PlayerInventory } from '../items/Inventory';
-import { ITEM, blockDrop, breakSeconds, getItemDef, isBlockItem, itemBlock, itemFromState, itemId, itemMeta, miningWear } from '../items/ItemRegistry';
+import { ITEM, SHIELD, blockDrop, breakSeconds, getItemDef, isBlockItem, itemBlock, itemFromState, itemId, itemMeta, miningWear } from '../items/ItemRegistry';
 import { toolUse } from '../items/ToolUse';
 import { facingFromYaw } from '../world/BlockStates';
 import { type GameMode, hasSurvivalRules } from '../player/GameMode';
 import { blockReach } from '../player/Physics';
 import type { Player } from '../player/Player';
+import { FOOD_EFFECTS } from '../player/Effects';
+import { AttackCooldown, attackSpeedOf, entityReach, isSword, meleeDamage, planAttack, sweepDamage, sweepVictims } from '../player/Melee';
 import type { PlayerStats } from '../player/PlayerStats';
 import type { HandRenderer } from '../rendering/HandRenderer';
 import type { Hotbar } from '../ui/Hotbar';
 import { BLOCK, BOX_KIND, PARTIAL, SHAPE, SHAPE_BOX, SHAPE_CROSS, SHAPE_DOOR, SHAPE_MODEL, SOLID, getBlockDef, stateSound } from '../world/BlockRegistry';
 import { collisionBoxes } from '../world/BlockShapes';
 import { BOX_BED, BOX_CARPET, BOX_GATE, BOX_TRAPDOOR } from '../world/BoxShapes';
+import { boneMealTarget } from '../world/Growth';
 import { isLiquid } from '../world/Liquids';
+import { needsSupport, plantCanStand } from '../world/PlantRules';
 import { resolveBucketTarget, resolvePlacement } from '../world/Placement';
 import { type RayHit, createRayHit, raycast } from '../world/Raycast';
 import type { World } from '../world/World';
@@ -54,6 +58,8 @@ export interface InteractionDeps {
   openContainer?(x: number, y: number, z: number): void;
   /** Right click on a bed: sets the spawn point and sleeps through the night. */
   useBed?(x: number, y: number, z: number): void;
+  /** Bone meal on a block (grows saplings, scatters grass); true when the item is used up. */
+  boneMeal?(x: number, y: number, z: number): boolean;
 }
 
 /**
@@ -72,8 +78,15 @@ export class Interaction {
   private placeCooldown = 0;
   private eatTime = 0;
   private eatItem = 0;
+  /** Attack cooldown of the held item (Minecraft 1.9+): the HUD shows it under the crosshair. */
+  readonly cooldown = new AttackCooldown();
   /** True while the eat animation is playing (hand renderer). */
   eating = false;
+  /** Shield raised (Use held with a shield, after Minecraft's 5 tick warm-up). */
+  blocking = false;
+  private shieldRaise = 0;
+  /** Seconds the shield stays down after an axe hit (Minecraft: 5 s). */
+  shieldDisabled = 0;
   /** Seconds the bow has been drawn (0 = not drawing). */
   private bowDraw = 0;
   /** Bow draw 0..1 for the FOV zoom. */
@@ -94,6 +107,8 @@ export class Interaction {
   private reach = 4.5;
 
   reset(): void {
+    this.blocking = false;
+    this.shieldRaise = 0;
     this.breakProgress = 0;
     this.breakKey = -1;
     this.eatTime = 0;
@@ -110,13 +125,15 @@ export class Interaction {
       return;
     }
     const { player, renderer, camera } = this.d;
+    const heldItem = this.d.hotbar.selectedBlock;
+    this.cooldown.advance(heldItem, attackSpeedOf(getItemDef(heldItem)?.name), dt * 20);
     const highlight = renderer.highlight;
     const pos = camera.position;
     camera.getWorldDirection(this.dir);
     this.reach = blockReach(!hasSurvivalRules(mode));
     const hit = raycast(this.getBlock, pos.x, pos.y, pos.z, this.dir.x, this.dir.y, this.dir.z, this.reach, this.ray, this.getMeta);
     const mobHit = active && mode !== 'spectator'
-      ? this.d.entities.raycastMob(pos.x, pos.y, pos.z, this.dir.x, this.dir.y, this.dir.z, Math.min(3, hit.hit ? hit.distance + 0.01 : 3))
+      ? this.d.entities.raycastMob(pos.x, pos.y, pos.z, this.dir.x, this.dir.y, this.dir.z, Math.min(entityReach(mode === 'creative'), hit.hit ? hit.distance + 0.01 : entityReach(mode === 'creative')))
       : null;
 
     if (!active || mode === 'spectator' || player.noclip) {
@@ -135,7 +152,10 @@ export class Interaction {
     } else {
       highlight.hide();
       this.breakProgress = 0;
-      if (input.leftClicked) this.d.hand.swingHand();
+      if (input.leftClicked) {
+        this.d.hand.swingHand();
+        this.cooldown.swing(); // swinging at the air restarts the cooldown, like Minecraft
+      }
     }
     highlight.setProgress(this.breakProgress);
 
@@ -143,7 +163,19 @@ export class Interaction {
     const held = this.d.hotbar.selectedStack;
     const food = getItemDef(held.id)?.food;
     const canEat = food && hasSurvivalRules(mode) && this.d.stats.hunger < 20;
-    if (held.id === ITEM.BOW) {
+    this.shieldDisabled = Math.max(0, this.shieldDisabled - dt);
+    if (held.id === SHIELD && input.rightDown && this.shieldDisabled <= 0) {
+      this.shieldRaise += dt;
+      this.blocking = this.shieldRaise >= 0.25;
+    } else {
+      this.shieldRaise = 0;
+      this.blocking = false;
+    }
+    if (held.id === SHIELD) {
+      this.eatTime = 0;
+      this.eating = false;
+      this.bowDraw = this.bowPull = 0;
+    } else if (held.id === ITEM.BOW) {
       this.eatTime = 0;
       this.eating = false;
       this.updateBow(dt, input, mode);
@@ -158,7 +190,9 @@ export class Interaction {
       if (Math.floor((this.eatTime - dt) / 0.2) !== Math.floor(this.eatTime / 0.2)) this.d.audio.playEat();
       if (this.eatTime >= EAT_TIME) {
         this.d.stats.eat(food.hunger, food.saturation);
-        if (food.poison) this.d.stats.poison = Math.max(this.d.stats.poison, food.poison);
+        const fx = this.d.stats.effects;
+        if (food.poison) fx.add('poison', 0, food.poison, this.d.stats);
+        for (const e of FOOD_EFFECTS[getItemDef(held.id)?.name ?? ''] ?? []) fx.add(e.id, e.amp, e.ticks, this.d.stats);
         this.d.inventory.consumeSlot(this.d.hotbar.selected);
         if (food.returns) this.d.inventory.add({ id: itemId(food.returns), count: 1 });
         this.d.audio.playBurp();
@@ -271,11 +305,20 @@ export class Interaction {
   }
 
   private attack(mob: import('../entities/Mob').Mob, mode: GameMode): void {
-    const { player, hotbar, inventory, audio, hand, stats } = this.d;
+    const { player, hotbar, inventory, audio, hand, stats, entities, renderer } = this.d;
     hand.swingHand();
-    const tool = getItemDef(hotbar.selectedBlock)?.tool;
-    const damage = tool ? tool.damage : 1;
-    // A server mob is hit by the server (damage from the held item, sound comes back with it).
+    const def = getItemDef(hotbar.selectedBlock);
+    const tool = def?.tool;
+    const cd = this.cooldown;
+    // Minecraft 1.9+: damage scales with the swing charge, a falling hit is a critical, a charged sprint hit knocks back
+    // further and a sword on the ground sweeps its neighbours.
+    const plan = planAttack({
+      charge: cd.charge, onGround: player.onGround, fallDistance: player.fallDistance, inWater: player.inWater,
+      sprinting: player.sprinting, sword: isSword(def?.name),
+    });
+    const damage = meleeDamage({ base: tool ? tool.damage : 1, effectBonus: stats.effects.attackBonus(), scale: cd.scale, crit: plan.crit });
+    const knockback = plan.sprintKnock ? 1.6 : 1;
+    // A server mob is hit by the server (it tracks the cooldown itself and sends the sound back).
     let hit = false;
     if (mob.remote) {
       if (mob.hurtTime === 0 && !mob.dead) {
@@ -283,12 +326,19 @@ export class Interaction {
         mob.hurtTime = 10; // no second request during its invulnerability frames
         hit = true;
       }
-    } else if (mob.hurt(damage, player.x, player.z, player.sprinting ? 1.6 : 1, true)) {
-      // Sprint hits knock back further, like Minecraft.
+    } else if (mob.hurt(damage, player.x, player.z, knockback, true, { kind: 'player', byPlayer: true })) {
       audio.playMob(mob.type.kind, 'hurt', 1);
       hit = true;
+      if (plan.sweep) {
+        for (const other of sweepVictims(mob, entities.mobs)) {
+          if (other.dead || other.remote) continue;
+          other.hurt(sweepDamage(1), player.x, player.z, 0.4, true, { kind: 'player', byPlayer: true });
+        }
+      }
     }
+    cd.swing();
     if (hit) {
+      if (plan.crit) renderer.particles.spawnCrit(mob.x, mob.y + mob.height * 0.8, mob.z);
       if (hasSurvivalRules(mode)) {
         stats.addExhaustion(0.1);
         if (tool) {
@@ -296,6 +346,20 @@ export class Interaction {
           if (tool.kind !== 'sword') inventory.damageTool(hotbar.selected);
         }
       }
+    }
+  }
+
+  /** The raised shield took a hit: it wears by 1 + floor(damage) from 3 damage on (Minecraft), an axe lowers it for 5 s. */
+  onShieldBlock(amount: number, byAxe = false): void {
+    const { inventory, hotbar, audio } = this.d;
+    audio.playArrowHit(0.8);
+    if (amount >= 3) {
+      const wear = Math.min(64, 1 + Math.floor(amount));
+      for (let i = 0; i < wear; i++) if (inventory.damageTool(hotbar.selected)) break;
+    }
+    if (byAxe) {
+      this.shieldDisabled = 5;
+      this.blocking = false;
     }
   }
 
@@ -318,7 +382,8 @@ export class Interaction {
     const survival = hasSurvivalRules(mode);
     const held = hotbar.selectedBlock;
     const hitMeta = this.getMeta(hit.x, hit.y, hit.z);
-    const seconds = survival ? breakSeconds(hit.id, held, player.onGround, player.headInWater, hitMeta) : 0;
+    // Haste and Mining Fatigue scale the mining speed.
+    const seconds = survival ? breakSeconds(hit.id, held, player.onGround, player.headInWater, hitMeta) / stats.effects.miningMultiplier() : 0;
     this.breakProgress = seconds <= 0 ? 1 : this.breakProgress + dt / seconds;
 
     // Arm swings continuously while mining.
@@ -376,6 +441,10 @@ export class Interaction {
     }
     const toolKind = getItemDef(item)?.tool?.kind;
     if (toolKind && this.useToolOnBlock(toolKind, mode)) return;
+    if (item === itemId('bone_meal')) {
+      this.useBoneMeal(mode);
+      return;
+    }
     if (!item || !isBlockItem(item)) return;
     if (itemBlock(item) === BLOCK.CHEST && this.d.chestsAllowed && !this.d.chestsAllowed()) return;
     // A block item is a block id plus the variant bits of its state (colour, wood, material).
@@ -397,6 +466,8 @@ export class Interaction {
       && m.y + m.height > y && m.y < y + 1 && m.z + m.width / 2 > z && m.z - m.width / 2 < z + 1)) return;
     // Plants and torches need a solid block underneath.
     if ((SHAPE[id] === SHAPE_CROSS || SHAPE[id] === SHAPE_MODEL) && !SOLID[world.getBlock(x, y - 1, z)]) return;
+    // Saplings want soil, sugar cane water beside its ground, cactus sand and no wall beside it.
+    if (needsSupport(id) && !plantCanStand(id, this.getBlock, x, y, z)) return;
     if (placed.upper && SHAPE[id] === SHAPE_DOOR && player.intersectsBlock(x, y + 1, z)) return;
     if (placed.upper && BOX_KIND[id] === BOX_BED && player.intersectsBlock(placed.upper.x, placed.upper.y, placed.upper.z)) return;
     if (!world.setBlock(x, y, z, id, placed.meta | baseMeta)) return;
@@ -408,6 +479,17 @@ export class Interaction {
     renderer.particles.spawnFace(x - hit.nx, y - hit.ny, z - hit.nz, hit.nx, hit.ny, hit.nz, id, world.getLight(x, y, z), 3, world.tintAt(x, z, id, baseMeta));
     if (hasSurvivalRules(mode)) inventory.consumeSlot(hotbar.selected);
     this.breakProgress = 0;
+  }
+
+  /** Bone meal: only on blocks it does something to; used up in survival. */
+  private useBoneMeal(mode: GameMode): void {
+    const { hotbar, inventory, audio, hand, renderer, world } = this.d;
+    const hit = this.ray;
+    if (!boneMealTarget(hit.id) || !this.d.boneMeal?.(hit.x, hit.y, hit.z)) return;
+    hand.swingHand();
+    audio.play('place', 'grass');
+    renderer.particles.spawnFace(hit.x, hit.y, hit.z, 0, 1, 0, BLOCK.GRASS, world.getLight(hit.x, hit.y + 1, hit.z), 6, 0x80ff60);
+    if (hasSurvivalRules(mode)) inventory.consumeSlot(hotbar.selected);
   }
 
   /** Hoe, shovel and axe change the block they are used on (see items/ToolUse). */

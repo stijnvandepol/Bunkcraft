@@ -21,5 +21,8 @@ export function armorWear(damage: number): number {
   return Math.max(1, Math.floor(damage / 4));
 }
 
-/** Damage causes armor reduces (and wears down for). Falling, drowning, starving, suffocating, the void and poison ignore it. */
-export const ARMOR_CAUSES: ReadonlySet<string> = new Set(['mob', 'arrow', 'explosion', 'fire', 'lava', 'cactus']);
+/**
+ * Damage causes armor reduces (and wears down for), Minecraft's `bypasses_armor` tag inverted: falling, drowning, starving,
+ * suffocating, the void, poison and magic ignore armor, and so does burning (`on_fire`); lava, cactus and lightning do not.
+ */
+export const ARMOR_CAUSES: ReadonlySet<string> = new Set(['mob', 'player', 'arrow', 'explosion', 'lava', 'cactus', 'lightning', 'anvil']);

@@ -48,6 +48,9 @@ export class Player {
   canSprint = true;
   /** Arcade: scales walking and sprinting speed on the ground and in the air (1 = Minecraft). */
   speedMultiplier = 1;
+  /** Jump Boost levels (+0.1 blocks/tick of jump speed each) and Levitation levels (rise 0.9 blocks/s each). */
+  jumpBoost = 0;
+  levitation = 0;
   /** Horizontal acceleration in the air (arcade raises it for bunny hopping). */
   airAccel: number = PHYSICS.AIR_ACCEL;
   /** Spectator: fly through blocks. */
@@ -146,10 +149,13 @@ export class Player {
       if (input.jump && this.horizontalCollision) this.vy = Math.max(this.vy, 5.5);
     } else {
       if (input.jump && this.onGround) {
-        this.vy = PHYSICS.JUMP_VELOCITY;
+        this.vy = PHYSICS.JUMP_VELOCITY + this.jumpBoost * 2.1;
         this.jumps++;
       }
-      this.vy = Math.max(this.vy - PHYSICS.GRAVITY * dt, -PHYSICS.TERMINAL_VELOCITY);
+      if (this.levitation > 0) {
+        this.vy = approach(this.vy, 0.9 * this.levitation, 5, dt);
+        this.fallDistance = 0;
+      } else this.vy = Math.max(this.vy - PHYSICS.GRAVITY * dt, -PHYSICS.TERMINAL_VELOCITY);
     }
 
     if (this.noclip) {

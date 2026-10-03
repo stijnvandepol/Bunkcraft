@@ -444,6 +444,17 @@ BLOCK_DEFS.push(
   },
 );
 
+// ---- Growth states (see Growth.ts): sapling stage, persistent leaves, sugar cane and cactus age ----
+/** Sapling: the wood is bits 0-2, the growth stage bit 5 (above the variant lookup mask of 31). */
+export const SAPLING_STAGE_BIT = 32;
+/** Leaves: bit 0 = persistent (placed by a player, never decays). */
+export const LEAVES_PERSISTENT_BIT = 1;
+for (const def of BLOCK_DEFS) {
+  if (def.id === B.SAPLING) def.metaMask = 7 | SAPLING_STAGE_BIT;
+  else if (def.id === B.CACTUS || def.id === CUBE_ID.sugar_cane) def.metaMask = 15;
+  else if (def.shape === 'cube' && def.sway && def.transparent) def.metaMask = LEAVES_PERSISTENT_BIT;
+}
+
 BLOCK_DEFS.sort((a, b) => a.id - b.id);
 
 /** Extra texture layers that are not tied to a block face (crack overlay stages). */

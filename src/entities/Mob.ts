@@ -1,4 +1,5 @@
 import type { BlockGetter } from '../player/Collision';
+import { type DamageSource, type DamageTarget, dealDamage } from '../player/Damage';
 import { OPAQUE, PARTIAL, SOLID } from '../world/BlockRegistry';
 import { collisionBoxes } from '../world/BlockShapes';
 import { Entity } from './Entity';
@@ -49,9 +50,19 @@ export interface MobEvents {
  * their distance and shoot, spiders climb walls, leap and are neutral in bright light.
  * Steering is greedy (head for the target, jump over 1-block steps).
  */
-export class Mob extends Entity {
+/** Natural armor points of mobs (Minecraft: zombies 2). */
+const NATURAL_ARMOR: Partial<Record<string, number>> = { zombie: 2 };
+
+export class Mob extends Entity implements DamageTarget {
   health: number;
   hurtTime = 0;
+  /** DamageTarget (Damage.ts): the hurt timer doubles as the 10 tick invulnerability frames. */
+  absorption = 0;
+  lastDamage = 0;
+  armorPoints = 0;
+  armorToughness = 0;
+  get invulnerableTicks(): number { return this.hurtTime; }
+  set invulnerableTicks(v: number) { this.hurtTime = v; }
   deathTime = 0;
   limbSwing = 0;
   limbAmount = 0;
@@ -86,6 +97,7 @@ export class Mob extends Entity {
   constructor(readonly type: MobType) {
     super(type.width, type.height);
     this.health = type.health;
+    this.armorPoints = NATURAL_ARMOR[type.kind] ?? 0;
     this.yaw = Math.random() * Math.PI * 2;
   }
 
@@ -94,10 +106,10 @@ export class Mob extends Entity {
   }
 
   /** Damage from the player, an arrow or an explosion; knockback away from (fromX, fromZ). */
-  hurt(amount: number, fromX: number, fromZ: number, knockback = 1, byPlayer = false): boolean {
-    if (this.dead || this.hurtTime > 0) return false;
-    this.health -= amount;
-    this.hurtTime = 10;
+  hurt(amount: number, fromX: number, fromZ: number, knockback = 1, byPlayer = false, source?: DamageSource): boolean {
+    if (this.dead) return false;
+    // Same pipeline as the player: invulnerability frames (a bigger hit still counts for the difference), armor, hooks.
+    if (!dealDamage(this, source ?? { kind: byPlayer ? 'player' : 'generic', byPlayer }, amount).hurt) return false;
     if (byPlayer) {
       this.hurtByPlayer = 100;
       this.provoked = true;

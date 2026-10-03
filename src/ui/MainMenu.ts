@@ -9,13 +9,16 @@ import { GAME_TYPES, type GameType, gameTypeDef } from '../modes/GameTypes';
 import { MAP_SETTINGS, MENU_DEFAULT_MAP, type MapSetting, getMap, mapName } from '../modes/maps';
 import { installButton } from '../pwa/Pwa';
 import { button, h, menuScreen, screen } from './dom';
+import { difficultyButton, gameRulesScreen } from './GameRulesScreen';
+import { DEFAULT_DIFFICULTY, type Difficulty } from '../world/Difficulty';
+import { GameRules } from '../world/GameRules';
 import { pickFile } from './download';
 import type { ScreenStack } from './Screens';
 
 export interface MenuActions {
   listWorlds(): Promise<WorldMeta[]>;
   playWorld(meta: WorldMeta): void;
-  createWorld(name: string, seedText: string, mode: GameMode): void;
+  createWorld(name: string, seedText: string, mode: GameMode, extra?: { difficulty: Difficulty; rules?: Record<string, boolean | number> }): void;
   deleteWorld(id: string): Promise<void>;
   /** Persists changed world metadata (rename, game mode). */
   saveWorld(meta: WorldMeta): Promise<void>;
@@ -544,7 +547,10 @@ export class MainMenu {
     const name = h('input', { class: 'mc-input', value: prefill.name ?? 'New World', maxLength: 32 });
     const seed = h('input', { class: 'mc-input', placeholder: 'Leave blank for a random seed', maxLength: 32, value: prefill.seed ?? '' });
     let mode: GameMode = prefill.mode ?? 'survival';
-    const create = () => this.actions.createWorld(name.value.trim() || 'New World', seed.value.trim(), mode);
+    let difficulty: Difficulty = DEFAULT_DIFFICULTY;
+    const rules = new GameRules();
+    const create = () => this.actions.createWorld(name.value.trim() || 'New World', seed.value.trim(), mode,
+      { difficulty: mode === 'hardcore' ? 'hard' : difficulty, rules: rules.serialize() });
     for (const input of [name, seed]) input.addEventListener('keydown', (e) => { if (e.key === 'Enter') create(); });
 
     const column = 'display: flex; flex-direction: column; align-items: center; gap: calc(var(--s) * 4);';
@@ -553,17 +559,20 @@ export class MainMenu {
       mode = GAME_MODES[(GAME_MODES.indexOf(mode) + 1) % GAME_MODES.length];
       modeButton.textContent = `Game Mode: ${GAME_MODE_NAMES[mode]}`;
       modeHint.textContent = GAME_MODE_HINTS[mode];
+      (diffButton as HTMLButtonElement & { refresh?: () => void }).refresh?.();
     });
+    const diffButton = difficultyButton(() => difficulty, (d) => { difficulty = d; }, () => mode === 'hardcore');
     const gameTab = h('div', { style: column },
       h('div', { class: 'field-label', text: 'World Name' }), name,
       modeButton,
       modeHint,
       prefill.seed ? h('div', { class: 'hint', text: `Seed: ${prefill.seed}` }) : null,
-      button('Difficulty: Normal', () => undefined, { disabled: true }),
+      diffButton,
     );
     const worldTab = h('div', { class: 'hidden', style: column },
       button('World Type: Default', () => undefined, { disabled: true }),
       h('div', { class: 'field-label', text: 'Seed for the World Generator' }), seed,
+      button('Game Rules...', () => this.stack.push(gameRulesScreen(rules, () => this.stack.pop()))),
     );
     const tabs = [['Game', gameTab], ['World', worldTab]] as const;
     const tabButtons: HTMLButtonElement[] = [];
@@ -619,7 +628,12 @@ export function deathScreen(opts: {
 }
 
 /** "Game Menu" laid out like Minecraft's pause screen. */
-export function pauseScreen(actions: { resume(): void; options(): void; quit(): void; multiplayer?: boolean; advancements?: () => void; invite?: () => void; seed?: string }): HTMLDivElement {
+export function pauseScreen(actions: {
+  resume(): void; options(): void; quit(): void; multiplayer?: boolean; advancements?: () => void; invite?: () => void; seed?: string;
+  /** The world's difficulty (read-only on a server and in Hardcore) and the Game Rules screen (singleplayer). */
+  difficulty?: { get(): Difficulty; set(d: Difficulty): void; locked: boolean };
+  gameRules?: () => void;
+}): HTMLDivElement {
   const off = () => undefined;
   const copySeed = button('Copy Seed', () => {
     const ok = () => { copySeed.textContent = 'Copied!'; window.setTimeout(() => { copySeed.textContent = 'Copy Seed'; }, 1500); };
@@ -634,6 +648,9 @@ export function pauseScreen(actions: { resume(): void; options(): void; quit(): 
       h('div', { class: 'row' }, button('Options...', actions.options, { cls: 'half' }), actions.invite
         ? button('Invite Friends', actions.invite, { cls: 'half' })
         : button('Open to LAN', off, { cls: 'half', disabled: true })),
+      actions.difficulty ? h('div', { class: 'row' },
+        Object.assign(difficultyButton(actions.difficulty.get, actions.difficulty.set, () => actions.difficulty!.locked), { className: 'mc-btn half' }),
+        button('Game Rules...', actions.gameRules ?? off, { cls: 'half', disabled: !actions.gameRules })) : null,
       button(actions.multiplayer ? 'Disconnect' : 'Save and Quit to Title', actions.quit),
     ),
   );

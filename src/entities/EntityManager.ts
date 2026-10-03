@@ -61,6 +61,10 @@ export class EntityManager {
   private readonly spawnedChunks = new Set<number>();
   private tickCount = 0;
   hostileSpawning = true;
+  /** Peaceful difficulty: hostile mobs are removed and do not spawn. */
+  peaceful = false;
+  /** The doMobSpawning game rule: false stops the natural top-up spawning (chunk generation herds stay). */
+  spawningEnabled = true;
   /** Multiplayer v1 is peaceful: mobs are not yet simulated by the server. */
   passiveSpawning = true;
 
@@ -182,14 +186,15 @@ export class EntityManager {
       targets = this.single;
     }
 
-    if (this.hostileSpawning || this.passiveSpawning) {
+    if ((this.hostileSpawning || this.passiveSpawning) && this.spawningEnabled) {
       this.spawner.recount();
-      if (this.hostileSpawning) this.spawner.tickHostile(targets, darkness);
+      if (this.hostileSpawning && !this.peaceful) this.spawner.tickHostile(targets, darkness);
       if (this.passiveSpawning) this.spawner.tickPassive(targets, darkness, this.tickCount);
     }
 
     for (const m of this.mobs) {
       if (m.removed || m.remote) continue;
+      if (this.peaceful && m.type.hostile) { m.removed = true; continue; }
       // Each mob follows the nearest player.
       let nearest = targets[0], d = Infinity;
       for (const t of targets) {
