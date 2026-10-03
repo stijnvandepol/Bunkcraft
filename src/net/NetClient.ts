@@ -140,16 +140,16 @@ export class NetClient {
     this.send({ t: 'pos', x, y, z, yaw, pitch, flags, held });
   }
 
-  sendAttack(id: number): void {
-    this.send({ t: 'attack', id });
+  sendAttack(id: number, e?: number[]): void {
+    this.send(e ? { t: 'attack', id, e } : { t: 'attack', id });
   }
 
   sendUseMob(id: number): void {
     this.send({ t: 'usemob', id });
   }
 
-  sendShoot(x: number, y: number, z: number, dx: number, dy: number, dz: number, power: number): void {
-    this.send({ t: 'shoot', x, y, z, dx, dy, dz, power });
+  sendShoot(x: number, y: number, z: number, dx: number, dy: number, dz: number, power: number, e?: number[]): void {
+    this.send(e ? { t: 'shoot', x, y, z, dx, dy, dz, power, e } : { t: 'shoot', x, y, z, dx, dy, dz, power });
   }
 
   sendIgnite(x: number, y: number, z: number): void {
@@ -178,8 +178,8 @@ export class NetClient {
     this.send(msg);
   }
 
-  sendState(inventory: number[][], stats: number[]): void {
-    this.send({ t: 'state', inventory, stats });
+  sendState(inventory: number[][], stats: number[], effects?: number[][]): void {
+    this.send({ t: 'state', inventory, stats, ...(effects ? { effects } : {}) });
   }
 
   close(): void {

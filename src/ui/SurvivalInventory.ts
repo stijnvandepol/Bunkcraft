@@ -1,9 +1,10 @@
 import { ARMOR_SLOTS, HOTBAR_SLOTS, INVENTORY_SLOTS, PlayerInventory } from '../items/Inventory';
-import { type ItemStack, cloneStack, getItemDef, itemName, maxDurability } from '../items/ItemRegistry';
+import { type ItemStack, cloneStack, getItemDef, itemName, maxDurability, sameItem } from '../items/ItemRegistry';
 import { RECIPES, RECIPE_CATEGORIES, type Recipe, type Station, canCraft, craft, recipeCategory } from '../items/Recipes';
 import { type ContainerClick, type ContainerKind, clickStacks, quickInsert, slotAccepts, slotTakeOnly } from '../items/ContainerOps';
 import type { BlockIcons } from './BlockIcons';
 import { h } from './dom';
+import { glintOverlay, hasGlint, tooltipNodes } from './ItemTooltip';
 
 export interface SurvivalInventoryActions {
   /** Throw a stack out of the inventory (clicked outside the panel / leftovers). */
@@ -31,6 +32,17 @@ export interface ContainerView {
    * contents and cursor (see ContainerController). `busy` is true while a click waits for its answer.
    */
   remote?: { click(c: ContainerClick, cursor: ItemStack): void; busy(): boolean };
+  /** Station screens (enchanting table, anvil, grindstone): controls shown next to the slots. */
+  extra?: HTMLElement;
+  /** Extra class on the container block (station layouts). */
+  className?: string;
+  /** Index of a result slot: nothing can be put in; clicking it takes `takeOutput()` (which pays and uses up the inputs). */
+  output?: number;
+  takeOutput?(): ItemStack | null;
+  /** Station slots that only take some items (lapis in the enchanting table). */
+  accepts?(index: number, stack: ItemStack): boolean;
+  /** Set by the inventory while open: redraws the slots after the station changed them itself. */
+  requestRender?: () => void;
 }
 
 const STATION_NAMES: Record<Station, string> = { hand: '', table: 'Crafting Table', furnace: 'Furnace' };
@@ -57,6 +69,7 @@ export class SurvivalInventory {
   private readonly boxTitle: HTMLDivElement;
   private readonly boxWrap: HTMLDivElement;
   private readonly furnaceEl: HTMLDivElement;
+  private readonly boxExtra: HTMLDivElement;
   private readonly flameEl: HTMLDivElement;
   private readonly arrowEl: HTMLDivElement;
   private boxSig = '';
@@ -71,6 +84,8 @@ export class SurvivalInventory {
   private stations = new Set<Station>();
   private box: ContainerView | null = null;
   private category: string = 'craftable';
+  /** Slot under the mouse: the target of number keys (swap with the hotbar) and Q (drop). */
+  private hovered: SlotRef | null = null;
 
   constructor(private readonly icons: BlockIcons, private readonly inv: PlayerInventory, private readonly actions: SurvivalInventoryActions) {
     this.tooltip = h('div', { class: 'mc-tooltip hidden' });
@@ -83,7 +98,8 @@ export class SurvivalInventory {
     this.flameEl = h('div', { class: 'furnace-flame' }, h('i', {}));
     this.arrowEl = h('div', { class: 'furnace-arrow' }, h('i', {}));
     this.furnaceEl = h('div', { class: 'furnace-ui hidden' });
-    this.boxWrap = h('div', { class: 'inv-box hidden' }, this.boxTitle, this.boxGrid, this.furnaceEl);
+    this.boxExtra = h('div', { class: 'inv-box-extra' });
+    this.boxWrap = h('div', { class: 'inv-box hidden' }, this.boxTitle, h('div', { class: 'inv-box-row' }, this.boxGrid, this.boxExtra), this.furnaceEl);
     this.recipes = h('div', { class: 'recipe-list' });
     this.recipeTitle = h('div', { class: 'inv-subtitle' });
     this.recipeTabs = h('div', { class: 'recipe-tabs' });
@@ -118,12 +134,53 @@ export class SurvivalInventory {
         this.actions.close();
       }
     });
+    // Tooltip and cursor stack follow the pointer with transforms only (no layout work per mouse move).
     this.el.addEventListener('mousemove', (e) => {
-      this.tooltip.style.left = `${e.clientX + 12}px`;
-      this.tooltip.style.top = `${e.clientY - 24}px`;
-      this.cursorEl.style.left = `${e.clientX - 12}px`;
-      this.cursorEl.style.top = `${e.clientY - 12}px`;
+      this.tooltip.style.transform = `translate3d(${e.clientX + 12}px, ${e.clientY - 24}px, 0)`;
+      this.cursorEl.style.transform = `translate3d(${e.clientX - 12}px, ${e.clientY - 12}px, 0)`;
     });
+    window.addEventListener('keydown', (e) => this.onKey(e));
+  }
+
+  /**
+   * Minecraft's inventory keys over the hovered slot: 1–9 swap it with that hotbar slot, Q drops one item
+   * (Ctrl+Q the whole stack).
+   */
+  private onKey(e: KeyboardEvent): void {
+    if (!this.isOpen || !this.hovered || e.target === this.search || this.cursor.count > 0) return;
+    const ref = this.hovered;
+    const digit = /^Digit([1-9])$/.exec(e.code);
+    if (digit) {
+      const hot: SlotRef = { group: 'inv', index: Number(digit[1]) - 1 };
+      if (hot.group === ref.group && hot.index === ref.index) return;
+      const a = cloneStack(this.get(ref)), b = cloneStack(this.get(hot));
+      if ((b.count && !this.accepts(ref, b)) || (a.count && !this.accepts(hot, a))) return;
+      this.set(ref, b);
+      this.set(hot, a);
+      this.renderSlots();
+    } else if (e.code === 'KeyQ') {
+      const s = this.get(ref);
+      if (!s.count) return;
+      const n = e.ctrlKey || e.metaKey ? s.count : 1;
+      this.actions.drop({ ...cloneStack(s), count: n });
+      this.set(ref, { ...cloneStack(s), count: s.count - n });
+      this.renderSlots();
+    }
+  }
+
+  /** Double click with a stack on the cursor: collect matching items from the inventory, up to a full stack. */
+  private collect(): void {
+    const cur = this.cursor;
+    const max = PlayerInventory.maxStack(cur.id);
+    for (let i = 0; i < INVENTORY_SLOTS && cur.count < max; i++) {
+      const s = this.inv.get(i);
+      if (!s.count || !sameItem(s, cur)) continue;
+      const n = Math.min(s.count, max - cur.count);
+      cur.count += n;
+      this.inv.set(i, { ...cloneStack(s), count: s.count - n });
+    }
+    this.renderCursor();
+    this.renderSlots();
   }
 
   /** Re-render after the inventory changed elsewhere (pickups while open). */
@@ -175,6 +232,9 @@ export class SurvivalInventory {
     this.boxWrap.classList.toggle('hidden', !box);
     this.recipePane.classList.toggle('hidden', !!box);
     this.boxTitle.textContent = box?.title ?? '';
+    this.boxWrap.className = `inv-box${box ? '' : ' hidden'}${box?.className ? ` ${box.className}` : ''}`;
+    this.boxExtra.replaceChildren(...(box?.extra ? [box.extra] : []));
+    if (box) box.requestRender = () => { if (this.box === box) this.renderSlots(); };
     this.el.classList.remove('hidden');
     this.renderSlots();
     if (!box) this.renderRecipes();
@@ -219,17 +279,64 @@ export class SurvivalInventory {
 
   /** Armor slots take only the matching piece; a furnace's fuel slot only fuel and its output nothing. */
   private accepts(ref: SlotRef, stack: ItemStack): boolean {
+    if (ref.group === 'box' && this.isStation) return this.box!.output !== ref.index && (this.box!.accepts?.(ref.index, stack) ?? true);
     if (ref.group === 'box') return slotAccepts(this.box?.kind ?? 'chest', ref.index, stack);
     return ref.group !== 'armor' || getItemDef(stack.id)?.armor?.slot === ref.index;
   }
 
+  /** An enchanting table, anvil or grindstone: its own slot rules and a result slot. */
+  private get isStation(): boolean {
+    return !!this.box && (this.box.output !== undefined || !!this.box.accepts);
+  }
+
+  /** Clicking a station's result slot: pick the result up (or add it to an equal stack on the cursor). */
+  private takeOutput(toInventory: boolean): void {
+    const box = this.box;
+    if (!box?.takeOutput) return;
+    const preview = box.slots[box.output!];
+    if (!preview?.id) return;
+    const cur = this.cursor;
+    if (!toInventory && cur.count > 0 && (!sameItem(cur, preview) || cur.count + preview.count > PlayerInventory.maxStack(cur.id))) return;
+    const out = box.takeOutput();
+    if (!out) return;
+    if (toInventory) {
+      const left = this.inv.add(out);
+      if (left > 0) this.actions.drop({ ...cloneStack(out), count: left });
+    } else if (cur.count > 0) cur.count += out.count;
+    else this.cursor = cloneStack(out);
+  }
+
+  /** Shift click into a station: the first input slot that takes the item. */
+  private addToStation(stack: ItemStack): number {
+    const slots = this.box!.slots;
+    const max = PlayerInventory.maxStack(stack.id);
+    let left = stack.count;
+    for (let i = 0; i < slots.length && left > 0; i++) {
+      if (!this.accepts({ group: 'box', index: i }, stack)) continue;
+      if (slots[i].id === 0) {
+        const n = Math.min(left, max);
+        slots[i] = { ...cloneStack(stack), count: n };
+        left -= n;
+      } else if (max > 1 && sameItem(slots[i], stack) && slots[i].count < max) {
+        const n = Math.min(left, max - slots[i].count);
+        slots[i].count += n;
+        left -= n;
+      }
+    }
+    this.box!.onChange?.();
+    return left;
+  }
+
   private takeOnly(ref: SlotRef): boolean {
+    if (ref.group === 'box' && this.isStation) return false;
     return ref.group === 'box' && slotTakeOnly(this.box?.kind ?? 'chest', ref.index);
   }
 
   private slotEl(stack: ItemStack, extraClass = ''): HTMLDivElement {
+    const icon = stack.id ? this.icons.get(stack.id) : '';
     const el = h('div', { class: `inv-slot ${extraClass}` },
-      stack.id ? h('img', { src: this.icons.get(stack.id), draggable: false, alt: '' }) : null,
+      stack.id ? h('img', { src: icon, draggable: false, alt: '' }) : null,
+      hasGlint(stack) ? glintOverlay(icon) : null,
       stack.count > 1 ? h('span', { class: 'slot-count', text: String(stack.count) }) : null);
     const max = maxDurability(stack.id);
     if (max && stack.damage) {
@@ -239,29 +346,37 @@ export class SurvivalInventory {
     return el;
   }
 
-  private tooltipOn(el: HTMLElement, text: () => string): void {
+  private tooltipOn(el: HTMLElement, text: () => string | HTMLElement[]): void {
     el.addEventListener('mouseenter', () => {
       const t = text();
-      if (!t) return;
-      this.tooltip.textContent = t;
+      if (!t || t.length === 0) return;
+      if (typeof t === 'string') this.tooltip.textContent = t;
+      else this.tooltip.replaceChildren(...t);
       this.tooltip.classList.remove('hidden');
     });
     el.addEventListener('mouseleave', () => this.tooltip.classList.add('hidden'));
-  }
-
-  private stackName(stack: ItemStack): string {
-    const data = stack.data ? Object.entries(stack.data).map(([k, v]) => `${k.replace(/_/g, ' ')} ${v}`).join(', ') : '';
-    return itemName(stack.id) + (data ? ` (${data})` : '');
   }
 
   private makeSlot(ref: SlotRef, extra = ''): HTMLDivElement {
     const el = this.slotEl(this.get(ref), extra);
     el.addEventListener('mousedown', (e) => {
       e.preventDefault();
+      if (ref.group === 'box' && this.box?.output === ref.index && this.box.takeOutput) {
+        this.takeOutput(e.shiftKey);
+        this.renderCursor();
+        this.renderSlots();
+        return;
+      }
       if (e.shiftKey) this.quickMove(ref);
+      else if (e.detail === 2 && e.button === 0 && this.cursor.count > 0 && ref.group !== 'armor') this.collect();
       else this.click(ref, e.button === 2);
     });
-    this.tooltipOn(el, () => this.stackName(this.get(ref)) || (ref.group === 'armor' ? ['Helmet', 'Chestplate', 'Leggings', 'Boots'][ref.index] : ''));
+    el.addEventListener('mouseenter', () => { this.hovered = ref; });
+    el.addEventListener('mouseleave', () => { if (this.hovered === ref) this.hovered = null; });
+    this.tooltipOn(el, () => {
+      const nodes = tooltipNodes(this.get(ref));
+      return nodes.length ? nodes : ref.group === 'armor' ? ['Helmet', 'Chestplate', 'Leggings', 'Boots'][ref.index] : '';
+    });
     return el;
   }
 
@@ -322,8 +437,8 @@ export class SurvivalInventory {
         if (!remote.busy() && ref.index < INVENTORY_SLOTS) remote.click({ slot: -1, from: ref.index, button: 0, shift: true }, this.cursor);
         return;
       }
-      const left = quickInsert(this.box.kind ?? 'chest', this.box.slots, slot);
-      this.box.onChange?.();
+      const left = this.isStation ? this.addToStation(slot) : quickInsert(this.box.kind ?? 'chest', this.box.slots, slot);
+      if (!this.isStation) this.box.onChange?.();
       this.set(ref, left > 0 ? { ...cloneStack(slot), count: left } : { id: 0, count: 0 });
     } else {
       const piece = getItemDef(slot.id)?.armor;

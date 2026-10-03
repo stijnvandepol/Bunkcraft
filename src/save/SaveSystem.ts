@@ -1,3 +1,4 @@
+import type { Difficulty } from '../world/Difficulty';
 import type { WeatherState } from '../world/Weather';
 import type { GameMode } from '../player/GameMode';
 import type { ImportedPack } from '../rendering/TexturePacks';
@@ -34,6 +35,10 @@ export interface WorldMeta {
   inventory?: number[][];
   /** [health, hunger, saturation, exhaustion, air] */
   stats?: number[];
+  /** Statistics counters (src/player/StatTracker.ts); absent = all zero. */
+  statistics?: Record<string, number>;
+  /** Allow Cheats: gates the slash commands in singleplayer; absent = on in creative, off otherwise. */
+  cheats?: boolean;
   /** Earned advancements: id → timestamp. */
   advancements?: Record<string, number>;
   /** Block entities (chests, furnaces): "x,y,z" → saved entity (see world/BlockEntities). Since save version 4. */
@@ -50,6 +55,19 @@ export interface WorldMeta {
   day?: number;
   /** Weather timers and flags; absent = a fresh clear cycle. */
   weather?: WeatherState;
+  /** World difficulty; absent = Normal. */
+  difficulty?: Difficulty;
+  /** Game rules that differ from the defaults (GameRules.ts). */
+  rules?: Record<string, boolean | number>;
+  /** Respawn point at a bed block (or a /spawnpoint position when `point`); absent = the world spawn. */
+  bed?: { x: number; y: number; z: number; point?: boolean };
+  /** Status effects: [effect index, amplifier, ticks left]. */
+  effects?: number[][];
+}
+
+/** Allow Cheats: an explicit choice wins, otherwise cheats are on in Creative worlds only (like Minecraft). */
+export function cheatsAllowed(meta: Pick<WorldMeta, 'cheats' | 'gameMode'>): boolean {
+  return meta.cheats ?? meta.gameMode === 'creative';
 }
 
 export interface ChunkEditRecord {

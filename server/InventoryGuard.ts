@@ -1,5 +1,5 @@
 import { ARMOR_SLOTS, INVENTORY_SLOTS } from '../src/items/Inventory';
-import { getItemDef, maxDurability, normalizeItem, possibleBlockDrops } from '../src/items/ItemRegistry';
+import { ITEM, getItemDef, itemId, maxDurability, normalizeItem, possibleBlockDrops } from '../src/items/ItemRegistry';
 import { RECIPES } from '../src/items/Recipes';
 
 /**
@@ -27,8 +27,17 @@ export interface Stack {
   extra?: number[];
 }
 
-/** A row is [id, count, damage, ...data pairs]: room for a handful of enchantments. */
-const MAX_ROW_LENGTH = 16;
+/** A row is [id, count, damage, ...data pairs]: room for the enchantments, the repair cost and a custom name. */
+const MAX_ROW_LENGTH = 40;
+
+/**
+ * Item changes that are not recipes: the enchanting table turns a book into an enchanted book, the grindstone turns it back.
+ * The guard treats them as one-ingredient recipes.
+ */
+const CONVERSIONS: { result: number; from: number }[] = [
+  { result: ITEM.ENCHANTED_BOOK, from: itemId('book') },
+  { result: itemId('book'), from: ITEM.ENCHANTED_BOOK },
+];
 
 export type StateCheck = { ok: true; inventory: number[][] } | { ok: false; reason: string; correction: number[][] };
 
@@ -221,6 +230,14 @@ export class InventoryGuard {
   /** Makes `count` of `id` from the pool `work`, crafting up to a few levels deep. */
   private craft(id: number, count: number, work: Map<number, number>, depth: number, keep: Map<number, number>): boolean {
     if (depth > MAX_CRAFT_DEPTH) return false;
+    for (const c of CONVERSIONS) {
+      if (c.result !== id) continue;
+      const have = work.get(c.from) ?? 0;
+      if (have >= count) {
+        work.set(c.from, have - count);
+        return true;
+      }
+    }
     for (const recipe of RECIPES) {
       // Smelting happens in real furnaces now: their output reaches the inventory as a container transfer.
       if (recipe.result.id !== id || recipe.station === 'furnace') continue;

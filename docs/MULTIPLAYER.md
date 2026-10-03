@@ -127,3 +127,13 @@ src/ui/        MultiplayerMenu.ts (serverlijst, Direct Connect, deelnemen via li
 - [ClassiCube hosting](https://www.classicube.net/server/host/)
 - [Voxelize](https://github.com/voxelize/voxelize)
 - [Hathora shutdown](https://gameye.com/blog/game-server-shake-up-2026/)
+
+## Ervaring en enchantments (protocol, additief, PROTOCOL_VERSION ongewijzigd)
+
+- `orbs` (server → client): `[id, waarde, x, y, z]` per XP-orb in de buurt, 10 Hz zolang er orbs zijn en één lege lijst daarna. Apart van
+  het binaire `ent`-frame, zodat oude clients het negeren.
+- Oppakken gaat via het bestaande `take` met het orb-id; de server antwoordt met `xpgain { id, value }` (bereik 2,6 blokken, één keer).
+- `attack` en `shoot` krijgen optioneel `e`: de enchantments van het wapen als sleutel/level-paren. De server klemt levels op het maximum en
+  laat alleen enchantments toe die het vastgehouden item kan dragen (Sharpness, Smite, Bane, Knockback, Fire Aspect, Looting; Power, Punch, Flame).
+- XP-punten en de enchant-seed reizen mee in `state.stats` (index 5 en 6) en staan in het spelersrecord.
+- Item-rijen mogen 40 getallen lang zijn (enchantments, repair cost, eigen naam).

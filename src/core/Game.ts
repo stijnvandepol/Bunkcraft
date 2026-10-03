@@ -15,11 +15,13 @@ import { explosionDamage, explosionDropChance } from '../entities/Explosion';
 import { MobRenderer } from '../entities/MobRenderer';
 import { type UseResult, canUseOnMob, useOnMob } from '../entities/MobInteraction';
 import { mount as mountHorse, rideStep } from '../entities/Riding';
+import { type MobEffect, arrowEffect, meleeEffect, witchPotion } from '../entities/MobEffects';
+import { EFFECT_DEFS, isEffectId } from '../player/Effects';
 import { NetClient, type WelcomeMessage } from '../net/NetClient';
 import { NetEntities } from '../net/NetEntities';
 import { useBoneMeal } from '../world/Growth';
 import { type ClientMessage, type ServerMessage, formatCode, normalizeCode } from '../net/protocol';
-import { TEAM_COLORS, gameTypeDef } from '../modes/GameTypes';
+import { type GameType, TEAM_COLORS, gameTypeDef } from '../modes/GameTypes';
 import { inviteLink, inviteText, rememberGame } from '../net/RoomApi';
 import { RemotePlayers } from '../net/RemotePlayers';
 import { Chat } from '../ui/Chat';
@@ -35,7 +37,7 @@ import { HandRenderer } from '../rendering/HandRenderer';
 import {
   IMPORTED_PREFIX, MINECRAFT_LAYOUT, type PackImage, builtinResolver, findBuiltinPack, importMinecraftArchive, importedResolver, loadPack,
 } from '../rendering/TexturePacks';
-import { type WorldMeta, SaveSystem, newWorldId } from '../save/SaveSystem';
+import { type WorldMeta, SaveSystem, cheatsAllowed, newWorldId } from '../save/SaveSystem';
 import { BlockIcons } from '../ui/BlockIcons';
 import { DebugOverlay } from '../ui/DebugOverlay';
 import { h } from '../ui/dom';
@@ -47,6 +49,7 @@ import { createLogo } from '../ui/Logo';
 import { AdvancementTracker } from '../player/Advancements';
 import { AdvancementToasts } from '../ui/AdvancementToasts';
 import { advancementsScreen } from '../ui/AdvancementsScreen';
+import { statisticsScreen } from '../ui/StatisticsScreen';
 import { initKeyboardLock, keyboardLockActive } from '../pwa/KeyboardLock';
 import { showToast } from '../pwa/Toast';
 import { parseShareParams } from '../save/share';
@@ -55,8 +58,8 @@ import { downloadBlob } from '../ui/download';
 import { MainMenu, VERSION, deathScreen, inviteScreen, pauseScreen } from '../ui/MainMenu';
 import { resourcePacksScreen } from '../ui/ResourcePacksMenu';
 import { ScreenStack } from '../ui/Screens';
-import { optionsScreen } from '../ui/SettingsMenu';
-import { KB, resolveKeybinds } from './Keybinds';
+import { type OptionsNav, languageScreen, optionsScreen } from '../ui/SettingsMenu';
+import { KB, keyDisplayName, resolveKeybinds } from './Keybinds';
 import { SurvivalInventory } from '../ui/SurvivalInventory';
 import { WorkerPool } from '../workers/WorkerPool';
 import { BLOCK, SOLID, getBlockDef } from '../world/BlockRegistry';
@@ -74,12 +77,21 @@ import { type ArcadeFrame, ArcadeSession } from './ArcadeSession';
 import { AudioEngine } from './Audio';
 import { CameraController } from './Camera';
 import { Input } from './Input';
+import { type StationKind } from './Interaction';
+import { Progression } from './Progression';
+import { encodeData as encodeItemData } from '../items/ItemRegistry';
+import { hasEnchants, powerBonus, punchKnockback } from '../items/EnchantRules';
+import type { ContainerView } from '../ui/SurvivalInventory';
 import { Interaction } from './Interaction';
 import { ContainerScreens } from './ContainerScreens';
 import { Renderer } from './Renderer';
+import { WorldRules } from './WorldRules';
+import { blocksFromDirection } from '../player/Melee';
+import { gameRulesScreen } from '../ui/GameRulesScreen';
+import type { Difficulty } from '../world/Difficulty';
 import { WeatherSystem } from './WeatherSystem';
 import { DynamicResolution, suggestPreset } from './AdaptiveQuality';
-import { type Settings, SettingsStore } from './Settings';
+import { MAX_FPS_UNLIMITED, type Settings, SettingsStore } from './Settings';
 import { applyAccessibilityDocument, effectiveParticles, limitFlash, mobSoundLabel, paletteFor } from './Accessibility';
 import { GamepadController, type PadContext, cleanName } from './Gamepad';
 import { needsAutoJump } from './InputMath';
@@ -88,6 +100,9 @@ import { announce } from '../ui/Announcer';
 import { MenuNav } from '../ui/MenuNav';
 import { Subtitles } from '../ui/Subtitles';
 import { setSurvivalColorBlind } from '../ui/SurvivalHud';
+import { detectLanguage, setLanguage, t } from '../ui/i18n';
+import { StatTracker } from '../player/StatTracker';
+import { LOCAL_COMMAND_USAGE, SERVER_COMMAND_USAGE } from '../ui/chatLogic';
 
 type GameState = 'menu' | 'loading' | 'playing' | 'paused' | 'inventory' | 'dead' | 'chat';
 
@@ -120,6 +135,8 @@ export class Game {
   private readonly cycle = new DayCycle();
   /** Weather: simulation (singleplayer) or server follower (multiplayer), rendering inputs and lightning. */
   private readonly weatherSys: WeatherSystem;
+  /** Difficulty, game rules, respawn point and sleeping (WorldRules.ts). */
+  private readonly worldRules: WorldRules;
   readonly player = new Player();
   private readonly stats = new PlayerStats();
   private readonly advancements = new AdvancementTracker();
@@ -142,6 +159,8 @@ export class Game {
   private netFalling: NetFalling | null = null;
   private static readonly NO_FALLING: FallingBlock[] = [];
   private readonly arrowRenderer: ArrowRenderer;
+  /** Experience, orbs, armor enchantments and the enchanting screens. */
+  private readonly progression: Progression;
   private readonly tmpDir = new THREE.Vector3();
   private readonly debug = new DebugOverlay();
   private readonly remote = new RemotePlayers();
@@ -196,6 +215,11 @@ export class Game {
 
   private last = 0;
   private frameDt = 0;
+  /** Statistics screen counters (saved in WorldMeta.statistics). */
+  readonly statTracker = new StatTracker();
+  private statLast: { x: number; z: number; ground: boolean } | null = null;
+  /** Frame limiter (Options > Max Framerate); 0 = unlimited. */
+  private minFrameMs = 0;
   private time = 0;
   private accumulator = 0;
   private stepCount = 0;
@@ -267,8 +291,21 @@ export class Game {
       const armor = this.playerInventory.armorTotals();
       this.stats.armorPoints = armor.points;
       this.stats.armorToughness = armor.toughness;
+      this.progression?.onArmorChanged();
     };
     this.stats.onArmorHit = (wear) => void this.playerInventory.wearArmor(wear);
+    // Shield: a raised shield blocks hits from a 100 degree arc in front (mob and explosion yaw points from the source to
+    // the player, arrow yaw back along the flight, towards the shooter).
+    this.stats.blocker = (src, amount) => {
+      const it = this.interaction;
+      if (!it?.blocking || src.yaw === undefined) return false;
+      const s = Math.sin(src.yaw), c = Math.cos(src.yaw);
+      const p = this.player;
+      const tx = src.kind === 'arrow' ? s : -s, tz = src.kind === 'arrow' ? c : -c;
+      if (!blocksFromDirection(p.yaw, p.x + tx, p.z + tz, p.x, p.z)) return false;
+      it.onShieldBlock(amount);
+      return true;
+    };
     this.stack = new ScreenStack(root.querySelector<HTMLElement>('#screens')!);
     root.append(this.toasts.el, this.remote.el, this.chat.el, this.hud.el, this.debug.el, this.inventory.el, this.survivalInventory.el);
     this.weatherSys = new WeatherSystem({
@@ -276,11 +313,23 @@ export class Game {
       world: () => this.world, mode: () => this.mode, entities: () => this.entities,
       multiplayer: () => this.net !== null, arcade: () => this.arcade !== null || this.meta?.worldType === 'arena',
     });
+    this.worldRules = new WorldRules({
+      stats: this.stats, player: this.player, cycle: this.cycle, input: this.input, overlayParent: this.hud.el,
+      world: () => this.world, entities: () => this.entities, meta: () => this.meta, net: () => this.net, mode: () => this.mode,
+      weather: () => this.weatherSys.weather, chat: (line) => this.chat.add(line, true),
+    });
     this.chat.onSend = (text) => {
+      // /enchant and /xp change only this player's items and bar: handled here, also on a server.
+      const own = text.startsWith('/') ? this.progression.command(text) : null;
+      if (own) {
+        for (const line of own) this.chat.add(line, true);
+        return;
+      }
       if (this.net) return this.net.sendChat(text);
-      // Singleplayer has no server: the slash commands run locally.
-      if (!text.startsWith('/')) return;
-      const lines = this.weatherSys.localCommand(text) ?? [`Unknown command: ${text.split(/\s+/)[0]}. Type /help for help.`];
+      // Singleplayer has no server: messages are echoed and the slash commands run locally (with Allow Cheats).
+      if (!text.startsWith('/')) return this.chat.add(`<Player> ${text}`);
+      if (!this.meta || !cheatsAllowed(this.meta)) return this.chat.add(t('chat.noCheats'), true);
+      const lines = this.weatherSys.localCommand(text) ?? this.worldRules.localCommand(text) ?? [`Unknown command: ${text.split(/\s+/)[0]}. Type /help for help.`];
       for (const line of lines) this.chat.add(line, true);
     };
     this.chat.onClose = () => {
@@ -293,10 +342,22 @@ export class Game {
     this.itemRenderer = new ItemRenderer(this.renderer.uniforms, this.icons);
     this.tntRenderer = new TntRenderer(this.renderer.uniforms);
     this.arrowRenderer = new ArrowRenderer(this.renderer.uniforms);
+    this.progression = new Progression({
+      stats: this.stats, inventory: this.playerInventory, hotbar: this.hotbar, player: this.player, audio: this.audio,
+      uniforms: this.renderer.uniforms, world: () => this.world, entities: () => this.entities, mode: () => this.mode,
+      openView: (view) => this.openStationView(view), multiplayer: () => this.net !== null,
+      rules: () => ({ keepInventory: !!this.worldRules?.rules.get('keepInventory') }),
+    });
+    this.renderer.scene.add(this.mobRenderer.group, this.itemRenderer.mesh, this.tntRenderer.mesh, this.arrowRenderer.mesh, this.progression.orbRenderer.mesh);
+    this.renderer.shadowExcluded.push(this.progression.orbRenderer.mesh);
+    // Furnace experience (taking the output) falls as orbs at the player, like Minecraft.
+    this.onFurnaceXp = (amount) => {
+      const p = this.player;
+      if (amount > 0) this.entities?.spawnXp(p.x, p.y + 0.5, p.z, amount);
+    };
     this.fallingRenderer = new FallingBlockRenderer(this.renderer.uniforms);
     this.renderer.scene.add(this.fallingRenderer.mesh);
     this.renderer.shadowExcluded.push(this.fallingRenderer.mesh);
-    this.renderer.scene.add(this.mobRenderer.group, this.itemRenderer.mesh, this.tntRenderer.mesh, this.arrowRenderer.mesh);
     this.renderer.scene.add(this.remote.weapons);
     this.renderer.shadowExcluded.push(this.mobRenderer.group, this.itemRenderer.mesh, this.tntRenderer.mesh, this.arrowRenderer.mesh, this.remote.weapons);
     this.renderer.afterMain = (three) => {
@@ -309,7 +370,9 @@ export class Game {
     this.menu = new MainMenu(this.stack, {
       listWorlds: () => this.save.listWorlds(),
       playWorld: (m) => void this.enterWorld(m),
-      createWorld: (name, seed, mode) => void this.createWorld(name, seed, mode),
+      createWorld: (name, seed, mode, extra) => void this.createWorld(name, seed, mode, extra),
+      openLanguage: () => this.stack.push(languageScreen(this.settings, { ...this.optionsNav(), languageChanged: () => this.menu.showTitle() })),
+      tipKeys: () => this.tipKeys(),
       deleteWorld: (id) => this.save.deleteWorld(id),
       saveWorld: (meta) => this.save.saveWorld(meta),
       transfer: new WorldTransfer(this.save),
@@ -385,6 +448,7 @@ export class Game {
     const info = gl.getExtension('WEBGL_debug_renderer_info');
     this.gpuName = info ? String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL)) : 'WebGL2';
     if (this.settings.fresh) {
+      this.settings.set('language', detectLanguage());
       const memory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
       this.settings.setMany(suggestPreset(this.gpuName, navigator.hardwareConcurrency || 0, memory).values);
     }
@@ -413,7 +477,11 @@ export class Game {
   // ---------------------------------------------------------------- settings
 
   private openOptions(): void {
-    this.stack.push(optionsScreen(this.settings, {
+    this.stack.push(optionsScreen(this.settings, this.optionsNav()));
+  }
+
+  private optionsNav(): OptionsNav {
+    return {
       push: (el) => this.stack.push(el),
       pop: () => this.stack.pop(),
       openResourcePacks: () => this.openResourcePacks(),
@@ -426,7 +494,13 @@ export class Game {
         'Terrain, mobs, sounds, music, sky and procedural textures: generated in code',
         'Not affiliated with Mojang or Microsoft',
       ],
-    }));
+      languageChanged: () => {
+        // Rebuild what sits below Options (title or pause menu) in the new language, then reopen Options.
+        if (this.state === 'menu') this.menu.showTitle();
+        else this.showPauseMenu();
+        this.openOptions();
+      },
+    };
   }
 
   private openResourcePacks(): void {
@@ -491,6 +565,12 @@ export class Game {
     this.updateMenuBlur();
     this.cam.baseFov = s.fov;
     this.cam.viewBobbing = s.viewBobbing && !s.reducedMotion;
+    setLanguage(s.language);
+    this.chat.applySettings(s);
+    this.hud.setAttackIndicator(s.attackIndicator);
+    this.input.rawInput = s.rawInput;
+    this.mobRenderer.distanceScale = s.entityDistance / 100;
+    this.minFrameMs = s.maxFps >= MAX_FPS_UNLIMITED ? 0 : 1000 / s.maxFps;
     if (!key || key === 'keybinds') {
       this.input.setBindings(resolveKeybinds(s.keybinds));
       this.arcade?.setBindings(this.input);
@@ -638,7 +718,8 @@ export class Game {
     this.interaction = new Interaction({
       world, player: this.player, stats: this.stats, inventory: this.playerInventory, hotbar: this.hotbar,
       entities, renderer: this.renderer, hand: this.hand, audio: this.audio, camera: this.cam.camera,
-      attackRemote: (id) => this.net?.sendAttack(id),
+      attackRemote: (id, data) => this.net?.sendAttack(id, encodeItemData(data)),
+      onStat: (key) => this.statTracker.add(key),
       igniteTnt: (x, y, z) => {
         if (this.net) {
           // The server validates, removes the block and simulates the fuse.
@@ -649,6 +730,7 @@ export class Game {
         entities.primeTnt(x, y, z);
         return true;
       },
+      openStation: (kind, x, y, z) => this.openStation(kind, x, y, z),
       openContainer: (x, y, z) => this.containers.open(x, y, z),
       useBed: (x, y, z) => this.useBed(x, y, z),
       useMob: (mob) => this.useMob(mob),
@@ -661,16 +743,22 @@ export class Game {
         world.batch(() => { used = useBoneMeal(ticker, x, y, z); });
         return used;
       },
-      shootArrow: (power, pickup) => {
+      shootArrow: (power, pickup, ench) => {
         const cam = this.cam.camera;
         const dir = cam.getWorldDirection(this.tmpDir);
         if (this.net) {
-          this.net.sendShoot(cam.position.x, cam.position.y - 0.1, cam.position.z, dir.x, dir.y, dir.z, power);
+          this.net.sendShoot(cam.position.x, cam.position.y - 0.1, cam.position.z, dir.x, dir.y, dir.z, power,
+            encodeItemData(this.hotbar.selectedStack.data));
           return;
         }
         // Player bow: speed 3 × power blocks/tick, inaccuracy 1, critical at full draw.
-        entities.shootArrow(cam.position.x, cam.position.y - 0.1, cam.position.z, dir.x, dir.y, dir.z,
+        const arrow = entities.shootArrow(cam.position.x, cam.position.y - 0.1, cam.position.z, dir.x, dir.y, dir.z,
           power * 3, 1, null, true, power >= 1, pickup);
+        if (arrow && ench) {
+          arrow.powerBonus = powerBonus(ench.power);
+          arrow.punch = punchKnockback(ench.punch);
+          arrow.flame = ench.flame > 0;
+        }
       },
     });
     return world;
@@ -679,6 +767,8 @@ export class Game {
   private enterMenu(): void {
     this.stopArcade();
     this.state = 'menu';
+    this.chat.close();
+    this.chat.setVisible(false);
     this.meta = null;
     this.weatherSys.stop();
     this.hud.setVisible(false);
@@ -694,7 +784,13 @@ export class Game {
     this.menu.showTitle();
   }
 
-  private async createWorld(name: string, seedText: string, mode: GameMode): Promise<void> {
+  /** Key names for the loading tips (the player's own bindings). */
+  private tipKeys(): Record<string, string> {
+    const key = (kb: number) => keyDisplayName(this.input.bound(kb));
+    return { inventory: key(KB.INVENTORY), chat: key(KB.CHAT), command: key(KB.COMMAND), sprint: key(KB.SPRINT), drop: key(KB.DROP) };
+  }
+
+  private async createWorld(name: string, seedText: string, mode: GameMode, extra?: { difficulty: Difficulty; rules?: Record<string, boolean | number>; cheats?: boolean }): Promise<void> {
     let seed: number;
     if (!seedText) seed = (Math.random() * 4294967296) >>> 0;
     else if (/^-?\d+$/.test(seedText)) seed = Number(BigInt.asUintN(32, BigInt(seedText)));
@@ -703,6 +799,8 @@ export class Game {
       id: newWorldId(), name, seed, seedText: seedText || String(seed),
       created: Date.now(), lastPlayed: Date.now(), player: null, genVersion: GEN_VERSION_CURRENT,
       hotbar: [...DEFAULT_HOTBAR], selectedSlot: 0, time: 0.08, gameMode: mode,
+      difficulty: extra?.difficulty, rules: extra?.rules,
+      ...(extra?.cheats === undefined ? {} : { cheats: extra.cheats }),
     };
     await this.save.saveWorld(meta);
     await this.enterWorld(meta);
@@ -710,8 +808,8 @@ export class Game {
 
   private async enterWorld(meta: WorldMeta): Promise<void> {
     this.audio.unlock();
-    this.loadingProgress = this.menu.showLoading('Loading world');
-    this.loadingProgress('Reading save data...', 0);
+    this.loadingProgress = this.menu.showLoading(t('loading.world'));
+    this.loadingProgress(t('loading.reading'), 0);
     const edits = await this.save.loadEdits(meta.id);
     this.startSession(meta, edits);
   }
@@ -732,7 +830,16 @@ export class Game {
       if (!hasSurvivalRules(mode)) meta.hotbar.forEach((id, i) => this.playerInventory.set(i, { id, count: id ? 1 : 0 }));
     }
     this.stats.load(meta.stats);
+    this.stats.effects.load(meta.effects, this.stats);
+    this.worldRules.load(meta);
     this.advancements.load(meta.advancements);
+    this.statTracker.load(meta.statistics);
+    this.statLast = null;
+    if (!this.net) {
+      this.chat.clear();
+      this.chat.setCommands(LOCAL_COMMAND_USAGE);
+      this.chat.setVisible(true);
+    }
     this.score = 0;
     // A save made on the death screen: hardcore becomes spectator, others respawn at spawn.
     const diedBeforeSave = this.stats.wasDead;
@@ -780,6 +887,20 @@ export class Game {
 
   private finishLoading(): void {
     const world = this.world!;
+    if (this.worldRules.pendingBed) {
+      // Respawn at the bed: next to it, or back to the world spawn when it is gone or blocked.
+      const spot = this.worldRules.resolveBedRespawn();
+      if (spot) {
+        this.player.setPosition(spot.x, spot.y, spot.z);
+        this.needsSurface = false;
+      } else {
+        const s = this.meta?.spawn ?? { ...world.findSpawn(), y: 100 };
+        this.player.setPosition(s.x, s.y, s.z);
+        this.needsSurface = true;
+        this.state = 'loading';
+        return;
+      }
+    }
     if (this.needsSurface) {
       const x = Math.floor(this.player.x), z = Math.floor(this.player.z);
       this.player.setPosition(this.player.x, world.surfaceY(x, z) + 1, this.player.z);
@@ -808,7 +929,7 @@ export class Game {
     this.survivalInventory.flushCursor();
     if (this.net) {
       // Multiplayer: the server stores position, inventory and health per player.
-      this.net.sendState(this.playerInventory.serialize(), this.stats.serialize());
+      this.net.sendState(this.playerInventory.serialize(), this.stats.serialize(), this.stats.effects.serialize() ?? []);
       return;
     }
     const p = this.player;
@@ -818,7 +939,10 @@ export class Game {
     meta.blockEntities = world.blockEntities.serialize();
     delete meta.containers;
     meta.stats = this.stats.serialize();
+    meta.effects = this.stats.effects.serialize();
+    this.worldRules.save(meta);
     meta.advancements = this.advancements.serialize();
+    meta.statistics = this.statTracker.serialize();
     meta.gameMode = this.mode;
     meta.selectedSlot = this.hotbar.selected;
     meta.time = this.cycle.time;
@@ -856,20 +980,28 @@ export class Game {
     this.renderer.three.domElement.toBlob((blob) => {
       if (!blob) return;
       downloadBlob(blob, name);
-      showToast(`Saved screenshot ${name}`);
+      showToast(t('hud.screenshot', name));
     }, 'image/png');
   }
 
-  /** A bed sets the respawn point; at night it also sleeps until the morning (singleplayer). */
+  /** Opens an enchanting table, anvil or grindstone (singleplayer and multiplayer: nothing is stored in the block). */
+  private openStation(kind: StationKind, x: number, y: number, z: number): void {
+    if (!this.world || this.state !== 'playing') return;
+    this.progression.open(kind, x, y, z);
+  }
+
+  /** Shows a station's slots above the inventory, like a chest. */
+  private openStationView(view: ContainerView): void {
+    this.state = 'inventory';
+    this.suppressPause = this.input.locked;
+    this.input.exitLock();
+    this.survivalInventory.open(this.nearbyStations(), view);
+  }
+
+  /** A bed sets the respawn point and sleeps at night (WorldRules: monsters, multiplayer sleeping rule). */
   private useBed(x: number, y: number, z: number): void {
     if (!this.meta || this.arcade) return;
-    this.meta.spawn = { x: x + 0.5, y: y + 0.6, z: z + 0.5 };
-    this.chat.add('Respawn point set', true);
-    if (!this.net && this.cycle.dayFactor < 0.4) {
-      this.cycle.time = 0.02;
-      this.cycle.compute();
-      this.chat.add('You slept through the night', true);
-    }
+    this.worldRules.useBed(x, y, z);
   }
 
   private async quitToTitle(): Promise<void> {
@@ -926,7 +1058,9 @@ export class Game {
       player: rec ? { x: rec.x, y: rec.y, z: rec.z, yaw: rec.yaw, pitch: rec.pitch, flying: false } : null,
       hotbar: [...DEFAULT_HOTBAR], selectedSlot: 0, time: welcome.time, day: welcome.day, gameMode: welcome.gameMode,
       inventory: rec?.inventory, stats: rec?.stats, spawn: welcome.spawn, worldType: welcome.worldType,
+      difficulty: welcome.difficulty, rules: welcome.rules, bed: rec?.bed, effects: rec?.effects,
     };
+    this.stats.playerName = name;
     this.loadingProgress = progress;
     this.arenaMap = welcome.match?.map ?? DEFAULT_MAP;
     this.lastJoin = { name, address, room };
@@ -943,6 +1077,9 @@ export class Game {
     entities.dropHook = (stack, x, y, z, delay, yaw) => {
       net.sendDrop(stack.id, stack.count, stack.damage, x, y, z, yaw, delay, encodeData(stack.data));
       return true;
+    };
+    entities.xpTakeHook = (orb) => {
+      if (mirror.shouldTakeOrb(orb, performance.now() / 1000)) net.sendTake(orb.netId);
     };
     entities.takeHook = (item) => {
       // Only ask when the whole stack fits; the server hands it to the first asker.
@@ -974,6 +1111,7 @@ export class Game {
     if (welcome.gameType === 'minecraft') for (const p of welcome.players) this.remote.add(p.id, p.name);
     if (welcome.gameType !== 'minecraft') this.startArcade(welcome, (m) => net.send(m), name);
     this.chat.clear();
+    this.chat.setCommands(SERVER_COMMAND_USAGE);
     this.chat.setVisible(true);
     if (welcome.motd) this.chat.add(welcome.motd, true);
     if (this.arcade) this.chat.add(this.arcadeHint, true);
@@ -1022,10 +1160,12 @@ export class Game {
     session.setBindings(this.input);
     this.renderer.scene.add(session.tracers.mesh);
     this.renderer.shadowExcluded.push(session.tracers.mesh);
+    this.renderer.scene.add(session.modeVisuals.group);
+    this.renderer.shadowExcluded.push(session.modeVisuals.group);
     this.root.append(session.hud.el, session.hud.loadoutEl);
     session.setHudVisible(false);
     for (const pl of welcome.players) session.addPlayer(pl.id, pl.name, pl.team ?? '');
-    this.arcadeHint = `${def.name}: first to ${info.scoreLimit} wins. Tab = scoreboard, B = loadout, R = reload.`;
+    this.arcadeHint = `${def.name}: ${def.description}. Tab = scoreboard,${def.loadout === 'ladder' ? '' : ' B = loadout,'} R = reload.`;
   }
 
   private stopArcade(): void {
@@ -1037,8 +1177,10 @@ export class Game {
     this.remote.clear();
     session.dispose();
     session.tracers.mesh.removeFromParent();
-    const i = this.renderer.shadowExcluded.indexOf(session.tracers.mesh);
-    if (i >= 0) this.renderer.shadowExcluded.splice(i, 1);
+    for (const o of [session.tracers.mesh, session.modeVisuals.group]) {
+      const i = this.renderer.shadowExcluded.indexOf(o);
+      if (i >= 0) this.renderer.shadowExcluded.splice(i, 1);
+    }
     session.hud.el.remove();
     session.hud.loadoutEl.remove();
     this.hud.setArcade(false);
@@ -1055,7 +1197,7 @@ export class Game {
       case 'fall': this.netFalling?.apply(msg.f, performance.now() / 1000); break;
       case 'hurt':
         this.hurtByServer(msg.cause, msg.amount, msg.by, msg.yaw);
-        if (msg.poison) this.stats.poison = Math.max(this.stats.poison, msg.poison);
+        if (msg.effect) this.applyMobEffect(msg.effect as MobEffect);
         break;
       case 'mobused': this.applyMobUse(msg); break;
       case 'mobfx': {
@@ -1085,6 +1227,11 @@ export class Game {
         if (left > 0) this.entities?.dropItem({ id: msg.itemId, count: left, damage: msg.damage, data }, this.player.x, this.player.y + 1, this.player.z, 40, undefined, true);
         break;
       }
+      case 'orbs': this.netEntities?.applyOrbs(msg, performance.now() / 1000); break;
+      case 'xpgain':
+        this.netEntities?.orbTaken(msg.id);
+        if (Number.isFinite(msg.value) && msg.value > 0) this.progression.pickupXp(Math.min(msg.value, 100_000));
+        break;
       case 'block': world?.applyRemoteEdit(msg.x, msg.y, msg.z, msg.id, msg.meta ?? 0); break;
       case 'blocks':
         for (let i = 0; i + 4 < msg.edits.length; i += 5) {
@@ -1116,7 +1263,7 @@ export class Game {
         break;
       case 'gamemode': this.setMode(msg.mode); break;
       case 'container': this.containers.onMessage(msg); break;
-      default: if (!this.weatherSys.onServerMessage(msg)) this.arcade?.handle(msg, performance.now() / 1000); break;
+      default: if (!this.weatherSys.onServerMessage(msg) && !this.worldRules.onServerMessage(msg)) this.arcade?.handle(msg, performance.now() / 1000); break;
     }
   }
 
@@ -1145,7 +1292,7 @@ export class Game {
    * real server. With a map id (`arcadePreview('tdm', 'You', 'canyon')`) it plays on the real arena
    * of that map instead of a fake one. The fake server is `game.previewServer` (see ArcadePreview.ts for scripted events).
    */
-  async arcadePreview(type: 'tdm' | 'ffa' = 'tdm', name = 'You', mapId?: string): Promise<void> {
+  async arcadePreview(type: GameType = 'tdm', name = 'You', mapId?: string): Promise<void> {
     if (!import.meta.env.DEV) return;
     const { ArcadePreviewServer } = await import('./ArcadePreview');
     this.audio.unlock();
@@ -1167,7 +1314,7 @@ export class Game {
         const hit = raycast(this.getBlock, ox, oy, oz, dx, dy, dz, max, ray);
         return hit.hit ? hit.distance : max;
       },
-    }, type, name);
+    }, type, name, 10, mapId);
     const welcome = {
       t: 'welcome', id: server.selfId, worldName: 'Arcade preview', seed: meta.seed, gameMode: 'creative', time: 0.3,
       gameType: type, worldType: 'arena', match: server.info, spawn: { x: 8, y: 100, z: 8 }, edits: [], player: null,
@@ -1213,6 +1360,7 @@ export class Game {
   // ---------------------------------------------------------------- death
 
   private onDeath(): void {
+    this.statTracker.add('deaths');
     this.inventory.close();
     this.survivalInventory.close();
     this.chat.close();
@@ -1223,14 +1371,19 @@ export class Game {
       this.input.exitLock();
     }
     this.interaction?.reset();
-    // Drop the whole inventory where the player died.
+    this.progression.onDeath();
+    this.worldRules.stopSleeping(false);
+    if (!this.net && this.worldRules.rules.get('showDeathMessages') && this.stats.deathMessage) this.chat.add(this.stats.deathMessage, true);
+    // Drop the whole inventory where the player died (unless keepInventory).
     const p = this.player;
-    for (let i = 0; i < 36; i++) {
-      const s = this.playerInventory.get(i);
-      if (s.count > 0) this.entities?.dropItem(s, p.x, p.y + 1, p.z, 40, undefined, true);
+    if (!this.worldRules.rules.get('keepInventory')) {
+      for (let i = 0; i < 36; i++) {
+        const s = this.playerInventory.get(i);
+        if (s.count > 0) this.entities?.dropItem(s, p.x, p.y + 1, p.z, 40, undefined, true);
+      }
+      for (const s of this.playerInventory.armor) if (s.count > 0) this.entities?.dropItem(s, p.x, p.y + 1, p.z, 40, undefined, true);
+      this.playerInventory.clear();
     }
-    for (const s of this.playerInventory.armor) if (s.count > 0) this.entities?.dropItem(s, p.x, p.y + 1, p.z, 40, undefined, true);
-    this.playerInventory.clear();
     const hardcore = this.mode === 'hardcore';
     // Hardcore: the single life is gone even if the tab is closed now.
     if (hardcore && this.meta) this.meta.gameMode = 'spectator';
@@ -1263,12 +1416,13 @@ export class Game {
    */
   private respawn(): void {
     this.stats.reset();
-    const s = this.meta?.spawn ?? { x: this.player.x, y: this.player.y, z: this.player.z };
-    this.player.setPosition(s.x, s.y, s.z);
+    const t = this.worldRules.respawnTarget(this.meta?.spawn ?? { x: this.player.x, y: this.player.y, z: this.player.z });
+    this.worldRules.pendingBed = t.checkBed ? this.worldRules.bed : null;
+    this.player.setPosition(t.x, t.y, t.z);
     this.player.vx = this.player.vy = this.player.vz = 0;
     this.player.fallDistance = 0;
     this.player.landedFall = 0;
-    this.needsSurface = true;
+    this.needsSurface = !this.worldRules.bed?.point; // a /spawnpoint position is kept as it is
     this.stack.clear();
     this.state = 'loading';
   }
@@ -1318,15 +1472,27 @@ export class Game {
     this.state = 'paused';
     announce('Game paused');
     void this.saveGame(true);
+    this.showPauseMenu();
+  }
+
+  private showPauseMenu(): void {
     this.stack.clear();
     this.stack.push(pauseScreen({
       resume: () => void this.resumeGame(),
       options: () => this.openOptions(),
       quit: () => void this.quitToTitle(),
       multiplayer: this.net !== null,
+      statistics: this.net ? undefined : () => this.stack.push(statisticsScreen(this.statTracker, () => this.stack.pop())),
       advancements: this.net ? undefined : () => this.stack.push(advancementsScreen(this.advancements, this.icons, () => this.stack.pop())),
       invite: this.roomCode ? () => this.openInvite(this.roomCode!) : undefined,
       seed: !this.net && this.meta && this.meta.worldType !== 'arena' ? this.meta.seedText || String(this.meta.seed) : undefined,
+      difficulty: this.arcade ? undefined : {
+        get: () => this.worldRules.difficulty,
+        set: (d) => this.worldRules.setDifficulty(d),
+        // Servers change it with /difficulty; Hardcore is always Hard.
+        locked: this.net !== null || this.mode === 'hardcore' || this.meta?.gameMode === 'hardcore',
+      },
+      gameRules: this.net || this.arcade ? undefined : () => this.stack.push(gameRulesScreen(this.worldRules.rules, () => this.stack.pop(), () => this.worldRules.apply())),
     }));
   }
 
@@ -1354,7 +1520,8 @@ export class Game {
   private onKey(code: string): void {
     if (this.chat.isOpen) return;
     const command = this.keyIs(code, KB.COMMAND);
-    if ((command || this.keyIs(code, KB.CHAT)) && this.net && this.state === 'playing' && this.input.locked) {
+    const chatAvailable = this.net !== null || (this.meta !== null && !this.arcade);
+    if ((command || this.keyIs(code, KB.CHAT)) && chatAvailable && this.state === 'playing' && this.input.locked) {
       this.state = 'chat';
       this.suppressPause = this.input.locked;
       this.input.exitLock();
@@ -1363,6 +1530,11 @@ export class Game {
     }
     if (code === 'F3') this.debug.toggle();
     if (code === 'F2' && this.world) this.wantScreenshot = true;
+    // F11: fullscreen like Minecraft (the page's own fullscreen; the browser's F11 is a different mode).
+    if (code === 'F11') {
+      if (document.fullscreenElement) void document.exitFullscreen();
+      else void document.documentElement.requestFullscreen().catch(() => undefined);
+    }
     // With keyboard lock (fullscreen) Esc arrives as a key press instead of ending pointer lock.
     if (code === 'Escape' && keyboardLockActive() && this.state === 'playing') this.input.exitLock();
     if (code === 'F1' && this.state === 'playing') {
@@ -1370,7 +1542,7 @@ export class Game {
       this.hud.setVisible(!this.hudHidden);
       this.arcade?.setHudVisible(!this.hudHidden);
     }
-    if (this.arcade && this.keyIs(code, KB.LOADOUT)) {
+    if (this.arcade && this.arcade.def.loadout !== 'ladder' && this.keyIs(code, KB.LOADOUT)) {
       // The loadout menu needs the mouse, like the inventory.
       if (this.state === 'playing' && this.input.locked) {
         this.state = 'inventory';
@@ -1416,6 +1588,8 @@ export class Game {
 
   private readonly frame = (now: number): void => {
     requestAnimationFrame(this.frame);
+    // Max Framerate: skip this display refresh while the previous frame is too recent.
+    if (this.minFrameMs > 0 && now - this.last < this.minFrameMs - 1.5) return;
     const rawDt = (now - this.last) / 1000;
     this.frameDt = Math.min(rawDt, 0.1);
     const dt = Math.min(rawDt, 0.1);
@@ -1479,6 +1653,7 @@ export class Game {
     this.itemRenderer.update(e.items, alpha, this.time, world);
     this.tntRenderer.update(e.tnt, alpha, world);
     this.arrowRenderer.update(e.arrows, alpha, world);
+    this.progression.update(alpha, this.time, hasSurvivalRules(this.mode) && !this.arcade);
     this.netFalling?.update(performance.now() / 1000);
     this.fallingRenderer.update(this.netFalling ? this.netFalling.list : world.updates?.falling ?? Game.NO_FALLING, alpha, world);
   }
@@ -1514,14 +1689,14 @@ export class Game {
       }
     }
     const total = (r * 2 + 1) ** 2;
-    this.loadingProgress?.(ready === 0 ? 'Generating terrain...' : 'Building chunk meshes...', ready / total);
+    this.loadingProgress?.(ready === 0 ? t('loading.terrain') : t('loading.meshes'), ready / total);
     // Keep the camera at the spawn so the first frame after loading is correct.
     this.cam.camera.position.set(this.player.x, this.player.y + PHYSICS.EYE_HEIGHT, this.player.z);
     if (world.chunks.isAreaReady(this.player.x, this.player.z, r)) this.finishLoading();
   }
 
   /** Reused every game tick (no per-tick allocations). */
-  private readonly mobTarget = { x: 0, y: 0, z: 0, attackable: false, held: 0, yaw: 0, pitch: 0 };
+  private readonly mobTarget = { x: 0, y: 0, z: 0, attackable: false, collects: true, held: 0, yaw: 0, pitch: 0 };
   /** The horse the player rides (singleplayer), null on foot. */
   private mount: Mob | null = null;
 
@@ -1535,9 +1710,10 @@ export class Game {
     attack: (mob, damage) => {
       const p = this.player;
       const yaw = Math.atan2(p.x - mob.x, p.z - mob.z);
-      if (this.stats.damage(damage, 'mob', this.mode, mob.type.name, yaw)) {
-        // Cave spiders poison (7 s on Normal).
-        if (mob.type.poison) this.stats.poison = Math.max(this.stats.poison, mob.type.poison);
+      if (this.stats.hurt(damage, { kind: 'mob', attacker: mob.type.name, yaw }, this.mode).hurt) {
+        this.progression.thorns(mob);
+        // Cave spiders poison, husks make hungry.
+        this.applyMobEffect(meleeEffect(mob));
         // Knockback away from the attacker.
         const d = Math.hypot(p.x - mob.x, p.z - mob.z) || 1;
         p.vx += ((p.x - mob.x) / d) * 8;
@@ -1546,7 +1722,10 @@ export class Game {
         this.cam.hurtSide = Math.sin(yaw - p.yaw) >= 0 ? 1 : -1;
       }
     },
-    killed: (mob) => this.advancements.onMobKilled(mob.type.hostile),
+    killed: (mob) => {
+      this.statTracker.add('killed');
+      this.advancements.onMobKilled(mob.type.hostile);
+    },
     playerArrowHit: () => this.advancements.onArrowHitMob(),
     explode: (mob) => this.explode(mob, mob.x, mob.y + 0.5, mob.z, 3),
     shoot: (mob) => {
@@ -1559,13 +1738,15 @@ export class Game {
     arrowHit: (arrow, damage) => {
       const p = this.player;
       const yaw = Math.atan2(-arrow.vx, -arrow.vz);
-      if (this.stats.damage(damage, 'arrow', this.mode, arrow.shooter ? arrow.shooter.type.name : '', yaw)) {
+      if (this.stats.hurt(damage, { kind: 'arrow', attacker: arrow.shooter ? arrow.shooter.type.name : undefined, yaw }, this.mode).hurt) {
         // Knockback along the arrow's direction.
         const h = Math.hypot(arrow.vx, arrow.vz) || 1;
         p.vx += (arrow.vx / h) * 3;
         p.vz += (arrow.vz / h) * 3;
         p.vy = Math.max(p.vy, 3);
         this.cam.hurtSide = Math.sin(yaw - p.yaw) >= 0 ? 1 : -1;
+        // Strays shoot arrows of Slowness.
+        this.applyMobEffect(arrowEffect(arrow.shooter));
       }
     },
     arrowImpact: (arrow) => {
@@ -1582,9 +1763,7 @@ export class Game {
       if (vol > 0.05) this.caption(mobSoundLabel(mob.type.kind, kind), mob.x, mob.z);
     },
     fx: (mob, kind) => this.mobRenderer.emote(kind, mob.x, mob.y + mob.height, mob.z, mob.width),
-    // TODO: XP orbs once the XP system exposes awardXp (breeding gives 1-7).
-    xp: () => undefined,
-    potion: (mob) => this.witchPotion(mob.type.name, mob.x, mob.z),
+    potion: (mob) => this.witchPotion(mob.x, mob.z),
 
   };
 
@@ -1595,7 +1774,9 @@ export class Game {
   private explode(source: Mob | null, x: number, y: number, z: number, power: number, inWater = false): void {
     const world = this.world!, entities = this.entities!;
     const positions: number[] = [];
-    const destroyed = inWater ? [] : world.explode(x, y, z, power * 1.3, positions);
+    // Creepers break blocks only with the mobGriefing rule; TNT always does.
+    const grief = !source || this.worldRules.rules.get('mobGriefing');
+    const destroyed = inWater || !grief ? [] : world.explode(x, y, z, power * 1.3, positions);
     // Blocks drop with chance 1/power (TNT: all of them), like Minecraft; caught TNT lights with a short fuse.
     const dropChance = explosionDropChance(power, source === null);
     for (let i = 0; i < destroyed.length; i++) {
@@ -1632,7 +1813,7 @@ export class Game {
     if (d < reach) {
       const impact = 1 - d / reach;
       const dmg = explosionDamage(d, power);
-      this.stats.damage(dmg, 'explosion', this.mode, by, Math.atan2(p.x - x, p.z - z));
+      this.stats.hurt(dmg, { kind: 'explosion', attacker: by || undefined, yaw: Math.atan2(p.x - x, p.z - z) }, this.mode);
       const len = d || 1;
       p.vx += ((p.x - x) / len) * impact * 14;
       p.vz += ((p.z - z) / len) * impact * 14;
@@ -1641,17 +1822,21 @@ export class Game {
   }
 
   /** Damage from a server mob or arrow: same hurt camera, knockback and rules as a local hit. */
-  /**
-   * A witch's potion hits the player: Poison for 5 s plus a splash. Placeholder until the effects module brings real
-   * potions (slowness, weakness, harming); onzeker how far this matches the witch's choice of potion.
-   */
-  private witchPotion(by: string, x: number, z: number): void {
-    const p = this.player;
-    if (!hasSurvivalRules(this.mode) || this.stats.dead) return;
-    this.stats.damage(1, 'mob', this.mode, by, Math.atan2(p.x - x, p.z - z));
-    this.stats.poison = Math.max(this.stats.poison, 100);
-    for (let i = 0; i < 4; i++) this.renderer.particles.spawnBreak(Math.floor(p.x), Math.floor(p.y + 1), Math.floor(p.z), BLOCK.GLASS, 0xf0, 0x8a2ab0);
+  /** A witch's splash potion hits the player (the witch picks it like Minecraft's: see MobEffects.witchPotion). */
+  private witchPotion(x: number, z: number): void {
+    const p = this.player, stats = this.stats;
+    if (!hasSurvivalRules(this.mode) || stats.dead) return;
+    const effect = witchPotion(Math.hypot(p.x - x, p.z - z), stats.health, (id) => stats.effects.has(id), Math.random());
+    this.applyMobEffect(effect);
+    const color = EFFECT_DEFS[effect[0]].color;
+    for (let i = 0; i < 4; i++) this.renderer.particles.spawnBreak(Math.floor(p.x), Math.floor(p.y + 1), Math.floor(p.z), BLOCK.GLASS, 0xf0, color);
     this.audio.playMob('witch', 'hurt', 0.6);
+  }
+
+  /** A status effect from a mob (bite, husk hit, stray arrow, witch potion); survival only. */
+  private applyMobEffect(e: MobEffect | null): void {
+    if (!e || !hasSurvivalRules(this.mode) || this.stats.dead || !isEffectId(e[0])) return;
+    this.stats.effects.add(e[0], e[1], e[2], this.stats);
   }
 
   /** Right click on a mob: feed, tame, shear, milk, dye, saddle or mount. True when something happened. */
@@ -1696,7 +1881,7 @@ export class Game {
 
   private hurtByServer(cause: 'mob' | 'arrow', amount: number, by: string, yaw: number): void {
     const p = this.player;
-    if (!this.stats.damage(amount, cause, this.mode, by, yaw)) return;
+    if (!this.stats.hurt(amount, { kind: cause, attacker: by || undefined, yaw }, this.mode).hurt) return;
     // yaw points from the attacker to the player (mob) or along the arrow's flight (arrow).
     const sin = Math.sin(yaw), cos = Math.cos(yaw);
     if (cause === 'mob') {
@@ -1723,9 +1908,9 @@ export class Game {
     }
     // Fall damage on landing (distance − 3), not in creative or water.
     if (p.landedFall > 0) {
-      const dmg = Math.ceil(p.landedFall - 3);
+      const dmg = Math.ceil(p.landedFall - 3 - stats.effects.jumpBoost());
       if (dmg > 0 && !p.inWater) {
-        if (this.stats.damage(dmg, 'fall', this.mode)) this.cam.hurtSide = 1;
+        if (stats.hurt(dmg, { kind: 'fall' }, this.mode).hurt) this.cam.hurtSide = 1;
       }
       p.landedFall = 0;
     }
@@ -1736,6 +1921,7 @@ export class Game {
     p.sprintDistance = p.swimDistance = 0;
     p.jumps = 0;
     this.weatherSys.gameTick();
+    this.worldRules.gameTick();
     this.world?.tickLiquids();
     this.world?.tickGrowth(p.x, p.z);
     this.world?.blockEntities.tick();
@@ -1749,6 +1935,8 @@ export class Game {
     target.attackable = alive && hasSurvivalRules(this.mode);
     target.held = this.hotbar.selectedStack.id;
     target.yaw = p.yaw; target.pitch = p.pitch;
+    target.collects = alive && this.mode !== 'spectator';
+    if (this.entities) this.entities.xpPickup = target.collects ? this.progression.pickupXp : null;
     this.entities?.tick(
       target,
       // Rain and thunder count as extra darkness for the spawn rules.
@@ -1759,6 +1947,23 @@ export class Game {
     );
     if (this.entities) this.mobSteps.update(this.entities.mobs, p.x, p.z);
     if (stats.dead && (this.state === 'playing' || this.state === 'inventory' || this.state === 'chat' || this.state === 'paused')) this.onDeath();
+  }
+
+  /** Statistics: time played, distance walked (not flying) and jumps, from per-frame position changes. */
+  private trackStats(dt: number): void {
+    const p = this.player, st = this.statTracker;
+    st.add('playMs', dt * 1000);
+    const last = this.statLast;
+    if (last) {
+      if (!p.flying && !p.noclip) st.addWalk(Math.hypot(p.x - last.x, p.z - last.z));
+      if (last.ground && !p.onGround && p.vy > 4) st.add('jumps');
+    }
+    if (!last) this.statLast = { x: p.x, z: p.z, ground: p.onGround };
+    else {
+      last.x = p.x;
+      last.z = p.z;
+      last.ground = p.onGround;
+    }
   }
 
   private updatePlaying(dt: number): void {
@@ -1779,6 +1984,8 @@ export class Game {
       }
     }
 
+    if (this.state === 'playing' && !this.arcade) this.trackStats(dt);
+
     if (this.state !== 'paused') {
       // Fixed-step simulation, rendered with interpolation.
       this.accumulator = Math.min(this.accumulator + dt, 0.25);
@@ -1797,8 +2004,8 @@ export class Game {
       // A toggled sprint ends when the player stops walking forward.
       if (this.wasMovingForward && move.forward <= 0) input.releaseLatch(KB.SPRINT);
       this.wasMovingForward = move.forward > 0;
-      // Touch auto-jump: walking into a one-block step.
-      if (control && !arcade && input.touchMode && this.settings.values.touchAutoJump && p.onGround && p.horizontalCollision
+      // Auto-jump: walking into a one-block step (touch setting, or Options > Controls > Auto-Jump).
+      if (control && !arcade && (input.touchMode ? this.settings.values.touchAutoJump : this.settings.values.autoJump) && p.onGround && p.horizontalCollision
         && (move.forward !== 0 || move.strafe !== 0)) {
         const sin = Math.sin(p.yaw), cos = Math.cos(p.yaw);
         if (needsAutoJump(this.solidAt, p.x, p.y, p.z, -sin * move.forward + cos * move.strafe, -cos * move.forward - sin * move.strafe)) move.jump = true;
@@ -1807,16 +2014,26 @@ export class Game {
       if (arcade) {
         p.speedMultiplier = arcade.speedMultiplier;
         p.airAccel = arcade.airAccel;
+      } else {
+        // Status effects: Speed/Slowness, Jump Boost, Levitation.
+        const fx = this.stats.effects;
+        p.speedMultiplier = fx.speedMultiplier();
+        p.jumpBoost = fx.jumpBoost();
+        p.levitation = fx.level('levitation');
+        // A raised shield slows you down to sneaking speed.
+        if (this.interaction?.blocking) p.speedMultiplier *= 0.3;
       }
+      const asleep = this.worldRules.sleeping;
       while (this.accumulator >= PHYSICS.STEP) {
         // Riding: the horse moves, the player sits on it (sneak gets off).
         if (this.mount && !rideStep(p, this.mount, move, ((this.stepCount % STEPS_PER_TICK) + 1) / STEPS_PER_TICK)) this.mount = null;
-        if (!this.mount) p.step(move, this.getBlock, this.getMeta);
+        if (!asleep && !this.mount) p.step(move, this.getBlock, this.getMeta);
         move.jumpPressed = false;
         this.accumulator -= PHYSICS.STEP;
         if (++this.stepCount % STEPS_PER_TICK === 0) this.gameTick();
       }
-      this.cycle.update(dt);
+      if (this.arcade || this.worldRules.daylightCycle) this.cycle.update(dt);
+      this.worldRules.update(dt);
       this.weatherSys.update(dt);
       this.autosave += dt;
       if (this.autosave > AUTOSAVE_INTERVAL) {
@@ -1840,7 +2057,20 @@ export class Game {
     this.audioProbe.update(dt, this.audio.env, eye.x, eye.y, eye.z, this.cycle.dayFactor, this.underwater);
     this.hud.setUnderwater(this.underwater);
     this.hud.setHurt(limitFlash(this.arcade ? this.arcade.hurt * 0.8 : this.stats.hurtTime / 10, this.settings.values));
-    if (!this.arcade) this.hud.survival.update({ health: Math.ceil(this.stats.health), hunger: this.stats.hunger, air: this.stats.air, maxAir: MAX_AIR, armor: this.stats.armorPoints }, this.time);
+    if (!this.arcade) this.hud.survival.update({
+      health: Math.ceil(this.stats.health), hunger: this.stats.hunger, air: this.stats.air, maxAir: MAX_AIR, armor: this.stats.armorPoints,
+      hardcore: this.mode === 'hardcore', poison: this.stats.effects.level('poison') > 0, wither: this.stats.effects.level('wither') > 0,
+      hurtTime: this.stats.hurtTime, saturation: this.stats.saturation,
+    }, this.time);
+    if (!this.arcade) {
+      const fx = this.hud.effects;
+      fx.updateEffects(this.stats.effects, this.time);
+      fx.updateAbsorption(hasSurvivalRules(this.mode) ? this.stats.absorption : 0);
+      const charge = this.interaction?.cooldown.charge ?? 1;
+      const showCooldown = this.state === 'playing' && this.mode !== 'spectator';
+      fx.updateCooldown(charge, showCooldown && this.settings.values.attackIndicator === 'crosshair');
+      this.hud.setAttackCharge(showCooldown ? charge : 1);
+    }
 
     if (this.net) {
       const flags = (p.sprinting ? 1 : 0) | (p.flying ? 2 : 0) | (p.onGround ? 4 : 0);
@@ -1868,7 +2098,7 @@ export class Game {
       this.arcade.update(f, input);
     } else {
       this.hand.update(dt, this.hotbar.selectedBlock, this.cam.bobPhase, this.cam.bobStrength, light,
-        this.interaction!.eating, window.innerWidth / Math.max(1, window.innerHeight));
+        this.interaction!.eating, window.innerWidth / Math.max(1, window.innerHeight), hasEnchants(this.hotbar.selectedStack.data), this.time);
     }
     this.renderer.particles.update(dt, world);
     this.renderer.clouds.update(dt, this.cycle);
@@ -1911,38 +2141,40 @@ export class Game {
     const target = ray?.hit ? `${getBlockDef(ray.id)?.displayName} @ ${ray.x}, ${ray.y}, ${ray.z}` : '—';
     const e = this.entities;
     const near = this.countMobsNear(p.x, p.z, 64);
+    // Grouped like Minecraft 1.21's F3: left = version, performance, renderer counts, then position and world
+    // state; right = memory, system/display, then the targeted block. F3 text stays English, as in Minecraft.
+    const towards: Record<string, string> = { north: 'Towards negative Z', south: 'Towards positive Z', east: 'Towards positive X', west: 'Towards negative X' };
     d.set([
       `BunkCraft 1.0 (WebGL2 · three.js r${THREE.REVISION})`,
       `${d.fps} fps · frame ${d.frameMs.toFixed(2)} ms CPU · worst ${d.worstMs.toFixed(1)} ms`,
-      `Chunks: ${stats.loaded} loaded · ${stats.meshed} meshed · ${visible} rendered`,
-      `Draw calls: ${r.drawCalls} (+${r.shadowCalls} shadow) · Triangles: ${(r.triangles / 1000).toFixed(1)}k`,
+      `C: ${visible}/${stats.loaded} (meshed ${stats.meshed}) D: ${world.chunks.renderDistance} · Draw calls: ${r.drawCalls} (+${r.shadowCalls} shadow)`,
+      `E: ${e?.mobs.length ?? 0} mobs, ${e?.items.length ?? 0} items · P: ${this.renderer.particles.active}${this.renderer.precipitation.count > 0 ? ` · Rain: ${this.renderer.precipitation.count}` : ''} · Tris: ${(r.triangles / 1000).toFixed(1)}k`,
       `Workers: ${this.pool.size} · queue ${this.pool.queued} · gen ${this.pool.genMs.toFixed(1)} ms · mesh ${this.pool.meshMs.toFixed(1)} ms`,
-      `Entities: ${e?.mobs.length ?? 0} mobs · ${e?.items.length ?? 0} items · Particles: ${this.renderer.particles.active}${this.renderer.precipitation.count > 0 ? ` · Precipitation: ${this.renderer.precipitation.count}` : ''}`,
+      '',
+      `XYZ: ${p.x.toFixed(3)} / ${p.y.toFixed(5)} / ${p.z.toFixed(3)}`,
+      `Block: ${bx} ${by} ${bz}`,
+      `Chunk: ${bx & 15} ${by} ${bz & 15} in ${bx >> 4} ${bz >> 4}`,
+      `Facing: ${facing} (${towards[facing] ?? ''}) (${yawDeg.toFixed(1)} / ${((-p.pitch * 180) / Math.PI).toFixed(1)})`,
+      `Light: ${Math.max(light >> 4, light & 15)} (${light >> 4} sky, ${light & 15} block)`,
+      `Biome: ${BIOME_NAMES[world.biomeName(bx, bz)]}`,
+      `Day ${this.cycle.day + 1} · ${this.cycle.clock()} · Moon: ${MOON_PHASE_NAMES[this.cycle.moonPhase]}`,
+      this.weatherSys.debugLine(),
       `Mobs within 64: ${near.hostile} hostile · ${near.passive} passive${this.net ? ' (server)' : ''}`,
       '',
-      `XYZ: ${p.x.toFixed(3)} / ${p.y.toFixed(3)} / ${p.z.toFixed(3)}`,
-      `Block: ${bx} ${by} ${bz}`,
-      `Chunk: ${bx >> 4} ${bz >> 4} (in chunk ${bx & 15} ${by} ${bz & 15})`,
-      `Facing: ${facing} (${yawDeg.toFixed(1)} / ${((-p.pitch * 180) / Math.PI).toFixed(1)})`,
-      `Biome: ${BIOME_NAMES[world.biomeName(bx, bz)]}`,
-      `Light: ${light >> 4} sky, ${light & 15} block`,
-      `${this.audio.debugLine()} · enclosure ${this.audio.env.enclosure.toFixed(2)}`,
-      `Time: ${this.cycle.clock()} · Day ${this.cycle.day + 1} · Moon: ${MOON_PHASE_NAMES[this.cycle.moonPhase]}`,
-      this.weatherSys.debugLine(),
-      `Render distance: ${world.chunks.renderDistance} chunks`,
       `${GAME_MODE_NAMES[this.mode]} · ${p.flying ? 'Flying' : p.onGround ? 'On ground' : 'Airborne'}${p.sprinting ? ' · Sprinting' : ''}${p.inWater ? ' · In water' : ''}`,
       `Health ${this.stats.health} · Food ${this.stats.hunger} (sat ${this.stats.saturation.toFixed(1)}) · Air ${this.stats.air}`,
+      `${this.audio.debugLine()} · enclosure ${this.audio.env.enclosure.toFixed(2)}`,
     ], [
-      mem ? `JS heap: ${(mem.usedJSHeapSize / 1048576).toFixed(0)} / ${(mem.totalJSHeapSize / 1048576).toFixed(0)} MB` : 'JS heap: n/a',
-      `World blocks: ${(worldBlocks / 1e6).toFixed(2)}M (${(worldBlocks / 1048576).toFixed(1)} MB)`,
-      `Edited chunks: ${world.edits.size}`,
+      mem ? `Mem: ${Math.round((mem.usedJSHeapSize / mem.totalJSHeapSize) * 100)}% ${(mem.usedJSHeapSize / 1048576).toFixed(0)}/${(mem.totalJSHeapSize / 1048576).toFixed(0)}MB` : 'Mem: n/a',
+      `World blocks: ${(worldBlocks / 1e6).toFixed(2)}M (${(worldBlocks / 1048576).toFixed(1)} MB) · edited chunks ${world.edits.size}`,
       `Upload queue: ${stats.uploadQueue} · in flight ${stats.genInFlight}g/${stats.meshInFlight}m`,
       '',
-      `Display: ${window.innerWidth}×${window.innerHeight} @ ${this.renderer.three.getPixelRatio().toFixed(2)}x`
+      `CPU: ${navigator.hardwareConcurrency || '?'} threads`,
+      `Display: ${window.innerWidth}x${window.innerHeight} @ ${this.renderer.three.getPixelRatio().toFixed(2)}x`
         + (this.dynamicResolution.enabled ? ` (dynamic ${Math.round(this.dynamicResolution.scale * 100)}%)` : ''),
-      `GPU: ${this.gpuName.replace(/^ANGLE \(|\)$/g, '').split(',').slice(0, 2).join(',')}`,
+      `${this.gpuName.replace(/^ANGLE \(|\)$/g, '').split(',').slice(0, 2).join(',')}`,
       '',
-      `Targeted: ${target}`,
+      `Targeted Block: ${target}`,
       `Holding: ${getItemDef(this.hotbar.selectedBlock)?.displayName ?? 'Empty hand'}`,
       `Seed: ${world.seed}`,
     ]);

@@ -89,13 +89,13 @@ describe('wolves', () => {
     wolf.sitting = false;
     const zombie = s.em.spawnMob('zombie', 6.5, 63, 3.5);
     s.tick(1);
-    zombie.hurt(1, 0.5, 0.5, 0, true, s.player);
+    zombie.hurt(1, 0.5, 0.5, 0, true, undefined, s.player);
     s.tick(120);
     expect(zombie.health).toBeLessThan(20 - 1 - 4);
     expect(s.log.attacks).toBeGreaterThanOrEqual(0);
     // A wolf hit by its owner does not turn on him.
     const before = s.log.attacks;
-    wolf.hurt(1, 0.5, 0.5, 0, true, s.player);
+    wolf.hurt(1, 0.5, 0.5, 0, true, undefined, s.player);
     s.player.attackable = true;
     s.tick(60);
     expect(wolf.target === s.player).toBe(false);
@@ -106,7 +106,7 @@ describe('wolves', () => {
     const s = setup();
     const a = s.em.spawnMob('wolf', 3.5, 63, 0.5), b = s.em.spawnMob('wolf', 5.5, 63, 0.5);
     s.tick(2);
-    a.hurt(1, 0.5, 0.5, 0, true, s.player);
+    a.hurt(1, 0.5, 0.5, 0, true, undefined, s.player);
     s.tick(60);
     expect(a.angryTicks).toBeGreaterThan(0);
     expect(b.angryTicks).toBeGreaterThan(0);
@@ -313,5 +313,31 @@ describe('server sync of the new kinds', () => {
     sent.length = 0;
     ents.useMob({ ...p, x: 40 }, cow.netId);
     expect(sent).toHaveLength(0);
+  });
+});
+
+describe('mob effects', () => {
+  it('bites, husk hits, stray arrows and witch potions map to status effects', async () => {
+    const { meleeEffect, arrowEffect, witchPotion } = await import('../src/entities/MobEffects');
+    const s = setup();
+    expect(meleeEffect(s.em.spawnMob('cave_spider', 0, 63, 0))).toEqual(['poison', 0, 140]);
+    expect(meleeEffect(s.em.spawnMob('husk', 0, 63, 0))).toEqual(['hunger', 0, 140]);
+    expect(meleeEffect(s.em.spawnMob('zombie', 0, 63, 0))).toBeNull();
+    expect(arrowEffect(s.em.spawnMob('stray', 0, 63, 0))?.[0]).toBe('slowness');
+    expect(arrowEffect(s.em.spawnMob('skeleton', 0, 63, 0))).toBeNull();
+    const none = () => false;
+    expect(witchPotion(9, 20, none, 0.5)[0]).toBe('slowness');
+    expect(witchPotion(5, 20, none, 0.5)[0]).toBe('poison');
+    expect(witchPotion(2, 5, none, 0.1)[0]).toBe('weakness');
+    expect(witchPotion(5, 5, none, 0.9)[0]).toBe('instant_damage');
+  });
+
+  it('breeding drops experience orbs through the entity manager', () => {
+    const s = setup();
+    const a = s.em.spawnMob('pig', 0.5, 63, 0.5), b = s.em.spawnMob('pig', 3.5, 63, 0.5);
+    a.inLove = b.inLove = 600;
+    s.tick(200);
+    expect(s.em.mobs.filter((m) => m.baby)).toHaveLength(1);
+    expect(s.em.orbs.length).toBeGreaterThan(0);
   });
 });

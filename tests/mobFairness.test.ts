@@ -184,7 +184,7 @@ describe('outrunning and killing', () => {
     expect(target.x - z.x).toBeGreaterThan(32);
   });
 
-  it('a zombie dies from 20 bare-handed hits, or 5 with a wooden sword', () => {
+  it('a zombie (2 natural armor) dies from 22 bare-handed hits, or 6 with a wooden sword', () => {
     const fist = new Mob(MOB_TYPES.zombie);
     let swings = 0;
     while (!fist.dead && swings < 100) {
@@ -192,8 +192,16 @@ describe('outrunning and killing', () => {
       for (let t = 0; t < 10; t++) fist.hurtTime = Math.max(0, fist.hurtTime - 1);
       swings++;
     }
-    expect(swings).toBe(20);
+    // Armor 2 takes 6 % off a fist (1 → 0.94) and 1.6 % off a wooden sword (4 → 3.936), like Minecraft.
+    expect(swings).toBe(22);
+    const sword = new Mob(MOB_TYPES.zombie);
     const swordDamage = getItemDef(ITEM.WOODEN_SWORD)!.tool!.damage;
-    expect(Math.ceil(MOB_TYPES.zombie.health / swordDamage)).toBe(5);
+    let hits = 0;
+    while (!sword.dead && hits < 100) {
+      sword.hurt(swordDamage, 0, 0, 1, true);
+      sword.hurtTime = 0;
+      hits++;
+    }
+    expect(hits).toBe(6);
   });
 });

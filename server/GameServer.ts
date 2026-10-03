@@ -1,10 +1,11 @@
+import { enchantsOf } from '../src/items/EnchantRules';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { WebSocket } from 'ws';
 import {
   type ClientMessage, NAME_PATTERN, PROTOCOL_VERSION, type PlayerRecord, type ServerMessage, type SnapshotEntry, sanitizeChat,
 } from '../src/net/protocol';
-import { ARENA_FLOOR_Y, DEFAULT_MAP, type MapId, type MapSetting, getMap, nextMap, parseMapId, parseMapSetting } from '../src/modes/maps';
+import { ARENA_FLOOR_Y, DEFAULT_MAP, type MapId, type MapSetting, getMap, mapFor, nextMap, parseMapId, parseMapSetting } from '../src/modes/maps';
 import { type GameType, gameTypeDef } from '../src/modes/GameTypes';
 import { GAME_MODES, type GameMode, hasSurvivalRules } from '../src/player/GameMode';
 import { encodeBinary, encodeSnap } from '../src/net/binary';
@@ -20,7 +21,9 @@ import { arenaWorldType } from '../src/world/WorldGenerator';
 import { TerrainGenerator } from '../src/world/TerrainGenerator';
 import { GEN_VERSION_CURRENT, GEN_VERSION_LEGACY } from '../src/world/GenVersion';
 import { Match, type MatchHost } from './Match';
-import { ServerEntities } from './ServerEntities';
+import { ServerEntities, dayFactorAt } from './ServerEntities';
+import { ServerSurvival, type SurvivalData } from './SurvivalRules';
+import { EffectSet } from '../src/player/Effects';
 import { ServerWorld } from './ServerWorld';
 import { ContainerService } from './Containers';
 import type { SavedEntity } from '../src/world/BlockEntities';
@@ -48,13 +51,20 @@ const MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
 /** Names that may claim an identity per game (bounds world.json). */
 const MAX_CLAIMS = 500;
 
+/** Saved status effects from a client: well-formed rows only, at most one per effect. */
+function cleanEffects(rows: unknown[]): number[][] | undefined {
+  const set = new EffectSet();
+  set.load(rows.slice(0, 32));
+  return set.serialize();
+}
+
 function rawLength(raw: unknown): number {
   if (Buffer.isBuffer(raw)) return raw.length;
   if (Array.isArray(raw)) return raw.reduce((n: number, b: Buffer) => n + b.length, 0);
   return (raw as ArrayBuffer | undefined)?.byteLength ?? 0;
 }
 
-interface WorldData {
+interface WorldData extends SurvivalData {
   name: string;
   seed: number;
   /** Terrain generator version (src/world/GenVersion.ts); files from before versioning have none = 1. */
@@ -216,6 +226,8 @@ export class GameServer {
   private timers: NodeJS.Timeout[] = [];
   /** Mobs, items, arrows and TNT for this world. */
   private readonly entities: ServerEntities | null;
+  /** Difficulty, game rules and sleeping (Minecraft game types only). */
+  private readonly survival: ServerSurvival | null = null;
   private entitiesActive = false;
   /** Arcade games: the match and the arena as bullets see it. */
   private readonly match: Match | null = null;
@@ -244,7 +256,7 @@ export class GameServer {
     const def = gameTypeDef(this.world.gameType ?? 'minecraft');
     if (def.arcade) {
       this.mapSetting = parseMapSetting(this.world.mapId) ?? DEFAULT_MAP;
-      const first: MapId = parseMapId(this.mapSetting) ?? DEFAULT_MAP;
+      const first: MapId = mapFor(parseMapId(this.mapSetting) ?? DEFAULT_MAP, def.requires);
       this.loadArena(first);
       this.match = new Match(this.matchHost(), {
         type: def.id, scoreLimit: this.world.scoreLimit ?? def.scoreLimit, timeLimitSec: this.world.timeLimitSec ?? def.timeLimitSec,
@@ -263,6 +275,36 @@ export class GameServer {
       skyDarkness: () => this.weather.skyDarkness,
     }, () => this.world.time, this.world.genVersion);
     if (this.entities) {
+      const ents = this.entities;
+      this.survival = new ServerSurvival({
+        send: (id, msg) => { const ss = this.sessions.get(id); if (ss) this.send(ss, msg); },
+        broadcast: (msg) => this.broadcast(msg),
+        getBlock: (x, y, z) => ents.world.getBlock(x, y, z),
+        getMeta: (x, y, z) => ents.world.getMeta(x, y, z),
+        mobs: () => ents.manager.mobs,
+        dayFactor: () => dayFactorAt(this.world.time),
+        thundering: () => this.weather.thundering && this.weather.raining,
+        skipNight: (time) => {
+          if (this.world.time > time) this.world.day = (this.world.day ?? 0) + 1;
+          this.world.time = time;
+          if (this.weather.raining) this.weather.set('clear');
+          this.dirty = true;
+          this.broadcast({ t: 'time', time, day: this.world.day ?? 0 });
+        },
+        setBed: (name, bed) => {
+          const prev = this.playerRecord(name);
+          if (!prev) return;
+          const next = { ...prev };
+          if (bed) next.bed = bed; else delete next.bed;
+          this.setPlayerRecord(name, next);
+          this.dirty = true;
+        },
+      });
+      this.survival.load(this.world);
+      if (this.world.gameMode === 'hardcore') this.survival.difficulty = 'hard';
+      ents.rules = this.survival.rules;
+      ents.setDifficulty(this.survival.difficulty);
+      ents.applyRules();
       const store = this.entities.world.blockEntities;
       store.load(this.world.blockEntities);
       this.containers = new ContainerService({
@@ -369,6 +411,7 @@ export class GameServer {
     for (const s of this.sessions.values()) this.storePlayer(s);
     this.world.day = this.world.day ?? 0;
     if (!this.match) this.world.weather = this.weather.serialize();
+    this.survival?.save(this.world);
     const store = this.entities?.world.blockEntities;
     if (store?.dirty) {
       this.world.blockEntities = store.serialize();
@@ -466,9 +509,9 @@ export class GameServer {
       },
       random: Math.random,
       ping: (id) => this.sessions.get(id)?.pingMs ?? 0,
-      nextMap: (current) => {
+      nextMap: (current, requires) => {
         if (this.mapSetting !== 'rotate') return null;
-        const next = nextMap(parseMapId(current) ?? DEFAULT_MAP);
+        const next = nextMap(parseMapId(current) ?? DEFAULT_MAP, requires);
         this.loadArena(next);
         return next;
       },
@@ -660,6 +703,7 @@ export class GameServer {
       motd: this.opts.motd,
       ...(op ? { op: true } : {}),
       ...(session.bin ? { binary: true } : {}),
+      ...(this.survival ? this.survival.welcome() : {}),
       ...(this.containers ? { containers: true } : {}),
     });
     if (!this.match) this.send(session, this.weatherMessage(true));
@@ -681,6 +725,7 @@ export class GameServer {
     this.storePlayer(s);
     this.sessions.delete(s.id);
     this.entities?.forget(s.id);
+    this.survival?.forget(s.id);
     this.containers?.onLeave(s.id);
     this.match?.leave(s.id);
     this.broadcast({ t: 'leave', id: s.id, name: s.name });
@@ -735,18 +780,22 @@ export class GameServer {
       case 'pos': return this.onPos(s, msg);
       case 'block': return this.onBlock(s, msg);
       case 'chat': return this.onChat(s, msg.text);
-      case 'attack': return void (s.attacks.take() && entities.attack(s, Number(msg.id)));
+      case 'attack': return void (s.attacks.take() && entities.attack(s, Number(msg.id), enchantData(msg.e)));
       case 'usemob': return void (s.attacks.take() && entities.useMob(s, Number(msg.id)));
       case 'shoot':
-        return void (s.shots.take() && entities.shoot(s, msg.x, msg.y, msg.z, msg.dx, msg.dy, msg.dz, msg.power));
+        return void (s.shots.take() && entities.shoot(s, msg.x, msg.y, msg.z, msg.dx, msg.dy, msg.dz, msg.power, enchantData(msg.e)));
       case 'ignite': return void (s.edits.take() && entities.ignite(s, msg.x, msg.y, msg.z));
       case 'take': return void (s.takes.take() && entities.take(s, Number(msg.id)));
       case 'bonemeal': return void (s.edits.take() && entities.boneMeal(s, msg.x, msg.y, msg.z));
       case 'drop':
         if (!s.drops.take()) return;
         if (!this.dropAllowed(s, msg)) return;
-        return entities.drop(s, { id: msg.id, count: msg.count, damage: msg.damage, data: decodeData(Array.isArray(msg.data) ? msg.data.slice(0, 16).map(Number) : undefined) }, msg.x, msg.y, msg.z, msg.yaw, msg.delay);
+        return entities.drop(s, { id: msg.id, count: msg.count, damage: msg.damage, data: decodeData(Array.isArray(msg.data) ? msg.data.slice(0, MAX_ITEM_DATA).map(Number) : undefined) }, msg.x, msg.y, msg.z, msg.yaw, msg.delay);
       case 'state': return this.onState(s, msg);
+      case 'bed':
+        if (!s.actions.take() || !this.survival) return;
+        return this.survival.bed(s, Number(msg.x), Number(msg.y), Number(msg.z), this.sessions.size);
+      case 'wake': return this.survival?.wake(s.id);
       case 'container': return this.containers?.handle(s, msg);
     }
   }
@@ -787,7 +836,8 @@ export class GameServer {
       return; // even creative inventories must be well formed
     }
     const prev = this.playerRecord(s.name) ?? { x: s.x, y: s.y, z: s.z, yaw: s.yaw, pitch: s.pitch };
-    this.setPlayerRecord(s.name, { ...prev, inventory, stats: msg.stats });
+    const effects = Array.isArray(msg.effects) ? cleanEffects(msg.effects) : prev.effects;
+    this.setPlayerRecord(s.name, { ...prev, inventory, stats: msg.stats, ...(effects ? { effects } : {}) });
     this.dirty = true;
   }
 
@@ -799,7 +849,7 @@ export class GameServer {
       case 'fire': return void (s.fires.take() && match.fire(s.id, msg));
       case 'reload': return void (s.actions.take() && match.reload(s.id, Number(msg.slot)));
       case 'weapon': return void (s.actions.take() && match.switchWeapon(s.id, Number(msg.slot)));
-      case 'loadout': return void (s.actions.take() && match.setLoadout(s.id, String(msg.primary)));
+      case 'loadout': return void (s.actions.take() && match.setLoadout(s.id, String(msg.primary), msg.secondary === undefined ? undefined : String(msg.secondary)));
       case 'block':
         // Nobody builds in an arcade game: roll the client's guess back.
         return this.send(s, { t: 'reject', seq: msg.seq, x: msg.x, y: msg.y, z: msg.z, id: this.arena!.getBlock(msg.x | 0, msg.y | 0, msg.z | 0) });
@@ -974,6 +1024,38 @@ export class GameServer {
         self.send(p, { t: 'taken', id: -1, itemId, count });
         return true;
       },
+      survival: self.survival ? {
+        get difficulty() { return self.survival!.difficulty; },
+        setDifficulty: (d) => {
+          self.survival!.difficulty = d;
+          self.entities?.setDifficulty(d);
+          self.dirty = true;
+          self.survival!.announce();
+        },
+        get rules() { return self.survival!.rules; },
+        rulesChanged: () => {
+          self.entities?.applyRules();
+          self.dirty = true;
+          self.survival!.announce();
+        },
+      } : undefined,
+      setSpawnpoint: (name) => {
+        const p = self.findSession(name);
+        if (!p || !p.hasPos) return false;
+        const bed = { x: Math.round(p.x * 100) / 100, y: Math.round(p.y * 100) / 100, z: Math.round(p.z * 100) / 100, point: true };
+        self.storePlayer(p);
+        const prev = self.playerRecord(p.name);
+        if (prev) self.setPlayerRecord(p.name, { ...prev, bed });
+        self.dirty = true;
+        self.send(p, { t: 'spawnpoint', bed });
+        return true;
+      },
+      effect: (name, action, effect, amp, ticks) => {
+        const p = self.findSession(name);
+        if (!p) return false;
+        self.send(p, { t: 'effect', action, effect, amp, ticks });
+        return true;
+      },
       seed: () => self.world.seed,
       spawn: (name) => {
         const p = self.findSession(name);
@@ -998,9 +1080,13 @@ export class GameServer {
     this.lastTick = now;
     this.tickCount++;
     if (this.sessions.size > 0 && !this.match) {
-      const t = this.world.time + dt / DAY_SECONDS;
-      if (t >= 1) { this.world.day = (this.world.day ?? 0) + Math.floor(t); this.dirty = true; }
-      this.world.time = t % 1;
+      const rules = this.survival?.rules;
+      if (!rules || rules.get('doDaylightCycle')) {
+        const t = this.world.time + dt / DAY_SECONDS;
+        if (t >= 1) { this.world.day = (this.world.day ?? 0) + Math.floor(t); this.dirty = true; }
+        this.world.time = t % 1;
+      }
+      this.weather.timersFrozen = !!rules && !rules.get('doWeatherCycle');
       this.weather.advance(dt);
       if (this.weather.version !== this.weatherVersion) {
         this.weatherVersion = this.weather.version;
@@ -1019,6 +1105,7 @@ export class GameServer {
     }
     this.entitiesActive = true;
     this.entities?.tick([...this.sessions.values()]);
+    this.survival?.tick([...this.sessions.values()]);
     this.containers?.tick();
     if (this.match) {
       this.match.tick();
@@ -1116,4 +1203,13 @@ function round(v: number): number {
 
 export function parseGameMode(v: string | undefined): GameMode {
   return GAME_MODES.includes(v as GameMode) ? (v as GameMode) : 'survival';
+}
+
+/** Numbers of item data a client may send with a stack (enchantments, repair cost and a custom name). */
+const MAX_ITEM_DATA = 40;
+
+/** Enchantments a client sent with an attack or shot (key/level pairs): decoded and clamped to real levels. */
+function enchantData(raw: unknown): Record<string, number> | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  return enchantsOf(decodeData(raw.slice(0, MAX_ITEM_DATA).map(Number)));
 }

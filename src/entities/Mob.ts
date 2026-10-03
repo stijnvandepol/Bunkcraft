@@ -1,5 +1,6 @@
 import type { BlockGetter } from '../player/Collision';
 import type { ItemStack } from '../items/ItemRegistry';
+import { type DamageSource, type DamageTarget, dealDamage } from '../player/Damage';
 import { OPAQUE, PARTIAL, SOLID } from '../world/BlockRegistry';
 import { collisionBoxes } from '../world/BlockShapes';
 import { Entity } from './Entity';
@@ -31,6 +32,8 @@ export interface MobTarget {
   /** View direction (endermen notice being stared at). */
   yaw?: number;
   pitch?: number;
+  /** Experience orbs fly to this player (false for spectators). */
+  collects?: boolean;
 }
 
 /** Something a mob can chase or fight: a player or another mob. */
@@ -101,9 +104,19 @@ export const BABY_AGE = -24000;
  * controls and finally the physics. Steering towards the move target is the old greedy code; routes around obstacles
  * come from the navigator's A*.
  */
-export class Mob extends Entity {
+/** Natural armor points of mobs (Minecraft: zombies 2). */
+const NATURAL_ARMOR: Partial<Record<string, number>> = { zombie: 2 };
+
+export class Mob extends Entity implements DamageTarget {
   health: number;
   hurtTime = 0;
+  /** DamageTarget (Damage.ts): the hurt timer doubles as the 10 tick invulnerability frames. */
+  absorption = 0;
+  lastDamage = 0;
+  armorPoints = 0;
+  armorToughness = 0;
+  get invulnerableTicks(): number { return this.hurtTime; }
+  set invulnerableTicks(v: number) { this.hurtTime = v; }
   deathTime = 0;
   limbSwing = 0;
   limbAmount = 0;
@@ -125,6 +138,10 @@ export class Mob extends Entity {
   provoked = false;
   /** Ticks since the player last hurt this mob (player-kill drops). */
   hurtByPlayer = 0;
+  /** Ticks of fire left from Fire Aspect or a Flame arrow (1 damage a second). */
+  igniteTicks = 0;
+  /** Looting level of the last player weapon that hit it (extra drops). */
+  looting = 0;
   /** Bow draw progress in ticks (skeleton). */
   aimTicks = 0;
   age = 0;
@@ -196,6 +213,7 @@ export class Mob extends Entity {
     super(type.width, type.height);
     this.health = type.health;
     this.maxHp = type.health;
+    this.armorPoints = NATURAL_ARMOR[type.kind] ?? 0;
     this.yaw = Math.random() * Math.PI * 2;
     this.prevYaw = this.yaw;
   }
@@ -241,10 +259,10 @@ export class Mob extends Entity {
   }
 
   /** Damage from the player, an arrow or an explosion; knockback away from (fromX, fromZ). */
-  hurt(amount: number, fromX: number, fromZ: number, knockback = 1, byPlayer = false, attacker: AiTarget | null = null): boolean {
-    if (this.dead || this.hurtTime > 0) return false;
-    this.health -= amount;
-    this.hurtTime = 10;
+  hurt(amount: number, fromX: number, fromZ: number, knockback = 1, byPlayer = false, source?: DamageSource, attacker: AiTarget | null = null): boolean {
+    if (this.dead) return false;
+    // Same pipeline as the player: invulnerability frames (a bigger hit still counts for the difference), armor, hooks.
+    if (!dealDamage(this, source ?? { kind: byPlayer ? 'player' : 'generic', byPlayer }, amount).hurt) return false;
     if (byPlayer) {
       this.hurtByPlayer = 100;
       this.provoked = true;

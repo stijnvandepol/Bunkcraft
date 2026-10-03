@@ -190,6 +190,15 @@ export function paintItemSprite(key: string): HTMLCanvasElement {
     case 'bucket_lava':
       drawBucket(px, ['#ff8a1a', '#ffd23a']);
       break;
+    case 'shield':
+      // Plank face with an iron rim and boss, like the default shield.
+      for (let y = 2; y < 15; y++) for (let x = 3; x < 13; x++) {
+        const edge = x === 3 || x === 12 || y === 2 || (y === 14 && x > 3 && x < 12);
+        if (y > 11 && (x < 3 + (y - 11) || x > 12 - (y - 11))) continue;
+        px(x, y, edge ? (x + y) % 2 ? '#9a9a9a' : '#7a7a7a' : (y % 4 === 0 ? '#7d5a33' : pick(['#a07a48', '#94703f', '#a98352'])));
+      }
+      for (let y = 6; y < 10; y++) for (let x = 6; x < 10; x++) px(x, y, x === 6 || y === 6 ? '#d0d0d0' : '#8e8e8e');
+      break;
     case 'stick':
       for (let i = 0; i < 10; i++) { px(4 + i, 12 - i, '#6e4e2c'); px(5 + i, 12 - i, '#4a3219'); }
       break;

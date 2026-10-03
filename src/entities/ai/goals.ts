@@ -316,7 +316,7 @@ export function meleeStrike(m: Mob, t: NonNullable<Mob['target']>): void {
   if (damage <= 0 || !m.canSee(m.getBlock, t)) return;
   m.attackCooldown = 20;
   if (tm) {
-    if (t.hurt(damage, m.x, m.z, 1, false, m)) m.events?.sound(t, 'hurt');
+    if (t.hurt(damage, m.x, m.z, 1, false, { kind: 'mob', attacker: m.type.name }, m)) m.events?.sound(t, 'hurt');
   } else {
     m.events?.attack(m, damage, t as MobTarget);
   }

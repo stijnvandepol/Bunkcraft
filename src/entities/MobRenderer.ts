@@ -217,13 +217,16 @@ export class MobRenderer {
     }
   }
 
+  /** Options > Entity Distance (0.5–5): scales how far mobs are drawn. */
+  distanceScale = 1;
+
   update(mobs: Mob[], alpha: number, world: World, cam: THREE.Vector3): void {
     const all = this.all;
     this.frame++;
     const now = performance.now() / 1000;
     const dt = this.lastTime ? Math.min(0.1, now - this.lastTime) : 0;
     this.lastTime = now;
-    const cullR = this.fogFar.value + 8;
+    const cullR = (this.fogFar.value + 8) * this.distanceScale;
     const cull2 = cullR * cullR;
     const shadowR2 = Math.min(cull2, 48 * 48);
     let shadows = 0;

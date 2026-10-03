@@ -688,7 +688,7 @@ export class AudioEngine {
   private gunRecipe(weapon: string, v: number): void {
     const p = 0.95 + Math.random() * 0.1;
     // Far shots: only the crack (one voice); the body and thump are inaudible at that range anyway.
-    if (this.synth.level < 0.5 && weapon !== 'sniper' && weapon !== 'shotgun') {
+    if (this.synth.level < 0.5 && weapon !== 'sniper' && weapon !== 'shotgun' && weapon !== 'revolver') {
       this.noiseBurst(weapon === 'pistol' ? 2400 : 2800 * p, 0.8, 0.06, v * 0.6);
       return;
     }
@@ -716,6 +716,21 @@ export class AudioEngine {
         this.noiseBurst(350, 0.4, 0.55, v * 0.9, 'lowpass');
         this.voice('sine', 80, 28, 0.45, v * 1.0);
         this.noiseBurst(600, 0.5, 0.4, v * 0.25, 'lowpass', 0.12);
+        break;
+      case 'dmr':
+        this.noiseBurst(2600 * p, 0.6, 0.1, v * 0.8);
+        this.noiseBurst(420, 0.5, 0.25, v * 0.7, 'lowpass');
+        this.voice('sine', 110 * p, 40, 0.2, v * 0.8);
+        break;
+      case 'burst':
+        this.noiseBurst(2800 * p, 0.7, 0.06, v * 0.6);
+        this.noiseBurst(600, 0.6, 0.08, v * 0.4, 'lowpass');
+        this.voice('sine', 160 * p, 60, 0.07, v * 0.5);
+        break;
+      case 'revolver':
+        this.noiseBurst(1800 * p, 0.6, 0.12, v * 0.9);
+        this.noiseBurst(380, 0.5, 0.3, v * 0.8, 'lowpass');
+        this.voice('sine', 95 * p, 36, 0.25, v * 0.9);
         break;
       case 'pistol':
         this.noiseBurst(2600 * p, 0.8, 0.06, v * 0.6);
@@ -767,6 +782,33 @@ export class AudioEngine {
       this.voice('sine', 1318, 1318, 0.28, 0.32);
       this.voice('sine', 1760, 1760, 0.32, 0.3, 0.08);
       this.voice('triangle', 2637, 2637, 0.2, 0.12, 0.08);
+    });
+  }
+
+  /**
+   * Arcade objective cue (flag taken, zone captured, round won ...): `good` = your side gained, `bad` = it lost,
+   * `alarm` = your flag is on the move, `neutral` = something to notice (the hill moved, a round starts).
+   */
+  playModeCue(kind: 'good' | 'bad' | 'alarm' | 'neutral'): void {
+    this.emit(`arcade.cue.${kind}`, NaN, NaN, NaN, 0.35);
+    this.placed(undefined, 0, Priority.Ui, () => {
+      if (kind === 'good') {
+        this.voice('triangle', 784, 784, 0.16, 0.26);
+        this.voice('triangle', 988, 988, 0.16, 0.26, 0.1);
+        this.voice('triangle', 1319, 1319, 0.3, 0.24, 0.2);
+      } else if (kind === 'bad') {
+        this.voice('triangle', 659, 659, 0.18, 0.24);
+        this.voice('triangle', 523, 523, 0.18, 0.24, 0.12);
+        this.voice('triangle', 392, 392, 0.32, 0.22, 0.24);
+      } else if (kind === 'alarm') {
+        for (let i = 0; i < 3; i++) {
+          this.voice('square', 880, 880, 0.12, 0.12, i * 0.24);
+          this.voice('square', 660, 660, 0.12, 0.12, i * 0.24 + 0.12);
+        }
+      } else {
+        this.voice('sine', 1047, 1047, 0.22, 0.22);
+        this.voice('sine', 1568, 1568, 0.3, 0.16, 0.09);
+      }
     });
   }
 

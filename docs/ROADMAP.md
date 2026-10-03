@@ -84,7 +84,7 @@ wat al is doorgevoerd.
    - Nog te doen op deze basis: **ladders, muurfakkels, gewassen** (groeifase in `meta`), **oven met een richting** (en een brandende staat), **bed** (2 blokken), vallend zand en grind, waterlogged slabs, stroming die entities meeduwt, lava-fakkels/vuur, trapdoors en hekken (zelfde `partial`-machinerie).
    - Bewust anders dan Minecraft: de trapvorm wordt afgeleid uit de buren (niet opgeslagen) en lava vertraagt niet willekeurig (`random.nextInt(4)`).
 5. **Landbouw (M):** saplings (**gedaan**), tarwe, brood en een schoffel. Hernieuwbaar hout en voedsel.
-6. **Meer survival-inhoud (M):** harnas met een armor-bar: **Gedaan** (zie §4b). XP-orbs met een XP-balk. Skeleton (schiet elke 2 s, verbrandt in daglicht; drops botten en pijlen) en spin (klimt, springt, neutraal in fel licht; drops draad en spinnenoog met Poison) zijn **Gedaan**.
+6. **Meer survival-inhoud (M):** harnas met een armor-bar: **Gedaan** (zie §4b). XP-orbs met een XP-balk, enchanting, anvil en grindstone: **Gedaan** (zie §4c). Skeleton (schiet elke 2 s, verbrandt in daglicht; drops botten en pijlen) en spin (klimt, springt, neutraal in fel licht; drops draad en spinnenoog met Poison) zijn **Gedaan**.
 7. **Structuren (M per stuk):** dungeon met spawner en kisten, mijnschachten, later dorpen.
 8. **Eindspel (L):** een "Underworld"-dimensie of een stronghold met een eindbaas en credits.
 
@@ -98,10 +98,34 @@ Ontwerp, tellingen en tier-lijst: [`CONTENT.md`](CONTENT.md). **Gedaan:**
 - **`ItemStack.data`** (enchants en dergelijke) is er, wordt opgeslagen en over het netwerk meegestuurd; stapels met verschillende data voegen nooit samen.
 - Harnas (armor-balk, schadeformule, slijtage), schoffel, schaar, tooluse (akkergrond, paden, strippen, pompoen snijden), kist (27 slots), bed, ladder.
 - Creative inventory met tabs, scrollen, zoeken en tooltips; receptenboek met tabs en zoeken; ~420 recepten.
-- **Nog te doen (tier 2):** landbouw (tarwe, wortels en aardappels, hoofdreden dat brood, koekjes en modderstenen nog niet te maken zijn), enchanting, brouwen, smithing en
-  netherite, anvil, grindstone, blast furnace, smoker, schild, hengel, kaarsen, banners, koraal, ruitjes met doorzichtigheid (gekleurd glas is alpha-getest),
+- **Nog te doen (tier 2):** landbouw (tarwe, wortels en aardappels, hoofdreden dat brood, koekjes en modderstenen nog niet te maken zijn), brouwen, smithing en
+  netherite, blast furnace, smoker, schild, hengel, kaarsen, banners, koraal, ruitjes met doorzichtigheid (gekleurd glas is alpha-getest),
   kisten in multiplayer, een echte kist-animatie, kisten met richting-afhankelijke dubbele variant, vallend zand en grind, en dat de worldgen de nieuwe blokken
   (graniet, diorite, andesiet, tuff, calciet, deepslate, nieuwe ertsen, bloemen, junglebomen) nog moet plaatsen.
+
+## 4c. Ervaring en enchanting (klaar)
+
+Screenshots: `docs/screenshots/xp-bar-orbs.png`, `enchanting-table.png`, `sword-tooltip.png`, `anvil.png`, `grindstone.png`, `enchant-blocks.png`
+(`scripts/enchant-shots.py`).
+
+- **XP:** `src/player/Experience.ts` (formules van de wiki, getest per tabelwaarde), orbs als entity (`src/entities/XpOrb.ts`, 11 groottes,
+  aantrekking binnen 8 blokken, samenvoegen, 5 minuten levensduur, pulserend groen/geel, `XpOrbRenderer`: één draw call). Bronnen: mobs
+  (monsters 5, dieren 1–3), ertsen (kolen 0–2, lapis 2–5, redstone 1–5, diamant en smaragd 3–7, niet met Silk Touch), oven (via de
+  `onFurnaceXp`-hook van de block entities: orbs bij de speler), grindstone. Hooks: `awardXp(entities, x, y, z, n)`, `breedingXp`, `fishingXp`,
+  `SMELT_XP`. XP-balk en level boven de hotbar, plingetje bij oppakken, klokje elk 5e level. Dood: `min(7 × level, 100)` als orbs
+  (een `keepInventory`-gamerule op `WorldMeta.rules` slaat dit over). Opgeslagen als `stats[5]` (punten) en `stats[6]` (enchant-seed).
+- **Enchantments:** 25 stuks (`src/items/EnchantRules.ts`) met vanilla max-levels, conflicten, gewichten en anvil-kosten; effecten op
+  breken (Efficiency, Aqua Affinity, Silk Touch, Fortune), drops (Looting, brandende dieren laten gebakken vlees vallen), melee (Sharpness,
+  Smite, Bane, Knockback, Fire Aspect), boog (Power, Punch, Flame, Infinity), slijtage (Unbreaking), harnas (Protection-familie als `post`-modifier via
+  `registerDamageModifier` in `Damage.ts`, Thorns, Respiration, Depth Strider) en Mending. Paarse glint op iconen (CSS-mask), hotbar, hand en
+  gevallen items (shader); tooltips met romeinse cijfers, aqua naam, cursief bij een eigen naam.
+- **Blokken:** enchanting table (250), anvil (251, met chipped/damaged als variant, 12% slijtage per gebruik) en grindstone (252) als
+  box-modellen met procedurele textures, recepten en creative-items. Enchanting table: boekenkasten in de 5×5-ring (max 15), drie aanbiedingen
+  met Minecraft's algoritme, seed per speler, glyph-tekst. Anvil: repareren met materiaal, combineren, boeken, hernoemen, prior-work-straf,
+  "Too Expensive!" vanaf 40. Grindstone: haalt enchantments weg en geeft XP terug. `/enchant <naam> [level]` en `/xp <n>[L]` (creative).
+- **Nog te doen:** Sweeping Edge heeft geen effect zolang er geen sweep-aanval is; de vloeken (Binding, Vanishing), Frost Walker, Soul Speed,
+  Swift Sneak en alles van kruisboog, trietand en hengel; een zwevend boek op de enchanting table en glyph-deeltjes van de boekenkasten; de
+  server bewaakt XP niet (de client stuurt zijn punten mee, zoals health); dood-XP en erts-XP zijn in multiplayer lokale orbs; creative-tab met kant-en-klare enchanted books.
 
 ## 5. Sfeer
 
@@ -133,6 +157,8 @@ Nog open: gebakken buffers voor veelgebruikte geluiden (minder CPU), geluiden va
 - **Werkende keybind-remapping:** **Gedaan.** Key Binds-scherm zoals Minecraft 1.21 (categorieën, `> key <`, Esc = Not Bound, conflicten rood, Reset Keys); toetsen en muisknoppen, opgeslagen in `bunkcraft.settings`. Centrale tabel in `src/core/Keybinds.ts`.
 - **Contexthints en ontdekken van recepten (S):** voor nieuwe spelers.
 - **Toegankelijkheid (S–M):** **Gedaan** (zie `docs/CONTROLS.md`): ondertitels met richtingspijlen, reduced motion (default uit `prefers-reduced-motion`), reduce flashes (`limitFlash`/`FlashLimiter` in `src/core/Accessibility.ts` voor de weer-ontwikkelaar), kleurenblind-veilig palet, hoog contrast (ook `prefers-contrast`/`forced-colors`), tekstgrootte, hold/toggle voor sneak, sprint, attack en use, FOV-effecten, stick-curve, menu-herhaalvertraging, `role=dialog`, aria-live en echte `<button>`s. **Nog open:** patronen/iconen op teamkleuren (nu alleen palet), ondertitels voor blokgeluiden, volledige screenreader-tekst voor de inventaris.
+- **UI op Minecraft 1.21-niveau:** **Gedaan** (zie [`docs/UI.md`](UI.md)): Nederlands/Engels (`src/ui/i18n.ts`), Language-, Mouse- en Chat Settings-schermen, Max Framerate/Entity Distance/FOV Effects/Attack Indicator/Auto-Jump/Raw Input, chatgeschiedenis en `/`-aanvulling, Allow Cheats en chat in singleplayer, Statistics, laadscherm met tips, F3 zoals 1.21, effect-hearts, inventory-sneltoetsen, en een screenshot- en pixel-diff-suite (`scripts/ui-shots.py`).
+- **UI vervolg (S–M):** drag-split en muiswiel in de inventory, 2×2 crafting-raster, offhand-slot en speler-preview (eerst API afstemmen met furnace/enchanting), toegankelijkheidsknop op het titelscherm, overige schermen vertalen (sleutels toevoegen aan `i18n.ts`), aanvals-cooldown koppelen aan `hud.setAttackCharge`.
 - **`navigator.storage.persist()`:** **Gedaan.** Safari wist anders werelden na 7 dagen zonder bezoek.
 - **Gamepad (M):** **Gedaan.** Standard mapping, dode zone en curve, menunavigatie met focusring, hot-plug, rumble, Controller Settings, southpaw. **Nog open:** knoppen herbinden in de UI en een muiscursor voor de inventaris.
 - **Touchbediening (L):** **Gedaan.** Zwevende joystick, kijken door slepen, tikken om te gebruiken en vasthouden om te breken, knoppen, hotbar tikken en vegen, auto-jump, arcade-knoppen, safe-area, fullscreen en oriëntatiehint. **Nog open:** test op echte toestellen, aim-assist voor arcade (staat bewust uit) en haptics op telefoons.
@@ -185,6 +211,14 @@ regenereert, respawns en een scoreboard. Beschrijving, besturing en wapentabel: 
 - **Naamtags: Gedaan.** Nooit door muren, met zichtlijn-raycast en fade.
 - **Spectaten na je dood: Gedaan.** Moordenaar eerst, daarna bladeren met de muis.
 - **Teambalans: Gedaan.** Late joiners naar het kleinste team; bij vertrek wisselt de laatste joiner bij de volgende respawn.
+- **Modeframework: Gedaan.** `GameTypeDef` (data) + `ModeLogic` per mode in `server/modes/`; rondefases (warm-up, countdown,
+  live, roundend, intermission, ended); Create Game toont modes, limieten en kaarten uit de registry.
+- **Nieuwe modes: Gedaan.** Gun Game, Team Elimination, Hardpoint, Domination en Capture the Flag, met objective-HUD (markeringen
+  door muren, scorebalk, vlagstatus, rondepips, ladder), vlagmodellen, geluidscues, Vitest per mode en `scripts/modes-bots.ts`.
+- **Kaartobjectives: Gedaan.** Zones en/of vlaggen op Classic, Maple Court, Old Quarter, Harbor Yard en Atomic Lane, plus de
+  nieuwe CTF-kaart Bunker Flag.
+- **Wapenherziening: Gedaan.** Shotgun 10 × 13 (one-shot dichtbij), SMG 15, nieuwe DMR, burst rifle en revolver, klassen in het
+  loadoutmenu.
 
 **Open:**
 
@@ -193,10 +227,14 @@ regenereert, respawns en een scoreboard. Beschrijving, besturing en wapentabel: 
 2. **Meer kaarten en varianten:** per kaart meerdere dekkingsindelingen via de seed (nu alleen Classic), een stemronde voor de
    volgende kaart in plaats van vast `rotate`, en bij een kaartwissel de wereld ter plekke herbouwen (nu een korte
    herverbinding met laadscherm).
-3. **Meer wapens en perks**, scorestreaks, kill cam, headshot-statistieken, teamchat.
-4. **Lag compensation** voor hitscan (server) en client-side tracer-voorspelling tegen spelers.
-5. **Bots** voor lege servers, en een snelle "Quick Play"-knop die een open arcade-game zoekt.
-6. **Mobiel:** touchbediening voor schieten en richten (hoort bij de touch-taak in 6).
+3. **Meer modes:** Infected en Block Hunt (onderzoek §2.4), Search & Destroy op een asymmetrische kaart (Foundry), en
+   Domination/Hardpoint-varianten per kaart (meer zones op kleine kaarten, spawnkeuze weg van de actieve heuvel).
+4. **Objective-afwerking:** dragerpijl met interval voor de vijand, MVP-punten (dragerkill, terugbrengen), overtime bij een
+   gelijkspel in ctf, rondes met zijwissel, granaten voor elimination, de vlag als echt derde-persoonsmodel op de rug.
+5. **Meer wapens en perks**, scorestreaks, kill cam, headshot-statistieken, teamchat.
+6. **Lag compensation** voor hitscan (server) en client-side tracer-voorspelling tegen spelers.
+7. **Bots** voor lege servers, en een snelle "Quick Play"-knop die een open arcade-game zoekt.
+8. **Mobiel:** touchbediening voor schieten en richten (hoort bij de touch-taak in 6).
 
 ## 8. Distributie
 
@@ -224,7 +262,17 @@ ertsaders, `genVersion` voor bestaande werelden).
    `RandomTicker.register` en `registerBoneMeal`), vuur, sneeuwlagen (geen blok), bamboe/kelp/vines (geen blokken), grote 2×2-bomen (dark oak, jungle,
    spruce), big oak, de `/gamerule randomTickSpeed`-UI (setter: `RandomTicker.setSpeed`, server: `ServerEntities.setRandomTickSpeed`), geluid bij landen.
 2. Block entities (kisten, ovens, spawners) met opslag per wereld en server-sync. **Gedaan voor kist, dubbele kist en oven** (singleplayer save v4, `world.json` op de server, `container`-protocol); spawner, bord, bed en banner kunnen zich registreren met `registerBlockEntityKind`.
-3. Eén centrale schade-pijplijn (moeilijkheidsgraad, harnas, effecten, enchantments).
+3. Eén centrale schade-pijplijn (moeilijkheidsgraad, harnas, effecten, enchantments). **Gedaan** (zie `GAMEPLAY.md`):
+   `Damage.ts` met difficulty, i-frames, schild, harnas, Resistance, enchant-hooks en absorption; game rules en
+   difficulty per wereld (UI, `/difficulty`, `/gamerule`); 1.9+-gevecht (cooldown, crits, sweep, server-check);
+   bedden met spawnpunt en slapen (multiplayer-regel); statuseffecten met HUD en `/effect`; schild.
+   **Nog open:** enchantments vullen `registerDamageModifier` (Protection, Feather Falling, Sharpness via
+   `meleeDamage.enchantBonus`, Sweeping Edge via `sweepDamage(…, edge)`); Night Vision/Invisibility renderen;
+   blok-pose en model van het schild in de hand; bijl-mobs/PvP voor het uitschakelen van schilden; doodsberichten in
+   multiplayer-chat (de server ziet de dood niet: health is client-autoritatief); zombies die deuren breken op Hard;
+   Easy-specifieke mobregels (cave spiders); `difficulty`/`rules`/`bed`/`effects` in `.bunkworld`-export;
+   slapen versnelt nu direct naar de ochtend
+   (geen tijd-animatie) en de server kent geen fase "iedereen in bed maar nog geen 100 ticks" in de HUD.
 
 **Fase 1, early game loop:** ~~saplings en bladverval~~ (gedaan), landbouw (schoffel, farmland, tarwe, brood, bone meal), bed met
 spawnpunt en nacht overslaan, difficulty en game rules, harnas, attack cooldown met crits en sweep, kist met loot-tabellen,
@@ -268,9 +316,10 @@ cave spider, witch (drankje = vergif als placeholder), paard (minimaal rijden in
 mobs, blob-schaduwen, nieuwe geluiden en ondertitels, server-sync (`NET_MOB_KINDS` uitgebreid, vlaggen en variant-byte).
 
 **Open, op volgorde:**
-1. Effecten koppelen zodra het effectensysteem er is: witch-drankjes (slowness, weakness, harming), stray-pijlen
-   (slowness), husk-honger, melk die effecten wist.
-2. XP-bollen bij fokken (`MobEvents.xp` → `awardXp`) en mob-drops naar `rollLoot` (`src/items/Loot.ts`).
+1. Effecten zijn gekoppeld (`MobEffects.ts`: cave-spider-vergif, husk-honger, stray-slowness, witch-drankjes) en
+   fokken geeft XP-bollen. Open: melk drinken die effecten wist, witch die zelf drankjes drinkt, de server kent de
+   gezondheid van de speler niet (witch kiest dan als bij volle gezondheid).
+2. Mob-drops naar `rollLoot` (`src/items/Loot.ts`).
 3. Getemde wolven en paarden opslaan in de wereld (nu verdwijnen ze bij afsluiten; ze blijven wel geladen zolang je
    speelt) en rijden in multiplayer (de server moet de paardsnelheid toestaan).
 4. Deuren in het pad zoeken (openen door zombies op Hard), enderman die blokken oppakt, wolf-bedel-goal, paard-

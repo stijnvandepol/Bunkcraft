@@ -226,6 +226,9 @@ export class Input {
     return this.pressed.has(code);
   }
 
+  /** Raw (unaccelerated) mouse input where supported; the Options > Mouse Settings toggle. */
+  rawInput = true;
+
   async requestLock(): Promise<void> {
     if (this.locked) return;
     if (this.softLock) {
@@ -234,7 +237,7 @@ export class Input {
     }
     try {
       // Raw (unaccelerated) mouse input where supported: lower latency, 1:1 aim.
-      await (this.canvas.requestPointerLock as (o?: { unadjustedMovement?: boolean }) => Promise<void>)({ unadjustedMovement: true });
+      await (this.canvas.requestPointerLock as (o?: { unadjustedMovement?: boolean }) => Promise<void>)({ unadjustedMovement: this.rawInput });
     } catch {
       try {
         await this.canvas.requestPointerLock();

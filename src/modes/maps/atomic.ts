@@ -194,6 +194,19 @@ export const ATOMIC: FreeArenaMapDef = {
   blueSpawns: RED_SPAWNS.map(turn),
   ffaSpawns: [...FFA_WEST, ...FFA_WEST.map(turn)],
   highGround: [[-25, 10], turn([-25, 10])],
+  objectives: {
+    // Point symmetric like the layout: every zone has its twin turned 180° around the roundabout.
+    zones: [
+      { name: 'Roundabout', x: 0, z: 0, r: 5 },
+      { name: 'Yellow Kerb', x: -10.5, z: 10.5, r: 4 },
+      { name: 'Green Kerb', x: 10.5, z: -10.5, r: 4 },
+      { name: 'Bus Stop', x: -6.5, z: -18.5, r: 4 },
+      { name: 'Truck', x: 6.5, z: 18.5, r: 4 },
+    ],
+    dominationZones: [0, 1, 2],
+    // In the side yard of each house, out of sight of the other house.
+    flags: [{ team: 'red', x: -24.5, z: -20.5 }, { team: 'blue', x: 24.5, z: 20.5 }],
+  },
   build(variant, b) {
     const { box, paint } = b;
 

@@ -8,9 +8,17 @@ import { initMob } from './MobInit';
 import { MOB_TYPES, type MobKind } from './MobTypes';
 import { MobSpawner, SPAWN, hostileDespawns } from './MobSpawner';
 import { PrimedTnt, TNT_FUSE } from './PrimedTnt';
+import { XpOrb, mergeOrbs } from './XpOrb';
+import { mobXp, splitXp } from '../player/Experience';
+import { lootingExtra } from '../items/EnchantRules';
 
 const MAX_ITEMS = 160;
 const MAX_ARROWS = 128;
+const MAX_ORBS = 160;
+/** Raw meat a burning animal drops cooked (Minecraft). */
+const COOKED: Record<number, number> = {
+  [ITEM.PORKCHOP]: ITEM.COOKED_PORKCHOP, [ITEM.BEEF]: ITEM.STEAK, [ITEM.MUTTON]: ITEM.COOKED_MUTTON, [ITEM.CHICKEN]: ITEM.COOKED_CHICKEN,
+};
 
 /** What entities need from a world: the client's World and the server's ServerWorld both fit. */
 export interface EntityWorld {
@@ -50,6 +58,12 @@ export class EntityManager implements MobWorld {
   readonly items: ItemEntity[] = [];
   readonly tnt: PrimedTnt[] = [];
   readonly arrows: Arrow[] = [];
+  /** Experience orbs (local ones and, in multiplayer, mirrors of the server's). */
+  readonly orbs: XpOrb[] = [];
+  /** Gives the player the experience of a local orb it touched (null = nobody collects: the server). */
+  xpPickup: ((value: number) => void) | null = null;
+  /** Multiplayer client: asks the server for a nearby server orb. */
+  xpTakeHook: ((orb: XpOrb) => void) | null = null;
   /**
    * All players the mobs may target (multiplayer server). Empty = the single `target`
    * passed to tick(). Each mob and arrow picks the nearest one.
@@ -78,6 +92,10 @@ export class EntityManager implements MobWorld {
   private readonly playerAttackers = new Map<number, { mob: Mob; time: number }>();
   private wrappedFor: MobEvents | null = null;
   private wrapped: MobEvents | null = null;
+  /** Peaceful difficulty: hostile mobs are removed and do not spawn. */
+  peaceful = false;
+  /** The doMobSpawning game rule: false stops the natural top-up spawning (chunk generation herds stay). */
+  spawningEnabled = true;
   /** Multiplayer v1 is peaceful: mobs are not yet simulated by the server. */
   passiveSpawning = true;
 
@@ -95,6 +113,7 @@ export class EntityManager implements MobWorld {
     this.items.length = 0;
     this.tnt.length = 0;
     this.arrows.length = 0;
+    this.orbs.length = 0;
     this.spawnedChunks.clear();
   }
 
@@ -146,6 +165,8 @@ export class EntityManager implements MobWorld {
         log.set(target.id ?? 0, { mob, time: this.time });
         events.attack(mob, damage, target);
       },
+      // Breeding XP becomes experience orbs (singleplayer and server alike).
+      xp: events.xp ?? ((x, y, z, amount) => this.spawnXp(x, y, z, amount)),
     };
     return this.wrapped;
   }
@@ -167,6 +188,33 @@ export class EntityManager implements MobWorld {
       e.vy = 3 + Math.random() * 2;
     }
     this.items.push(e);
+  }
+
+  /**
+   * Spawns `amount` experience as orbs (split into Minecraft's orb values) with a small random hop. Used for mob kills,
+   * ores, smelting (see `awardXp`), the grindstone and death drops.
+   */
+  spawnXp(x: number, y: number, z: number, amount: number): void {
+    if (!(amount > 0)) return;
+    for (const value of splitXp(amount)) {
+      if (this.orbs.length >= MAX_ORBS) {
+        // Full: the value goes into the nearest orb instead of being lost.
+        let best: XpOrb | null = null, bd = Infinity;
+        for (const o of this.orbs) {
+          if (o.removed || o.remote) continue;
+          const d = Math.hypot(o.x - x, o.y - y, o.z - z);
+          if (d < bd) { bd = d; best = o; }
+        }
+        if (best) { best.value += value; continue; }
+      }
+      const o = new XpOrb(value);
+      o.setPosition(x, y, z);
+      o.netId = this.nextNetId++;
+      o.vx = (Math.random() - 0.5) * 2.5;
+      o.vz = (Math.random() - 0.5) * 2.5;
+      o.vy = 2 + Math.random() * 2;
+      this.orbs.push(o);
+    }
   }
 
   /** Lights TNT at a block position (the block itself must already be removed). */
@@ -245,14 +293,15 @@ export class EntityManager implements MobWorld {
       targets = this.single;
     }
 
-    if (this.hostileSpawning || this.passiveSpawning) {
+    if ((this.hostileSpawning || this.passiveSpawning) && this.spawningEnabled) {
       this.spawner.recount();
-      if (this.hostileSpawning) this.spawner.tickHostile(targets, darkness);
+      if (this.hostileSpawning && !this.peaceful) this.spawner.tickHostile(targets, darkness);
       if (this.passiveSpawning) this.spawner.tickPassive(targets, darkness, this.tickCount);
     }
 
     for (const m of this.mobs) {
       if (m.removed || m.remote) continue;
+      if (this.peaceful && m.type.hostile) { m.removed = true; continue; }
       // Each mob follows the nearest player.
       let nearest = targets[0], d = Infinity;
       for (const t of targets) {
@@ -278,9 +327,28 @@ export class EntityManager implements MobWorld {
       }
       if (m.burning > 0) m.burning--;
       if (m.inLava && this.tickCount % 10 === 0) m.hurt(4, m.x, m.z, 0);
+      // Set on fire (Fire Aspect, Flame): 1 damage a second until it runs out or the mob reaches water.
+      if (m.igniteTicks > 0) {
+        if (m.inWater) m.igniteTicks = 0;
+        else {
+          m.igniteTicks--;
+          m.burning = Math.max(m.burning, 2);
+          if (m.igniteTicks % 20 === 0 && !m.dead) m.hurt(1, m.x, m.z, 0, m.hurtByPlayer > 0);
+        }
+      }
       if (m.dead && m.deathTime === 1) {
-        // Babies drop nothing (Minecraft), big slimes split into 2-4 smaller ones.
-        if (!m.baby) for (const s of m.type.drops(m.hurtByPlayer > 0, m)) this.dropItem(s, m.x, m.y + 0.5, m.z);
+        const byPlayer = m.hurtByPlayer > 0;
+        const onFire = m.burning > 0 || m.igniteTicks > 0;
+        // Babies drop nothing and give no XP (Minecraft), big slimes split into 2-4 smaller ones.
+        if (!m.baby) {
+          for (const s of m.type.drops(byPlayer, m)) {
+            // Looting adds up to its level to every drop; burning animals drop cooked meat.
+            if (byPlayer && m.looting > 0) s.count += lootingExtra(m.looting);
+            if (onFire && COOKED[s.id]) s.id = COOKED[s.id];
+            this.dropItem(s, m.x, m.y + 0.5, m.z);
+          }
+          if (byPlayer) this.spawnXp(m.x, m.y + 0.5, m.z, mobXp(m.type.kind, m.type.hostile));
+        }
         if (m.type.kind === 'slime' && m.size > 1) this.splitSlime(m);
         events.sound(m, 'death');
         if (m.hurtByPlayer > 0) events.killed(m);
@@ -333,6 +401,27 @@ export class EntityManager implements MobWorld {
     // Merge nearby identical stacks (fewer entities, like Minecraft).
     if (this.tickCount % 10 === 0) this.mergeItems();
 
+    for (const o of this.orbs) {
+      if (o.removed) continue;
+      if (o.remote) {
+        if (this.xpTakeHook && o.canPickUp(target.x, target.y, target.z)) this.xpTakeHook(o);
+        continue;
+      }
+      // Each orb flies to the nearest player within range (the player, or every player on a server).
+      let goal: MobTarget | null = null, gd = Infinity;
+      for (const t of targets) {
+        if (t.collects === false) continue;
+        const d = Math.hypot(t.x - o.x, t.y - o.y, t.z - o.z);
+        if (d < gd) { gd = d; goal = t; }
+      }
+      o.tick(getBlock, goal);
+      if (this.xpPickup && goal === targets[0] && o.canPickUp(target.x, target.y, target.z) && o.age > 2) {
+        this.xpPickup(o.value);
+        o.removed = true;
+      }
+    }
+    if (this.tickCount % 5 === 0) mergeOrbs(this.orbs);
+
     this.compact();
   }
 
@@ -355,7 +444,8 @@ export class EntityManager implements MobWorld {
 
   private readonly onArrowHitMob = (a: Arrow, m: Mob, damage: number): void => {
     // Knockback along the arrow's flight direction.
-    if (m.hurt(damage, a.x - a.vx * 4, a.z - a.vz * 4, 0.5, a.fromPlayer)) this.events?.sound(m, 'hurt');
+    if (a.fromPlayer && a.flame) m.igniteTicks = Math.max(m.igniteTicks, 100);
+    if (m.hurt(damage, a.x - a.vx * 4, a.z - a.vz * 4, 0.5 + a.punch, a.fromPlayer)) this.events?.sound(m, 'hurt');
     this.events?.arrowImpact(a);
     if (a.fromPlayer) this.events?.playerArrowHit();
   };
@@ -389,6 +479,7 @@ export class EntityManager implements MobWorld {
     for (let i = this.items.length - 1; i >= 0; i--) if (this.items[i].removed) this.items.splice(i, 1);
     for (let i = this.tnt.length - 1; i >= 0; i--) if (this.tnt[i].removed) this.tnt.splice(i, 1);
     for (let i = this.arrows.length - 1; i >= 0; i--) if (this.arrows[i].removed) this.arrows.splice(i, 1);
+    for (let i = this.orbs.length - 1; i >= 0; i--) if (this.orbs[i].removed) this.orbs.splice(i, 1);
   }
 
   /** Nearest living mob hit by a ray, with distance. */

@@ -20,6 +20,17 @@ export const SUBURB: ArenaMapDef = {
   teamSpawns: [[28, 3], [26, 6], [28, 8], [27, 14]],
   ffaSpawns: [[10, 5], [20, 7], [21, 16], [6, 16]],
   highGround: [[21, 4]],
+  objectives: {
+    // Small map: hills on the street only, never in the gardens next to the spawns.
+    zones: [
+      { name: 'Van', x: 0, z: 6, r: 5 },
+      { name: 'West Kerb', x: -9.5, z: 10.5, r: 4 },
+      { name: 'East Kerb', x: 9.5, z: 10.5, r: 4 },
+      { name: 'West Corner', x: -8.5, z: -12.5, r: 4 },
+      { name: 'East Corner', x: 8.5, z: -12.5, r: 4 },
+    ],
+    dominationZones: [0, 1, 2],
+  },
   build(_variant, b) {
     const { box, paint } = b;
 

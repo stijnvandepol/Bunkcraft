@@ -4,6 +4,7 @@ import { ItemEntity } from '../entities/ItemEntity';
 import { Mob } from '../entities/Mob';
 import { MOB_TYPES } from '../entities/MobTypes';
 import { PrimedTnt } from '../entities/PrimedTnt';
+import { XpOrb } from '../entities/XpOrb';
 import { MOB_FLAG, NET_MOB_KINDS, type ServerMessage } from './protocol';
 
 /** Entities are drawn this far in the past so two 10 Hz snapshots always bracket the frame. */
@@ -20,6 +21,7 @@ interface Track<T> {
 }
 
 type EntMessage = Extract<ServerMessage, { t: 'ent' }>;
+type OrbMessage = Extract<ServerMessage, { t: 'orbs' }>;
 
 /**
  * Mirrors the server's mobs, dropped items, arrows and lit TNT as `remote` entities inside the
@@ -31,6 +33,7 @@ export class NetEntities {
   private readonly items = new Map<number, Track<ItemEntity>>();
   private readonly arrows = new Map<number, Track<Arrow>>();
   private readonly tnt = new Map<number, Track<PrimedTnt>>();
+  private readonly orbs = new Map<number, Track<XpOrb>>();
 
   constructor(private readonly entities: EntityManager) {}
 
@@ -129,6 +132,43 @@ export class NetEntities {
     this.prune(this.tnt, seen, (e) => { e.removed = true; });
   }
 
+  /** Experience orbs (their own message, see protocol `orbs`): the list replaces what the client knows. */
+  applyOrbs(msg: OrbMessage, now: number): void {
+    const seen = new Set<number>();
+    for (const [id, value, x, y, z] of msg.o) {
+      seen.add(id);
+      let tr = this.orbs.get(id);
+      if (!tr) {
+        const orb = new XpOrb(value);
+        orb.remote = true;
+        orb.netId = id;
+        orb.setPosition(x, y, z);
+        this.entities.orbs.push(orb);
+        tr = { entity: orb, buffer: [], lastTake: 0 };
+        this.orbs.set(id, tr);
+      }
+      tr.entity.value = value;
+      this.push(tr, now, x, y, z, 0);
+    }
+    this.prune(this.orbs, seen, (e) => { e.removed = true; });
+  }
+
+  /** Throttled pickup request for an orb. */
+  shouldTakeOrb(orb: XpOrb, now: number): boolean {
+    const tr = this.orbs.get(orb.netId);
+    if (!tr || now - tr.lastTake < TAKE_INTERVAL) return false;
+    tr.lastTake = now;
+    return true;
+  }
+
+  /** The server gave us this orb: drop the mirror. */
+  orbTaken(id: number): void {
+    const tr = this.orbs.get(id);
+    if (!tr) return;
+    tr.entity.removed = true;
+    this.orbs.delete(id);
+  }
+
   private push<T>(tr: Track<T>, now: number, x: number, y: number, z: number, yaw: number): void {
     tr.buffer.push({ t: now, x, y, z, yaw });
     if (tr.buffer.length > 6) tr.buffer.shift();
@@ -171,6 +211,12 @@ export class NetEntities {
       if (!s) continue;
       const a = tr.entity;
       a.x = a.prevX = s.x; a.y = a.prevY = s.y; a.z = a.prevZ = s.z;
+    }
+    for (const tr of this.orbs.values()) {
+      const s = this.sample(tr.buffer, renderTime);
+      if (!s) continue;
+      const o = tr.entity;
+      o.x = o.prevX = s.x; o.y = o.prevY = s.y; o.z = o.prevZ = s.z;
     }
     for (const tr of this.tnt.values()) {
       const s = this.sample(tr.buffer, renderTime);
@@ -218,7 +264,7 @@ export class NetEntities {
   }
 
   clear(): void {
-    for (const map of [this.mobs, this.items, this.arrows, this.tnt] as Map<number, Track<{ removed?: boolean }>>[]) {
+    for (const map of [this.mobs, this.items, this.arrows, this.tnt, this.orbs] as Map<number, Track<{ removed?: boolean }>>[]) {
       for (const tr of map.values()) tr.entity.removed = true;
       map.clear();
     }

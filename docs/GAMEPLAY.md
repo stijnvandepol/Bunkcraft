@@ -22,12 +22,105 @@ in BunkCraft zit. Getallen komen uit de Minecraft Wiki, tenzij anders vermeld.
 | Cactus | 1 bij contact |
 | Void | 4 per 0,5 s onder y = −64 (ook in Creative) |
 | Stikken | 1 per 0,5 s met je hoofd in een vast blok |
-| Verhongeren | 1 per 4 s bij honger 0 (in Survival niet onder ½ hartje) |
+| Verhongeren | 1 per 4 s bij honger 0 (Easy tot 10 HP, Normal tot ½ hartje, Hard en Hardcore dodelijk) |
 
 - **Onkwetsbaarheid:** 10 ticks na een treffer. Een zwaardere klap telt alleen voor het verschil.
 - **Uitputting:** sprinten 0,1/m, springen 0,05 (sprint-sprong 0,2), blok breken 0,005, zwemmen 0,01/m, schade 0,1. Elke 4 punten uitputting kost eerst saturatie, daarna honger.
 - **Regeneratie:** 1 HP per 80 ticks bij honger ≥ 18, of per 10 ticks bij volle honger met saturatie.
 - **Sprinten:** niet mogelijk bij honger ≤ 6.
+
+## Schade, moeilijkheid en game rules (Foundation 3)
+
+**Eén schade-pijplijn** (`src/player/Damage.ts`, DOM-vrij, gedeeld door client, server en tests). Alle schade aan speler
+én mobs gaat door `dealDamage` met een getypte `DamageSource` (`mob`, `player`, `arrow`, `explosion`, `fall`, `fire`,
+`lava`, `drown`, `cactus`, `void`, `suffocate`, `starve`, `poison`, `wither`, `magic`, `lightning`, `anvil`, `generic`),
+in de volgorde van Minecraft:
+
+1. game rules (`fallDamage`, `fireDamage`, `drowningDamage`) en Fire Resistance;
+2. moeilijkheid (alleen mob-schade aan de speler): Peaceful ×0, Easy `min(D/2+1, D)`, Normal ×1, Hard ×1,5;
+3. onkwetsbaarheid (10 ticks; een zwaardere klap telt alleen voor het verschil);
+4. schild (`blocked`-hook);
+5. enchantment-hooks fase `pre` (`registerDamageModifier`);
+6. harnas: `schade × (1 − min(20, max(armor/5, armor − 4·schade/(toughness+8)))/25)`, slijtage `max(1, floor(schade/4))` per stuk;
+7. Resistance (−20 % per level; niet tegen void en verhongeren);
+8. enchantment-hooks fase `post` (Protection-types, Feather Falling: `protectionFactor(epf)` helpt);
+9. absorption, dan health.
+
+Doodsberichten volgen Minecraft ("Stijn was slain by Zombie", "was shot by Skeleton", "blew up", "fell from a high
+place", "tried to swim in lava", "withered away", ...). In singleplayer verschijnen ze in de chat (`showDeathMessages`).
+
+**Moeilijkheid** per wereld (Create World, pauzemenu, `/difficulty` voor ops; opgeslagen in `WorldMeta` en `world.json`,
+naar clients via `welcome` en het `rules`-bericht). Hardcore staat altijd op Hard.
+
+| | Peaceful | Easy | Normal | Hard |
+|---|---|---|---|---|
+| Vijandige mobs | verdwijnen, spawnen niet | ja | ja | ja |
+| Mob-schade | 0 | `min(D/2+1, D)` | D | 1,5·D |
+| Honger | vult zich, ~1 HP/s herstel | | | |
+| Verhongeren tot | n.v.t. | 10 HP | ½ hartje | dood |
+
+**Game rules** (`src/world/GameRules.ts`, getypte tabel; alleen afwijkingen worden opgeslagen): `keepInventory`,
+`doMobSpawning`, `doDaylightCycle`, `doWeatherCycle`, `randomTickSpeed`, `naturalRegeneration`, `fallDamage`,
+`fireDamage`, `drowningDamage`, `mobGriefing` (creeper-blokschade; TNT breekt altijd), `showDeathMessages`,
+`playersSleepingPercentage`. `/gamerule <naam> [waarde]` in singleplayer en voor ops op de server; scherm "Game Rules"
+in Create World (tab World) en in het pauzemenu (singleplayer). `randomTickSpeed` stuurt het random-tick-systeem
+(singleplayer `world.randomTicker.speed`, server `setRandomTickSpeed`).
+
+## Gevecht (1.9+)
+
+- **Attack cooldown** (`src/player/Melee.ts`): `T = 20/snelheid` ticks; schade × `0,2 + ((t+0,5)/T)² × 0,8`.
+  Snelheden: zwaard 1,6; bijl hout/steen 0,8, ijzer 0,9, diamant/goud 1,0; houweel 1,2; schop 1,0; schoffel 1–4; hand 4.
+  Wisselen van item of in de lucht slaan reset de cooldown. Een balkje onder het richtkruis toont de lading.
+- **Crit:** vallend, niet sprintend, niet in water en ≥ 84,8 % geladen: ×1,5 met een vonkenregen.
+- **Sprint-knockback:** sprintend met volle lading (nooit samen met een crit of sweep).
+- **Sweep:** zwaard, op de grond, geladen: 1 schade aan mobs binnen 1 blok van het doelwit.
+- **Server:** de server telt de cooldown zelf per speler (laatste klap, laatste itemwissel uit `held`) en schaalt de schade
+  net zo; spam-klikken levert alleen de zwakke klappen op. Crits op de server: niet op de grond, niet sprintend en dalend.
+- **Schild** (id 339, 336 duurzaamheid, 6 planken + 1 ijzer): Use ingedrukt houden (5 ticks opwarmen) blokkeert mob-,
+  pijl- en explosieschade uit een boog van 100° vóór je; je loopt dan op sluipsnelheid. Vanaf 3 schade slijt het
+  schild `1 + floor(schade)`. Een bijl zet het 5 s uit (`onShieldBlock(…, true)`; wacht op PvP of bijl-mobs).
+- **Strength/Weakness** tellen mee (+3 / −4 per level).
+
+## Bedden, spawnpunt en slapen
+
+- Rechtsklik op een bed zet altijd je spawnpunt ("Respawn point set"), per speler opgeslagen (`WorldMeta.bed`,
+  server-record `bed`). Slapen kan alleen 's nachts of bij onweer ("You can only sleep at night") en niet met vijandige
+  mobs binnen 8 blokken horizontaal en 5 verticaal ("You may not rest now, there are monsters nearby").
+- Slapen: het scherm wordt zwart; na 100 ticks wordt het ochtend en klaart het weer op. Sluipen of springen = uit bed.
+- Multiplayer: de server telt slapers; de nacht gaat voorbij zodra `playersSleepingPercentage` (standaard 100 %) van de
+  spelers 100 ticks slaapt. Weglopen van het bed maakt je wakker.
+- Respawn: naast het bed (eerst naast het hoofdeinde), anders bovenop. Is het bed weg of geblokkeerd, dan
+  "Your home bed was missing or obstructed" en terug naar het wereldspawnpunt. `/spawnpoint [naam]` (ops; in
+  singleplayer altijd) zet het spawnpunt op je huidige plek.
+
+## Statuseffecten
+
+`src/player/Effects.ts`: Speed, Slowness, Haste, Mining Fatigue, Strength, Weakness, Instant Health/Damage, Jump Boost,
+Regeneration, Resistance, Fire Resistance, Water Breathing, Invisibility, Night Vision, Hunger, Poison, Wither,
+Absorption, Saturation, Levitation. Amplifier + duur in ticks; een sterker effect vervangt een zwakker, een gelijk
+effect alleen als het langer duurt.
+
+| Effect | Regel |
+|---|---|
+| Regeneration | 1 HP per `50 >> amp` ticks |
+| Poison | 1 schade per `25 >> amp` ticks, nooit onder ½ hartje |
+| Wither | 1 schade per `40 >> amp` ticks, kan doden |
+| Hunger | +0,005 × level uitputting per tick |
+| Saturation | +level honger en saturatie per tick |
+| Instant Health / Damage | `4 << amp` herstel / `6 << amp` schade |
+| Absorption | `4 × level` extra HP (gouden hartjes) zolang het effect duurt |
+| Speed / Slowness | +20 % / −15 % loopsnelheid per level |
+| Haste / Mining Fatigue | +20 % per level / ×0,3, 0,09, 0,0027, 0,00081 mijnsnelheid |
+| Jump Boost | sneller springen, level blokken minder valschade |
+| Levitation | stijgen met 0,9 blok/s per level |
+| Resistance, Fire Resistance, Water Breathing | in de schade-pijplijn en het lucht-systeem |
+| Night Vision, Invisibility | alleen icoon (cosmetisch, nog geen render-effect) |
+
+Iconen met timer rechtsboven (procedureel getekend, laatste 10 s knipperend). Spinnenoog geeft Poison via dit systeem;
+een gouden appel Regeneration II (5 s) en Absorption (2 min). `/effect give|clear` in singleplayer, op de server voor ops
+en in creative. Effecten zijn client-autoritatief (net als health en honger) en gaan mee in `state` en het spelerrecord.
+
+Schermafdrukken: `docs/screenshots/survival-*.png` (`scripts/survival-shots.py`).
 
 ## Mobs
 
@@ -45,10 +138,10 @@ in BunkCraft zit. Getallen komen uit de Minecraft Wiki, tenzij anders vermeld.
 | Enderman | 40 | 0,6×2,9 | neutraal; boos bij 5 ticks aankijken (64 blokken), teleporteert na schade en in water, slaat 7 | 0–1 ender pearl |
 | Slime | 16 / 4 / 1 | 0,52 × grootte | springt, slaat 3 / 2 / 0, splitst in 2–4 kleinere | kleine: 0–2 slimeballs |
 | Drowned | 20 | 0,6×1,95 | zwemt achter je aan, slaat 3, brandt niet | 0–2 rot vlees, 11 % goudstaaf (onzeker) |
-| Husk | 20 | 0,6×1,95 | woestijnzombie, brandt niet | 0–2 rot vlees |
-| Stray | 20 | 0,6×1,99 | skelet van sneeuwgebieden (slowness-pijlen volgen met effecten) | botten, pijlen |
-| Cave spider | 12 | 0,7×0,5 | klein, vergif 7 s per beet | draad, spinnenoog |
-| Witch | 26 | 0,6×1,95 | gooit elke 3 s een drankje binnen 10 blokken (nu: vergif 5 s, tot de effecten er zijn) | 3× 0–2 uit glowstone, buskruit, redstone, spinnenoog, suiker, stok |
+| Husk | 20 | 0,6×1,95 | woestijnzombie, brandt niet, een klap geeft 7 s honger | 0–2 rot vlees |
+| Stray | 20 | 0,6×1,99 | skelet van sneeuwgebieden, pijlen geven 30 s slowness | botten, pijlen |
+| Cave spider | 12 | 0,7×0,5 | klein, vergif 7 s per beet (effectensysteem) | draad, spinnenoog |
+| Witch | 26 | 0,6×1,95 | gooit elke 3 s een splash-drankje binnen 10 blokken: slowness (≥ 8 blokken), vergif (≥ 8 HP), soms weakness, anders harming | 3× 0–2 uit glowstone, buskruit, redstone, spinnenoog, suiker, stok |
 | Paard | 15–30 | 1,4×1,6 | temmen door te rijden (temper), zadel, sturen met WASD, springen | 0–2 leer |
 
 ![Nieuwe mobs](screenshots/mobs-new-a-front.jpg)
@@ -64,7 +157,7 @@ in BunkCraft zit. Getallen komen uit de Minecraft Wiki, tenzij anders vermeld.
 ### Fokken, baby's en boerderij
 
 - **Voer** gaat via *tags* (`Breeding.ts`): koe/schaap tarwe, varken wortel/aardappel/bietwortel, kip zaden (tarwe, pompoen, meloen, bietwortel, torchflower: wat er bestaat telt), wolf vlees, paard gouden appel/wortel. Nieuwe gewassen werken dus vanzelf zodra het item bestaat.
-- Voeren geeft 30 s love mode (hartjes), twee dieren lopen naar elkaar toe en krijgen na 3 s samen een baby; daarna 5 minuten afkoeling. XP 1–7 via `MobEvents.xp` (TODO: koppelen aan `awardXp` van het XP-systeem).
+- Voeren geeft 30 s love mode (hartjes), twee dieren lopen naar elkaar toe en krijgen na 3 s samen een baby; daarna 5 minuten afkoeling. Fokken geeft 1–7 XP als ervaringsbollen (`EntityManager.spawnXp`).
 - **Baby's** groeien in 20 minuten op (voeren haalt 10 % van de resttijd af), zijn half zo groot met een relatief grote kop, volgen een ouder, praten hoger en laten niets vallen. 5 % van de natuurlijke dieren is een baby.
 - **Schapen** eten gras (gras → aarde, tufjes weg) en krijgen zo hun wol terug; scheren met een schaar geeft 1–3 wol in hun kleur, verf kleurt ze. Natuurlijke kleuren: wit 81,8 %, zwart/grijs/lichtgrijs 5 %, bruin 3 %, roze 0,16 %.
 - **Koeien** geven melk in een emmer (nieuw item `milk_bucket`), kippen leggen elke 5–10 minuten een ei (nieuw item `egg`).
@@ -164,6 +257,25 @@ Onderzoek, ontwerp en tellingen: [`CONTENT.md`](CONTENT.md). Kort:
 - **Recepten:** ongeveer 420, met vanilla-aantallen. Het receptenboek heeft tabs (Now, All, Build, Wood, Tools, Combat, Food, Items, Colors, Smelt)
   en een zoekveld; alleen recepten van stations binnen 4 blokken worden getoond.
 
+## Ervaring en enchanting
+
+- **XP-orbs** vallen uit monsters (5), dieren (1–3), ertsen (kolen 0–2, lapis 2–5, redstone 1–5, diamant en smaragd 3–7; niet met Silk
+  Touch), de oven en de grindstone. Ze vliegen naar je toe binnen 8 blokken, voegen samen en verdwijnen na 5 minuten. De balk boven de
+  hotbar vult volgens Minecraft (level 0→1: 7 punten, 15→16: 37, 30→31: 112; level 30 = 1395 punten). Bij doodgaan valt `min(7 × level, 100)`
+  als orbs, de rest is weg.
+- **Enchanting table** (boek + 2 diamant + 4 obsidiaan): leg een tool, wapen, harnas of boek erin plus lapis. Boekenkasten in de ring op
+  2 blokken afstand (met lucht ertussen) tillen de aanbiedingen op tot level 30. Je betaalt 1/2/3 levels en lapis; het niveau dat erbij
+  staat moet je wel hebben. De hover toont één enchantment ("Efficiency II . . . ?").
+- **Anvil** (3 ijzerblokken + 4 ijzerstaven): repareer met materiaal (25% per stuk), combineer twee gelijke tools (+12%) of leg er een
+  enchanted book op, en geef het een naam. Elke keer wordt het volgende gebruik duurder (prior work); vanaf 40 levels: "Too Expensive!".
+  Een anvil slijt (chipped, damaged, kapot).
+- **Grindstone** (2 stokken + stenen slab + 2 planken): haalt alle enchantments weg en geeft een deel van de XP terug; twee gelijke
+  tools worden samen gerepareerd (+5%).
+- **Effecten:** Sharpness +0,5 × level + 0,5, Smite/Bane +2,5 per level tegen ondoden/geleedpotigen, Fire Aspect zet in brand,
+  Looting tot +level drops, Efficiency `level² + 1` erbij, Fortune tot ×4 op ertsen, Silk Touch laat het blok zelf vallen, Unbreaking
+  `1/(level+1)` kans op slijtage, Protection 4% per punt (max 80%), Feather Falling 12% per level bij vallen, Mending repareert 2 per XP.
+- **Commando's (creative):** `/enchant sharpness 5` op het item in je hand, `/xp 100` of `/xp 10L`.
+
 ## Nieuwe blokken
 
 | Blok | Details |
@@ -211,7 +323,7 @@ passen (`w.setBlock`, `w.setMeta` voor een stille leeftijd, `w.brightness`, `w.r
 2. **Vloeistofstroming:** **gedaan** (water en lava, emmers).
 3. **Vallend zand en grind** als entity.
 4. **Meer mobs:** skeleton (pijlen) en spin (klimmen).
-5. **Meer blokken en items:** XP-orbs en de XP-balk, landbouw met groeifases, enchanting (de `ItemStack.data` is er klaar voor), brouwen, anvil, schilden en boten (zie `CONTENT.md`, tier 2).
+5. **Meer blokken en items:** XP, enchanting, anvil en grindstone zijn **gedaan**; landbouw met groeifases, brouwen, schilden en boten (zie `CONTENT.md`, tier 2).
 6. **Multiplayer:** zie [`MULTIPLAYER.md`](MULTIPLAYER.md).
 
 ## Bronnen
