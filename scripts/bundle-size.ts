@@ -14,14 +14,21 @@ interface Budget { maxGrowth: number; files: Record<string, { bytes: number; gzi
 const DIST = join(process.cwd(), 'dist', 'assets');
 const BUDGET_FILE = join(process.cwd(), 'scripts', 'bundle-budget.json');
 /** Logical name → hashed file prefix. */
-const TRACKED: Record<string, RegExp> = { main: /^index-.*\.js$/, chunkWorker: /^chunkWorker-.*\.js$/ };
+const TRACKED: Record<string, RegExp> = {
+  main: /^index-.*\.js$/, chunkWorker: /^chunkWorker-.*\.js$/, three: /^three-.*\.js$/, arcade: /^ArcadeSession-.*\.js$/,
+};
+/** Chunks that must exist; the others are tracked when the build splits them out. */
+const REQUIRED = new Set(['main', 'chunkWorker']);
 
 function measure(): Record<string, { bytes: number; gzip: number }> {
   const files = readdirSync(DIST);
   const out: Record<string, { bytes: number; gzip: number }> = {};
   for (const [name, re] of Object.entries(TRACKED)) {
     const matches = files.filter((f) => re.test(f)).map((f) => join(DIST, f));
-    if (matches.length === 0) throw new Error(`no ${name} chunk in dist/assets (run npm run build first)`);
+    if (matches.length === 0) {
+      if (REQUIRED.has(name)) throw new Error(`no ${name} chunk in dist/assets (run npm run build first)`);
+      continue;
+    }
     // The biggest match is the real entry (small helper chunks can share the prefix).
     const file = matches.sort((a, b) => statSync(b).size - statSync(a).size)[0];
     const data = readFileSync(file);
