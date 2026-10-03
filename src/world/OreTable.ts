@@ -1,4 +1,5 @@
-import { BLOCK } from './BlockRegistry';
+import { BIOME } from './Biomes';
+import { BLOCK, CUBE_ID } from './BlockRegistry';
 import { CHUNK_HEIGHT, CHUNK_SIZE, blockIndex } from './constants';
 import { hash2, hash3, mulberry32 } from './Noise';
 
@@ -33,6 +34,13 @@ export interface OreSpec {
   host?: string;
   /** First generator version that places this ore (default 2). */
   minGen?: number;
+  /**
+   * Also replace deepslate (default: true for ores, false for filler blobs). Version 3 has a deepslate layer
+   * below y ~16; Minecraft's deepslate variants of the ores are not in the content yet, so the plain ore is used.
+   */
+  inDeepslate?: boolean;
+  /** Only columns of these biomes get the blob (needs the biome map; ignored when none is passed). */
+  biomes?: readonly number[];
 }
 
 export const ORE_TABLE: readonly OreSpec[] = [
@@ -62,13 +70,24 @@ export const ORE_TABLE: readonly OreSpec[] = [
   { block: 'REDSTONE_ORE', attempts: 3, size: 8, minY: 1, maxY: 36, shape: 'uniform', minGen: 3 },
   { block: 'REDSTONE_ORE', attempts: 4, size: 8, minY: 1, maxY: 30, shape: 'triangle', minGen: 3 },
   { block: 'COPPER_ORE', attempts: 5, size: 10, minY: 24, maxY: 80, shape: 'triangle', minGen: 3 },
-  { block: 'EMERALD_ORE', attempts: 6, size: 1, minY: 60, maxY: 127, shape: 'triangle', minGen: 3 },
+  // Emerald: single blocks, only in mountain biomes (Minecraft: windswept hills and the peaks).
+  { block: 'EMERALD_ORE', attempts: 5, size: 1, minY: 24, maxY: 127, shape: 'triangle', minGen: 3, biomes: [BIOME.MOUNTAINS, BIOME.WINDSWEPT_HILLS] },
+
+  // ---- Generator 3: rock variety and the deepslate layer. These rows come last so that the ore rows keep their place
+  // in the table (the index is part of the random stream) and ores are placed before the rock blobs. ----
+  // Minecraft: granite, diorite and andesite 2 × size 64 each (rarely up to 33 in our smaller world), tuff 2 × 64 deep down.
+  { block: 'GRANITE', attempts: 1, size: 33, minY: 4, maxY: 90, shape: 'uniform', minGen: 3 },
+  { block: 'DIORITE', attempts: 1, size: 33, minY: 4, maxY: 90, shape: 'uniform', minGen: 3 },
+  { block: 'ANDESITE', attempts: 1, size: 33, minY: 4, maxY: 90, shape: 'uniform', minGen: 3 },
+  { block: 'TUFF', attempts: 0.8, size: 33, minY: 3, maxY: 40, shape: 'uniform', minGen: 3, inDeepslate: true },
 ];
 
 interface ResolvedOre {
   spec: OreSpec;
   id: number;
   host: number;
+  /** Also replaces deepslate. */
+  deep: number;
   /** Index in the table: part of the random stream key, so adding rows never changes the others. */
   index: number;
   /** How far a blob can reach from its origin, in blocks. */
@@ -77,15 +96,22 @@ interface ResolvedOre {
 
 const BLOCKS = BLOCK as unknown as Record<string, number>;
 
+/** Block id of a BLOCK key or, failing that, of the content table ('LAPIS_ORE' → CUBE_ID.lapis_ore). */
+function idOf(key: string): number | undefined {
+  return BLOCKS[key] ?? CUBE_ID[key.toLowerCase()];
+}
+
 /** The rows that exist for a generator version (unknown blocks skipped). */
 export function resolveOres(genVersion: number): ResolvedOre[] {
   const out: ResolvedOre[] = [];
   ORE_TABLE.forEach((spec, index) => {
     if ((spec.minGen ?? 2) > genVersion) return;
-    const id = BLOCKS[spec.block];
-    const host = BLOCKS[spec.host ?? 'STONE'];
+    const id = idOf(spec.block);
+    const host = idOf(spec.host ?? 'STONE');
     if (id === undefined || host === undefined) return;
-    out.push({ spec, id, host, index, reach: spec.size / 8 + spec.size / 16 + 2 });
+    const deepslate = CUBE_ID.deepslate;
+    const inDeep = spec.inDeepslate ?? spec.block.endsWith('_ORE');
+    out.push({ spec, id, host, deep: inDeep && genVersion >= 3 && deepslate !== undefined ? deepslate : host, index, reach: spec.size / 8 + spec.size / 16 + 2 });
   });
   return out;
 }
@@ -96,7 +122,9 @@ export function resolveOres(genVersion: number): ResolvedOre[] {
  * blobs cross chunk borders seamlessly and do not depend on generation order. Only host blocks (stone)
  * are replaced, which also means ores show up in cave walls.
  */
-export function placeOreBlobs(blocks: Uint8Array, seed: number, cx: number, cz: number, ores: readonly ResolvedOre[]): void {
+export function placeOreBlobs(
+  blocks: Uint8Array, seed: number, cx: number, cz: number, ores: readonly ResolvedOre[], biomes?: Uint8Array,
+): void {
   const ox = cx * CHUNK_SIZE, oz = cz * CHUNK_SIZE;
   for (let dcz = -1; dcz <= 1; dcz++) {
     for (let dcx = -1; dcx <= 1; dcx++) {
@@ -127,7 +155,7 @@ export function placeOreBlobs(blocks: Uint8Array, seed: number, cx: number, cz: 
             const r = ((Math.sin(Math.PI * t) + 1) * rand() * s.size / 16 + 1) / 2;
             const px = bx + sx * (1 - 2 * t), pz = bz + sz * (1 - 2 * t);
             const py = by + dy1 + (dy2 - dy1) * t;
-            fillSphere(blocks, seed, ox, oz, px, py, pz, r, ore);
+            fillSphere(blocks, seed, ox, oz, px, py, pz, r, ore, biomes);
           }
         }
       }
@@ -137,7 +165,7 @@ export function placeOreBlobs(blocks: Uint8Array, seed: number, cx: number, cz: 
 
 function fillSphere(
   blocks: Uint8Array, seed: number, ox: number, oz: number,
-  px: number, py: number, pz: number, r: number, ore: ResolvedOre,
+  px: number, py: number, pz: number, r: number, ore: ResolvedOre, biomes?: Uint8Array,
 ): void {
   const x0 = Math.max(ox, Math.floor(px - r)), x1 = Math.min(ox + CHUNK_SIZE - 1, Math.floor(px + r));
   const z0 = Math.max(oz, Math.floor(pz - r)), z1 = Math.min(oz + CHUNK_SIZE - 1, Math.floor(pz + r));
@@ -154,7 +182,9 @@ function fillSphere(
         if ((dx * dx + dy * dy + dz * dz) * inv >= 1) continue;
         const lx = x - ox, lz = z - oz;
         const i = blockIndex(lx, y, lz);
-        if (blocks[i] !== ore.host) continue;
+        const cur = blocks[i];
+        if (cur !== ore.host && cur !== ore.deep) continue;
+        if (biomes && ore.spec.biomes && !ore.spec.biomes.includes(biomes[lx + lz * CHUNK_SIZE])) continue;
         if (discard > 0 && touchesAir(blocks, lx, y, lz) && (discard >= 1 || hash3(seed + 5, x, y, z) < discard)) continue;
         blocks[i] = ore.id;
       }

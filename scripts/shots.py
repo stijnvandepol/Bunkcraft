@@ -2,7 +2,7 @@
 Screenshots of the arcade maps through the dev preview (needs a Vite dev server without HMR or
 file watching, see CLAUDE.md: `server: { hmr: false, watch: null }` in a temporary config).
 
-  python3 scripts/shots.py <map id> <outdir> [port]
+  python3 scripts/shots.py <map id> <outdir> [port] [view,view,...]
 """
 import math
 import sys
@@ -12,6 +12,7 @@ from playwright.sync_api import sync_playwright
 
 mapid, out = sys.argv[1], sys.argv[2]
 port = sys.argv[3] if len(sys.argv) > 3 else '5199'
+only = sys.argv[4].split(',') if len(sys.argv) > 4 else None
 F = 64  # arena floor y
 
 
@@ -48,10 +49,32 @@ VIEWS = {
         ('lane', *look((-40, E, 14), (40, F + 3, 14))), ('tower', *look((-42, F + 8.6, 23), (0, F + 3, 14))),
         ('market', *look((0.5, E, 10), (-14, F + 3, 4))), ('roof', *look((-23, F + 6.6, 5), (-45, F + 3, 14))),
     ],
+    'atomic': [
+        ('top', *top(50)), ('red', *look((-36.5, E, 0.5), (0, F + 3, 0))), ('blue', *look((35.5, E, -1.5), (0, F + 3, 0))),
+        ('street', *look((0.5, E, 20), (-20, F + 4, -4))), ('green', *look((-10, E, -3), (25, F + 4, 3))),
+        ('window', *look((-21.5, F + 6.6, -6.5), (20, F + 3, 0))), ('bus', *look((-8, E, -8), (-8, F + 2, -16))),
+        ('inside', *look((-28.5, E, -4), (-20, F + 2, -4))),
+    ],
+    'villa': [
+        ('top', *top(60)), ('red', *look((-40.5, E, -2.5), (0, F + 3, 0))), ('front', *look((-30, F + 7, 3), (-8, F + 3, 0))),
+        ('pool', *look((-14, F + 6, -12), (-28, F + 1, -24))), ('court', *look((14, F + 6, 12), (28, F + 1, 24))), ('atrium', *look((-5.5, E, 3.5), (4, F + 2, -3))),
+    ],
+    'yacht': [
+        ('top', *top(60)), ('red', *look((-41.5, E, 0.5), (0, F + 3, 0))), ('side', *look((-6, F + 6, -26), (2, F + 4, 0))),
+        ('stern', *look((22, F + 6.6, 5), (32, F + 4, 0))), ('salon', *look((-10.5, F + 4, 2), (2, F + 5, -2))), ('lower', *look((-29.5, F + 1, -0.5), (0, F + 2.5, 0))),
+    ],
+    'town': [
+        ('top', *top(62)), ('red', *look((-37.5, E, -0.5), (0, F + 3, 0))), ('gas', *look((-14, F + 3, -9), (0, F + 2, 0))),
+        ('market', *look((-2, F + 3, -12), (-16, F + 2, -20))), ('tower', *look((-22.5, F + 7, -28.6), (-8, F + 1, -6))), ('alley', *look((-14, F + 1, 13), (-14, F + 2, 31))),
+    ],
+    'station': [
+        ('top', *top(64)), ('red', *look((-39.5, E, -0.5), (0, F + 3, 0))), ('platform', *look((-10, F + 2, 14), (-6, F + 3, -20))),
+        ('crossing', *look((-0.5, F + 1, 6), (0, F + 2, -20))), ('train', *look((-3.5, F + 2, -18), (-3.5, F + 3, -5))), ('hall', *look((-19, F + 1, -11), (-28, F + 5, 6))),
+    ],
 }
 
 with sync_playwright() as p:
-    browser = p.chromium.launch(args=['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'])
+    browser = p.chromium.launch(args=['--use-angle=metal'])
     page = browser.new_page(viewport={'width': 1280, 'height': 720})
     logs = []
     page.on('console', lambda m: logs.append(m.text) if m.type == 'error' else None)
@@ -74,6 +97,8 @@ with sync_playwright() as p:
         document.querySelector('.click-to-play')?.remove();
     }""")
     for name, x, y, z, yaw, pitch in VIEWS[mapid]:
+        if only and name not in only:
+            continue
         page.evaluate(f"""() => {{
             const g = window.game;
             g.player.setPosition({x}, {y}, {z});

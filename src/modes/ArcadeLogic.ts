@@ -1,5 +1,6 @@
 import type { RosterEntry } from '../net/protocol';
 import type { Team } from './GameTypes';
+import { PHYSICS } from '../player/Physics';
 import type { WeaponDef } from './Weapons';
 
 /**
@@ -13,6 +14,28 @@ export const ARCADE_SPEED_MULT = 1.3;
 export const ARCADE_AIR_ACCEL = 8;
 /** Seconds of spawn protection shown after (re)spawning. */
 export const SPAWN_PROTECTION = 2;
+
+/**
+ * Shared client/server numbers: the server validates movement against the same constants the
+ * client's `Player` physics uses (see server/anticheat/Movement.ts), so change them together.
+ */
+/** Highest ground speed (blocks/s) with a weapon of speed modifier `moveSpeed`: always-sprint pace. */
+export function arcadeMaxSpeed(moveSpeed: number): number {
+  return PHYSICS.SPRINT_SPEED * ARCADE_SPEED_MULT * moveSpeed;
+}
+
+/** Server tick rate of arcade rooms (Hz), overridable per server with ARCADE_TICK_HZ. */
+export const ARCADE_TICK_HZ = 30;
+/** Arcade clients send their position this often (Hz), at most. */
+export const ARCADE_POS_HZ = 30;
+/** Clamp for the configurable tick rate. */
+export const ARCADE_TICK_MIN = 10;
+export const ARCADE_TICK_MAX = 60;
+
+/** Other players are drawn this many seconds in the past: two snapshot intervals, so there are always two to blend. */
+export function arcadeInterpDelay(tickHz: number): number {
+  return 2 / Math.max(ARCADE_TICK_MIN, Math.min(ARCADE_TICK_MAX, tickHz));
+}
 
 // ---------------------------------------------------------------- crosshair
 
@@ -52,13 +75,36 @@ export class FireControl {
     return true;
   }
 
+  private burstLeft = 0;
+  private burstStart = 0;
+
+  /**
+   * Burst weapons: one press fires `count` shots `interval` apart; the next burst may start
+   * `cycleSec` after the first shot. Returns true for every shot that goes out now.
+   */
+  tryBurst(now: number, interval: number, count: number, cycleSec: number, pressed: boolean): boolean {
+    if (now < this.nextAt) return false;
+    if (this.burstLeft > 0) {
+      this.burstLeft--;
+      this.nextAt = this.burstLeft > 0 ? now + interval : Math.max(now + interval, this.burstStart + cycleSec);
+      return true;
+    }
+    if (!pressed) return false;
+    this.burstStart = now;
+    this.burstLeft = count - 1;
+    this.nextAt = this.burstLeft > 0 ? now + interval : now + cycleSec;
+    return true;
+  }
+
   /** Block the trigger for a while (weapon switch, reload). */
   delay(now: number, seconds: number): void {
     this.nextAt = Math.max(this.nextAt, now + seconds);
+    this.burstLeft = 0;
   }
 
   reset(): void {
     this.nextAt = 0;
+    this.burstLeft = 0;
   }
 }
 
@@ -80,7 +126,7 @@ export function damageAngle(dx: number, dz: number, yaw: number): number {
 
 /** Scoreboard order: most kills first, then fewest deaths, then name. Does not modify the input. */
 export function sortRoster(players: readonly RosterEntry[]): RosterEntry[] {
-  return [...players].sort((a, b) => b.kills - a.kills || a.deaths - b.deaths || a.name.localeCompare(b.name));
+  return [...players].sort((a, b) => (b.pts ?? 0) - (a.pts ?? 0) || b.kills - a.kills || a.deaths - b.deaths || a.name.localeCompare(b.name));
 }
 
 /** Total kills per team from the roster (the server also sends these in `match.scores`). */

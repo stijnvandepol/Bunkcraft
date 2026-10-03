@@ -1,8 +1,18 @@
-// QA runs: the normal Vite config without HMR or file watching, so worktree changes never reload the page mid-test.
-//   QA_PORT=5231 npx vite --config scripts/qa/vite.qa.config.ts
-import { defineConfig, mergeConfig } from 'vite';
-import base from '../../vite.config';
+// QA-only Vite config: no HMR/watch (Vite would otherwise reload pages mid-test) and a proxy to a QA game server.
+//   QA_SERVER_PORT=3471 npx vite --config scripts/qa/vite.qa.config.ts --port 5191 --strictPort
+import { fileURLToPath } from 'node:url';
+import { defineConfig } from 'vite';
 
-export default mergeConfig(base, defineConfig({
-  server: { hmr: false, watch: null, port: Number(process.env.QA_PORT ?? 5231), strictPort: true },
-}));
+const port = process.env.QA_SERVER_PORT ?? '3471';
+export default defineConfig({
+  root: fileURLToPath(new URL('../..', import.meta.url)),
+  worker: { format: 'es' },
+  server: {
+    hmr: false,
+    watch: null,
+    proxy: {
+      '/ws': { target: `ws://localhost:${port}`, ws: true },
+      '/api': { target: `http://localhost:${port}` },
+    },
+  },
+});

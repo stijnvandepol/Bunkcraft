@@ -37,6 +37,9 @@ const PROBES_PER_FRAME = 6;
  * Every public play method also reports its sound to the listeners ({@link addSoundListener}) so subtitles
  * can show it, even when the sound itself is muted.
  */
+/** Mob sound events (see entities/Mob.ts MobSound). */
+export type MobSoundEvent = 'idle' | 'hurt' | 'death' | 'fuse' | 'angry' | 'teleport';
+
 export class AudioEngine {
   private ctx: BaseAudioContext | null = null;
   private offline = false;
@@ -439,16 +442,73 @@ export class AudioEngine {
    * Mob sounds, synthesised per kind. Pass `at` (the mob or message position) for positional sound; without
    * it `volume` already includes the distance falloff.
    */
-  playMob(kind: string, event: 'idle' | 'hurt' | 'death' | 'fuse', volume: number, at?: Vec3): void {
+  playMob(kind: string, event: MobSoundEvent, volume: number, at?: Vec3): void {
     this.emitAt(`mob.${kind}.${event}`, at, volume);
     if (!at && volume <= 0.02) return;
-    this.placed(at, 28, Priority.Normal, () => this.mobRecipe(kind, event, at ? 1 : volume));
+    // Babies (a mob passed as `at` with baby set) speak half an octave higher, like Minecraft's 1.5x pitch.
+    const pitch = (at as { baby?: boolean } | undefined)?.baby ? 1.5 : 1;
+    this.placed(at, 28, Priority.Normal, () => this.mobRecipe(kind, event, at ? 1 : volume, pitch));
   }
 
-  private mobRecipe(kind: string, event: 'idle' | 'hurt' | 'death' | 'fuse', volume: number): void {
+  private mobRecipe(kind: string, event: MobSoundEvent, volume: number, pitch = 1): void {
     const v = volume * (event === 'idle' ? 0.5 : 0.7);
-    const p = 0.9 + Math.random() * 0.2;
+    const p = (0.9 + Math.random() * 0.2) * pitch;
     switch (kind) {
+      case 'wolf':
+        if (event === 'angry') {
+          // Growl: low rumbling saw with noise.
+          this.voice('sawtooth', 110 * p, 90 * p, 0.7, v * 0.5);
+          this.noiseBurst(350 * p, 1.2, 0.6, v * 0.3);
+        } else if (event === 'hurt' || event === 'death') {
+          // Whine: a falling squeal.
+          this.voice('triangle', 900 * p, event === 'death' ? 300 * p : 600 * p, event === 'death' ? 0.7 : 0.25, v * 0.5);
+        } else {
+          // Bark: two short punchy notes.
+          this.voice('square', 420 * p, 260 * p, 0.09, v * 0.35);
+          this.noiseBurst(900 * p, 1, 0.08, v * 0.25);
+          this.voice('square', 400 * p, 240 * p, 0.09, v * 0.3, 0.22);
+        }
+        break;
+      case 'enderman':
+        if (event === 'teleport') {
+          this.voice('sine', 300 * p, 1200 * p, 0.35, v * 0.4);
+          this.noiseBurst(2500, 0.5, 0.3, v * 0.2, 'bandpass');
+        } else if (event === 'angry') {
+          // Scream: detuned high saws.
+          this.voice('sawtooth', 820 * p, 700 * p, 0.9, v * 0.3);
+          this.voice('sawtooth', 860 * p, 650 * p, 0.9, v * 0.25);
+        } else {
+          // "Vwoop" murmurs: a pitch-bent sine pair.
+          this.voice('sine', 160 * p, 320 * p, 0.3, v * 0.4);
+          this.voice('sine', 330 * p, 150 * p, 0.3, v * 0.3, 0.25);
+        }
+        break;
+      case 'slime':
+        // Squish: low filtered noise and a wet blip.
+        this.noiseBurst(500 * p, 1.5, 0.15, v * 0.45);
+        this.voice('sine', 180 * p, 90 * p, 0.12, v * 0.35);
+        break;
+      case 'witch':
+        // Cackle: rising-falling triangle chirps.
+        for (let i = 0; i < (event === 'idle' ? 3 : 2); i++) this.voice('triangle', 520 * p, 380 * p, 0.09, v * 0.35, i * 0.12);
+        break;
+      case 'horse':
+        if (event === 'hurt' || event === 'death') this.voice('sawtooth', 480 * p, 260 * p, 0.4, v * 0.4);
+        else {
+          // Whinny: a fast wobbling falling tone.
+          for (let i = 0; i < 4; i++) this.voice('sawtooth', (620 - i * 60) * p, (560 - i * 60) * p, 0.1, v * 0.3, i * 0.08);
+        }
+        break;
+      case 'husk':
+      case 'drowned':
+        this.mobRecipe('zombie', event, volume, (kind === 'drowned' ? 0.85 : 0.9) * pitch);
+        return;
+      case 'stray':
+        this.mobRecipe('skeleton', event, volume, 0.9 * pitch);
+        return;
+      case 'cave_spider':
+        this.mobRecipe('spider', event, volume, 1.3 * pitch);
+        return;
       case 'pig':
         this.voice('sawtooth', 210 * p, 150 * p, 0.18, v * 0.5);
         this.voice('sawtooth', 190 * p, 130 * p, 0.16, v * 0.4, 0.2);
@@ -577,6 +637,46 @@ export class AudioEngine {
     });
   }
 
+  /** Lever, button or pressure plate click (higher when switching on). `at` makes it positional. */
+  playClick(on: boolean, at?: Vec3): void {
+    this.emitAt(on ? 'block.click.on' : 'block.click.off', at, 0.4);
+    this.placed(at, 16, at ? Priority.Normal : Priority.Player, () => {
+      this.voice('square', on ? 1500 : 1150, on ? 1300 : 950, 0.03, 0.12);
+      this.noiseBurst(on ? 3200 : 2600, 2, 0.03, 0.18);
+    });
+  }
+
+  /** Piston pushing out (or pulling back): a wooden thump with a short slide. */
+  playPiston(extend: boolean, at?: Vec3): void {
+    this.emitAt(extend ? 'block.piston.extend' : 'block.piston.contract', at, 0.5);
+    this.placed(at, 16, at ? Priority.Normal : Priority.Player, () => {
+      this.noiseBurst(extend ? 420 : 360, 1.1, 0.16, 0.45, 'lowpass');
+      this.voice('triangle', extend ? 180 : 140, extend ? 120 : 200, 0.12, 0.2);
+      this.noiseBurst(1600, 0.8, 0.12, 0.12, 'bandpass', 0.02);
+    });
+  }
+
+  /**
+   * Note block: `rate` is Minecraft's pitch multiplier (0.5 … 2, F♯3 … F♯5 around a base of F♯4 = 370 Hz), the instrument
+   * picks the timbre (by the block under it).
+   */
+  playNote(instrument: string, rate: number, at?: Vec3): void {
+    this.emitAt(`block.note.${instrument}`, at, 0.6);
+    const f = 370 * rate;
+    this.placed(at, 48, at ? Priority.Normal : Priority.Player, () => {
+      switch (instrument) {
+        case 'basedrum': this.voice('sine', f / 4, f / 8, 0.18, 0.5); this.noiseBurst(200, 1, 0.08, 0.3, 'lowpass'); break;
+        case 'snare': this.noiseBurst(f * 4, 0.8, 0.12, 0.35); break;
+        case 'hat': this.noiseBurst(f * 12, 2, 0.05, 0.25, 'highpass'); break;
+        case 'bass': this.voice('triangle', f / 4, f / 4, 0.4, 0.45); break;
+        case 'guitar': this.voice('sawtooth', f / 2, f / 2, 0.35, 0.18); break;
+        case 'chime': case 'bell': this.voice('sine', f * 2, f * 2, 0.9, 0.25); this.voice('sine', f * 5.4, f * 5.4, 0.4, 0.06); break;
+        case 'flute': this.voice('sine', f * 2, f * 2, 0.45, 0.25); break;
+        default: this.voice('triangle', f, f, 0.5, 0.3); this.voice('sine', f * 2, f * 2, 0.25, 0.08); break;
+      }
+    });
+  }
+
   /** Lava meeting water: a short hiss. */
   playFizz(volume: number): void {
     this.emit('block.fizz', NaN, NaN, NaN, volume);
@@ -628,7 +728,7 @@ export class AudioEngine {
   private gunRecipe(weapon: string, v: number): void {
     const p = 0.95 + Math.random() * 0.1;
     // Far shots: only the crack (one voice); the body and thump are inaudible at that range anyway.
-    if (this.synth.level < 0.5 && weapon !== 'sniper' && weapon !== 'shotgun') {
+    if (this.synth.level < 0.5 && weapon !== 'sniper' && weapon !== 'shotgun' && weapon !== 'revolver') {
       this.noiseBurst(weapon === 'pistol' ? 2400 : 2800 * p, 0.8, 0.06, v * 0.6);
       return;
     }
@@ -656,6 +756,21 @@ export class AudioEngine {
         this.noiseBurst(350, 0.4, 0.55, v * 0.9, 'lowpass');
         this.voice('sine', 80, 28, 0.45, v * 1.0);
         this.noiseBurst(600, 0.5, 0.4, v * 0.25, 'lowpass', 0.12);
+        break;
+      case 'dmr':
+        this.noiseBurst(2600 * p, 0.6, 0.1, v * 0.8);
+        this.noiseBurst(420, 0.5, 0.25, v * 0.7, 'lowpass');
+        this.voice('sine', 110 * p, 40, 0.2, v * 0.8);
+        break;
+      case 'burst':
+        this.noiseBurst(2800 * p, 0.7, 0.06, v * 0.6);
+        this.noiseBurst(600, 0.6, 0.08, v * 0.4, 'lowpass');
+        this.voice('sine', 160 * p, 60, 0.07, v * 0.5);
+        break;
+      case 'revolver':
+        this.noiseBurst(1800 * p, 0.6, 0.12, v * 0.9);
+        this.noiseBurst(380, 0.5, 0.3, v * 0.8, 'lowpass');
+        this.voice('sine', 95 * p, 36, 0.25, v * 0.9);
         break;
       case 'pistol':
         this.noiseBurst(2600 * p, 0.8, 0.06, v * 0.6);
@@ -707,6 +822,33 @@ export class AudioEngine {
       this.voice('sine', 1318, 1318, 0.28, 0.32);
       this.voice('sine', 1760, 1760, 0.32, 0.3, 0.08);
       this.voice('triangle', 2637, 2637, 0.2, 0.12, 0.08);
+    });
+  }
+
+  /**
+   * Arcade objective cue (flag taken, zone captured, round won ...): `good` = your side gained, `bad` = it lost,
+   * `alarm` = your flag is on the move, `neutral` = something to notice (the hill moved, a round starts).
+   */
+  playModeCue(kind: 'good' | 'bad' | 'alarm' | 'neutral'): void {
+    this.emit(`arcade.cue.${kind}`, NaN, NaN, NaN, 0.35);
+    this.placed(undefined, 0, Priority.Ui, () => {
+      if (kind === 'good') {
+        this.voice('triangle', 784, 784, 0.16, 0.26);
+        this.voice('triangle', 988, 988, 0.16, 0.26, 0.1);
+        this.voice('triangle', 1319, 1319, 0.3, 0.24, 0.2);
+      } else if (kind === 'bad') {
+        this.voice('triangle', 659, 659, 0.18, 0.24);
+        this.voice('triangle', 523, 523, 0.18, 0.24, 0.12);
+        this.voice('triangle', 392, 392, 0.32, 0.22, 0.24);
+      } else if (kind === 'alarm') {
+        for (let i = 0; i < 3; i++) {
+          this.voice('square', 880, 880, 0.12, 0.12, i * 0.24);
+          this.voice('square', 660, 660, 0.12, 0.12, i * 0.24 + 0.12);
+        }
+      } else {
+        this.voice('sine', 1047, 1047, 0.22, 0.22);
+        this.voice('sine', 1568, 1568, 0.3, 0.16, 0.09);
+      }
     });
   }
 

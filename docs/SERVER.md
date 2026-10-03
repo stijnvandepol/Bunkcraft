@@ -86,6 +86,9 @@ limieten per bezoeker werken in plaats van per proxy.
 | `LIST_MAX` | `50` | Maximum aantal games in de publieke serverlijst |
 | `INVENTORY_GUARD` | `enforce` | Inventory-controle in survival: `enforce` (terugdraaien), `warn` (alleen loggen) of `off` |
 | `BINARY_PROTOCOL` | `on` | Binaire `snap`/`ent`-frames voor clients die erom vragen (`off` = altijd JSON) |
+| `ARCADE_TICK_HZ` | `30` | Tickrate van arcade-kamers (10-60); Minecraft-werelden blijven 20 Hz |
+| `ARCADE_CULLING` | `on` | Anti-wallhack: arcade-snapshots per speler zonder onzichtbare vijanden (`off` = iedereen naar iedereen) |
+| `ARCADE_AUTOKICK_SCORE` | `0` | Kick bij deze aim-verdenkingsscore (0-100; `0` = nooit, alleen loggen) |
 | `BACKUP_KEEP` | `12` | Aantal back-ups per wereld (`0` = geen back-ups) |
 | `BACKUP_INTERVAL_MIN` | `60` | Minuten tussen back-ups |
 | `RECONNECT_HINT_MS` | `8000` | Bij afsluiten (SIGTERM) krijgen spelers de hint om zoveel milliseconden later opnieuw te verbinden |
@@ -135,7 +138,7 @@ client stuurt alleen de chattekst. `/help` toont alleen wat jij mag gebruiken.
 | `/tp <naam>` of `/tp <naam> to <naam>` | operator | Teleporteren |
 | `/gamemode survival\|creative\|hardcore\|spectator` | operator | Geldt voor iedereen in die game |
 | `/time set day\|noon\|night\|midnight` | operator | |
-| `/weather clear\|rain\|thunder` | operator | Stub: meldt dat weer nog niet beschikbaar is (haakje `setWeather` in `CommandHost`) |
+| `/weather clear\|rain\|thunder [seconden]` | operator | Zet het weer voor iedereen in die game (niet in arcade-games) |
 | `/give <naam> <item> [aantal]` | operator | **Alleen in creative-games** |
 
 Opslag: `ops`, `bans` en `whitelist` staan in `world.json` en overleven herstarts. Een game die van vóór de eigenaars-tokens
@@ -171,7 +174,8 @@ adressen blokkeren. Alle data gaat via `textContent` de pagina in en een strikte
   `process_cpu_seconds_total`, `bunkcraft_ws_messages_{received,sent}_total`, `bunkcraft_ws_bytes_{received,sent}_total`,
   `bunkcraft_ws_messages_per_second{direction}`, `bunkcraft_ws_bytes_per_second{direction}`,
   `bunkcraft_rate_limit_hits_total{kind}`, `bunkcraft_connections_refused_total`, `bunkcraft_logins_failed_total`,
-  `bunkcraft_inventory_rejects_total`. Scrape-config: `bearer_token: <METRICS_TOKEN>` of scrape lokaal.
+  `bunkcraft_inventory_rejects_total`, `bunkcraft_cheat_events_total{rule}`, `bunkcraft_cheat_kicks_total`,
+  `bunkcraft_cheat_bans_total`, `bunkcraft_suspicion_flags_total` (arcade anti-cheat, zie SECURITY.md). Scrape-config: `bearer_token: <METRICS_TOKEN>` of scrape lokaal.
 - **Afsluiten (SIGTERM/SIGINT):** de server stopt met nieuwe verbindingen, slaat alle werelden op, stuurt elke speler
   `kick` met `reconnect: <ms>` en sluit de sockets met code 1012. De client toont "Server restarting" en probeert tot vijf keer
   zelf opnieuw te joinen. Docker stuurt SIGTERM en wacht 10 seconden: ruim genoeg.
@@ -217,9 +221,12 @@ inventory), maar ook daar moet de vorm kloppen. `INVENTORY_GUARD=warn` logt alle
 - Een speler die al vóór deze versie vals speelde: zijn opgeslagen inventory geldt als beginsituatie.
 - Een legitieme drop zonder blokbreuk die de server niet kent (bijvoorbeeld bladverval aan de clientkant) wordt geweigerd:
   `INVENTORY_GUARD=warn` laat zien of dat gebeurt (`unbacked drop` in de logs).
-- Kisten bestaan nog niet; als ze er komen, moeten overdrachten via een servervalidatie lopen en krediet geven in `InventoryGuard`.
+- Kisten en ovens staan op de server (`server/Containers.ts`): elke klik draagt de inventory mee, gaat langs de guard en geeft krediet (`creditTransfer`) of boekt af (`spendTransfer`).
 
 ## Binair protocol voor `snap` en `ent`
+
+Arcade-kamers gebruiken daarnaast versie 2: `hello` met `binv: 2` → `welcome` met `binaryVersion: 2` en `tickHz`, en
+`snap` als gekwantiseerd frame (soort 3, 13 bytes per speler, zie `binary.ts` en `docs/SECURITY.md` §Arcade).
 
 De twee berichten met de meeste bytes kunnen als binaire WebSocket-frames (`src/net/binary.ts`, `DataView`, geen
 afhankelijkheid). De client zet `bin: true` in `hello`; de server antwoordt `binary: true` in `welcome` en verstuurt vanaf dan
@@ -303,7 +310,7 @@ sturen de verwijderde blokken mee. Een lege game geeft zijn geheugen vrij.
 Kosten: ongeveer 0,03 ms CPU per tick in rust en ~0,3 ms terwijl chunks genereren, plus een paar MB per
 geladen game.
 
-## Speltypes: Minecraft, Team Deathmatch en Free For All
+## Speltypes: Minecraft en de arcade-modes
 
 Een game heeft een speltype. **Minecraft** (standaard) is de sandbox hierboven. De twee arcade-types zijn
 rondes op één vaste arena, in de geest van Krunker: snelle beweging, hitscan-wapens, health die terugkomt
@@ -314,15 +321,20 @@ en een scorebord.
 | Minecraft | `minecraft` | Bouwen, mijnen, mobs, spelmodus naar keuze |
 | Team Deathmatch | `tdm` | Rood tegen blauw; het team met de meeste kills wint |
 | Free For All | `ffa` | Ieder voor zich; wie de scorelimiet haalt (of aan het eind de meeste kills heeft) wint |
+| Gun Game | `gungame` | Wapenladder van 16 niveaus (eindigt met het mes); kill = niveau omhoog, meskill = slachtoffer omlaag |
+| Team Elimination | `elimination` | Rondes met één leven; het team dat de ander uitschakelt wint de ronde |
+| Hardpoint | `hardpoint` | Wisselende heuvel, 1 punt/s voor het team dat er alleen staat, tot 250 |
+| Domination | `domination` | Drie punten innemen en vasthouden, 1 punt per 2 s per punt, tot 100 |
+| Capture the Flag | `ctf` | Vijandelijke vlag naar de eigen (thuis staande) vlag brengen, tot 3 captures |
 
 Een game aanmaken (`POST /api/rooms`) accepteert `{ name, gameMode, seed, gameType?, scoreLimit?, timeLimitSec?, mapId? }`:
 
 | Veld | Standaard (tdm / ffa) | Grenzen |
 |---|---|---|
-| `gameType` | `minecraft` | `minecraft`, `tdm`, `ffa` (onbekend = `minecraft`) |
-| `scoreLimit` | 30 / 20 | 5 tot 100 (kills van het team in tdm, kills van de speler in ffa) |
-| `timeLimitSec` | 600 / 600 | 120 tot 1800 seconden |
-| `mapId` | `classic` | `classic`, `suburb`, `quarter`, `dockyard`, `desert` of `rotate` (onbekend = `classic`) |
+| `gameType` | `minecraft` | een id uit `GAME_TYPES` (onbekend = `minecraft`) |
+| `scoreLimit` | van het type (30 / 20 / 4 / 250 / 100 / 3) | 5 tot 100, verruimd met de keuzes van het type (1 capture, 250 punten); gun game negeert het (de ladder) |
+| `timeLimitSec` | van het type (600; elimination 90 = rondetijd) | 120 tot 1800 seconden, verruimd met de keuzes van het type (rondetijd 60 s) |
+| `mapId` | `classic` | een id uit `MAP_IDS` (`classic`, `suburb`, `quarter`, `dockyard`, `desert`, `atomic`, `bunker`, `villa`, `yacht`, `town`, `station`) of `rotate` (onbekend = `classic`) |
 
 `GET /api/rooms/<CODE>` geeft ook `gameType`, `scoreLimit` en `timeLimitSec` terug (0 bij Minecraft) en bij arcade-games
 `map` (de instelling: een kaart of `rotate`). De instellingen staan in `world.json` van de game (`mapId`). De spelmodus
@@ -341,6 +353,12 @@ rode en blauwe wol markeert de teamzones. Elke kaart heeft eigen spawns die ver 
 | `quarter` | Old Quarter | 80 × 64 | Stedelijk: binnenplaats, balkons, dakstairs en steegjes |
 | `dockyard` | Harbor Yard | 88 × 64 | Industrieel: containerstapels, centrale loods, kraandek en een schip |
 | `desert` | Dust Bazaar | 96 × 64 | Lange zichtlijnen: markt, daken en sluipschuttertorens aan beide uiteinden |
+| `atomic` | Atomic Lane | 80 × 52 | Vrije kaart: twee huizen, een bus en een rotonde |
+| `bunker` | Bunker Flag | 64 × 40 | Capture the flag: rivierbedding, bruggen, een duiker en een bunker per team |
+| `villa` | Skyline Villa | 88 × 64 | Vrije kaart: witte villa met atrium en dakterras, leeg zwembad, basketbalveld, garage |
+| `yacht` | Riptide | 88 × 56 | Vrije kaart: superjacht in een jachthaven met benedendek, salon, brug en helikopterdek |
+| `town` | Sundown | 80 × 68 | Vrije kaart: stoffig dorp met tankstation, cantina, markt, klokkentoren en steegjes |
+| `station` | Terminus | 84 × 68 | Vrije kaart: station met twee treinen, perrons, loopbruggen, tunnels en twee hallen |
 
 De instelling `rotate` speelt elke volgende match op de volgende kaart (in de volgorde hierboven). Bij een nieuwe
 kaart vervangt de server zijn kogelwereld en stuurt hij `match` met `info.map`; de client ziet dat dit niet zijn kaart
@@ -349,6 +367,39 @@ is en **voegt zich opnieuw bij de game** (nieuw `welcome`, nieuwe wereld). De ka
 `MatchInfo.map` (zonder protocolversie te verhogen: oude clients negeren het veld).
 
 Alleen bestaande blokken, op een vlakke vloer. De server houdt spelers binnen de muur van de gekozen kaart.
+
+**Het modeframework** (`server/Match.ts` + `server/modes/*`): `Match` is eigenaar van spelers, teams, hitscan, health,
+munitie, respawntimers, lag compensation en de berichten. Wat een mode anders maakt staat als data in de `GameTypeDef`
+(respawnregel, spawnbescherming, rondefases, loadout, benodigde kaartdata, params, scoring, HUD) en in een kleine klasse die
+`ModeLogic` implementeert (`server/modes/ModeLogic.ts`, standaardgedrag in `BaseLogic`):
+
+| Hook | Wanneer |
+|---|---|
+| `onStart` | de warm-up is voorbij (scores op nul); standaard `match.startLive()` |
+| `onTick(dt)` | elke servertick buiten warm-up en uitslag (zones tellen, vlaggen aanraken) |
+| `onPhaseEnd(phase)` | de timer van een fase loopt af (`countdown`, `live`, `roundend`, `intermission`); standaard eindigt `live` de match |
+| `onKill`, `onSpawn`, `onJoin`, `onLeave`, `onReset` | levensloop van spelers en matches |
+| `respawnDelay`, `loadoutFor`, `pickSpawn`, `canStart` | regels per leven (negatief = pas volgende ronde; ladderwapen; ...) |
+| `checkEnd`, `winner`, `scoreText`, `modeState` | einde, winnaar, de regel onder de timer en de HUD-toestand (`mode`-bericht) |
+
+`Match` biedt de modes `setPhase(phase, sec)`, `startLive()`, `respawnAll()`, `endMatch(result?)`, `giveGear()`, `event()`,
+`markModeDirty()`, `scores`, `teamSize`/`aliveCount`. De klassen:
+
+- `deathmatch.ts` (tdm, ffa): ongewijzigd gedrag; `tests/match.test.ts` en `scripts/arena-bots.ts` zijn het vangnet.
+- `gungame.ts`: `pts` = niveau; elke kill `giveGear` met het volgende ladderwapen (plus mes); meskill zet het slachtoffer een
+  niveau terug; een kill op het laatste niveau wint, op tijd wint het hoogste niveau. FFA-spawns, respawn 1,5 s.
+- `rounds.ts` (elimination): `intermission` (5 s, iedereen respawnt) → `countdown` (3 s) → `live` (rondetijd) → `roundend` (4 s).
+  Uitschakelen van het hele andere team wint de ronde, op tijd wint het team met meer levenden (gelijk = geen punt). Late
+  joiners kijken mee tot de volgende ronde; is een team leeg, dan terug naar warm-up.
+- `zones.ts` (hardpoint, domination): aanwezigheid = levende spelers binnen de straal en -1,2..+3,5 blokken hoogte. Hardpoint:
+  één heuvel in kaartvolgorde, 60 s plus 5 s pauze, 1 punt/s bij alleenbezit, betwist = niets. Domination: inname in 6 s
+  (eigen punt eerst neutraliseren), 1 punt per 2 s per eigen punt.
+- `ctf.ts`: vlag aanraken (1,6 blokken, 2,6 hoog) pakt hem op; eigen vlag aanraken terwijl die thuis staat en je de andere
+  draagt = capture (+1 team, +1 `pts`); dood/vertrek laat de vlag vallen, eigen team brengt hem terug of na 12 s vanzelf.
+
+De HUD-toestand gaat 4× per seconde (en direct bij een verandering) als `mode` naar iedereen, gebeurtenissen als `event`, een
+puntwijziging direct als `match`. Kaarten zonder de benodigde `objectives` worden voor dat type overgeslagen (`mapFor`,
+`nextMap(id, requires)`). Botrun tegen een echte server: `npx tsx scripts/modes-bots.ts [mode...] --url=http://localhost:3000`.
 
 **Het matchverloop:**
 
@@ -403,7 +454,7 @@ Beveiliging (dreigingsmodel, bevindingen, hardening-checklist voor een domein): 
 - **Items:** blokdrops, Q en doodsdrops gaan via de server en zijn voor iedereen zichtbaar; wie het eerst bij een item komt, krijgt het.
 - **Geen accounts, wel gebonden namen:** een naam hoort bij de browser die hem het eerst gebruikte (zie *Wachtwoorden, privacy en namen*); er is geen herstel als je je browserdata wist. Een game is toegankelijk met de code (zes tekens uit 31, met een limiet op het aantal pogingen per bezoeker) en eventueel een wachtwoord. De whitelist werkt op naam: iemand kan een naam claimen die nog nooit gebruikt is, dus combineer hem met een wachtwoord als dat telt.
 - **Ban op adres** raakt iedereen achter hetzelfde IP (huishouden, school). Bans op naam helpen weinig tegen iemand die een andere naam kiest; gebruik daarvoor een wachtwoord of de whitelist.
-- **Weer** bestaat nog niet in multiplayer: `/weather` is een stub.
+- **Weer** loopt op de server (regen, onweer, bliksem) en `/weather` werkt voor operators; arcade-games zijn altijd helder.
 - **Aanmaken is beperkt:** zes games per uur per bezoeker en `MAX_ROOMS` in totaal, zodat een publieke server niet volloopt.
 - **Advancements** staan uit in multiplayer.
 

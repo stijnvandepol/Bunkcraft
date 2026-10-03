@@ -8,6 +8,7 @@ import { MOB_TYPES, type MobKind } from '../src/entities/MobTypes';
 import { BLOCK } from '../src/world/BlockRegistry';
 import { CHUNK_VOLUME, blockIndex } from '../src/world/constants';
 import { mulberry32 } from '../src/world/Noise';
+import { TIME_SLACK } from './helpers/timing';
 
 /** Flat grass world at y = 63 with a configurable light level everywhere. */
 class FlatWorld implements EntityWorld {
@@ -285,6 +286,6 @@ describe('despawning', () => {
     const perTick = (performance.now() - t0) / 1200;
     expect(em.mobs.filter((m) => m.type.hostile).length).toBeGreaterThan(SPAWN.hostileCap / 2);
     expect(em.mobs.filter((m) => m.type.hostile).length).toBeLessThanOrEqual(SPAWN.hostileCap);
-    expect(perTick).toBeLessThan(5);
+    expect(perTick).toBeLessThan(5 * TIME_SLACK);
   });
 });

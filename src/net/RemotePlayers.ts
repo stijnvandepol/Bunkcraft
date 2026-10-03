@@ -6,10 +6,14 @@ import { RESPAWN_SECONDS } from '../modes/Weapons';
 import { createWeaponMaterial, weaponGeometry } from '../rendering/WeaponModels';
 import { h } from '../ui/dom';
 import { type RayHit, createRayHit, raycast } from '../world/Raycast';
-import type { SnapshotEntry } from './protocol';
+import { SNAP_FLAG_STALE, type SnapshotEntry } from './protocol';
 
-/** Render other players this far in the past so there are always two snapshots to blend. */
+/** Render other players this far in the past so there are always two snapshots to blend (20 Hz default; arcade sets its own). */
 const INTERPOLATION_DELAY = 0.1;
+/** Arcade culling: a player marked stale (out of view) is hidden this long after the mark... */
+const STALE_HIDE = 0.3;
+/** ...or when no snapshot mentioned it for this long. */
+const ABSENT_HIDE = 0.5;
 /** Arcade name tags need a clear line from the camera to the head, re-checked this often per player (s), within this range. */
 const LOS_INTERVAL = 0.1;
 const ARCADE_TAG_RANGE = 60;
@@ -46,6 +50,12 @@ interface Remote {
   losAt: number;
   tagAlpha: number;
   tagOpacity: number;
+  /** Arcade culling: the server marked this player out of view (time of the mark, −1 = in view). */
+  staleAt: number;
+  /** Time of the last fresh snapshot entry. */
+  lastSeen: number;
+  /** Hidden because it is out of view (model, weapon and tag). */
+  culled: boolean;
 }
 
 const tmp = new THREE.Vector3();
@@ -78,6 +88,8 @@ export class RemotePlayers {
   private readonly losRay: RayHit = createRayHit();
   /** Arcade: the player the camera is following after our death (its tag stays hidden), 0 = none. */
   private spectated = 0;
+  /** Seconds in the past other players are drawn (two snapshot intervals). */
+  interpDelay = INTERPOLATION_DELAY;
 
   constructor() {
     this.el = h('div', { class: 'nametags' });
@@ -105,7 +117,7 @@ export class RemotePlayers {
     this.weapons.add(weapon);
     const r: Remote = {
       id, name, mob, buffer: [], tag, tagX: NaN, tagY: NaN, tagShown: true, team: '', weaponId: '', weapon, deadAt: -1, hidden: false,
-      los: true, losAt: -1, tagAlpha: 1, tagOpacity: 1,
+      los: true, losAt: -1, tagAlpha: 1, tagOpacity: 1, staleAt: -1, lastSeen: -1e9, culled: false,
     };
     this.players.set(id, r);
     this.list.push(r);
@@ -175,8 +187,16 @@ export class RemotePlayers {
     r.mob.deathTime = 0;
     if (r.hidden) {
       r.hidden = false;
-      if (!this.mobs.includes(r.mob)) this.mobs.push(r.mob);
+      this.syncListed(r);
     }
+  }
+
+  /** The model is drawn unless it is a hidden corpse or out of view. */
+  private syncListed(r: Remote): void {
+    const i = this.mobs.indexOf(r.mob);
+    const want = !r.hidden && !r.culled;
+    if (want && i < 0) this.mobs.push(r.mob);
+    else if (!want && i >= 0) this.mobs.splice(i, 1);
   }
 
   /** Arcade: the camera follows this player (0 = nobody): their name tag is not drawn. */
@@ -187,7 +207,7 @@ export class RemotePlayers {
   /** Arcade: whether the player is up and has a known position (they can be spectated). */
   isAlive(id: number): boolean {
     const r = this.players.get(id);
-    return !!r && r.buffer.length > 0 && r.deadAt < 0 && !r.hidden;
+    return !!r && r.buffer.length > 0 && r.deadAt < 0 && !r.hidden && !r.culled;
   }
 
   /** Arcade: interpolated pose of a player (eye at y + 1.62 is up to the caller); false when unknown. */
@@ -221,19 +241,32 @@ export class RemotePlayers {
       if (id === selfId) continue;
       const r = this.players.get(id);
       if (!r) continue;
+      if (flags & SNAP_FLAG_STALE) {
+        // Out of view (arcade): keep the last position, fade out; no new samples.
+        if (r.staleAt < 0) r.staleAt = now;
+        continue;
+      }
+      // Back in view after a gap: start a fresh buffer instead of gliding through the wall.
+      if (r.staleAt >= 0 || now - r.lastSeen > ABSENT_HIDE) r.buffer.length = 0;
+      r.staleAt = -1;
+      r.lastSeen = now;
+      if (r.culled) { r.culled = false; this.syncListed(r); }
       r.buffer.push({ t: now, x, y, z, yaw, pitch, flags });
       if (r.buffer.length > 30) r.buffer.shift();
     }
   }
 
   update(now: number, camera: THREE.PerspectiveCamera, width: number, height: number): void {
-    const renderTime = now - INTERPOLATION_DELAY;
+    const renderTime = now - this.interpDelay;
     const dtTag = Math.min(0.25, Math.max(0, now - this.lastUpdate));
     this.lastUpdate = now;
     for (let pi = 0; pi < this.list.length; pi++) {
       const r = this.list[pi];
       const b = r.buffer;
       if (b.length === 0) { this.showTag(r, false); continue; }
+      // Arcade culling: hide players the server no longer shows us.
+      const culled = this.occluder !== null && ((r.staleAt >= 0 && now - r.staleAt >= STALE_HIDE) || now - r.lastSeen > ABSENT_HIDE);
+      if (culled !== r.culled) { r.culled = culled; this.syncListed(r); }
       // Find the two snapshots around renderTime; hold the newest if we run out.
       let a = b[0], c = b[b.length - 1];
       for (let i = 0; i < b.length - 1; i++) {
@@ -247,8 +280,7 @@ export class RemotePlayers {
         if (since >= RESPAWN_SECONDS) this.revive(r);
         else if (since >= CORPSE_SECONDS && !r.hidden) {
           r.hidden = true;
-          const mi = this.mobs.indexOf(r.mob);
-          if (mi >= 0) this.mobs.splice(mi, 1);
+          this.syncListed(r);
         }
         r.mob.deathTime = Math.min(20, since * 20);
       }
@@ -277,7 +309,7 @@ export class RemotePlayers {
       const d2 = dx * dx + dy * dy + dz * dz;
       const arcade = this.occluder !== null;
       const range = arcade ? ARCADE_TAG_RANGE : TAG_RANGE;
-      let visible = !r.hidden && r.id !== this.spectated && tmp.z < 1 && Math.abs(tmp.x) < 1.2 && Math.abs(tmp.y) < 1.2 && d2 < range * range;
+      let visible = !r.hidden && !r.culled && r.staleAt < 0 && r.id !== this.spectated && tmp.z < 1 && Math.abs(tmp.x) < 1.2 && Math.abs(tmp.y) < 1.2 && d2 < range * range;
       if (arcade) {
         // Throttled line of sight, then a fade towards the result.
         if (visible && now - r.losAt >= LOS_INTERVAL) {
@@ -313,7 +345,7 @@ export class RemotePlayers {
   /** Puts the weapon mesh into the right hand: at the end of the (raised) arm, barrel along it. */
   private placeWeapon(r: Remote): void {
     const m = r.mob, w = r.weapon;
-    const show = m.holding && !r.hidden && r.weaponId !== '' && !m.dead;
+    const show = m.holding && !r.hidden && !r.culled && r.weaponId !== '' && !m.dead;
     if (w.visible !== show) w.visible = show;
     if (!show) return;
     tmpPos.set(m.x, m.y, m.z);

@@ -238,6 +238,13 @@ export function paintExtraSprite(px: Px, r: Rand, key: string): boolean {
       rect(px, 6, 4, 10, 10, () => '#e8e0c0');
       line(px, [[7, 6], [8, 6], [9, 6], [7, 8], [8, 8]], '#8a7a50');
       return true;
+    case 'enchanted_book':
+      // A book with a purple-red cover and a gold clasp (the glint overlay adds the shimmer).
+      rect(px, 3, 2, 12, 13, (x, y) => (x <= 4 ? '#4a1440' : x === 12 || y === 13 ? '#2a0a24' : '#7a2a6a'));
+      rect(px, 6, 4, 10, 10, () => '#e8e0c0');
+      line(px, [[7, 6], [8, 6], [9, 6], [7, 8], [8, 8]], '#8a5aa0');
+      line(px, [[11, 6], [11, 7], [12, 6], [12, 7]], '#e8c040');
+      return true;
     case 'clay':
       blob(px, 8, 8, 5, 4.5, () => pick(['#a0a8b8', '#9098a8', '#aab2c2']));
       return true;

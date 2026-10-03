@@ -1,6 +1,7 @@
 import { TEAM_COLORS, type Team } from '../modes/GameTypes';
 import { type KillFeedEntry, damageAngle, formatClock, kdRatio, sortRoster } from '../modes/ArcadeLogic';
-import { PLAYER_MAX_HEALTH, PRIMARY_WEAPONS, type WeaponDef, weaponDef } from '../modes/Weapons';
+import { LOADOUT_PRESETS, presetFor } from '../modes/Loadouts';
+import { DEFAULT_SECONDARY, PLAYER_MAX_HEALTH, PRIMARY_WEAPONS, type WeaponDef, weaponDef } from '../modes/Weapons';
 import type { MatchPhase, RosterEntry } from '../net/protocol';
 import { h } from './dom';
 
@@ -13,6 +14,8 @@ export interface ScoreboardContext {
   selfId: number;
   teams: boolean;
   scores: { red: number; blue: number };
+  /** Header of the mode's objective column ("Caps", "Level"); absent = no column. */
+  scoreColumn?: string;
 }
 
 interface DamageMarker {
@@ -80,6 +83,7 @@ export class ArcadeHud {
   private readonly endBoard: HTMLDivElement;
   private readonly endCount: HTMLDivElement;
   private readonly loadoutCards = new Map<string, HTMLDivElement>();
+  private readonly presetCards = new Map<string, HTMLDivElement>();
   private readonly loadoutNote: HTMLDivElement;
 
   private lastHealth = -1;
@@ -97,7 +101,8 @@ export class ArcadeHud {
   private lastEndCount = -1;
 
   /** Called when a primary weapon is chosen in the loadout menu. */
-  onLoadout: ((primary: string) => void) | null = null;
+  /** A primary card (primary only) or a class preset (primary and secondary) was clicked. */
+  onLoadout: ((primary: string, secondary?: string) => void) | null = null;
   onLoadoutClose: (() => void) | null = null;
 
   constructor() {
@@ -186,9 +191,23 @@ export class ArcadeHud {
       this.loadoutCards.set(id, card);
       cards.append(card);
     }
+    const presets = h('div', { class: 'arc-loadout-cards presets' });
+    for (const pr of LOADOUT_PRESETS) {
+      const card = h('div', { class: 'arc-card preset' },
+        h('div', { class: 'arc-card-name', text: pr.name }),
+        h('div', { class: 'arc-card-desc', text: `${weaponDef(pr.primary)!.name} + ${weaponDef(pr.secondary)!.name}` }),
+        h('div', { class: 'arc-card-desc', text: pr.description }),
+      );
+      card.addEventListener('click', () => this.onLoadout?.(pr.primary, pr.secondary));
+      this.presetCards.set(pr.id, card);
+      presets.append(card);
+    }
     this.loadoutEl = h('div', { class: 'arc-loadout hidden' },
       h('div', { class: 'arc-loadout-panel' },
         h('div', { class: 'arc-loadout-title', text: 'Loadout' }),
+        h('div', { class: 'arc-card-desc', text: 'Classes' }),
+        presets,
+        h('div', { class: 'arc-card-desc', text: 'Primary weapon' }),
         cards,
         this.loadoutNote,
         h('button', { class: 'mc-btn w150', text: 'Done', onclick: () => this.onLoadoutClose?.() }),
@@ -331,17 +350,20 @@ export class ArcadeHud {
   }
 
   /** Timer, team scores (or your own score in free for all) and the phase line. Call when something changed. */
-  setMatch(phase: MatchPhase, timeLeft: number, ctx: ScoreboardContext & { scoreLimit: number; selfKills: number; leader: string }): void {
-    this.clock.textContent = phase === 'warmup' ? 'WARM-UP' : formatClock(timeLeft);
+  setMatch(
+    phase: MatchPhase, timeLeft: number,
+    ctx: ScoreboardContext & { scoreLimit: number; selfKills: number; leader: string; text?: string; selfScore?: string },
+  ): void {
+    this.clock.textContent = phase === 'warmup' ? 'WARM-UP' : phase === 'intermission' || phase === 'countdown' ? 'NEXT ROUND' : formatClock(timeLeft);
     this.rightScore.classList.toggle('hidden', !ctx.teams);
     if (ctx.teams) {
       this.leftScore.textContent = String(ctx.scores.red);
       this.leftScore.style.background = TEAM_COLORS.red;
       this.rightScore.textContent = String(ctx.scores.blue);
       this.rightScore.style.background = TEAM_COLORS.blue;
-      this.subline.textContent = `First to ${ctx.scoreLimit}`;
+      this.subline.textContent = ctx.text || `First to ${ctx.scoreLimit}`;
     } else {
-      this.leftScore.textContent = `${ctx.selfKills}/${ctx.scoreLimit}`;
+      this.leftScore.textContent = ctx.selfScore ?? `${ctx.selfKills}/${ctx.scoreLimit}`;
       this.leftScore.style.background = '#3a3a3a';
       this.rightScore.textContent = '';
       this.subline.textContent = ctx.leader;
@@ -389,15 +411,25 @@ export class ArcadeHud {
   }
 
   /** Respawn countdown in whole seconds; also lists the loadout choices. */
-  setRespawn(seconds: number, primary: string, pending: string): void {
-    const n = Math.max(0, Math.ceil(seconds));
-    if (n === this.lastCount && pending === this.lastRespawnPending) return;
+  /**
+   * Respawn countdown in whole seconds (negative = no respawn before the next round) and the loadout
+   * choices (hidden when the mode chooses the weapons).
+   */
+  setRespawn(seconds: number, primary: string, pending: string, secondary: string = DEFAULT_SECONDARY, pendingSecondary = '', choice = true): void {
+    const n = seconds < 0 ? -1 : Math.max(0, Math.ceil(seconds));
+    const key = `${pending}|${pendingSecondary}`;
+    if (n === this.lastCount && key === this.lastRespawnPending) return;
     this.lastCount = n;
-    this.lastRespawnPending = pending;
-    this.deathCount.textContent = `Respawning in ${n}`;
-    this.deathLoadout.replaceChildren(h('div', { class: 'arc-death-hint', text: 'Next weapon (keys 1-4, or B for the loadout menu)' }),
-      h('div', { class: 'arc-death-weapons' }, ...PRIMARY_WEAPONS.map((id, i) =>
-        h('span', { class: id === (pending || primary) ? 'sel' : '', text: `${i + 1} ${weaponDef(id)!.name}` }))));
+    this.lastRespawnPending = key;
+    this.deathCount.textContent = n < 0 ? 'Eliminated: you are back next round' : `Respawning in ${n}`;
+    if (!choice) {
+      this.deathLoadout.replaceChildren();
+      return;
+    }
+    const cur = presetFor(pending || primary, pendingSecondary || secondary);
+    this.deathLoadout.replaceChildren(h('div', { class: 'arc-death-hint', text: `Next class (keys 1-${LOADOUT_PRESETS.length}, or B for the loadout menu)` }),
+      h('div', { class: 'arc-death-weapons' }, ...LOADOUT_PRESETS.map((pr, i) =>
+        h('span', { class: pr === cur ? 'sel' : '', text: `${i + 1} ${pr.name}` }))));
   }
 
   setMatchEnd(info: { title: string; color: string; roster: readonly RosterEntry[]; ctx: ScoreboardContext } | null): void {
@@ -416,14 +448,16 @@ export class ArcadeHud {
     this.endCount.textContent = `Next match in ${n}`;
   }
 
-  showLoadout(selected: string, nextLife: boolean): void {
+  showLoadout(selected: string, nextLife: boolean, secondary: string = DEFAULT_SECONDARY): void {
     this.loadoutEl.classList.remove('hidden');
-    this.markLoadout(selected);
+    this.markLoadout(selected, secondary);
     this.loadoutNote.textContent = nextLife ? 'Applies from your next life' : 'Applies when you respawn';
   }
 
-  markLoadout(selected: string): void {
+  markLoadout(selected: string, secondary: string = DEFAULT_SECONDARY): void {
     for (const [id, card] of this.loadoutCards) card.classList.toggle('selected', id === selected);
+    const cur = presetFor(selected, secondary);
+    for (const [id, card] of this.presetCards) card.classList.toggle('selected', id === cur?.id);
   }
 
   hideLoadout(): void {
@@ -472,14 +506,17 @@ function statRows(def: WeaponDef): HTMLElement[] {
 /** Scoreboard table: rank, name (team colour), kills, deaths, K/D and ping; yours is highlighted. */
 function renderBoard(host: HTMLElement, roster: readonly RosterEntry[], ctx: ScoreboardContext): void {
   const rows: HTMLElement[] = [];
-  const header = h('div', { class: 'arc-row head' },
+  const cols = ctx.scoreColumn ? ' pts' : '';
+  const header = h('div', { class: `arc-row head${cols}` },
     h('span', { class: 'rank', text: '#' }), h('span', { class: 'name', text: 'Player' }),
+    ctx.scoreColumn ? h('span', { text: ctx.scoreColumn }) : null,
     h('span', { text: 'Kills' }), h('span', { text: 'Deaths' }), h('span', { text: 'K/D' }), h('span', { text: 'Ping' }));
   rows.push(header);
   sortRoster(roster).forEach((p, i) => {
-    rows.push(h('div', { class: `arc-row${p.id === ctx.selfId ? ' self' : ''}` },
+    rows.push(h('div', { class: `arc-row${cols}${p.id === ctx.selfId ? ' self' : ''}` },
       h('span', { class: 'rank', text: String(i + 1) }),
       h('span', { class: 'name', style: `color:${teamColor(p.team)}`, text: p.name }),
+      ctx.scoreColumn ? h('span', { text: String(ctx.scoreColumn === 'Level' ? (p.pts ?? 0) + 1 : p.pts ?? 0) }) : null,
       h('span', { text: String(p.kills) }), h('span', { text: String(p.deaths) }),
       h('span', { text: kdRatio(p.kills, p.deaths) }), h('span', { text: p.ping > 0 ? String(Math.round(p.ping)) : '-' })));
   });

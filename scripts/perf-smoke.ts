@@ -1,0 +1,52 @@
+/**
+ * Performance smoke test (CI): runs the mesh and arena benchmarks and fails on large regressions against
+ * scripts/perf-budget.json. The budgets are generous ceilings (a shared CI runner is several times slower than a
+ * laptop), so only real regressions (an accidental O(n^2), a lost cache) trip them, not noise.
+ *
+ *   npm run test:perf
+ */
+import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+interface Budget {
+  /** Multiplier applied to every budget on CI (process.env.CI). */
+  ciFactor: number;
+  mesh: { meanMs: number; p95Ms: number };
+  arena: { tickMeanMs: number; tickP95Ms: number; handleMeanMs: number; outKiBps: number };
+}
+
+const root = process.cwd();
+const budget = JSON.parse(readFileSync(join(root, 'scripts', 'perf-budget.json'), 'utf8')) as Budget;
+const factor = process.env.CI ? budget.ciFactor : 1;
+const tsx = join(root, 'node_modules', '.bin', 'tsx');
+const run = (script: string, args: string[]) => execFileSync(tsx, [join(root, 'scripts', script), ...args], { encoding: 'utf8', timeout: 300_000 });
+
+const num = (re: RegExp, text: string, what: string): number => {
+  const m = re.exec(text);
+  if (!m) throw new Error(`could not read ${what} from:\n${text}`);
+  return Number(m[1]);
+};
+
+const results: { name: string; value: number; limit: number; unit: string }[] = [];
+const mesh = run('bench-mesh.ts', ['12345', '3', '3']);
+results.push({ name: 'mesh mean', value: num(/mean ([\d.]+) ms/, mesh, 'mesh mean'), limit: budget.mesh.meanMs * factor, unit: 'ms' });
+results.push({ name: 'mesh p95', value: num(/p95 ([\d.]+) ms/, mesh, 'mesh p95'), limit: budget.mesh.p95Ms * factor, unit: 'ms' });
+
+const arena = run('bench-arena.ts', ['16', '20']);
+results.push({ name: 'arena tick mean', value: num(/tick\(\):\s+mean ([\d.]+) ms/, arena, 'tick mean'), limit: budget.arena.tickMeanMs * factor, unit: 'ms' });
+results.push({ name: 'arena tick p95', value: num(/tick\(\):\s+mean [\d.]+ ms, p95 ([\d.]+) ms/, arena, 'tick p95'), limit: budget.arena.tickP95Ms * factor, unit: 'ms' });
+results.push({ name: 'arena handling mean', value: num(/message handling\/tick: mean ([\d.]+) ms/, arena, 'handling mean'), limit: budget.arena.handleMeanMs * factor, unit: 'ms' });
+// Bandwidth does not depend on the machine: no CI factor.
+results.push({ name: 'arena outgoing/player', value: num(/outgoing per player: ([\d.]+) KiB\/s/, arena, 'outgoing'), limit: budget.arena.outKiBps, unit: 'KiB/s' });
+
+let failed = false;
+for (const r of results) {
+  const ok = r.value <= r.limit;
+  if (!ok) failed = true;
+  console.log(`${ok ? 'ok  ' : 'FAIL'} ${r.name.padEnd(22)} ${r.value.toFixed(3).padStart(9)} ${r.unit}  (budget ${r.limit.toFixed(3)} ${r.unit})`);
+}
+if (failed) {
+  console.error('Performance regression. If it is intended (more work per chunk, richer snapshots), raise scripts/perf-budget.json in the same commit.');
+  process.exit(1);
+}

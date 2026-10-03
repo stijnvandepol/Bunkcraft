@@ -67,3 +67,19 @@ export function container(b: LayoutBuilder, u: number, v: number, alongU: boolea
   const [w, d] = alongU ? [6, 2] : [2, 6];
   b.box(u, u + w - 1, v, v + d - 1, 1, layers * 2, color);
 }
+
+/** A spawn or spot turned 180° around the centre of a free-form map (the point symmetry of its layout). */
+export const turn = ([x, z]: [number, number]): [number, number] => [-1 - x, -1 - z];
+
+/**
+ * A free-form builder that draws in the coordinates of the west half: `s = -1` turns every box
+ * 180° around the centre, so a map drawn once per side with s = 1 and s = -1 is point symmetric.
+ */
+export function turned(b: LayoutBuilder, s: 1 | -1): LayoutBuilder {
+  if (s > 0) return b;
+  const t = (n: number) => -1 - n;
+  return {
+    box: (x0, x1, z0, z1, h0, h1, id) => b.box(t(x0), t(x1), t(z0), t(z1), h0, h1, id),
+    paint: (x0, x1, z0, z1, id) => b.paint(t(x0), t(x1), t(z0), t(z1), id),
+  };
+}

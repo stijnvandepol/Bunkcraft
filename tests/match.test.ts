@@ -386,7 +386,7 @@ describe('hitscan', () => {
     s.advance(0.5);
     s.host.rng = () => 0;
     s.match.fire(1, aim(s.match.players.get(1)!, body(4.5)));
-    expect(s.host.of('hit', 1)[0].damage).toBe(72); // 8 pellets × 9 at point blank
+    expect(s.host.of('hit', 1)[0].damage).toBe(130); // 10 pellets × 13 at point blank: one shot kills
 
     const k = liveDuel('ffa');
     k.place(2, 0.5, 65, 2.2);
@@ -576,6 +576,6 @@ describe('maps in the match', () => {
 
 describe('weapon data', () => {
   it('has the contract weapons', () => {
-    expect(WEAPONS.map((w) => w.id)).toEqual(['rifle', 'smg', 'shotgun', 'sniper', 'pistol', 'knife']);
+    expect(WEAPONS.map((w) => w.id)).toEqual(['rifle', 'smg', 'shotgun', 'sniper', 'dmr', 'burst', 'pistol', 'revolver', 'knife']);
   });
 });

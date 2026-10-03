@@ -1,6 +1,6 @@
-import { decodeBinary } from './binary';
-import { type ClientMessage, PROTOCOL_VERSION, type ServerMessage } from './protocol';
-import { identityKey, ownerToken, roomPassword } from './RoomApi';
+import { BINARY_VERSION, decodeBinary } from './binary';
+import { type ClientMessage, type ContainerClientMessage, PROTOCOL_VERSION, type ServerMessage } from './protocol';
+import { forgetRoomPassword, identityKey, ownerToken, roomPassword } from './RoomApi';
 
 export type WelcomeMessage = Extract<ServerMessage, { t: 'welcome' }>;
 
@@ -22,6 +22,8 @@ export class NetClient {
   private seq = 1;
   private readonly pending = new Map<number, PendingEdit>();
   private sendTimer = 0;
+  /** Seconds between position messages (20 Hz; arcade rooms send at their tick rate, up to 30 Hz). */
+  posInterval = 0.05;
   private closedByUser = false;
   id = -1;
   /** All server messages after the welcome. */
@@ -63,8 +65,8 @@ export class NetClient {
       ws.onopen = () => {
         const owner = room ? ownerToken(room) : undefined;
         const password = room ? roomPassword(room) : undefined;
-        // `bin`: this client understands binary snap/ent frames (older servers ignore the field).
-        this.send({ t: 'hello', v: PROTOCOL_VERSION, name, key: identityKey(host, room), bin: true, ...(owner ? { owner } : {}), ...(password ? { password } : {}) });
+        // `bin`: this client understands binary snap/ent frames, `binv` which formats (older servers ignore both).
+        this.send({ t: 'hello', v: PROTOCOL_VERSION, name, key: identityKey(host, room), bin: true, binv: BINARY_VERSION, ...(owner ? { owner } : {}), ...(password ? { password } : {}) });
       };
       ws.onmessage = (e) => {
         let msg: ServerMessage;
@@ -87,6 +89,8 @@ export class NetClient {
             resolve(msg);
           } else if (msg.t === 'kick') {
             window.clearTimeout(timeout);
+            // A refused password must not be sent again silently (the menu would never ask for it again).
+            if (msg.code === 'password' && room) forgetRoomPassword(room);
             reject(new Error(msg.reason));
           }
           return;
@@ -129,27 +133,37 @@ export class NetClient {
     this.pending.set(seq, { x, y, z, prev, prevMeta });
     // Keep only recent edits around for rollback.
     if (this.pending.size > 256) this.pending.delete(this.pending.keys().next().value!);
-    this.send(meta ? { t: 'block', seq, x, y, z, id, meta } : { t: 'block', seq, x, y, z, id });
+    // `prev` lets the server spot a race with another player's edit of the same block (see protocol.ts).
+    this.send(meta ? { t: 'block', seq, x, y, z, id, meta, prev } : { t: 'block', seq, x, y, z, id, prev });
   }
 
   /** Sends the player position at most 20 times per second. */
   update(dt: number, x: number, y: number, z: number, yaw: number, pitch: number, flags: number, held: number): void {
     this.sendTimer -= dt;
     if (this.sendTimer > 0) return;
-    this.sendTimer = 0.05;
+    this.sendTimer = this.posInterval;
     this.send({ t: 'pos', x, y, z, yaw, pitch, flags, held });
   }
 
-  sendAttack(id: number): void {
-    this.send({ t: 'attack', id });
+  sendAttack(id: number, e?: number[]): void {
+    this.send(e ? { t: 'attack', id, e } : { t: 'attack', id });
   }
 
-  sendShoot(x: number, y: number, z: number, dx: number, dy: number, dz: number, power: number): void {
-    this.send({ t: 'shoot', x, y, z, dx, dy, dz, power });
+  sendUseMob(id: number): void {
+    this.send({ t: 'usemob', id });
+  }
+
+  sendShoot(x: number, y: number, z: number, dx: number, dy: number, dz: number, power: number, e?: number[]): void {
+    this.send(e ? { t: 'shoot', x, y, z, dx, dy, dz, power, e } : { t: 'shoot', x, y, z, dx, dy, dz, power });
   }
 
   sendIgnite(x: number, y: number, z: number): void {
     this.send({ t: 'ignite', x, y, z });
+  }
+
+  /** Bone meal on a block (the server checks the held item and reach, then grows it). */
+  sendBoneMeal(x: number, y: number, z: number): void {
+    this.send({ t: 'bonemeal', x, y, z });
   }
 
   sendTake(id: number): void {
@@ -164,8 +178,13 @@ export class NetClient {
     this.send({ t: 'chat', text });
   }
 
-  sendState(inventory: number[][], stats: number[]): void {
-    this.send({ t: 'state', inventory, stats });
+  /** Chest and furnace screens (see ContainerScreens). */
+  sendContainer(msg: ContainerClientMessage): void {
+    this.send(msg);
+  }
+
+  sendState(inventory: number[][], stats: number[], effects?: number[][]): void {
+    this.send({ t: 'state', inventory, stats, ...(effects ? { effects } : {}) });
   }
 
   close(): void {
