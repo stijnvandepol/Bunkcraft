@@ -1,5 +1,5 @@
 import { ARMOR_MATERIALS, FOODS, MATERIALS } from '../items/ItemContent';
-import { ITEM, ITEM_ID, ALL_ITEMS, getItemDef, itemFromState } from '../items/ItemRegistry';
+import { ITEM, ITEM_ID, ALL_ITEMS, getItemDef, itemFromState, SHIELD } from '../items/ItemRegistry';
 import { BLOCK, BLOCK_DEFS, CUBE_ID, PARTIAL_MATERIALS, SLAB_FIRST, STAIRS_FIRST } from '../world/BlockRegistry';
 import { DYES, WOODS } from '../world/Content';
 
@@ -99,7 +99,7 @@ export function buildCreativeTabs(): CreativeTab[] {
   ]);
 
   const armorIds = ARMOR_MATERIALS.flatMap((m) => ['helmet', 'chestplate', 'leggings', 'boots'].map((s) => ITEM_ID[`${m.name}_${s}`]));
-  const combat = ids([...tool('sword'), ...tool('axe'), ITEM.BOW, ITEM.ARROW, ...armorIds]);
+  const combat = ids([...tool('sword'), ...tool('axe'), ITEM.BOW, ITEM.ARROW, SHIELD, ...armorIds]);
 
   const meat = ['porkchop', 'cooked_porkchop', 'beef', 'steak', 'mutton', 'cooked_mutton', 'chicken', 'cooked_chicken', 'rotten_flesh', 'spider_eye'];
   const foodIds = [

@@ -274,6 +274,9 @@ add({ id: ITEM.FLINT, name: 'flint', displayName: 'Flint', maxStack: 64, sprite:
 add({ id: ITEM.BONE, name: 'bone', displayName: 'Bone', maxStack: 64, sprite: 'bone' });
 add({ id: ITEM.ARROW, name: 'arrow', displayName: 'Arrow', maxStack: 64, sprite: 'arrow' });
 add({ id: ITEM.BOW, name: 'bow', displayName: 'Bow', maxStack: 1, durability: 384, sprite: 'bow' });
+/** Shield (Minecraft 1.21: 336 uses). Hold Use to block melee hits, arrows and explosions from the front. */
+export const SHIELD = 339;
+add({ id: SHIELD, name: 'shield', displayName: 'Shield', maxStack: 1, durability: 336, sprite: 'shield' });
 add({ id: ITEM.STRING, name: 'string', displayName: 'String', maxStack: 64, sprite: 'string' });
 add({ id: ITEM.SPIDER_EYE, name: 'spider_eye', displayName: 'Spider Eye', maxStack: 64, food: { hunger: 2, saturation: 3.2, poison: 100 }, sprite: 'spider_eye' });
 add({ id: ITEM.FLINT_AND_STEEL, name: 'flint_and_steel', displayName: 'Flint and Steel', maxStack: 1, durability: 64, sprite: 'flint_and_steel' });

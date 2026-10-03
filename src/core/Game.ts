@@ -70,6 +70,7 @@ import { Input } from './Input';
 import { Interaction } from './Interaction';
 import { Renderer } from './Renderer';
 import { WorldRules } from './WorldRules';
+import { blocksFromDirection } from '../player/Melee';
 import { gameRulesScreen } from '../ui/GameRulesScreen';
 import type { Difficulty } from '../world/Difficulty';
 import { WeatherSystem } from './WeatherSystem';
@@ -217,6 +218,18 @@ export class Game {
       this.stats.armorToughness = armor.toughness;
     };
     this.stats.onArmorHit = (wear) => void this.playerInventory.wearArmor(wear);
+    // Shield: a raised shield blocks hits from a 100 degree arc in front (mob and explosion yaw points from the source to
+    // the player, arrow yaw back along the flight, towards the shooter).
+    this.stats.blocker = (src, amount) => {
+      const it = this.interaction;
+      if (!it?.blocking || src.yaw === undefined) return false;
+      const s = Math.sin(src.yaw), c = Math.cos(src.yaw);
+      const p = this.player;
+      const tx = src.kind === 'arrow' ? s : -s, tz = src.kind === 'arrow' ? c : -c;
+      if (!blocksFromDirection(p.yaw, p.x + tx, p.z + tz, p.x, p.z)) return false;
+      it.onShieldBlock(amount);
+      return true;
+    };
     this.stack = new ScreenStack(root.querySelector<HTMLElement>('#screens')!);
     root.append(this.toasts.el, this.remote.el, this.chat.el, this.hud.el, this.debug.el, this.inventory.el, this.survivalInventory.el);
     this.weatherSys = new WeatherSystem({
@@ -1583,6 +1596,8 @@ export class Game {
         p.speedMultiplier = fx.speedMultiplier();
         p.jumpBoost = fx.jumpBoost();
         p.levitation = fx.level('levitation');
+        // A raised shield slows you down to sneaking speed.
+        if (this.interaction?.blocking) p.speedMultiplier *= 0.3;
       }
       const asleep = this.worldRules.sleeping;
       while (this.accumulator >= PHYSICS.STEP) {

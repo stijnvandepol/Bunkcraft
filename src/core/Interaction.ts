@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { EntityManager } from '../entities/EntityManager';
 import type { PlayerInventory } from '../items/Inventory';
-import { ITEM, blockDrop, breakSeconds, getItemDef, isBlockItem, itemBlock, itemFromState, itemId, itemMeta } from '../items/ItemRegistry';
+import { ITEM, SHIELD, blockDrop, breakSeconds, getItemDef, isBlockItem, itemBlock, itemFromState, itemId, itemMeta } from '../items/ItemRegistry';
 import { toolUse } from '../items/ToolUse';
 import { facingFromYaw } from '../world/BlockStates';
 import { type GameMode, hasSurvivalRules } from '../player/GameMode';
@@ -78,6 +78,11 @@ export class Interaction {
   readonly cooldown = new AttackCooldown();
   /** True while the eat animation is playing (hand renderer). */
   eating = false;
+  /** Shield raised (Use held with a shield, after Minecraft's 5 tick warm-up). */
+  blocking = false;
+  private shieldRaise = 0;
+  /** Seconds the shield stays down after an axe hit (Minecraft: 5 s). */
+  shieldDisabled = 0;
   /** Seconds the bow has been drawn (0 = not drawing). */
   private bowDraw = 0;
   /** Bow draw 0..1 for the FOV zoom. */
@@ -96,6 +101,8 @@ export class Interaction {
   private readonly liquidRay: RayHit = createRayHit();
 
   reset(): void {
+    this.blocking = false;
+    this.shieldRaise = 0;
     this.breakProgress = 0;
     this.breakKey = -1;
     this.eatTime = 0;
@@ -149,7 +156,19 @@ export class Interaction {
     const held = this.d.hotbar.selectedStack;
     const food = getItemDef(held.id)?.food;
     const canEat = food && hasSurvivalRules(mode) && this.d.stats.hunger < 20;
-    if (held.id === ITEM.BOW) {
+    this.shieldDisabled = Math.max(0, this.shieldDisabled - dt);
+    if (held.id === SHIELD && input.rightDown && this.shieldDisabled <= 0) {
+      this.shieldRaise += dt;
+      this.blocking = this.shieldRaise >= 0.25;
+    } else {
+      this.shieldRaise = 0;
+      this.blocking = false;
+    }
+    if (held.id === SHIELD) {
+      this.eatTime = 0;
+      this.eating = false;
+      this.bowDraw = this.bowPull = 0;
+    } else if (held.id === ITEM.BOW) {
       this.eatTime = 0;
       this.eating = false;
       this.updateBow(dt, input, mode);
@@ -320,6 +339,20 @@ export class Interaction {
           if (tool.kind !== 'sword') inventory.damageTool(hotbar.selected);
         }
       }
+    }
+  }
+
+  /** The raised shield took a hit: it wears by 1 + floor(damage) from 3 damage on (Minecraft), an axe lowers it for 5 s. */
+  onShieldBlock(amount: number, byAxe = false): void {
+    const { inventory, hotbar, audio } = this.d;
+    audio.playArrowHit(0.8);
+    if (amount >= 3) {
+      const wear = Math.min(64, 1 + Math.floor(amount));
+      for (let i = 0; i < wear; i++) if (inventory.damageTool(hotbar.selected)) break;
+    }
+    if (byAxe) {
+      this.shieldDisabled = 5;
+      this.blocking = false;
     }
   }
 
