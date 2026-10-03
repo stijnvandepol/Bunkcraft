@@ -1,0 +1,448 @@
+{
+ "steps": [
+  {
+   "name": "Nieuwe survival-wereld via het menu",
+   "ok": true,
+   "seconds": 8.6,
+   "notes": [
+    "default mode button: Game Mode: Survival",
+    "world loaded in 0.5s, state after load: paused (pointer lock fails in automation)",
+    "spawn at 8.5,65.0,0.5 clock 07:57, mobs near: 0 hostile / 25 passive",
+    "inventory at start: []"
+   ],
+   "frame": {
+    "samples": 8,
+    "fps_min": 47,
+    "fps_p10": 47,
+    "fps_median": 120,
+    "cpu_ms_avg": 4.15,
+    "worst_frame_ms": 100,
+    "now": {
+     "fps": 120,
+     "frameMs": 1.18,
+     "worstMs": 9.2
+    }
+   },
+   "errors": [],
+   "shots": [
+    "shots/00_title.png",
+    "shots/01_worlds.png",
+    "shots/02_create.png",
+    "shots/03_spawn.png"
+   ]
+  },
+  {
+   "name": "Boom slaan met de hand (logs verzamelen)",
+   "ok": true,
+   "seconds": 109.1,
+   "notes": [
+    "tree oak_log at 12,66,-1: walked there ok=False",
+    "mine: crosshair on [10, 67, -1], wanted [12, 66, -1]",
+    "mine: crosshair on [10, 68, -1], wanted [12, 68, -1]",
+    "mine: crosshair on [11, 69, -1], wanted [12, 69, -1]",
+    "log break times so far (s): [4.51, 3.19, 4.31, 3.84]; items left on ground: 0",
+    "tree spruce_log at 14,67,6: walked there ok=False",
+    "mine: crosshair on [12, 67, 0], wanted [14, 67, 6]",
+    "could not break log at height +0",
+    "log break times so far (s): [4.51, 3.19, 4.31, 3.84, None]; items left on ground: 0",
+    "tree spruce_log at 14,67,6: walked there ok=True",
+    "mine: crosshair on [14, 69, 5], wanted [14, 69, 6]",
+    "mine: crosshair on [14, 70, 5], wanted [14, 71, 6]",
+    "log break times so far (s): [4.51, 3.19, 4.31, 3.84, None, 3.06, 3.1, 3.92, 3.16, 3.83]; items left on ground: 0",
+    "inventory: [('Oak Sapling', 3), ('Oak Log', 4), ('Spruce Log', 5)]; total 109s"
+   ],
+   "frame": {
+    "samples": 436,
+    "fps_min": 108,
+    "fps_p10": 120,
+    "fps_median": 120,
+    "cpu_ms_avg": 1.41,
+    "worst_frame_ms": 33.4,
+    "now": {
+     "fps": 120,
+     "frameMs": 1.46,
+     "worstMs": 10
+    }
+   },
+   "errors": [],
+   "shots": [
+    "shots/04_tree.png"
+   ]
+  },
+  {
+   "name": "Planken, stokken, werkbank en houten pikhouweel via het receptenboek",
+   "ok": true,
+   "seconds": 15.3,
+   "notes": [
+    "Oak Planks crafted 4x (from 9 logs) -> planks 16",
+    "Stick crafted 2x -> 8 sticks",
+    "Crafting Table crafted 1x",
+    "recipe search \"pickaxe\" without table shows 0 recipes",
+    "table placed at 13,67,5",
+    "select ok=True, placed=True",
+    "Wooden Pickaxe crafted 1x",
+    "Wooden Sword crafted 1x"
+   ],
+   "frame": {
+    "samples": 5,
+    "fps_min": 120,
+    "fps_p10": 120,
+    "fps_median": 120,
+    "cpu_ms_avg": 1.44,
+    "worst_frame_ms": 10.1,
+    "now": {
+     "fps": 121,
+     "frameMs": 1.19,
+     "worstMs": 10.3
+    }
+   },
+   "errors": [],
+   "shots": [
+    "shots/05_inventory_open.png",
+    "shots/06_recipes_no_table.png",
+    "shots/07_inventory_wood_tools.png"
+   ]
+  },
+  {
+   "name": "Bestaande wereld laden (Play Selected World)",
+   "ok": true,
+   "seconds": 3.8,
+   "notes": [
+    "loaded in 0.3s at 13.9,67.0,7.1, clock 10:25 day 0, hp 20 food 20",
+    "inventory: [('Oak Sapling', 3), ('Stick', 5), ('Spruce Log', 5), ('Oak Planks', 3), ('Wooden Pickaxe', 1), ('Wooden Sword', 1)]"
+   ],
+   "frame": {
+    "samples": 6,
+    "fps_min": 119,
+    "fps_p10": 119,
+    "fps_median": 120,
+    "cpu_ms_avg": 1.35,
+    "worst_frame_ms": 10.3,
+    "now": {
+     "fps": 120,
+     "frameMs": 1.17,
+     "worstMs": 10.1
+    }
+   },
+   "errors": [],
+   "shots": []
+  },
+  {
+   "name": "Steen hakken met het houten pikhouweel (trap naar beneden)",
+   "ok": true,
+   "seconds": 52.6,
+   "notes": [
+    "cobblestone 19 after 52s; stone break times with wooden pickaxe: [1.24, 1.18, 1.19, 1.19, 1.19, 1.39, 1.16, 1.25]",
+    "wooden pickaxe damage: [{'slot': 4, 'id': 270, 'name': 'Wooden Pickaxe', 'count': 1, 'damage': 33}]"
+   ],
+   "frame": {
+    "samples": 210,
+    "fps_min": 76,
+    "fps_p10": 120,
+    "fps_median": 120,
+    "cpu_ms_avg": 1.3,
+    "worst_frame_ms": 100,
+    "now": {
+     "fps": 121,
+     "frameMs": 1.28,
+     "worstMs": 10.2
+    }
+   },
+   "errors": [],
+   "shots": [
+    "shots/08_staircase.png"
+   ]
+  },
+  {
+   "name": "Stenen gereedschap en oven maken (bij de werkbank)",
+   "ok": false,
+   "seconds": 26.7,
+   "notes": [
+    "back at the table: True",
+    "crafted: {'Stone Pickaxe': 1, 'Stone Sword': 1, 'Furnace': 1}",
+    "furnace placed: False"
+   ],
+   "frame": {
+    "samples": 90,
+    "fps_min": 119,
+    "fps_p10": 120,
+    "fps_median": 120,
+    "cpu_ms_avg": 1.31,
+    "worst_frame_ms": 10.3,
+    "now": {
+     "fps": 120,
+     "frameMs": 1.24,
+     "worstMs": 10.1
+    }
+   },
+   "errors": [],
+   "shots": [
+    "shots/09_table_furnace.png"
+   ]
+  },
+  {
+   "name": "Bestaande wereld laden (Play Selected World)",
+   "ok": true,
+   "seconds": 4.8,
+   "notes": [
+    "loaded in 0.5s at 15.3,65.0,7.5, clock 12:00 day 0, hp 20 food 20",
+    "inventory: [('Oak Sapling', 3), ('Stick', 2), ('Spruce Log', 5), ('Oak Planks', 3), ('Wooden Pickaxe', 1), ('Wooden Sword', 1), ('Dirt', 15), ('Cobblestone', 6), ('Furnace', 1), ('Stone Sword', 1), ('Stone Pickaxe', 1)]"
+   ],
+   "frame": {
+    "samples": 6,
+    "fps_min": 119,
+    "fps_p10": 119,
+    "fps_median": 120,
+    "cpu_ms_avg": 1.87,
+    "worst_frame_ms": 10.2,
+    "now": {
+     "fps": 120,
+     "frameMs": 1.59,
+     "worstMs": 9.7
+    }
+   },
+   "errors": [],
+   "shots": []
+  },
+  {
+   "name": "Oven neerzetten",
+   "ok": true,
+   "seconds": 1.7,
+   "notes": [
+    "furnace placed at (14, 66, 6)"
+   ],
+   "frame": {
+    "samples": 7,
+    "fps_min": 93,
+    "fps_p10": 93,
+    "fps_median": 120,
+    "cpu_ms_avg": 1.78,
+    "worst_frame_ms": 66.7,
+    "now": {
+     "fps": 120,
+     "frameMs": 1.93,
+     "worstMs": 9.9
+    }
+   },
+   "errors": [],
+   "shots": [
+    "shots/09_table_furnace.png"
+   ]
+  },
+  {
+   "name": "Kolen zoeken en hakken",
+   "ok": true,
+   "seconds": 199.0,
+   "notes": [
+    "mine: crosshair on [27, 61, 13], wanted [27, 61, 14]",
+    "mine: crosshair on [27, 60, 14], wanted [28, 60, 14]",
+    "mine: crosshair on [28, 61, 13], wanted [29, 60, 14]",
+    "mine: crosshair on [27, 60, 13], wanted [29, 59, 14]",
+    "mine: crosshair on [29, 61, 14], wanted [30, 60, 14]",
+    "mine: crosshair on [35, 59, 21], wanted [35, 58, 21]",
+    "mine: crosshair on [36, 59, 21], wanted [36, 58, 21]",
+    "mine: crosshair on [34, 59, 20], wanted [34, 58, 20]",
+    "mine: crosshair on [36, 59, 20], wanted [36, 58, 20]",
+    "mine: crosshair on [34, 58, 21], wanted [34, 57, 21]",
+    "coal 40 in 198s; {'veins': 4, 'mined': 39, 'times': [2.75, 1.4, 1.37, 1.2, 1.45, 2.99, 1.24, 1.34, 3.92, 1.25, 1.29, 1.52, 1.17, 2.13, 1.16, 1.26, 1.41, 1.2, 1.28, 1.17, 1.3, 1.19, 1.2, 1.25, 1.22, 1.3, 1.21, 2.16, 2.16, 1.29, 1.18, 1.21, 2.66, 1.28, 1.26, 1.22, 1.28, 1.16, 1.28], 'dig_failures': 0}"
+   ],
+   "frame": {
+    "samples": 794,
+    "fps_min": 116,
+    "fps_p10": 120,
+    "fps_median": 120,
+    "cpu_ms_avg": 1.55,
+    "worst_frame_ms": 13.8,
+    "now": {
+     "fps": 120,
+     "frameMs": 1.37,
+     "worstMs": 9.8
+    }
+   },
+   "errors": [],
+   "shots": [
+    "shots/10_coal.png"
+   ]
+  },
+  {
+   "name": "Fakkels maken en plaatsen",
+   "ok": true,
+   "seconds": 3.1,
+   "notes": [
+    "torch crafted 2x -> 8 torches",
+    "torch placed at (35, 57, 21), block light there 14"
+   ],
+   "frame": {
+    "samples": 6,
+    "fps_min": 120,
+    "fps_p10": 120,
+    "fps_median": 120,
+    "cpu_ms_avg": 1.38,
+    "worst_frame_ms": 10.4,
+    "now": {
+     "fps": 121,
+     "frameMs": 1.47,
+     "worstMs": 9.7
+    }
+   },
+   "errors": [],
+   "shots": [
+    "shots/12_torch.png"
+   ]
+  },
+  {
+   "name": "IJzererts zoeken en hakken (stenen pikhouweel)",
+   "ok": true,
+   "seconds": 421.0,
+   "notes": [
+    "mine: crosshair on [41, 53, 25], wanted [41, 52, 25]",
+    "mine: crosshair on [42, 53, 25], wanted [42, 52, 25]",
+    "mine: crosshair on [42, 52, 24], wanted [43, 50, 24]",
+    "mine: crosshair on [38, 51, 24], wanted [38, 50, 24]",
+    "mine: crosshair on [39, 49, 24], wanted [39, 47, 25]",
+    "mine: crosshair on [40, 49, 20], wanted [40, 48, 20]",
+    "mine: crosshair on [39, 48, 21], wanted [38, 47, 20]",
+    "mine: crosshair on [39, 49, 20], wanted [38, 48, 19]",
+    "mine: crosshair on [40, 47, 21], wanted [39, 46, 21]",
+    "raw iron 1 in 420s; {'veins': 6, 'mined': 8, 'times': [1.2, 4.06, 15.05, 15.25, 15.06, 15.02, 15.19, 15.52], 'dig_failures': 0}"
+   ],
+   "frame": {
+    "samples": 1683,
+    "fps_min": 112,
+    "fps_p10": 120,
+    "fps_median": 120,
+    "cpu_ms_avg": 1.47,
+    "worst_frame_ms": 20.9,
+    "now": {
+     "fps": 120,
+     "frameMs": 1.29,
+     "worstMs": 10.2
+    }
+   },
+   "errors": [],
+   "shots": [
+    "shots/11_iron.png"
+   ]
+  },
+  {
+   "name": "Bestaande wereld laden (Play Selected World)",
+   "ok": true,
+   "seconds": 4.0,
+   "notes": [
+    "loaded in 0.2s at 40.6,47.0,21.3, clock 00:33 day 0, hp 20 food 20",
+    "inventory: [('Oak Sapling', 3), ('Cobblestone', 16), ('Spruce Log', 5), ('Oak Planks', 3), ('Wooden Pickaxe', 1), ('Wooden Sword', 1), ('Dirt', 24), ('Cobblestone', 64), ('Stone Sword', 1), ('Coal', 38), ('Torch', 7), ('Raw Iron', 1)]",
+    "end: clock 00:33 day 1, hp 20, food 20, mobs<64: 8 hostile / 23 passive"
+   ],
+   "frame": {
+    "samples": 6,
+    "fps_min": 120,
+    "fps_p10": 120,
+    "fps_median": 120,
+    "cpu_ms_avg": 1.5,
+    "worst_frame_ms": 10,
+    "now": {
+     "fps": 120,
+     "frameMs": 1.48,
+     "worstMs": 9.7
+    }
+   },
+   "errors": [],
+   "shots": []
+  },
+  {
+   "name": "IJzererts zoeken en hakken (stenen pikhouweel)",
+   "ok": true,
+   "seconds": 78.7,
+   "notes": [
+    "pickaxe gone (broke without a sound/particle cue?) - making a new stone pickaxe; inventory [('Oak Sapling', 3), ('Cobblestone', 16), ('Spruce Log', 5), ('Oak Planks', 3), ('Wooden Pickaxe', 1), ('Wooden Sword', 1), ('Dirt', 24), ('Cobblestone', 64), ('Stone Sword', 1), ('Coal', 38), ('Torch', 7), ('Raw Iron', 1)]",
+    "new crafting table at None",
+    "new stone pickaxe crafted: 1",
+    "mine: crosshair on [40, 47, 20], wanted [39, 46, 20]",
+    "mine: crosshair on [40, 48, 20], wanted [38, 47, 19]",
+    "mine: crosshair on [41, 48, 21], wanted [43, 46, 19]",
+    "mine: crosshair on [44, 48, 20], wanted [44, 47, 20]",
+    "mine: crosshair on [44, 48, 19], wanted [44, 47, 19]",
+    "mine: crosshair on [43, 48, 19], wanted [44, 46, 18]",
+    "mine: crosshair on [45, 47, 19], wanted [45, 47, 18]",
+    "raw iron 9 in 79s; {'veins': 2, 'mined': 12, 'times': [1.23, 2.22, 1.33, 1.3, 6.36, 6.73, 1.22, 1.19, 3.98, 2.23, 1.24, 1.33], 'dig_failures': 0}",
+    "end: clock 02:05 day 1, hp 20, food 20, mobs<64: 18 hostile / 22 passive"
+   ],
+   "frame": {
+    "samples": 288,
+    "fps_min": 97,
+    "fps_p10": 119,
+    "fps_median": 120,
+    "cpu_ms_avg": 1.43,
+    "worst_frame_ms": 48.9,
+    "now": {
+     "fps": 127,
+     "frameMs": 1.38,
+     "worstMs": 9.8
+    }
+   },
+   "errors": [],
+   "shots": [
+    "shots/11_iron.png"
+   ]
+  },
+  {
+   "name": "IJzer smelten in de oven (receptenboek, tab Smelt)",
+   "ok": true,
+   "seconds": 129.8,
+   "notes": [
+    "mine: crosshair on [41, 47, 19], wanted [41, 48, 19]",
+    "mine: crosshair on [40, 48, 19], wanted [40, 49, 19]",
+    "mine: crosshair on [39, 49, 19], wanted [39, 50, 19]",
+    "mine: crosshair on [37, 48, 19], wanted [37, 49, 19]",
+    "mine: crosshair on [36, 49, 19], wanted [36, 50, 19]",
+    "mine: crosshair on [35, 50, 19], wanted [35, 51, 19]",
+    "mine: crosshair on [34, 51, 19], wanted [34, 52, 19]",
+    "mine: crosshair on [33, 52, 19], wanted [33, 53, 19]",
+    "mine: crosshair on [32, 53, 19], wanted [32, 54, 19]",
+    "mine: crosshair on [31, 54, 19], wanted [31, 55, 19]",
+    "mine: crosshair on [30, 55, 19], wanted [30, 56, 19]",
+    "mine: crosshair on [29, 56, 19], wanted [29, 57, 19]",
+    "mine: crosshair on [28, 57, 19], wanted [28, 58, 19]",
+    "mine: crosshair on [27, 58, 19], wanted [27, 59, 19]",
+    "mine: crosshair on [26, 59, 19], wanted [26, 60, 19]",
+    "mine: crosshair on [26, 60, 18], wanted [26, 61, 18]",
+    "at furnace: True",
+    "smelted 10 iron ingots from 10 raw iron in 4.8s (instant, no furnace UI); fuel before {'coal': 38, 'oak_planks': 0, 'spruce_planks': 5, 'spruce_log': 3} after {'coal': 28, 'oak_planks': 0, 'spruce_planks': 5, 'spruce_log': 3}",
+    "end: clock 04:41 day 1, hp 20, food 20, mobs<64: 17 hostile / 24 passive"
+   ],
+   "frame": {
+    "samples": 502,
+    "fps_min": 113,
+    "fps_p10": 118,
+    "fps_median": 120,
+    "cpu_ms_avg": 1.16,
+    "worst_frame_ms": 16.8,
+    "now": {
+     "fps": 116,
+     "frameMs": 1.27,
+     "worstMs": 16.6
+    }
+   },
+   "errors": [],
+   "shots": []
+  }
+ ],
+ "frames": [
+  {
+   "fps": 120,
+   "frameMs": 1.48,
+   "worstMs": 9.7
+  },
+  {
+   "fps": 127,
+   "frameMs": 1.38,
+   "worstMs": 9.8
+  },
+  {
+   "fps": 116,
+   "frameMs": 1.27,
+   "worstMs": 16.6
+  }
+ ],
+ "console": []
+}
