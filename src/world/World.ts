@@ -1,15 +1,20 @@
 import type { WorkerPool } from '../workers/WorkerPool';
 import { tintColor } from './BiomeColors';
-import { ContainerStore } from './Containers';
+import { BlockEntityStore } from './BlockEntities';
 import { BLOCK, BOX_KIND, DYE, DYE_RGB, SHAPE, SHAPE_CROSS, SHAPE_DOOR, SHAPE_MODEL, SOLID, TINT } from './BlockRegistry';
 import { CHUNK_READY, type Chunk } from './Chunk';
 import { ChunkManager, type ChunkMaterials } from './ChunkManager';
-import { CHUNK_HEIGHT, CHUNK_VOLUME, SEA_LEVEL, blockIndex, chunkKey } from './constants';
+import { CHUNK_HEIGHT, CHUNK_VOLUME, blockIndex, chunkKey } from './constants';
 import { GEN_VERSION_CURRENT } from './GenVersion';
 import { DOOR_OPEN_BIT, isDoorUpper, packState, stateId, stateMeta } from './BlockStates';
 import { BOX_BED, BOX_GATE, BOX_TRAPDOOR, GATE_OPEN_BIT, TRAPDOOR_OPEN_BIT, bedPartner } from './BoxShapes';
-import { BIOME } from './TerrainGenerator';
+import { BlockUpdates } from './BlockUpdates';
+import { createRandomTicker } from './Growth';
 import { LAVA_TICK_DELAY, LiquidSim, WATER_TICK_DELAY, isLiquid } from './Liquids';
+import { RedstoneSim, isRedstoneBlock } from './Redstone';
+import { type RandomTicker, type RandomTickHost, noteRandomTickable } from './RandomTicks';
+import { findSpawnColumn } from './Spawn';
+import { BIOME } from './TerrainGenerator';
 import { type WorldGenerator, type WorldType, arenaMapOf, createGenerator, isArenaWorld } from './WorldGenerator';
 
 /** Sparse player edits per chunk: block index → packed state (id | meta << 8, see BlockStates). */
@@ -21,13 +26,45 @@ export class World {
   readonly generator: WorldGenerator;
   readonly edits: EditMap;
   readonly dirtyEditChunks = new Set<number>();
-  /** Chest contents (singleplayer; saved with the world). */
-  readonly containers = new ContainerStore();
+  /**
+   * Block entities (chest and furnace contents, ...): created and removed as the blocks change, saved with the world.
+   * Singleplayer owns them; on a multiplayer server the server does (the client keeps this store disabled).
+   */
+  readonly blockEntities = new BlockEntityStore({
+    getBlock: (x, y, z) => this.getBlock(x, y, z),
+    getMeta: (x, y, z) => this.getMeta(x, y, z),
+    setState: (x, y, z, id, meta) => { this.setBlock(x, y, z, id, meta); },
+  });
   /**
    * Water and lava flow (singleplayer only: on a multiplayer server the server simulates and the client mirrors
    * its block changes). Null until enableLiquids().
    */
   liquids: LiquidSim | null = null;
+  /** Redstone (singleplayer only, like the liquids: a server simulates it and the client mirrors). Null until enableRedstone(). */
+  redstone: RedstoneSim | null = null;
+  /**
+   * A redstone block changed state through the simulation or the server (not the local player's own click): hook for its
+   * sound (lever, button, plate, piston, door, note block).
+   */
+  onRedstoneChange: ((x: number, y: number, z: number, prevId: number, prevMeta: number, id: number, meta: number) => void) | null = null;
+  /** Chunks whose only changes were dust strength (vertex colours): remeshed together at most 5 times a second. */
+  private readonly deferredMesh = new Map<Chunk, number>();
+  private deferTicks = 0;
+  private simEdit = false;
+  /**
+   * Random ticks (plants grow, leaves decay, grass spreads) and scheduled block updates (falling sand, plants that
+   * lose their ground). Singleplayer only: on a multiplayer server the server simulates and the client mirrors.
+   * Null until enableGrowth().
+   */
+  randomTicker: RandomTicker | null = null;
+  updates: BlockUpdates | null = null;
+  /** The simulation removed a block (leaves decayed, a plant was uprooted) or a falling block could not land: drop what it gives. */
+  onBlockDrop: ((id: number, meta: number, x: number, y: number, z: number) => void) | null = null;
+  /** Sky light that time of day and weather take away (0..11); the game sets it. */
+  skyDarkness: () => number = () => 0;
+  private readonly tickCenters = [{ x: 0, z: 0 }];
+  private batchDepth = 0;
+  private readonly batched = new Set<Chunk>();
   /** Entity hooks: a chunk finished generating / was unloaded. */
   onChunkReady: ((chunk: Chunk) => void) | null = null;
   onChunkUnloaded: ((key: number) => void) | null = null;
@@ -44,6 +81,9 @@ export class World {
         for (const [i, state] of e) {
           writeState(chunk, i, stateId(state), stateMeta(state));
           // Liquid that was still flowing when the world was saved carries on.
+          if (this.redstone && isRedstoneBlock(stateId(state))) {
+            this.redstone.loaded(chunk.cx * 16 + (i & 15), i >> 8, chunk.cz * 16 + ((i >> 4) & 15), stateId(state));
+          }
           if (this.liquids && isLiquid(stateId(state)) && stateMeta(state) !== 0) {
             this.liquids.schedule(chunk.cx * 16 + (i & 15), i >> 8, chunk.cz * 16 + ((i >> 4) & 15), stateId(state) === BLOCK.LAVA ? LAVA_TICK_DELAY : WATER_TICK_DELAY);
           }
@@ -67,6 +107,135 @@ export class World {
 
   tickLiquids(): void {
     this.liquids?.tick();
+  }
+
+  /** Turns on redstone; the caller ticks it with tickRedstone() at 20 Hz. */
+  enableRedstone(entitiesOn?: (x: number, y: number, z: number, oak: boolean) => number): RedstoneSim {
+    const sim = new RedstoneSim({
+      entitiesOn,
+      getBlock: (x, y, z) => this.getBlock(x, y, z),
+      getMeta: (x, y, z) => this.getMeta(x, y, z),
+      setState: (x, y, z, id, meta) => {
+        this.simEdit = true;
+        try { this.setBlock(x, y, z, id, meta); } finally { this.simEdit = false; }
+      },
+    });
+    this.redstone = sim;
+    return sim;
+  }
+
+  /** One game tick of redstone (singleplayer), then the batched dust remeshes (also in multiplayer, for the server's changes). */
+  tickRedstone(): void {
+    this.redstone?.tick();
+    if (++this.deferTicks % 4 !== 0 || this.deferredMesh.size === 0) return;
+    for (const [c, border] of this.deferredMesh) {
+      if (this.chunks.chunks.get(c.key) !== c) continue;
+      this.remeshAround(c, border);
+    }
+    this.deferredMesh.clear();
+  }
+
+  /** Remesh a chunk now, and the neighbours whose border it touched (`border`: bit 0 −x, 1 +x, 2 −z, 3 +z). */
+  private remeshAround(c: Chunk, border: number): void {
+    c.version++;
+    this.remesh(c);
+    for (let dz = -1; dz <= 1; dz++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (!dx && !dz) continue;
+        const touches = (dx === -1 ? (border & 1) !== 0 : dx === 1 ? (border & 2) !== 0 : true)
+          && (dz === -1 ? (border & 4) !== 0 : dz === 1 ? (border & 8) !== 0 : true);
+        if (!touches) continue;
+        const n = this.chunks.get(c.cx + dx, c.cz + dz);
+        if (!n || n.state !== CHUNK_READY) continue;
+        n.version++;
+        this.remesh(n);
+      }
+    }
+    this.chunks.markDirty();
+  }
+
+  /** Turns on random ticks and block updates; the caller ticks them with tickGrowth() at 20 Hz. */
+  enableGrowth(): void {
+    const host: RandomTickHost = {
+      chunkBlocks: (cx, cz) => this.chunkAt(cx, cz)?.blocks ?? null,
+      getBlock: (x, y, z) => this.getBlock(x, y, z),
+      getMeta: (x, y, z) => this.getMeta(x, y, z),
+      getLight: (x, y, z) => this.getLight(x, y, z),
+      setState: (x, y, z, id, meta, quiet) => {
+        if (quiet) this.setMetaQuiet(x, y, z, meta);
+        else this.setBlock(x, y, z, id, meta);
+      },
+      dropBlock: (id, meta, x, y, z) => this.onBlockDrop?.(id, meta, x, y, z),
+      biomeAt: (x, z) => {
+        const c = this.chunkAt(x >> 4, z >> 4);
+        return c?.biomes ? c.biomes[(x & 15) + (z & 15) * 16] : BIOME.PLAINS;
+      },
+      skyDarkness: () => this.skyDarkness(),
+      // Many changes in one tick (several leaves, a tree) remesh each chunk once, without jumping the queue.
+      begin: () => this.beginBatch(),
+      end: () => this.endBatch(false),
+    };
+    this.randomTicker = createRandomTicker(host, { radius: 8, budgetMs: 0.5 });
+    const updates = new BlockUpdates({
+      getBlock: (x, y, z) => this.getBlock(x, y, z),
+      getMeta: (x, y, z) => this.getMeta(x, y, z),
+      setState: (x, y, z, id, meta) => { this.setBlock(x, y, z, id, meta); },
+    });
+    updates.onBroken = (x, y, z, id, meta) => this.onBlockDrop?.(id, meta, x, y, z);
+    updates.onDropped = (id, meta, x, y, z) => this.onBlockDrop?.(id, meta, x, y, z);
+    this.updates = updates;
+  }
+
+  /** One game tick of random ticks and scheduled updates around the player. */
+  tickGrowth(px: number, pz: number): void {
+    if (!this.randomTicker) return;
+    const c = this.tickCenters[0];
+    c.x = px; c.z = pz;
+    this.randomTicker.tick(this.tickCenters);
+    this.updates?.tick();
+  }
+
+  /** Runs `fn` with all mesh updates held back, then remeshes every touched chunk once (`urgent`: ahead of the queue). */
+  batch(fn: () => void, urgent = true): void {
+    this.beginBatch();
+    try { fn(); } finally { this.endBatch(urgent); }
+  }
+
+  private beginBatch(): void {
+    this.batchDepth++;
+  }
+
+  private endBatch(urgent: boolean): void {
+    if (--this.batchDepth > 0) return;
+    for (const c of this.batched) {
+      if (urgent) this.chunks.requestMeshUrgent(c);
+    }
+    this.batched.clear();
+    this.chunks.markDirty();
+  }
+
+  private remesh(c: Chunk): void {
+    if (this.batchDepth > 0) this.batched.add(c);
+    else this.chunks.requestMeshUrgent(c);
+  }
+
+  /**
+   * Changes only the state byte of a block (growth age, sapling stage): saved with the world, but nothing is
+   * remeshed or sent. Returns false when the chunk is not loaded or nothing changed.
+   */
+  setMetaQuiet(x: number, y: number, z: number, meta: number): boolean {
+    if (y < 0 || y >= CHUNK_HEIGHT) return false;
+    const c = this.chunkAt(x >> 4, z >> 4);
+    if (!c || !c.blocks) return false;
+    const i = blockIndex(x & 15, y, z & 15);
+    if ((c.meta ? c.meta[i] : 0) === meta) return false;
+    const id = c.blocks[i];
+    writeState(c, i, id, meta);
+    let e = this.edits.get(c.key);
+    if (!e) { e = new Map(); this.edits.set(c.key, e); }
+    e.set(i, packState(id, meta));
+    this.dirtyEditChunks.add(c.key);
+    return true;
   }
 
   // chunkKey exceeds the Smi range, so every Map lookup boxes a heap number. Entities, particles and
@@ -135,7 +304,9 @@ export class World {
     const prevMeta = c.meta ? c.meta[i] : 0;
     if (prev === id && prevMeta === meta) return false;
     writeState(c, i, id, meta);
+    noteRandomTickable(c.blocks, y, id);
     if (!remote) this.onEdit?.(x, y, z, id, meta, prev, prevMeta);
+    if (this.blockEntities.enabled) this.blockEntities.onBlockChange(x, y, z, prev, prevMeta, id, meta);
 
     let e = this.edits.get(c.key);
     if (!e) { e = new Map(); this.edits.set(c.key, e); }
@@ -145,21 +316,19 @@ export class World {
     // Faces and AO reach one block into the neighbours: only chunks the edit touches are remeshed
     // right away. Light reaches up to 14 blocks, but ChunkManager remeshes a further neighbour only
     // when the border light of the edited chunk actually changed (see propagateLight).
-    c.version++;
-    this.chunks.requestMeshUrgent(c);
-    for (let dz = -1; dz <= 1; dz++) {
-      for (let dx = -1; dx <= 1; dx++) {
-        if (!dx && !dz) continue;
-        const touches = (dx === -1 ? lx === 0 : dx === 1 ? lx === 15 : true) && (dz === -1 ? lz === 0 : dz === 1 ? lz === 15 : true);
-        if (!touches) continue;
-        const n = this.chunks.get(cx + dx, cz + dz);
-        if (!n || n.state !== CHUNK_READY) continue;
-        n.version++;
-        this.chunks.requestMeshUrgent(n);
-      }
+    const border = (lx === 0 ? 1 : 0) | (lx === 15 ? 2 : 0) | (lz === 0 ? 4 : 0) | (lz === 15 ? 8 : 0);
+    if (prev === BLOCK.REDSTONE_WIRE && id === BLOCK.REDSTONE_WIRE) {
+      // Only the dust colour changed: batched (a clock would otherwise remesh its chunk every tick).
+      this.deferredMesh.set(c, (this.deferredMesh.get(c) ?? 0) | border);
+    } else {
+      this.remeshAround(c, border);
     }
-    this.chunks.markDirty();
+    if ((remote || this.simEdit) && (isRedstoneBlock(id) || isRedstoneBlock(prev) || SHAPE[id] === SHAPE_DOOR || BOX_KIND[id] !== 0)) {
+      this.onRedstoneChange?.(x, y, z, prev, prevMeta, id, meta);
+    }
     this.liquids?.notify(x, y, z);
+    this.redstone?.notify(x, y, z);
+    this.updates?.notify(x, y, z);
     return true;
   }
 
@@ -185,7 +354,9 @@ export class World {
           const i = blockIndex(x & 15, y, z & 15);
           const id = c.blocks[i];
           if (id === BLOCK.AIR || id === BLOCK.BEDROCK || id === BLOCK.OBSIDIAN || id === BLOCK.WATER || id === BLOCK.LAVA) continue;
+          const prevMeta = c.meta ? c.meta[i] : 0;
           writeState(c, i, BLOCK.AIR, 0);
+          if (this.blockEntities.enabled) this.blockEntities.onBlockChange(x, y, z, id, prevMeta, BLOCK.AIR, 0);
           cleared.push(x, y, z);
           let e = this.edits.get(c.key);
           if (!e) { e = new Map(); this.edits.set(c.key, e); }
@@ -229,6 +400,8 @@ export class World {
     }
     this.chunks.markDirty();
     if (this.liquids) for (let k = 0; k < cleared.length; k += 3) this.liquids.notify(cleared[k], cleared[k + 1], cleared[k + 2]);
+    if (this.redstone) for (let k = 0; k < cleared.length; k += 3) this.redstone.notify(cleared[k], cleared[k + 1], cleared[k + 2]);
+    if (this.updates) for (let k = 0; k < cleared.length; k += 3) this.updates.notify(cleared[k], cleared[k + 1], cleared[k + 2]);
     return destroyed;
   }
 
@@ -293,18 +466,8 @@ export class World {
   /** Spiral search for dry land near the origin using the 2D height function. */
   findSpawn(): { x: number; z: number } {
     if (isArenaWorld(this.worldType)) return arenaMapOf(this.worldType).spawns.ffa[0];
-    for (let r = 0; r < 2000; r += 8) {
-      const steps = Math.max(1, Math.floor((r * Math.PI * 2) / 16));
-      for (let s = 0; s < steps; s++) {
-        const a = (s / steps) * Math.PI * 2;
-        const x = Math.round(Math.cos(a) * r), z = Math.round(Math.sin(a) * r);
-        const h = this.generator.heightAt(x, z);
-        const biome = this.generator.biomeAt(x, z, Math.floor(h));
-        if (h > SEA_LEVEL + 2 && h < 85 && (biome === BIOME.PLAINS || biome === BIOME.FOREST || biome === BIOME.TAIGA) && !this.generator.surfaceOpen?.(x, z)) {
-          return { x: x + 0.5, z: z + 0.5 };
-        }
-      }
-    }
+    const at = findSpawnColumn(this.generator, this.genVersion);
+    if (at) return { x: at.x + 0.5, z: at.z + 0.5 };
     return { x: 0.5, z: 0.5 };
   }
 
@@ -366,6 +529,8 @@ export class World {
 
   dispose(): void {
     this.liquids?.clear();
+    this.redstone?.clear();
+    this.updates?.clear();
     this.chunks.dispose();
   }
 }

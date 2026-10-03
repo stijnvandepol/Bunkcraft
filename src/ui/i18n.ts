@@ -1,0 +1,542 @@
+/**
+ * Tiny i18n layer: a typed key table with English (the source of truth) and Dutch.
+ *
+ * `t('key')` looks the key up in the current language and falls back to English. Screens owned by other
+ * developers can use `t('their.key', 'English text')`: a key that is not in the table returns the fallback,
+ * so adding the strings later (to EN and NL below) translates those screens without touching them again.
+ * `{0}`, `{1}` ... in a string are replaced by the extra arguments.
+ */
+
+export type Language = 'en' | 'nl';
+export const LANGUAGES: readonly Language[] = ['en', 'nl'];
+export const LANGUAGE_NAMES: Record<Language, string> = { en: 'English', nl: 'Nederlands' };
+
+const EN = {
+  // Shared
+  'common.done': 'Done',
+  'common.cancel': 'Cancel',
+  'common.back': 'Back',
+  'common.save': 'Save',
+  'common.delete': 'Delete',
+  'common.reset': 'Reset',
+  'common.on': 'ON',
+  'common.off': 'OFF',
+  'common.auto': 'Auto',
+  'common.copied': 'Copied!',
+  'common.loading': 'Loading...',
+
+  // Title screen
+  'title.singleplayer': 'Singleplayer',
+  'title.multiplayer': 'Multiplayer',
+  'title.realms': 'BunkCraft Realms',
+  'title.options': 'Options...',
+  'title.quit': 'Quit Game',
+  'title.edition': 'Browser Edition',
+  'title.disclaimer': 'Not affiliated with Mojang',
+  'title.language': 'Language...',
+  'quit.title': 'Quit Game',
+  'quit.text': 'Thanks for playing! You can now close this browser tab.',
+  'quit.back': 'Back to Title',
+  'disconnected.title': 'Disconnected',
+  'disconnected.back': 'Back to Title Screen',
+
+  // Options hub
+  'options.title': 'Options',
+  'options.fov': 'FOV: {0}',
+  'options.fov.normal': 'Normal',
+  'options.fov.quakePro': 'Quake Pro',
+  'options.quality': 'Quality',
+  'options.quality.custom': 'Custom',
+  'options.video': 'Video Settings...',
+  'options.sound': 'Music & Sounds...',
+  'options.controls': 'Controls...',
+  'options.chat': 'Chat Settings...',
+  'options.language': 'Language...',
+  'options.accessibility': 'Accessibility Settings...',
+  'options.touch': 'Touch Settings...',
+  'options.controller': 'Controller Settings...',
+  'options.resourcePacks': 'Resource Packs...',
+  'options.credits': 'Credits & Attribution...',
+  'options.fullscreen': 'Fullscreen: {0}',
+  'options.lockEsc': 'Lock Esc in Fullscreen: {0}',
+
+  // Video settings
+  'video.title': 'Video Settings',
+  'video.presets': 'Graphics Quality',
+  'video.custom': 'Custom: your own combination',
+  'video.graphics': 'Graphics',
+  'video.graphics.fancy': 'Fancy',
+  'video.graphics.fast': 'Fast',
+  'video.renderDistance': 'Render Distance: {0} chunks',
+  'video.shadows': 'Shadows',
+  'video.shadows.low': 'Low',
+  'video.shadows.high': 'High',
+  'video.shadows.ultra': 'Ultra',
+  'video.renderScale': 'Render Scale: {0}%',
+  'video.dynamicResolution': 'Dynamic Resolution',
+  'video.particles': 'Particles',
+  'video.particles.all': 'All',
+  'video.particles.decreased': 'Decreased',
+  'video.particles.minimal': 'Minimal',
+  'video.clouds': 'Clouds',
+  'video.brightness': 'Brightness: {0}',
+  'video.brightness.moody': 'Moody',
+  'video.brightness.bright': 'Bright',
+  'video.guiScale': 'GUI Scale',
+  'video.viewBobbing': 'View Bobbing',
+  'video.fullscreen': 'Fullscreen',
+  'video.maxFps': 'Max Framerate: {0}',
+  'video.maxFps.unlimited': 'Unlimited',
+  'video.entityDistance': 'Entity Distance: {0}%',
+  'video.attackIndicator': 'Attack Indicator',
+  'video.attackIndicator.crosshair': 'Crosshair',
+  'video.attackIndicator.hotbar': 'Hotbar',
+
+  // Music & sounds
+  'sound.title': 'Music & Sound Options',
+  'sound.master': 'Master Volume',
+  'sound.music': 'Music',
+  'sound.blocks': 'Blocks & Actions',
+  'sound.ambient': 'Ambient',
+  'sound.ui': 'Interface',
+  'sound.spatial': '3D Sound',
+  'sound.stereo': 'Stereo',
+  'sound.hrtf': 'Headphones (HRTF)',
+
+  // Controls
+  'controls.title': 'Controls',
+  'controls.mouse': 'Mouse Settings...',
+  'controls.keybinds': 'Key Binds...',
+  'controls.autoJump': 'Auto-Jump',
+  'mouse.title': 'Mouse Settings',
+  'mouse.sensitivity': 'Sensitivity: {0}%',
+  'mouse.invert': 'Invert Mouse',
+  'mouse.raw': 'Raw Input',
+  'keybinds.title': 'Key Binds',
+  'keybinds.resetAll': 'Reset Keys',
+
+  // Chat settings
+  'chat.title': 'Chat Settings',
+  'chat.opacity': 'Chat Text Opacity: {0}%',
+  'chat.size': 'Chat Text Size: {0}%',
+  'chat.spacing': 'Line Spacing: {0}%',
+  'chat.width': 'Chat Width: {0}%',
+  'chat.colors': 'Colors',
+  'chat.suggestions': 'Command Suggestions',
+
+  // Language
+  'language.title': 'Language',
+  'language.hint': 'Screens that are not translated yet stay in English.',
+
+  // World list
+  'worlds.title': 'Select World',
+  'worlds.search': 'Search...',
+  'worlds.play': 'Play Selected World',
+  'worlds.create': 'Create New World',
+  'worlds.edit': 'Edit',
+  'worlds.delete': 'Delete',
+  'worlds.recreate': 'Re-Create',
+  'worlds.export': 'Export',
+  'worlds.import': 'Import',
+  'worlds.backupAll': 'Backup All',
+  'worlds.empty': 'No worlds yet — create one!',
+  'worlds.notFound': 'No worlds found',
+  'worlds.mode': '{0} Mode',
+  'worlds.seed': 'Seed: {0}',
+  'worlds.cheats': 'Cheats',
+  'worlds.version': 'Version: {0}',
+  'worlds.lastPlayed': 'Last played: {0}',
+  'worlds.deleteTitle': 'Are you sure you want to delete this world?',
+  'worlds.deleteText': "'{0}' will be lost forever! (A long time!)",
+  'worlds.exported': "Exported '{0}'",
+  'worlds.imported': "Imported '{0}'",
+  'worlds.importedMany': 'Imported {0} worlds',
+  'worlds.backupDone': 'Backup of {0} world(s) downloaded',
+  'worlds.sort': 'Sort: {0}',
+  'worlds.sort.played': 'Last played',
+  'worlds.sort.name': 'Name',
+  'worlds.sort.created': 'Created',
+
+  // Edit world
+  'edit.title': 'Edit World',
+  'edit.name': 'World Name',
+  'edit.backup': 'Back Up World',
+  'edit.backupDone': 'Backup downloaded',
+  'edit.cheats': 'Allow Cheats: {0}',
+
+  // Create world
+  'create.title': 'Create New World',
+  'create.tab.game': 'Game',
+  'create.tab.world': 'World',
+  'create.tab.more': 'More',
+  'create.name': 'World Name',
+  'create.mode': 'Game Mode: {0}',
+  'create.difficulty': 'Difficulty: Normal',
+  'create.cheats': 'Allow Cheats: {0}',
+  'create.cheats.hint': 'Cheats allow commands like /weather. Worlds with cheats still earn advancements.',
+  'create.worldType': 'World Type: Default',
+  'create.seed': 'Seed for the World Generator',
+  'create.seed.placeholder': 'Leave blank for a random seed',
+  'create.bonusChest': 'Bonus Chest: OFF',
+  'create.structures': 'Generate Structures: ON',
+  'create.gameRules': 'Game Rules...',
+  'create.button': 'Create New World',
+
+  // Pause menu
+  'pause.title': 'Game Menu',
+  'pause.back': 'Back to Game',
+  'pause.advancements': 'Advancements',
+  'pause.statistics': 'Statistics',
+  'pause.copySeed': 'Copy Seed',
+  'pause.reportBugs': 'Report Bugs',
+  'pause.options': 'Options...',
+  'pause.invite': 'Invite Friends',
+  'pause.lan': 'Open to LAN',
+  'pause.disconnect': 'Disconnect',
+  'pause.saveQuit': 'Save and Quit to Title',
+
+  // Death screen
+  'death.title': 'You died!',
+  'death.hardcore': 'Game over!',
+  'death.score': 'Score',
+  'death.respawn': 'Respawn',
+  'death.spectate': 'Spectate World',
+  'death.titleScreen': 'Title Screen',
+
+  // Loading
+  'loading.world': 'Loading world',
+  'loading.preparing': 'Preparing...',
+  'loading.tip': 'Tip: {0}',
+  'click.play': 'Click to play',
+
+  // Statistics
+  'stats.title': 'Statistics',
+  'stats.blocksMined': 'Blocks mined',
+  'stats.mobsKilled': 'Mobs killed',
+  'stats.distanceWalked': 'Distance walked',
+  'stats.timePlayed': 'Time played',
+  'stats.deaths': 'Deaths',
+  'stats.blocksPlaced': 'Blocks placed',
+  'stats.jumps': 'Jumps',
+  'stats.distance': '{0} m',
+  'stats.empty': 'Nothing to show yet.',
+
+  // Tips (loading screen)
+  'tip.1': 'Hold the attack button to break blocks; hold use to place them.',
+  'tip.2': 'Press {inventory} to open the inventory and craft with the recipe book.',
+  'tip.3': 'Press {chat} to chat and {command} to type a command.',
+  'tip.4': 'Press F3 for the debug screen and F1 to hide the HUD.',
+  'tip.5': 'Press F11 for fullscreen and F2 for a screenshot.',
+  'tip.6': 'Press {sprint} while moving forward to sprint.',
+  'tip.7': 'Press {drop} to drop the held item.',
+  'tip.8': 'Scroll the mouse wheel or press 1-9 to change the hotbar slot.',
+  'tip.9': 'Shift-click an item to move it to the other part of the inventory.',
+  'tip.10': 'Right-click a stack to pick up half of it.',
+  'tip.11': 'Sleep in a bed to skip the night and set your spawn point.',
+  'tip.12': 'Torches keep monsters from spawning nearby.',
+  'tip.13': 'Water stops a fall: place a bucket of water right before you land.',
+  'tip.14': 'Double-click an item with the cursor to collect all of the same kind.',
+
+  // Misc HUD
+  'hud.screenshot': 'Saved screenshot {0}',
+  'hud.hudHidden': 'HUD hidden',
+  'chat.noCheats': 'Cheats are not enabled in this world.',
+  'loading.reading': 'Reading save data...',
+  'loading.terrain': 'Generating terrain...',
+  'loading.meshes': 'Building chunk meshes...',
+} as const;
+
+export type I18nKey = keyof typeof EN;
+
+const NL: Record<I18nKey, string> = {
+  'common.done': 'Klaar',
+  'common.cancel': 'Annuleren',
+  'common.back': 'Terug',
+  'common.save': 'Opslaan',
+  'common.delete': 'Verwijderen',
+  'common.reset': 'Herstel',
+  'common.on': 'AAN',
+  'common.off': 'UIT',
+  'common.auto': 'Auto',
+  'common.copied': 'Gekopieerd!',
+  'common.loading': 'Laden...',
+
+  'title.singleplayer': 'Alleen spelen',
+  'title.multiplayer': 'Multiplayer',
+  'title.realms': 'BunkCraft Realms',
+  'title.options': 'Opties...',
+  'title.quit': 'Spel afsluiten',
+  'title.edition': 'Browser-editie',
+  'title.disclaimer': 'Niet verbonden aan Mojang',
+  'title.language': 'Taal...',
+  'quit.title': 'Spel afsluiten',
+  'quit.text': 'Bedankt voor het spelen! Je kunt dit browsertabblad nu sluiten.',
+  'quit.back': 'Terug naar titel',
+  'disconnected.title': 'Verbinding verbroken',
+  'disconnected.back': 'Terug naar titelscherm',
+
+  'options.title': 'Opties',
+  'options.fov': 'Gezichtsveld: {0}',
+  'options.fov.normal': 'Normaal',
+  'options.fov.quakePro': 'Quake Pro',
+  'options.quality': 'Kwaliteit',
+  'options.quality.custom': 'Aangepast',
+  'options.video': 'Video-instellingen...',
+  'options.sound': 'Muziek en geluiden...',
+  'options.controls': 'Besturing...',
+  'options.chat': 'Chatinstellingen...',
+  'options.language': 'Taal...',
+  'options.accessibility': 'Toegankelijkheid...',
+  'options.touch': 'Aanraakbediening...',
+  'options.controller': 'Controller...',
+  'options.resourcePacks': 'Texturepakketten...',
+  'options.credits': 'Credits en bronvermelding...',
+  'options.fullscreen': 'Volledig scherm: {0}',
+  'options.lockEsc': 'Esc vergrendelen op volledig scherm: {0}',
+
+  'video.title': 'Video-instellingen',
+  'video.presets': 'Grafische kwaliteit',
+  'video.custom': 'Aangepast: je eigen combinatie',
+  'video.graphics': 'Grafisch',
+  'video.graphics.fancy': 'Mooi',
+  'video.graphics.fast': 'Snel',
+  'video.renderDistance': 'Zichtafstand: {0} chunks',
+  'video.shadows': 'Schaduwen',
+  'video.shadows.low': 'Laag',
+  'video.shadows.high': 'Hoog',
+  'video.shadows.ultra': 'Ultra',
+  'video.renderScale': 'Renderschaal: {0}%',
+  'video.dynamicResolution': 'Dynamische resolutie',
+  'video.particles': 'Deeltjes',
+  'video.particles.all': 'Alle',
+  'video.particles.decreased': 'Minder',
+  'video.particles.minimal': 'Minimaal',
+  'video.clouds': 'Wolken',
+  'video.brightness': 'Helderheid: {0}',
+  'video.brightness.moody': 'Somber',
+  'video.brightness.bright': 'Helder',
+  'video.guiScale': 'Interfaceschaal',
+  'video.viewBobbing': 'Loopbeweging',
+  'video.fullscreen': 'Volledig scherm',
+  'video.maxFps': 'Max. framerate: {0}',
+  'video.maxFps.unlimited': 'Onbeperkt',
+  'video.entityDistance': 'Entiteitsafstand: {0}%',
+  'video.attackIndicator': 'Aanvalsindicator',
+  'video.attackIndicator.crosshair': 'Dradenkruis',
+  'video.attackIndicator.hotbar': 'Hotbar',
+
+  'sound.title': 'Muziek en geluidsopties',
+  'sound.master': 'Hoofdvolume',
+  'sound.music': 'Muziek',
+  'sound.blocks': 'Blokken en acties',
+  'sound.ambient': 'Omgeving',
+  'sound.ui': 'Interface',
+  'sound.spatial': '3D-geluid',
+  'sound.stereo': 'Stereo',
+  'sound.hrtf': 'Koptelefoon (HRTF)',
+
+  'controls.title': 'Besturing',
+  'controls.mouse': 'Muisinstellingen...',
+  'controls.keybinds': 'Toetsen...',
+  'controls.autoJump': 'Automatisch springen',
+  'mouse.title': 'Muisinstellingen',
+  'mouse.sensitivity': 'Gevoeligheid: {0}%',
+  'mouse.invert': 'Muis omkeren',
+  'mouse.raw': 'Ruwe invoer',
+  'keybinds.title': 'Toetsen',
+  'keybinds.resetAll': 'Alle toetsen herstellen',
+
+  'chat.title': 'Chatinstellingen',
+  'chat.opacity': 'Dekking chattekst: {0}%',
+  'chat.size': 'Grootte chattekst: {0}%',
+  'chat.spacing': 'Regelafstand: {0}%',
+  'chat.width': 'Chatbreedte: {0}%',
+  'chat.colors': 'Kleuren',
+  'chat.suggestions': 'Commandosuggesties',
+
+  'language.title': 'Taal',
+  'language.hint': 'Schermen die nog niet vertaald zijn, blijven Engels.',
+
+  'worlds.title': 'Kies wereld',
+  'worlds.search': 'Zoeken...',
+  'worlds.play': 'Speel geselecteerde wereld',
+  'worlds.create': 'Nieuwe wereld maken',
+  'worlds.edit': 'Bewerken',
+  'worlds.delete': 'Verwijderen',
+  'worlds.recreate': 'Opnieuw maken',
+  'worlds.export': 'Exporteren',
+  'worlds.import': 'Importeren',
+  'worlds.backupAll': 'Alles back-uppen',
+  'worlds.empty': 'Nog geen werelden: maak er een!',
+  'worlds.notFound': 'Geen werelden gevonden',
+  'worlds.mode': '{0}-modus',
+  'worlds.seed': 'Seed: {0}',
+  'worlds.cheats': 'Cheats',
+  'worlds.version': 'Versie: {0}',
+  'worlds.lastPlayed': 'Laatst gespeeld: {0}',
+  'worlds.deleteTitle': 'Weet je zeker dat je deze wereld wilt verwijderen?',
+  'worlds.deleteText': "'{0}' is voor altijd weg! (Heel lang!)",
+  'worlds.exported': "'{0}' geëxporteerd",
+  'worlds.imported': "'{0}' geïmporteerd",
+  'worlds.importedMany': '{0} werelden geïmporteerd',
+  'worlds.backupDone': 'Back-up van {0} wereld(en) gedownload',
+  'worlds.sort': 'Sorteren: {0}',
+  'worlds.sort.played': 'Laatst gespeeld',
+  'worlds.sort.name': 'Naam',
+  'worlds.sort.created': 'Gemaakt',
+
+  'edit.title': 'Wereld bewerken',
+  'edit.name': 'Wereldnaam',
+  'edit.backup': 'Back-up maken',
+  'edit.backupDone': 'Back-up gedownload',
+  'edit.cheats': 'Cheats toestaan: {0}',
+
+  'create.title': 'Nieuwe wereld maken',
+  'create.tab.game': 'Spel',
+  'create.tab.world': 'Wereld',
+  'create.tab.more': 'Meer',
+  'create.name': 'Wereldnaam',
+  'create.mode': 'Spelmodus: {0}',
+  'create.difficulty': 'Moeilijkheid: Normaal',
+  'create.cheats': 'Cheats toestaan: {0}',
+  'create.cheats.hint': 'Met cheats werken commando\'s zoals /weather. Je verdient nog steeds advancements.',
+  'create.worldType': 'Wereldtype: Standaard',
+  'create.seed': 'Seed voor de wereldgenerator',
+  'create.seed.placeholder': 'Leeg laten voor een willekeurige seed',
+  'create.bonusChest': 'Bonuskist: UIT',
+  'create.structures': 'Structuren genereren: AAN',
+  'create.gameRules': 'Spelregels...',
+  'create.button': 'Nieuwe wereld maken',
+
+  'pause.title': 'Spelmenu',
+  'pause.back': 'Terug naar spel',
+  'pause.advancements': 'Advancements',
+  'pause.statistics': 'Statistieken',
+  'pause.copySeed': 'Seed kopiëren',
+  'pause.reportBugs': 'Bugs melden',
+  'pause.options': 'Opties...',
+  'pause.invite': 'Vrienden uitnodigen',
+  'pause.lan': 'Openen voor LAN',
+  'pause.disconnect': 'Verbinding verbreken',
+  'pause.saveQuit': 'Opslaan en naar titel',
+
+  'death.title': 'Je bent dood!',
+  'death.hardcore': 'Game over!',
+  'death.score': 'Score',
+  'death.respawn': 'Herleven',
+  'death.spectate': 'Wereld bekijken',
+  'death.titleScreen': 'Titelscherm',
+
+  'loading.world': 'Wereld laden',
+  'loading.preparing': 'Voorbereiden...',
+  'loading.tip': 'Tip: {0}',
+  'click.play': 'Klik om te spelen',
+
+  'stats.title': 'Statistieken',
+  'stats.blocksMined': 'Blokken gedolven',
+  'stats.mobsKilled': 'Mobs gedood',
+  'stats.distanceWalked': 'Afstand gelopen',
+  'stats.timePlayed': 'Speeltijd',
+  'stats.deaths': 'Doodgegaan',
+  'stats.blocksPlaced': 'Blokken geplaatst',
+  'stats.jumps': 'Sprongen',
+  'stats.distance': '{0} m',
+  'stats.empty': 'Nog niets te laten zien.',
+
+  'tip.1': 'Houd de aanvalsknop ingedrukt om blokken te breken; houd gebruiken ingedrukt om ze te plaatsen.',
+  'tip.2': 'Druk op {inventory} voor de inventaris en craft met het receptenboek.',
+  'tip.3': 'Druk op {chat} om te chatten en op {command} voor een commando.',
+  'tip.4': 'Druk op F3 voor het debugscherm en op F1 om de HUD te verbergen.',
+  'tip.5': 'Druk op F11 voor volledig scherm en op F2 voor een screenshot.',
+  'tip.6': 'Druk op {sprint} terwijl je vooruit loopt om te sprinten.',
+  'tip.7': 'Druk op {drop} om het vastgehouden voorwerp te laten vallen.',
+  'tip.8': 'Scroll met het muiswiel of druk op 1-9 om van hotbarvak te wisselen.',
+  'tip.9': 'Shift-klik op een voorwerp om het naar het andere deel van de inventaris te verplaatsen.',
+  'tip.10': 'Rechtsklik op een stapel om de helft op te pakken.',
+  'tip.11': 'Slaap in een bed om de nacht over te slaan en je spawnpunt in te stellen.',
+  'tip.12': 'Fakkels voorkomen dat monsters in de buurt spawnen.',
+  'tip.13': 'Water breekt een val: plaats vlak voor de landing een emmer water.',
+  'tip.14': 'Dubbelklik met de cursor op een voorwerp om alles van dezelfde soort te verzamelen.',
+
+  'hud.screenshot': 'Screenshot opgeslagen: {0}',
+  'hud.hudHidden': 'HUD verborgen',
+  'chat.noCheats': 'Cheats zijn niet ingeschakeld in deze wereld.',
+  'loading.reading': 'Opslagdata lezen...',
+  'loading.terrain': 'Terrein genereren...',
+  'loading.meshes': 'Chunks opbouwen...',
+};
+
+const TABLES: Record<Language, Record<string, string>> = { en: EN, nl: NL };
+
+let current: Language = 'en';
+
+export function setLanguage(lang: Language): void {
+  current = LANGUAGES.includes(lang) ? lang : 'en';
+  try { document.documentElement.lang = current; } catch { /* no DOM (tests) */ }
+}
+
+export function getLanguage(): Language {
+  return current;
+}
+
+/** All keys, for tests and tooling. */
+export function i18nKeys(): I18nKey[] {
+  return Object.keys(EN) as I18nKey[];
+}
+
+export function translation(lang: Language, key: I18nKey): string {
+  return TABLES[lang][key];
+}
+
+function fill(text: string, args: readonly (string | number)[], named?: Record<string, string>): string {
+  return text.replace(/\{(\w+)\}/g, (m, k: string) => {
+    if (/^\d+$/.test(k)) return args[Number(k)] !== undefined ? String(args[Number(k)]) : m;
+    return named?.[k] ?? m;
+  });
+}
+
+/** Translate a known key, or any key (typed or not) with a fallback text. */
+export function t(key: I18nKey, ...args: (string | number)[]): string;
+export function t(key: string, fallback: string, ...args: (string | number)[]): string;
+export function t(key: string, ...rest: (string | number)[]): string {
+  const known = key in EN;
+  const fallback = known ? EN[key as I18nKey] : String(rest[0] ?? key);
+  const args = known ? rest : rest.slice(1);
+  return fill(TABLES[current][key] ?? fallback, args);
+}
+
+/** A tip with {action} placeholders replaced by the player's key names. */
+export function tip(index: number, keys: Record<string, string>): string {
+  const n = (((index % 14) + 14) % 14) + 1;
+  return fill(t(`tip.${n}` as I18nKey), [], keys);
+}
+
+export const TIP_COUNT = 14;
+
+/** Detect the browser language for a first launch ('nl' for Dutch browsers, else English). */
+export function detectLanguage(nav: { language?: string } | undefined = typeof navigator !== 'undefined' ? navigator : undefined): Language {
+  return nav?.language?.toLowerCase().startsWith('nl') ? 'nl' : 'en';
+}
+
+const MODE_KEYS = {
+  survival: { en: 'Survival', nl: 'Survival' },
+  creative: { en: 'Creative', nl: 'Creative' },
+  hardcore: { en: 'Hardcore', nl: 'Hardcore' },
+  spectator: { en: 'Spectator', nl: 'Toeschouwer' },
+} as const;
+
+/** Game mode name in the current language. */
+export function modeName(mode: keyof typeof MODE_KEYS): string {
+  return MODE_KEYS[mode][current];
+}
+
+const MODE_HINTS_NL = {
+  survival: 'Zoek grondstoffen, craft, win levels, gezondheid en honger',
+  creative: 'Onbeperkte grondstoffen, vrij vliegen en blokken direct breken',
+  hardcore: 'Als Survival, vergrendeld op de hoogste moeilijkheid, en maar één leven',
+  spectator: 'Je mag kijken, maar niet aanraken',
+} as const;
+
+export function modeHint(mode: keyof typeof MODE_KEYS, english: string): string {
+  return current === 'nl' ? MODE_HINTS_NL[mode] : english;
+}

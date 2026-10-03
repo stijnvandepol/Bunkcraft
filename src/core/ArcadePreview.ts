@@ -1,6 +1,7 @@
-import { type Team, gameTypeDef } from '../modes/GameTypes';
+import { type GameType, type Team, gameTypeDef } from '../modes/GameTypes';
+import { getMap } from '../modes/maps';
 import { PLAYER_MAX_HEALTH, REGEN_DELAY, REGEN_PER_SECOND, RESPAWN_SECONDS, weaponDef } from '../modes/Weapons';
-import type { ClientMessage, MatchInfo, MatchPhase, RosterEntry, ServerMessage, SnapshotEntry } from '../net/protocol';
+import type { ClientMessage, MatchInfo, MatchPhase, ModeEventKind, ModeState, RosterEntry, ServerMessage, SnapshotEntry } from '../net/protocol';
 
 /**
  * Development only: a tiny in-browser stand-in for the arcade server, so the client side (HUD,
@@ -74,12 +75,16 @@ export class ArcadePreviewServer {
   centerZ = 8;
   floorY = 80;
 
-  constructor(private readonly host: PreviewHost, type: 'tdm' | 'ffa', private readonly selfName: string, scoreLimit = 10) {
+  /** Objective score per player id (gun game level, captures) for the roster. */
+  private readonly pts = new Map<number, number>();
+  private text = '';
+
+  constructor(private readonly host: PreviewHost, type: GameType, private readonly selfName: string, scoreLimit = 10, mapId?: string) {
     const def = gameTypeDef(type);
-    this.info = { type, scoreLimit, timeLimitSec: 600 };
+    this.info = { type, scoreLimit: def.logic === 'deathmatch' ? scoreLimit : def.scoreLimit, timeLimitSec: def.timeLimitSec, ...(mapId ? { map: mapId } : {}) };
     this.team = def.teams ? 'red' : '';
     this.timeLeft = 4;
-    const count = type === 'tdm' ? 6 : 5;
+    const count = def.teams ? 6 : 5;
     for (let i = 0; i < count; i++) {
       const team: Team | '' = def.teams ? (i % 2 === 0 ? 'blue' : i < 2 ? 'red' : 'blue') : '';
       this.bots.push({
@@ -218,6 +223,80 @@ export class ArcadePreviewServer {
     this.sendMatch();
   }
 
+  // ---------------------------------------------------------------- objective modes (scripted states for looking at the HUD)
+
+  /** Puts the match in a phase with a timer (intermission, countdown, roundend, live). */
+  setPhase(phase: MatchPhase, seconds: number, text = ''): void {
+    this.phase = phase;
+    this.timeLeft = seconds;
+    this.text = text;
+    this.sendMatch();
+  }
+
+  setScores(red: number, blue: number): void {
+    this.scores.red = red;
+    this.scores.blue = blue;
+    this.sendMatch();
+  }
+
+  /** Sends a mode state as the server would (zones, flags, rounds). */
+  modeState(state: ModeState): void {
+    this.host.deliver({ t: 'mode', state });
+  }
+
+  event(kind: ModeEventKind, team: Team | '' = '', id = 0, text = ''): void {
+    this.host.deliver({ t: 'event', kind, ...(team ? { team } : {}), ...(id ? { id } : {}), ...(text ? { text } : {}) });
+  }
+
+  /** A typical state of the current mode on the preview's map: zones held/contested, a carried flag, round 3 ... */
+  demo(): void {
+    const def = gameTypeDef(this.info.type);
+    const map = getMap(this.info.map);
+    if (def.logic === 'zones') {
+      const hp = this.info.type === 'hardpoint';
+      const zones = map.zones.map((z, i) => ({
+        name: z.name, x: z.x, y: z.y, z: z.z, r: z.r, active: hp ? i === 0 : true,
+        owner: (hp ? (i === 0 ? 'red' : '') : i === 0 ? 'red' : i === 1 ? 'blue' : '') as Team | '',
+        progress: hp ? 0 : i === 2 ? 0.45 : 1, progressTeam: (hp ? '' : i === 2 ? 'red' : i === 0 ? 'red' : 'blue') as Team | '',
+        contested: !hp && i === 1, red: i === 0 ? 2 : i === 1 ? 1 : 0, blue: i === 1 ? 1 : 0,
+      }));
+      this.modeState({ kind: 'zones', variant: hp ? 'hardpoint' : 'domination', zones: hp ? zones : map.dominationZones.map((i) => zones[i]), rotateIn: 42, gap: false });
+      this.setScores(hp ? 132 : 61, hp ? 97 : 48);
+      this.text = hp ? `Hill: ${map.zones[0]?.name ?? ''} · first to ${this.info.scoreLimit}` : `First to ${this.info.scoreLimit} points`;
+      this.sendMatch();
+    } else if (def.logic === 'ctf') {
+      const [rf, bf] = [map.flags.find((f) => f.team === 'red'), map.flags.find((f) => f.team === 'blue')];
+      if (!rf || !bf) return;
+      const carrier = this.bots.find((b) => b.team === 'blue') ?? this.bots[0];
+      this.modeState({
+        kind: 'ctf', flags: [
+          { team: 'red', status: 'carried', x: carrier.x, y: carrier.y, z: carrier.z, carrier: carrier.id, returnIn: 0, hx: rf.x, hy: rf.y, hz: rf.z },
+          { team: 'blue', status: 'dropped', x: bf.x - 6, y: bf.y, z: bf.z + 2, carrier: 0, returnIn: 9, hx: bf.x, hy: bf.y, hz: bf.z },
+        ],
+      });
+      this.pts.set(this.selfId, 1);
+      this.setScores(1, 2);
+      this.sendRoster();
+    } else if (def.logic === 'rounds') {
+      this.modeState({ kind: 'rounds', round: 4, need: this.info.scoreLimit, wins: { red: 2, blue: 1 }, alive: { red: 2, blue: 3 } });
+      this.text = `Round 4 · first to ${this.info.scoreLimit}`;
+      this.setScores(2, 1);
+    } else if (def.logic === 'gungame') {
+      this.ladder(6);
+    }
+  }
+
+  /** Gun game: puts you on a ladder level (0-based) and the bots around it. */
+  ladder(level: number): void {
+    const ladder = gameTypeDef(this.info.type).ladder;
+    if (!ladder) return;
+    this.pts.set(this.selfId, level);
+    this.bots.forEach((b, i) => this.pts.set(b.id, (level + 3 - i + ladder.length) % ladder.length));
+    this.primary = ladder[Math.min(level, ladder.length - 1)];
+    this.host.deliver({ t: 'gear', primary: this.primary, secondary: 'knife' });
+    this.sendRoster();
+  }
+
   // ---------------------------------------------------------------- simulation
 
   private sendAmmo(slot: number): void {
@@ -225,12 +304,14 @@ export class ArcadePreviewServer {
   }
 
   private sendMatch(): void {
-    this.host.deliver({ t: 'match', phase: this.phase, timeLeft: this.timeLeft, scores: { ...this.scores }, info: this.info });
+    this.host.deliver({ t: 'match', phase: this.phase, timeLeft: this.timeLeft, scores: { ...this.scores }, info: this.info, ...(this.text ? { text: this.text } : {}) });
   }
 
   private sendRoster(): void {
-    const players: RosterEntry[] = [{ id: this.selfId, name: this.selfName, team: this.team, kills: this.kills, deaths: this.deaths, ping: 0 }];
-    for (const b of this.bots) players.push({ id: b.id, name: b.name, team: b.team, kills: b.kills, deaths: b.deaths, ping: 20 + ((b.id * 7) % 50) });
+    const withPts = !!gameTypeDef(this.info.type).scoreColumn;
+    const pts = (id: number) => (withPts ? { pts: this.pts.get(id) ?? 0 } : {});
+    const players: RosterEntry[] = [{ id: this.selfId, name: this.selfName, team: this.team, kills: this.kills, deaths: this.deaths, ping: 0, ...pts(this.selfId) }];
+    for (const b of this.bots) players.push({ id: b.id, name: b.name, team: b.team, kills: b.kills, deaths: b.deaths, ping: 20 + ((b.id * 7) % 50), ...pts(b.id) });
     this.host.deliver({ t: 'roster', players });
   }
 

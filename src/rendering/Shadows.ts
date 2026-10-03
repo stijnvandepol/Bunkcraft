@@ -38,6 +38,8 @@ export class ShadowRenderer {
   constructor(private readonly uniforms: WorldUniforms) {
     this.camera.near = 1;
     this.camera.far = 420;
+    // Chunks hidden from the main camera by the CPU cull (layer 1 only) still cast shadows.
+    this.camera.layers.enable(1);
   }
 
   /** @param maxSize the GPU's texture size limit: the map is clamped to it (weak and mobile GPUs). */

@@ -231,13 +231,45 @@ export class Synth {
         this.tone('sine', 1319, 1319, 0.5, 0.2, 0.24);
         this.tone('triangle', 2637, 2637, 0.35, 0.05, 0.24, { lp: 0 });
         break;
+      case 'xp': {
+        // Orb pickup: a short bright pling, slightly random in pitch like Minecraft's.
+        const f = 1300 + Math.random() * 500;
+        this.tone('sine', f, f * 1.02, 0.09, 0.09, 0, { lp: 0, attack: 0.002 });
+        this.tone('sine', f * 2, f * 2, 0.06, 0.03, 0.005, { lp: 0, attack: 0.002 });
+        break;
+      }
+      case 'levelup':
+        // Rising bell chord.
+        this.tone('triangle', 523, 523, 0.5, 0.16, 0, { lp: 0 });
+        this.tone('triangle', 784, 784, 0.5, 0.14, 0.08, { lp: 0 });
+        this.tone('sine', 1047, 1047, 0.7, 0.14, 0.16, { lp: 0 });
+        this.tone('sine', 2093, 2093, 0.5, 0.04, 0.16, { lp: 0 });
+        break;
+      case 'enchant':
+        // Shimmering sweep with sparkles.
+        this.tone('sine', 400, 1600, 0.6, 0.08, 0, { lp: 0 });
+        for (let i = 0; i < 6; i++) this.tone('sine', 1800 + i * 260, 1800 + i * 260, 0.12, 0.05, 0.05 + i * 0.07, { lp: 0, attack: 0.002 });
+        this.noiseBurst(5200, 2, 0.5, 0.04, 'bandpass');
+        break;
+      case 'anvil':
+        // Hammer on iron: a sharp metallic strike with a ringing tail.
+        this.noiseBurst(3200, 1.5, 0.04, 0.25, 'bandpass');
+        this.tone('square', 1480, 1440, 0.35, 0.07, 0, { lp: 5000, attack: 0.001 });
+        this.tone('sine', 2960, 2900, 0.5, 0.05, 0, { lp: 0, attack: 0.001 });
+        break;
+      case 'grindstone':
+        this.noiseBurst(900, 0.8, 0.45, 0.18, 'bandpass');
+        this.noiseBurst(2400, 1.2, 0.3, 0.08, 'bandpass', 0.1);
+        break;
     }
   }
 }
 
-export type UiSoundName = 'click' | 'hover' | 'back' | 'inventoryMove' | 'equip' | 'craft' | 'chat' | 'error' | 'advancement';
+export type UiSoundName = 'click' | 'hover' | 'back' | 'inventoryMove' | 'equip' | 'craft' | 'chat' | 'error' | 'advancement'
+  | 'xp' | 'levelup' | 'enchant' | 'anvil' | 'grindstone';
 
-export const UI_SOUND_NAMES: readonly UiSoundName[] = ['click', 'hover', 'back', 'inventoryMove', 'equip', 'craft', 'chat', 'error', 'advancement'];
+export const UI_SOUND_NAMES: readonly UiSoundName[] = ['click', 'hover', 'back', 'inventoryMove', 'equip', 'craft', 'chat', 'error', 'advancement',
+  'xp', 'levelup', 'enchant', 'anvil', 'grindstone'];
 
 function stopVoice(ctx: BaseAudioContext, g: GainNode, src: AudioScheduledSourceNode): void {
   try {

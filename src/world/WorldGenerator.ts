@@ -13,7 +13,11 @@ export type WorldType = 'terrain' | 'arena' | `arena:${MapId}`;
 /** What chunk workers, the server and the client need from a world generator. */
 export interface WorldGenerator {
   readonly seed: number;
-  generate(cx: number, cz: number, blocks: Uint8Array, biomesOut?: Uint8Array): void;
+  /**
+   * Fills `blocks` (and `biomesOut`); returns the block state bytes (terracotta colours, ...) when the chunk has any
+   * non-zero state, a fresh array the caller owns, otherwise null/nothing.
+   */
+  generate(cx: number, cz: number, blocks: Uint8Array, biomesOut?: Uint8Array): Uint8Array | null | void;
   heightAt(x: number, z: number): number;
   biomeAt(x: number, z: number, h: number): number;
   /** True when the surface block of the column is carved away (cave mouth, ravine): not a place to spawn. */

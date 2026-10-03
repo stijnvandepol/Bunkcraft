@@ -65,7 +65,7 @@ describe('generator version plumbing', () => {
 
   it('chunk generation requests carry the world\'s generator version', () => {
     const requests: WorkerRequest[] = [];
-    const pool = { size: 1, submit: (r: WorkerRequest) => { requests.push(r); } } as unknown as WorkerPool;
+    const pool = { size: 1, submit: (r: WorkerRequest) => { requests.push(r); }, recycle: () => {}, flushRecycle: () => {} } as unknown as WorkerPool;
     for (const version of [GEN_VERSION_LEGACY, GEN_VERSION_CURRENT]) {
       requests.length = 0;
       const world = new World(9, pool, {} as ChunkMaterials, undefined, 'terrain', version);

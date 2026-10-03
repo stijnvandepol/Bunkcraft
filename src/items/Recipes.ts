@@ -2,7 +2,7 @@ import { BLOCK, CUBE_ID, PARTIAL_MATERIALS, SLAB_FIRST, STAIRS_FIRST } from '../
 import { DYES, PARTIAL_EXT, WALL_MATERIALS, WOODS } from '../world/Content';
 import { ARMOR_MATERIALS } from './ItemContent';
 import type { PlayerInventory } from './Inventory';
-import { ITEM, type ItemStack, getItemDef, itemBlock, itemFromState, itemId } from './ItemRegistry';
+import { ITEM, type ItemStack, getItemDef, itemBlock, itemFromState, itemId, SHIELD } from './ItemRegistry';
 
 export type Station = 'hand' | 'table' | 'furnace';
 
@@ -61,6 +61,10 @@ add(id('ladder'), 3, 'table', one(ITEM.STICK, 7));
 add(B.TORCH, 4, 'hand', any(COAL, 1), one(ITEM.STICK));
 add(id('lantern'), 1, 'table', one(id('iron_nugget'), 8), one(B.TORCH));
 add(B.BOOKSHELF, 1, 'table', any(PLANKS, 6));
+// Enchanting blocks (Java 1.21 counts).
+add(B.ENCHANTING_TABLE, 1, 'table', one(id('book')), one(ITEM.DIAMOND, 2), one(B.OBSIDIAN, 4));
+add(B.ANVIL, 1, 'table', one(id('iron_block'), 3), one(id('iron_ingot'), 4));
+add(B.GRINDSTONE, 1, 'table', one(ITEM.STICK, 2), any([SLAB_FIRST + PARTIAL_MATERIALS.findIndex((m) => m.name === 'stone')], 1), any(PLANKS, 2));
 WOODS.forEach((_, w) => {
   add(itemFromState(B.DOOR, w << 5), 3, 'table', one(planksOf(w), 6));
   add(itemFromState(B.TRAPDOOR, w << 4), 2, 'table', one(planksOf(w), 6));
@@ -132,6 +136,7 @@ add(ITEM.BUCKET, 1, 'table', one(id('iron_ingot'), 3));
 add(ITEM.SHEARS, 1, 'hand', one(id('iron_ingot'), 2));
 add(ITEM.FLINT_AND_STEEL, 1, 'hand', one(id('iron_ingot')), one(ITEM.FLINT));
 add(ITEM.BOW, 1, 'table', one(ITEM.STICK, 3), one(ITEM.STRING, 3));
+add(SHIELD, 1, 'table', any(PLANKS, 6), one(id('iron_ingot')));
 add(ITEM.ARROW, 4, 'table', one(ITEM.FLINT), one(ITEM.STICK), one(ITEM.FEATHER));
 
 // ---------------------------------------------------------------- tools, weapons and armor
@@ -222,6 +227,18 @@ smelt(B.SANDSTONE, CUBE_ID.smooth_sandstone);
 smelt(CUBE_ID.red_sandstone, CUBE_ID.smooth_red_sandstone);
 smelt(B.STONE_BRICKS, CUBE_ID.cracked_stone_bricks);
 smelt(id('clay_ball'), id('brick'));
+// ---------------------------------------------------------------- redstone (Java 1.21 recipes; the sticky piston needs a slime ball, which has no source yet)
+add(B.LEVER, 1, 'hand', one(ITEM.STICK), any(COBBLES, 1));
+add(itemFromState(B.BUTTON, 0), 1, 'hand', one(B.STONE));
+add(itemFromState(B.BUTTON, 16), 1, 'hand', one(B.OAK_PLANKS));
+add(itemFromState(B.PRESSURE_PLATE, 0), 1, 'hand', one(B.STONE, 2));
+add(itemFromState(B.PRESSURE_PLATE, 2), 1, 'hand', one(B.OAK_PLANKS, 2));
+add(B.REDSTONE_TORCH, 1, 'hand', one(id('redstone')), one(ITEM.STICK));
+add(B.REPEATER, 1, 'table', one(B.STONE, 3), one(B.REDSTONE_TORCH, 2), one(id('redstone')));
+add(B.REDSTONE_LAMP, 1, 'table', one(id('redstone'), 4), one(B.GLOWSTONE));
+add(B.NOTE_BLOCK, 1, 'table', any(PLANKS, 8), one(id('redstone')));
+add(B.PISTON, 1, 'table', any(PLANKS, 3), any(COBBLES, 4), one(ITEM.IRON_INGOT), one(id('redstone')));
+
 smelt(B.CLAY, CUBE_ID.terracotta);
 DYES.forEach((_, i) => smelt(itemFromState(B.STAINED_TERRACOTTA, i), itemFromState(B.GLAZED_TERRACOTTA, i)));
 smelt(LOGS, id('charcoal'));
@@ -252,14 +269,14 @@ export const RECIPE_CATEGORIES: { id: RecipeCategory | 'all'; name: string }[] =
 ];
 
 const COLORED = new Set<number>([B.WOOL, B.CARPET, B.BED, B.STAINED_TERRACOTTA, B.STAINED_GLASS, B.CONCRETE, B.STAINED_GLASS_PANE, B.GLAZED_TERRACOTTA]);
-const FUNCTIONAL = new Set<number>([B.CRAFTING_TABLE, B.BOOKSHELF, B.TORCH, B.FURNACE, B.TNT, id('chest'), id('ladder'), id('lantern')]);
+const FUNCTIONAL = new Set<number>([B.ENCHANTING_TABLE, B.ANVIL, B.GRINDSTONE, B.CRAFTING_TABLE, B.BOOKSHELF, B.TORCH, B.FURNACE, B.TNT, id('chest'), id('ladder'), id('lantern')]);
 
 /** Which tab of the recipe book a recipe belongs to (derived from the result, so new recipes sort themselves). */
 export function recipeCategory(r: Recipe): RecipeCategory {
   if (r.station === 'furnace') return 'smelting';
   const item = r.result.id;
   const def = getItemDef(item);
-  if (def?.armor || def?.tool?.kind === 'sword' || item === ITEM.BOW || item === ITEM.ARROW) return 'combat';
+  if (def?.armor || def?.tool?.kind === 'sword' || item === ITEM.BOW || item === ITEM.ARROW || item === SHIELD) return 'combat';
   if (def?.tool || item === ITEM.BUCKET || item === ITEM.FLINT_AND_STEEL) return 'tools';
   if (def?.food) return 'food';
   const block = itemBlock(item);

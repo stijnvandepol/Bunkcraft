@@ -14,6 +14,26 @@ import { type TextureSet, buildTextures } from '../rendering/TextureAtlas';
 import type { World } from '../world/World';
 import type { Settings } from './Settings';
 
+/** Sort items of three.js' render list (the fields we compare). */
+interface RenderItem { id: number; groupOrder: number; renderOrder: number; z: number; material: { id: number } | null }
+
+/** Same order as three.js' painterSortStable, but returning small integers. */
+function sortFrontToBack(a: RenderItem, b: RenderItem): number {
+  if (a.groupOrder !== b.groupOrder) return a.groupOrder < b.groupOrder ? -1 : 1;
+  if (a.renderOrder !== b.renderOrder) return a.renderOrder < b.renderOrder ? -1 : 1;
+  if (a.material!.id !== b.material!.id) return a.material!.id < b.material!.id ? -1 : 1;
+  if (a.z !== b.z) return a.z < b.z ? -1 : 1;
+  return a.id < b.id ? -1 : 1;
+}
+
+/** Same order as three.js' reversePainterSortStable (transparent objects: far to near). */
+function sortBackToFront(a: RenderItem, b: RenderItem): number {
+  if (a.groupOrder !== b.groupOrder) return a.groupOrder < b.groupOrder ? -1 : 1;
+  if (a.renderOrder !== b.renderOrder) return a.renderOrder < b.renderOrder ? -1 : 1;
+  if (a.z !== b.z) return a.z > b.z ? -1 : 1;
+  return a.id < b.id ? -1 : 1;
+}
+
 const FLASH_COLOR = new THREE.Color(0.78, 0.82, 1.0);
 
 export interface FrameStats {
@@ -71,6 +91,9 @@ export class Renderer {
       powerPreference: 'high-performance',
     });
     this.three.info.autoReset = false;
+    // three.js' own comparators return doubles, which V8 boxes into heap numbers on every compare.
+    this.three.setOpaqueSort(sortFrontToBack);
+    this.three.setTransparentSort(sortBackToFront);
     this.three.outputColorSpace = THREE.LinearSRGBColorSpace; // shaders output display-ready colours
     this.three.setClearColor(0x000000, 1);
 
@@ -126,6 +149,11 @@ export class Renderer {
     // The accessibility developer adds Settings.reduceFlashes; read it when it exists.
     this.lightning.reduceFlashes = (s as { reduceFlashes?: boolean }).reduceFlashes === true;
     this.resize();
+  }
+
+  /** The distance the adaptive governor currently allows (fog follows it). */
+  setRenderDistance(chunks: number): void {
+    this.renderDistance = chunks;
   }
 
   /** Device pixel ratio (capped at 2) times the user render scale, before dynamic resolution. */
@@ -193,6 +221,7 @@ export class Renderer {
     this.stats.shadowCalls = this.three.info.render.calls;
 
     // 2. Main pass.
+    this.world?.chunks.cull(camera, underwater ? Infinity : fogFar);
     this.three.render(this.scene, camera);
     this.afterMain?.(this.three);
     this.stats.drawCalls = this.three.info.render.calls - this.stats.shadowCalls;

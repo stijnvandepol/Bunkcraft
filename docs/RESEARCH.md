@@ -71,7 +71,59 @@ De CPU kost per frame ~0,4–0,8 ms (renderen) en vrijwel niets voor chunks; de 
 
 - **Hapering bij het betreden van een wereld (~250 ms):** shaders van mobs, items, pijlen, TNT en de hand compileerden pas bij hun eerste gebruik. Ze worden nu tijdens het titelscherm voorgecompileerd (`compileAsync`).
 - **Hapering elke 30 s:** elke autosave las een frame terug van de GPU voor de wereldthumbnail (synchroon). De thumbnail wordt nu alleen bij pauzeren, afsluiten of een wereld zonder icoon gemaakt.
-- **Nog open:** garbage collection tijdens het streamen van chunks (`WorkerPool.pump`, `onmessage`), `updateMatrixWorld` over alle chunk-meshes per frame (statische meshes kunnen `matrixAutoUpdate = false`), en `toDataURL` voor de hotbar-iconen (eenmalig ~6 ms).
+- **Nog open (was):** garbage collection tijdens het streamen, `updateMatrixWorld` over alle chunk-meshes: opgelost in de ronde hieronder. `toDataURL` voor de hotbar-iconen (eenmalig ~6 ms) staat nog open.
+
+### Meetscript: `scripts/perf-report.py`
+
+`python3 scripts/perf-report.py [--browser chromium|webkit] [--distance 16] [--cpu 4] [--seconds 30]` start een eigen Vite-server (vrije poort, `hmr: false`, `watch: null`), maakt een creative-wereld (seed 1234) en vliegt 30 s met sprintsnelheid (~21 blokken/s) in een flauwe S-bocht. Chromium draait met `--use-angle=metal`. Het script drukt één tabel af: mediaan/p95/p99/slechtste frame, frames > 20 en > 33 ms, GC-pauzes van de main thread (CDP-trace, `MinorGC`/`MajorGC`), draw calls, JS-heap en de render distance aan het eind. `--cpu 4` vertraagt de main thread 4× (zwakke laptop; GC-pauzes worden dan ook 4× langer), `--profile` toont de duurste functies, `--alloc` de grootste allocatieplekken, `--eval` voert JS uit vóór de vlucht (experimenten). Redstone: `npx tsx --expose-gc scripts/bench-redstone.ts [lijnen] [lengte] [ticks]`.
+
+### Gemeten: streaming, culling en GC (Apple M1 Pro, 120 Hz, oktober 2026)
+
+`feature/bunkcraft-engine` vóór deze ronde tegen erna (zelfde machine, na elkaar, 30 s vlucht):
+
+| | rd 8 | rd 16 | rd 16, CPU 4× | WebKit rd 8 (60 Hz) |
+|---|---|---|---|---|
+| Mediaan frame | 8,3 → 8,3 ms | 8,3 → 8,3 ms | 16,6 → **8,7 ms** | 17,0 → 16,0 ms |
+| p99 | 10,3 → 10,3 ms | 10,3 → 10,3 ms | 31,7 → **18,4 ms** | 19 → 19 ms |
+| Frames > 20 ms | 0 → 0 | 0 → 0 | 240 → **6** | 6 → 10 (ruis) |
+| GC-pauzes (aantal / totaal) | 35 / 55 ms → 25 / 32 ms | 54 / 113 ms → **14 / 26 ms** | 25 / 177 ms → **13 / 73 ms** | – |
+| Major GC's | 26 → 8 | 42 → **4** | 17 → 3 | – |
+| Draw calls | 190 → 150 | 673 → 600 | 675 → 599 | 199 → 154 |
+
+Let op: de commit van de culling noemt 577 → 135 draw calls bij rd 16. Die meting klopte niet: het script zette de render distance zonder `settings.set`, waardoor de mist (en dus de culling) op 8 chunks bleef staan. De tabel hierboven is met de gecorrigeerde meting.
+
+Op normale snelheid haalt de M1 Pro de schermlimiet al; de winst zit in de 4× vertraagde main thread (zwakke laptop): de CPU-tijd per frame zakt van boven naar onder de 8,3 ms. Zonder vertraging duurt geen enkele GC-pauze langer dan 4 ms.
+
+Wat er gebeurde:
+
+1. **CPU-culling per chunkkolom** (`ChunkManager.cull`): één box-test per kolom in plaats van de bol-test van three.js per mesh (opaque, cutout en water). Verborgen meshes verliezen alleen layer 0, de schaduwcamera ziet alle layers, dus schaduwen van chunks achter de speler blijven. Kolommen die volledig in de mist liggen worden overgeslagen. De chunkgroepen slaan `updateMatrixWorld` over (three r186 loopt anders nog steeds door ~1000 kinderen). Profiel bij rd 16, CPU 4×: `projectObject` 5,6 → 3,6 s en `updateMatrixWorld` 3,8 → ~0 s per 25 s.
+2. **Geen ArrayBuffer-churn bij het streamen.** Mesh-verzoeken stoppen de 3×3 buurt in één gepoolde buffer die wordt *overgedragen* (niet gekloond: was ~300 KB kopie per mesh) en terugkomt. Resultaat-arrays en chunk-arrays gaan terug naar een `BufferPool` in de worker zodra three.js ze naar de GPU heeft gekopieerd. De CPU-kopie van alle chunkgeometrie (~25–40 MB bij rd 8) bestaat dus niet meer. Elke nieuwe ArrayBuffer telt bij V8 als externe geheugendruk en trok een volledige mark-compact.
+3. **Kleine lekken van garbage:** sorteerfuncties voor three.js die gehele getallen teruggeven (three's eigen `a.z - b.z` boxt een heap-getal per vergelijking), hergebruik van geometrie, mesh en bounding-volumes, `forEach` in `unloadFar`, geen herscan zolang alle workers bezig zijn, een toroïdaal grid voor chunk-lookups (berekende sleutels > 2^31 boxen bij elke `Map.get`), stilstaande deeltjes slaan hun upload over.
+4. **Adaptieve budgetten:** mesh-uploads per frame begrensd op bytes én ~2 ms main-thread-tijd, en kleiner als frames lang duren (`ChunkManager.adapt`). Generatie, meshing en uploads doen chunks vóór de speler eerst.
+5. **Render distance tijdelijk verlagen** (`DynamicResolution`): blijft de framerate laag terwijl de resolutie al minimaal is, dan gaat de render distance per 3 s één chunk omlaag (nooit onder 4) en komt na 12 s soepel spelen op volle resolutie terug (langer wachten na een terugval). F3 toont `(adaptive -n)`. Test met CPU 12× bij rd 16: eindigt op rd 14 en resolutie 69 %.
+6. **Redstone:** de >20 ms tick-pieken waren GC. Het oplossen van een stroomnetwerk maakte per keer nieuwe arrays, Maps en `Uint8Array`s (`neighbours()` met `out.length = 0` hergroeit elke aanroep). Nu met hergebruikte typed arrays, een eigen hashtabel en gelinkte emmers: 1500 schakelende dust (100 lijnen × 15, hendels elke 4 ticks) maakt 750 → 94 MB garbage per 2000 ticks, mediane tick 0,95 → 0,26 ms. De rest zit in `requeueWire`/`Set.add` met sleutels > 2^31.
+
+### Gemeten: geheugen over 10 minuten vliegen (rd 8, ~3,3 km)
+
+JS-heap na geforceerde GC: 14,3 MB na 30 s, 14,6 MB na 10 minuten. three.js-geometrieën stabiel rond 600, textures 10, mesh-pool ≤ 100, pack-buffers 8. Geen lek gevonden. GPU-geometrie van de chunks ~25–40 MB; die bestaat nu alleen nog op de GPU.
+
+### Gemeten: laden en bundel (productie-server, cache uit)
+
+| | Vóór | Na |
+|---|---|---|
+| Overgedragen tot titelscherm | 1498 KB | **488 KB** |
+| Titelscherm op Fast 3G (562 ms RTT, 1,44 Mbit/s) | 18,6 s | **11,4 s** |
+| Titelscherm op 4G (170 ms RTT, 9 Mbit/s) | 4,84 s | **3,47 s** |
+
+- three.js zit in een eigen chunk (532 KB, brotli 107 KB) met lange cache; een game-update downloadt hem niet opnieuw.
+- `vite build` schrijft brotli- (niveau 11) en gzip-kopieën; `server/App.ts` levert ze voor gehashte assets. Caddy geeft voorgecomprimeerde antwoorden ongewijzigd door. De PWA-precache slaat `.br`/`.gz` over.
+- Preload-hints in de HTML voor de chunk-worker, het pixelfont en de 56 PNG's van Pixel Perfection: het titelscherm wachtte op die afbeeldingen, en ze begonnen pas nadat de bundel draaide.
+- De arcade-client (`ArcadeSession`, HUD's, wapenmodellen; 46 KB) is een aparte chunk die vóór een multiplayer-join of de arcade-preview laadt. Singleplayer downloadt hem niet.
+- **Nog open:** de 56 losse PNG's kosten op HTTP/1.1 ~10 round trips (6 verbindingen). Een spritesheet van het standaardpack bij de build zou het titelscherm op 3G nog ~4 s sneller maken. Met Caddy (HTTP/2) speelt dit veel minder. fflate staat nog in de hoofdbundel omdat `WorldArchive` het statisch importeert.
+
+### Gemeten: opstarten (dev, warme cache)
+
+Titelscherm 0,34 s na navigatie; `new Game` ~50 ms, waarvan renderer 29 ms (texture-atlas 9 ms) en het schilderen van mob-textures 13 ms. Shaders worden na het titelscherm asynchroon voorgecompileerd. Een wereld betreden (25 chunks rond de spawn) duurt 0,8 s, vrijwel alleen workertijd. Opstarten is dus netwerkgebonden, niet CPU-gebonden.
 
 ### Doorgevoerd (geen visuele trade-off)
 
@@ -81,11 +133,12 @@ De CPU kost per frame ~0,4–0,8 ms (renderen) en vrijwel niets voor chunks; de 
 4. **Echte upload-budgettering** (bytes per frame) + nieuwe meshes één frame geforceerd tekenen, zodat GPU-uploads niet pas plaatsvinden als de camera draait.
 5. **Geen per-frame allocaties** in game loop en shadow pass.
 6. **Worker pool** `hardwareConcurrency − 2` → main thread en GPU-proces houden ruimte.
+7. **CPU-culling per kolom, overgedragen en gepoolde chunkbuffers, adaptief upload-budget en render distance** (zie de metingen hierboven).
 
 ### Roadmap (volgende stappen, op volgorde van impact)
 
 1. **16×16×16 secties** — strakkere frustum culling, kleinere remeshes.
-2. **Cave/occlusion culling** (Tommo's visibility graph, zoals Minecraft/Sodium) — 50–80 % minder geometrie ondergronds.
+2. **Cave/occlusion culling** (Tommo's visibility graph, zoals Minecraft/Sodium) — 50–80 % minder geometrie ondergronds. Vereist 16×16×16 secties: met kolommen van 128 hoog is een chunk nooit volledig ingesloten, dus de goedkope variant levert niets op.
 3. **Multi-draw** (`BatchedMesh` / `WEBGL_multi_draw`) — van ~550 naar ~4 draw calls per pass.
 4. **Per-richting face culling** — vlakken die van de camera af wijzen overslaan (30–50 % minder vertices).
 5. **Light cache per chunk + SharedArrayBuffer** (vereist COOP/COEP headers) — sneller streamen.
@@ -188,7 +241,73 @@ spawnen ondergronds via de bestaande regel (twee blokken lucht boven een massief
 
 ### Niet gedaan / ideeën
 
-- Ertsen: lapis, redstone, koper, smaragd, deepslate en tuff wachten op de blokken (zie `OreTable.ts`). Granite, diorite en andesite ook.
+- ~~Ertsen: lapis, redstone, koper, smaragd, deepslate en tuff; granite, diorite en andesite~~: gedaan in versie 3 (hieronder).
 - Dripstone, mos, lush/dripstone-caves en glow berries.
 - Stilstaand water in grotten stroomt pas als iemand het aanraakt (de vloeistofsimulatie draait alleen bij bewerkingen).
 - De rand van een grotingang wordt niet opnieuw begroeid (kale dirt/steen in de wand; Minecraft zet daar gras).
+
+### Generator versie 3: biomes, rivieren en gesteente
+
+Feedback: "meer Minecraft-achtige variatie". Versie 3 (`GeneratorV3.ts`, met `TreesV3.ts` en `Structures.ts`) vervangt het
+oppervlak voor nieuwe werelden; de ondergrond van versie 2 (`CaveCarver`, `OreTable`) blijft en krijgt deepslate, gesteente en
+de nieuwe ertsen. Versie 1 en 2 lopen nog door de oude code in `TerrainGenerator.ts` en zijn bitgelijk (golden hashes).
+
+| Onderdeel | Hoe |
+|---|---|
+| Hoogte | De hoogtefunctie van versie 2 (continentaliteit-spline, heuvels, bergmasker met ridges), daarna drie aanpassingen die met *gladde* klimaatgewichten mengen (niet met het biome-id, dus geen naden): badlands-terrassen (stappen van 6, steile randen, +5), moeras (plat rond y 62 met ondiepe plassen), rivierdal |
+| Klimaat | Temperatuur en vochtigheid (fbm, freq 0,0009/0,0011; kwartielen ±0,22), plus een variant-ruis voor bos-varianten en badlands-plekken. Banden: bevroren < −0,38, koud < −0,13, gematigd, warm ≥ 0,15, heet ≥ 0,32. Tabel zoals Minecraft: koud = taiga/snowy taiga/snowy plains, gematigd = plains/forest/birch/flower/dark forest (naar vochtigheid), warm/heet = woestijn/savanne/jungle; badlands waar heet, droog en landinwaarts |
+| Hoogtebiomes | Boven y 90 Mountains; voetheuvels (bergmasker > 0,12, boven y 74): Meadow, Cherry Grove (variant), Windswept Hills (grind en steen) |
+| Water | Oceaan naar diepte en temperatuur: Deep (< y 46), Warm, Cold, Frozen (ijs en packed ice op y 62). Stranden alleen aan de kust (continentaliteit < 0) en langs rivieren; koud = Snowy Beach, steil = Stony Shore |
+| Rivieren | Nulcontour van een domain-warped 2D-ruis (freq 0,0016, warp ±55 blokken): bedding y 57,6–61,4 in de geul (±5 blokken), dalwanden die meegroeien met het terrein, uitdoven boven y 84–104 (bergen). Water op zeeniveau, oevers zand/klei/grind, in koude streken Frozen River met ijs. Contouren zijn doorlopende lijnen, dus de meeste rivieren lopen door tot zee (Vitest: > 60 % van de bemonsterde rivieren bereikt via water een oceaan) |
+| Oppervlak | Per biome: podzol/coarse dirt-plekken (taiga, dark forest, savanne), modder en klei in het moeras, rood zand en coarse dirt op de badlands, sneeuwgrens = 104 + 45·temperatuur (kouder = lager) met packed ice, grind op Windswept Hills |
+| Badlands-banden | Een per-wereld tabel van 140 lagen (runs van 1–3 lagen, half gewone terracotta, half oranje/wit/geel/bruin/rood/lichtgrijs), golvend ±2 lagen. De kleur is een block state: `generate()` geeft nu de state-bytes terug (`Uint8Array \| null`), die via de worker (`GenerateResponse.meta`), `ChunkManager` en `ServerWorld` in `Chunk.meta` komen. Chunks zonder states blijven `null` (lazy, zoals voorheen) |
+| Gesteente | Deepslate onder y 7 en een willekeurige overgang tot y 16; granite/diorite/andesite-blobs (1 × grootte 33 per chunk, y 4–90) en tuff (0,8 ×, y 3–40, ook in deepslate) als rijen van `ORE_TABLE` achter de ertsen. Ertsen vervangen ook deepslate (geen `deepslate_*_ore` in de content; het gewone erts wordt gebruikt) |
+| Nieuwe ertsen | Koper (driehoek y 24–80), lapis (y 8–46, alleen ingebed), redstone (onder y 36), smaragd (losse blokken, alleen kolommen met Mountains/Windswept Hills: `OreSpec.biomes`) |
+| Planten | Per biome: bloemen (alle tien soorten in Flower Forest, Meadow-mix), varens, dode struiken, blue orchid in het moeras, paddenstoelen in dark forest/moeras/taiga en op grotbodems, suikerriet naast water op zeeniveau, pompoenen- en meloenvelden per chunk |
+| Bomen (`TreesV3.ts`) | Eik, berk en spar via de gedeelde vormen van `Trees.ts`; jungle (lange stam, takken met bladclusters), acacia (knik en platte kroon), dark oak (2×2, dicht dak), kers (roze kroon); dichtheid per biome. Kruinen tot 5 blokken buiten de chunk: stammen buiten de opgevulde hoogtekaart worden los opgevraagd, zodat bomen over chunkgrenzen kloppen. Elk blad ligt binnen 6 stappen (door bladeren) van een stam, dus leaf decay (`Growth.ts`) laat gegenereerde bomen staan (Vitest met `leafSupported`) |
+| Bronnen | Minecraft-springs: een water- of lavabron in een steenwand met precies één open zijde (22 resp. 9 pogingen per chunk) |
+| Structuren | `Structures.ts`: registry met ankers per chunk (geseed uit wereldseed, salt en chunk), elke chunk speelt de features van zichzelf en zijn buren af en houdt alleen zijn eigen blokken (zoals ertsblobs). Voorbeeld: woestijnput; daarnaast zwerfkeien van mossy cobblestone in de taiga |
+| Kleuren | Gras/blad-tinten per biome (Minecraft Java-waarden) en nu ook water (`TINT_WATER`, zelfde 5×5-vervaging als gras; de watershader deelt door #3F76E4, dus standaardbiomes zien er hetzelfde uit) |
+| Spawn | `Spawn.ts`: versie 3 kiest plains/forest/meadow/beach dicht bij zeeniveau (y 63–79), anders taiga/savanne/woestijn/kers/sneeuwvlakte binnen 1200 blokken; nooit badlands, oceaan, rivier, moeras, jungle of bergen. Versie 1/2 houden hun oude regel |
+
+**Biomes, oppervlakte** (`heightAt`/`biomeAt` elke 16 blokken over 4800 × 4800 blokken × 4 seeds; de 40 × 40-chunktabel van
+`scripts/gen-stats.ts` is te klein voor klimaatzones van duizenden blokken en wijkt per plek sterk af):
+
+| Biome | % | Biome | % | Biome | % |
+|---|---|---|---|---|---|
+| Ocean | 13,9 | Desert | 4,1 | Snowy Plains | 2,0 |
+| Deep Ocean | 9,3 | Savanna | 3,7 | River | 1,8 |
+| Taiga | 7,3 | Swamp | 3,6 | Meadow | 1,7 |
+| Cold Ocean | 7,2 | Forest | 3,5 | Birch Forest | 1,6 |
+| Plains | 6,3 | Windswept Hills | 3,1 | Dark Forest | 1,1 |
+| Mountains | 5,6 | Frozen Ocean | 3,1 | Snowy Beach | 1,0 |
+| Beach | 5,3 | Snowy Taiga | 2,9 | Flower Forest | 0,9 |
+| Warm Ocean | 4,8 | Jungle | 2,7 | Cherry Grove | 0,6 |
+| | | Badlands | 2,4 | Frozen River | 0,5 |
+| | | | | Stony Shore | 0,1 |
+
+**Gemeten** (`scripts/gen-stats.ts`, 4 seeds × 40 × 40 chunks; `scripts/bench-gen.ts`):
+
+| | versie 2 | versie 3 |
+|---|---|---|
+| Lucht onder zeeniveau / grotopeningen per 100 landchunks | 10,5 % / 57 | 10,4 % / 59 |
+| Kolen / ijzer / goud / diamant per chunk | 56,9 / 40,8 / 9,3 / 10,7 | 55,3 / 40,0 / 9,3 / 10,7 |
+| Koper / lapis / redstone / smaragd per chunk | – | 19,8 / 5,1 / 30,1 / 0,2 (smaragd alleen in bergchunks) |
+| Deepslate / tuff / granite / diorite / andesite per chunk | – | 2215 / 70 / 47 / 47 / 48 |
+| Losse zwevende blokken per chunk | – | 0,05 (Minecraft laat die ook tussen grotten staan) |
+| `generate` per chunk (seeds 777 / 12345 / 424242) | 1,04 / 1,46 / 1,41 ms | 1,50 / 1,95 / 1,82 ms (1,29–1,44×) |
+| `heightAt` + `biomeAt` per kolom | 0,71 µs | 0,95–1,00 µs (1,4×; met `surfaceOpen` 5,8 → 6,3–7,4 µs) |
+
+`heightAt` en `biomeAt` rekenen samen één kolom uit (cache van de laatste kolom), dus een spawn-zoektocht betaalt het klimaat
+maar één keer.
+
+**Screenshots** (seed 12345, `scripts/gen-spots.ts --biomes` + `scripts/shots-biomes.py`; diepe ertsen met
+`gen-spots.ts --gen=3` + `shots-caves.py`, view `deepOre`): [`worldgen-v3/biomes-ground.jpg`](screenshots/worldgen-v3/biomes-ground.jpg)
+en [`worldgen-v3/biomes-above.jpg`](screenshots/worldgen-v3/biomes-above.jpg). Versie 3 voegt geen blokken of textuurlagen toe:
+alles komt uit de bestaande content (`Content.ts`, gekleurde terracotta via block states).
+
+**Niet gedaan / open:** mangrove-moeras (geen wortels/propagules), mushroom fields, ice spikes, lianen en cocoa (geen blokken),
+waterlelies (geen blok), sneeuwlagen, `deepslate_*_ore`-blokken, dripstone en amethist, fossielen, iglo's, ruïnes; dorpen,
+dungeons en mijnschachten komen via `Structures.ts` (andere ontwikkelaar, na block entities). De grote jungle-, acacia-, dark-oak-
+en kersvormen staan in `TreesV3.ts`; saplings groeien met de kleinere vormen van `Trees.ts` (Minecraft: dark oak/jungle
+uit 2×2 saplings met de grote vorm, nog niet gedaan).

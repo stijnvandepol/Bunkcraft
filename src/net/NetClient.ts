@@ -1,5 +1,5 @@
 import { decodeBinary } from './binary';
-import { type ClientMessage, PROTOCOL_VERSION, type ServerMessage } from './protocol';
+import { type ClientMessage, type ContainerClientMessage, PROTOCOL_VERSION, type ServerMessage } from './protocol';
 import { identityKey, ownerToken, roomPassword } from './RoomApi';
 
 export type WelcomeMessage = Extract<ServerMessage, { t: 'welcome' }>;
@@ -140,16 +140,25 @@ export class NetClient {
     this.send({ t: 'pos', x, y, z, yaw, pitch, flags, held });
   }
 
-  sendAttack(id: number): void {
-    this.send({ t: 'attack', id });
+  sendAttack(id: number, e?: number[]): void {
+    this.send(e ? { t: 'attack', id, e } : { t: 'attack', id });
   }
 
-  sendShoot(x: number, y: number, z: number, dx: number, dy: number, dz: number, power: number): void {
-    this.send({ t: 'shoot', x, y, z, dx, dy, dz, power });
+  sendUseMob(id: number): void {
+    this.send({ t: 'usemob', id });
+  }
+
+  sendShoot(x: number, y: number, z: number, dx: number, dy: number, dz: number, power: number, e?: number[]): void {
+    this.send(e ? { t: 'shoot', x, y, z, dx, dy, dz, power, e } : { t: 'shoot', x, y, z, dx, dy, dz, power });
   }
 
   sendIgnite(x: number, y: number, z: number): void {
     this.send({ t: 'ignite', x, y, z });
+  }
+
+  /** Bone meal on a block (the server checks the held item and reach, then grows it). */
+  sendBoneMeal(x: number, y: number, z: number): void {
+    this.send({ t: 'bonemeal', x, y, z });
   }
 
   sendTake(id: number): void {
@@ -164,8 +173,13 @@ export class NetClient {
     this.send({ t: 'chat', text });
   }
 
-  sendState(inventory: number[][], stats: number[]): void {
-    this.send({ t: 'state', inventory, stats });
+  /** Chest and furnace screens (see ContainerScreens). */
+  sendContainer(msg: ContainerClientMessage): void {
+    this.send(msg);
+  }
+
+  sendState(inventory: number[][], stats: number[], effects?: number[][]): void {
+    this.send({ t: 'state', inventory, stats, ...(effects ? { effects } : {}) });
   }
 
   close(): void {
