@@ -1079,11 +1079,20 @@ export class GameServer {
         return this.send(s, blockMessage(x, y, z, current, this.entities.world.getMeta(x, y, z)));
       }
     }
-    // Breaking a block lets this player's client spawn its drop (see InventoryGuard.creditBreak).
-    if (id === 0 && this.entities && this.guarded()) {
-      const old = this.entities.world.getBlock(x, y, z);
+    if (this.entities && this.guarded()) {
+      const w = this.entities.world;
+      const raw = w.getBlock(x, y, z);
+      const old = raw === BLOCK.UNLOADED ? BLOCK.AIR : raw;
+      const oldMeta = raw === BLOCK.UNLOADED ? 0 : w.getMeta(x, y, z);
+      // A placed block must come out of the inventory (or be crafted from it): no diamond ore out of nothing.
+      if (!s.guard.authorizeEdit({ x, y, z }, old, oldMeta, id, meta, w.getBlock(x, y + 1, z))) {
+        metrics.inventoryRejects++;
+        this.logger.warn('unbacked place', { name: s.name, block: id, meta, mode: this.guardMode });
+        if (this.guardMode === 'enforce') return reject();
+      }
+      // Breaking a block lets this player's client spawn its drop (see InventoryGuard.creditBreak).
       // The state byte matters: red wool drops red wool, a double slab two slabs.
-      if (old > 0) s.guard.creditBreak(old, this.entities.world.getMeta(x, y, z));
+      if (id === 0 && old > 0) s.guard.creditBreak(old, oldMeta);
     }
     this.entities?.setBlock(x, y, z, id, meta); // records the edit and updates what the mobs see
     this.broadcast(blockMessage(x, y, z, id, meta), s.id);

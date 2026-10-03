@@ -206,6 +206,16 @@ def main():
         alice.shot('chat')
 
         # ---------------------------------------------------------------- building together
+        # Survival placing costs the item (InventoryGuard.authorizeEdit): give everybody bricks and glass the way an op
+        # can (a game mode switch makes each player's next inventory the server's baseline).
+        alice.chat('/gamemode creative')
+        time.sleep(1.1)
+        alice.chat('/gamemode survival')
+        time.sleep(1.1)
+        for p in (alice, bob, carol):
+            p.js('''() => { game.playerInventory.set(0, { id: 45, count: 64 }); game.playerInventory.set(1, { id: 11, count: 64 });
+              game.saveGame(); }''')
+        time.sleep(0.5)
         spot = alice.js('''() => { const p = game.player; const x = Math.floor(p.x) + 2, z = Math.floor(p.z);
           let y = Math.floor(p.y) + 1; while (game.world.getBlock(x, y, z) !== 0 && y < p.y + 4) y++; return [x, y, z]; }''')
         alice.js('([x, y, z]) => game.world.setBlock(x, y, z, 45)', spot)  # bricks
