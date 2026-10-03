@@ -116,8 +116,8 @@ Screenshots: `docs/screenshots/xp-bar-orbs.png`, `enchanting-table.png`, `sword-
   (een `keepInventory`-gamerule op `WorldMeta.rules` slaat dit over). Opgeslagen als `stats[5]` (punten) en `stats[6]` (enchant-seed).
 - **Enchantments:** 25 stuks (`src/items/EnchantRules.ts`) met vanilla max-levels, conflicten, gewichten en anvil-kosten; effecten op
   breken (Efficiency, Aqua Affinity, Silk Touch, Fortune), drops (Looting, brandende dieren laten gebakken vlees vallen), melee (Sharpness,
-  Smite, Bane, Knockback, Fire Aspect), boog (Power, Punch, Flame, Infinity), slijtage (Unbreaking), harnas (Protection-familie via
-  `PlayerStats.registerDamageModifier`, Thorns, Respiration, Depth Strider) en Mending. Paarse glint op iconen (CSS-mask), hotbar, hand en
+  Smite, Bane, Knockback, Fire Aspect), boog (Power, Punch, Flame, Infinity), slijtage (Unbreaking), harnas (Protection-familie als `post`-modifier via
+  `registerDamageModifier` in `Damage.ts`, Thorns, Respiration, Depth Strider) en Mending. Paarse glint op iconen (CSS-mask), hotbar, hand en
   gevallen items (shader); tooltips met romeinse cijfers, aqua naam, cursief bij een eigen naam.
 - **Blokken:** enchanting table (250), anvil (251, met chipped/damaged als variant, 12% slijtage per gebruik) en grindstone (252) als
   box-modellen met procedurele textures, recepten en creative-items. Enchanting table: boekenkasten in de 5×5-ring (max 15), drie aanbiedingen
@@ -125,8 +125,7 @@ Screenshots: `docs/screenshots/xp-bar-orbs.png`, `enchanting-table.png`, `sword-
   "Too Expensive!" vanaf 40. Grindstone: haalt enchantments weg en geeft XP terug. `/enchant <naam> [level]` en `/xp <n>[L]` (creative).
 - **Nog te doen:** Sweeping Edge heeft geen effect zolang er geen sweep-aanval is; de vloeken (Binding, Vanishing), Frost Walker, Soul Speed,
   Swift Sneak en alles van kruisboog, trietand en hengel; een zwevend boek op de enchanting table en glyph-deeltjes van de boekenkasten; de
-  server bewaakt XP niet (de client stuurt zijn punten mee, zoals health); dood-XP en erts-XP zijn in multiplayer lokale orbs; de
-  `combat`-pijplijn kan de lokale `registerDamageModifier` overnemen; creative-tab met kant-en-klare enchanted books.
+  server bewaakt XP niet (de client stuurt zijn punten mee, zoals health); dood-XP en erts-XP zijn in multiplayer lokale orbs; creative-tab met kant-en-klare enchanted books.
 
 ## 5. Sfeer
 
