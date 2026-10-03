@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { PHYSICS, blockReach } from '../src/player/Physics';
 import { type MoveInput, Player } from '../src/player/Player';
+import { ITEM, getItemDef, itemFromState, itemId } from '../src/items/ItemRegistry';
 import { BLOCK } from '../src/world/BlockRegistry';
 import { TestWorld } from './helpers';
 
@@ -23,6 +24,18 @@ function groundSpeed(input: MoveInput): number {
   for (let i = 0; i < 60; i++) p.step(input, floor.get);
   return p.x - x0;
 }
+
+describe('balance: stack sizes', () => {
+  it('stacks beds (every colour) to 1, buckets and snowballs to 16, tools, armor and stew to 1', () => {
+    for (let colour = 0; colour < 16; colour++) expect(getItemDef(itemFromState(BLOCK.BED, colour))?.maxStack).toBe(1);
+    expect(getItemDef(ITEM.BUCKET)?.maxStack).toBe(16);
+    expect(getItemDef(itemId('snowball'))?.maxStack).toBe(16);
+    for (const name of ['diamond_pickaxe', 'iron_sword', 'bow', 'shears', 'iron_chestplate', 'mushroom_stew', 'water_bucket']) {
+      expect(getItemDef(itemId(name))?.maxStack, name).toBe(1);
+    }
+    for (const name of ['stone', 'oak_planks', 'cooked_porkchop', 'arrow', 'torch']) expect(getItemDef(itemId(name))?.maxStack, name).toBe(64);
+  });
+});
 
 describe('balance: player', () => {
   it('reaches blocks 4.5 away in survival and 5 in creative (block_interaction_range)', () => {

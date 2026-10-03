@@ -340,7 +340,8 @@ export function getItemDef(id: number): ItemDef | undefined {
   const v = b.variant;
   const name = v ? v.names[meta >> v.shift] : undefined;
   if (v && !name) return undefined;
-  def = { id, name: b.name, displayName: name ?? b.displayName, maxStack: 64 };
+  // Beds stack to 1 in Minecraft; every other block item stacks to 64.
+  def = { id, name: b.name, displayName: name ?? b.displayName, maxStack: block === BLOCK.BED ? 1 : 64 };
   blockItemDefs.set(id, def);
   return def;
 }
