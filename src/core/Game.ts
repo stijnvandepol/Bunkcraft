@@ -68,6 +68,7 @@ import { AudioEngine } from './Audio';
 import { CameraController } from './Camera';
 import { Input } from './Input';
 import { Interaction } from './Interaction';
+import { ContainerScreens } from './ContainerScreens';
 import { Renderer } from './Renderer';
 import { WeatherSystem } from './WeatherSystem';
 import { DynamicResolution, suggestPreset } from './AdaptiveQuality';
@@ -114,6 +115,10 @@ export class Game {
   private readonly hud: HUD;
   private readonly inventory: Inventory;
   private readonly survivalInventory: SurvivalInventory;
+  /** Chest and furnace screens (singleplayer block entities or the server's containers). */
+  private readonly containers: ContainerScreens;
+  /** Experience handed out by a furnace (the XP system hooks in here; amount in points). */
+  onFurnaceXp: ((amount: number) => void) | null = null;
   private readonly hand: HandRenderer;
   private readonly mobRenderer: MobRenderer;
   private readonly itemRenderer: ItemRenderer;
@@ -202,6 +207,26 @@ export class Game {
     this.survivalInventory = new SurvivalInventory(this.icons, this.playerInventory, {
       drop: (s) => this.throwStack(s),
       close: () => void this.resumeGame(),
+    });
+    this.containers = new ContainerScreens({
+      world: () => this.world,
+      net: () => this.net,
+      inventory: this.playerInventory,
+      show: (view) => {
+        if (this.state !== 'playing') return;
+        this.state = 'inventory';
+        this.suppressPause = this.input.locked;
+        this.input.exitLock();
+        this.survivalInventory.open(this.nearbyStations(), view);
+      },
+      current: () => this.survivalInventory.container,
+      cursor: () => this.survivalInventory.cursorStack,
+      setCursor: (s) => this.survivalInventory.setCursor(s),
+      refresh: () => this.survivalInventory.refreshBox(),
+      close: () => { if (this.state === 'inventory') void this.resumeGame(); },
+      message: (text) => this.chat.add(text, true),
+      drop: (s) => this.throwStack(s),
+      awardXp: (amount) => this.onFurnaceXp?.(amount),
     });
     this.playerInventory.onAdd = (id) => this.advancements.onItemGained(id);
     this.playerInventory.onChange = () => {
@@ -482,6 +507,13 @@ export class Game {
     world.onChunkReady = (c) => entities.onChunkReady(c);
     world.onChunkUnloaded = (k) => entities.onChunkUnloaded(k);
     this.entities = entities;
+    // Chests and furnaces: singleplayer owns them; on a server the server does and this store stays empty.
+    world.blockEntities.enabled = !this.net;
+    world.blockEntities.onDrops = (x, y, z, stacks) => {
+      if (!hasSurvivalRules(this.mode)) return;
+      for (const st of stacks) entities.dropItem(st, x + 0.5, y + 0.5, z + 0.5, 10, undefined, true);
+    };
+    world.blockEntities.onXpAwarded = (amount) => this.onFurnaceXp?.(amount);
     // Water and lava flow in singleplayer; on a server the server simulates and sends the changes.
     if (!this.net) {
       const sim = world.enableLiquids();
@@ -509,8 +541,7 @@ export class Game {
         entities.primeTnt(x, y, z);
         return true;
       },
-      chestsAllowed: () => !this.net,
-      openChest: (x, y, z) => this.openChest(x, y, z),
+      openContainer: (x, y, z) => this.containers.open(x, y, z),
       useBed: (x, y, z) => this.useBed(x, y, z),
       shootArrow: (power, pickup) => {
         const cam = this.cam.camera;
@@ -574,7 +605,7 @@ export class Game {
     const world = this.createWorldInstance(meta.seed, edits, worldType, normalizeGenVersion(meta.genVersion));
     this.cycle.time = meta.time;
     this.weatherSys.start(meta, this.net !== null);
-    world.containers.load(meta.containers);
+    world.blockEntities.load(meta.blockEntities);
     const mode = meta.gameMode ?? 'creative';
     // Inventory: saved stacks, else creative gets the default hotbar and survival starts empty.
     if (meta.inventory) this.playerInventory.load(meta.inventory);
@@ -666,7 +697,8 @@ export class Game {
     meta.player = { x: p.x, y: p.y, z: p.z, yaw: p.yaw, pitch: p.pitch, flying: p.flying };
     meta.hotbar = Array.from({ length: 9 }, (_, i) => this.playerInventory.get(i).id);
     meta.inventory = this.playerInventory.serialize();
-    meta.containers = world.containers.serialize();
+    meta.blockEntities = world.blockEntities.serialize();
+    delete meta.containers;
     meta.stats = this.stats.serialize();
     meta.advancements = this.advancements.serialize();
     meta.gameMode = this.mode;
@@ -708,18 +740,6 @@ export class Game {
       downloadBlob(blob, name);
       showToast(`Saved screenshot ${name}`);
     }, 'image/png');
-  }
-
-  /** Opens a chest: the container screen with the chest's 27 slots above the inventory. */
-  private openChest(x: number, y: number, z: number): void {
-    const world = this.world;
-    if (!world || this.net || this.state !== 'playing') return;
-    const slots = world.containers.slotsAt(x, y, z);
-    if (!slots) return;
-    this.state = 'inventory';
-    this.suppressPause = this.input.locked;
-    this.input.exitLock();
-    this.survivalInventory.open(this.nearbyStations(), { title: 'Chest', slots });
   }
 
   /** A bed sets the respawn point; at night it also sleeps until the morning (singleplayer). */
@@ -792,6 +812,7 @@ export class Game {
     this.loadingProgress = progress;
     this.arenaMap = welcome.match?.map ?? DEFAULT_MAP;
     this.lastJoin = { name, address, room };
+    this.containers.serverSupport = welcome.containers === true;
     this.startSession(meta, edits);
     const world = this.world!;
     // The server simulates the mobs, items, arrows and TNT; we only mirror them.
@@ -963,6 +984,7 @@ export class Game {
         this.chat.add('The server corrected your inventory.', true);
         break;
       case 'gamemode': this.setMode(msg.mode); break;
+      case 'container': this.containers.onMessage(msg); break;
       default: if (!this.weatherSys.onServerMessage(msg)) this.arcade?.handle(msg, performance.now() / 1000); break;
     }
   }
@@ -975,6 +997,7 @@ export class Game {
     if (!this.net) return;
     const net = this.net;
     this.net = null;
+    this.containers.reset();
     net.close();
     this.remote.clear();
     this.chat.close();
@@ -1182,7 +1205,7 @@ export class Game {
     for (let y = -2; y <= 3; y++) for (let z = -4; z <= 4; z++) for (let x = -4; x <= 4; x++) {
       const b = this.getBlock(Math.floor(p.x) + x, Math.floor(p.y) + y, Math.floor(p.z) + z);
       if (b === BLOCK.CRAFTING_TABLE) s.add('table');
-      else if (b === BLOCK.FURNACE) s.add('furnace');
+      else if (b === BLOCK.FURNACE || b === BLOCK.LIT_FURNACE) s.add('furnace');
     }
     return s;
   }
@@ -1484,6 +1507,8 @@ export class Game {
     p.jumps = 0;
     this.weatherSys.gameTick();
     this.world?.tickLiquids();
+    this.world?.blockEntities.tick();
+    this.containers.tick();
     stats.tick(p, this.getBlock, this.mode);
     p.canSprint = !hasSurvivalRules(this.mode) || stats.canSprint;
 

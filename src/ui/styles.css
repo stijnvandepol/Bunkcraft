@@ -923,3 +923,13 @@ html, body {
 .arc-stat-bar { height: calc(var(--s) * 3); background: #000; }
 .arc-stat-bar i { display: block; height: 100%; background: #ffff55; }
 .arc-loadout-note { color: #a0a0a0; }
+
+/* Furnace screen: input over flame over fuel, the progress arrow, the output (Minecraft's layout). */
+.furnace-ui { display: flex; align-items: center; gap: calc(var(--s) * 8); padding: calc(var(--s) * 2) calc(var(--s) * 30); }
+.furnace-ui.hidden, .inv-grid.hidden { display: none; }
+.furnace-left { display: flex; flex-direction: column; align-items: center; gap: calc(var(--s) * 2); }
+.furnace-flame { position: relative; width: calc(var(--s) * 14); height: calc(var(--s) * 14); background: #8b8b8b; clip-path: polygon(50% 0, 85% 45%, 100% 100%, 0 100%, 15% 45%); }
+.furnace-flame > i { position: absolute; left: 0; right: 0; bottom: 0; height: 0; background: linear-gradient(#ffe25a, #f08a1a 60%, #c8401a); }
+.furnace-arrow { position: relative; width: calc(var(--s) * 24); height: calc(var(--s) * 16); background: #8b8b8b; clip-path: polygon(0 30%, 60% 30%, 60% 0, 100% 50%, 60% 100%, 60% 70%, 0 70%); }
+.furnace-arrow > i { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: #fff; }
+.inv-slot.furnace-out { width: calc(var(--s) * 26); height: calc(var(--s) * 26); }

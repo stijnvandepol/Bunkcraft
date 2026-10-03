@@ -79,6 +79,11 @@ export class ServerEntities {
       if (drop) this.manager.dropItem(drop, x + 0.5, y + 0.3, z + 0.5);
     };
     this.manager = new EntityManager(this.world, seed);
+    // A broken chest or furnace spills its contents (survival rules; creative empties it, like Minecraft).
+    this.world.blockEntities.onDrops = (x, y, z, stacks) => {
+      if (!hasSurvivalRules(this.mode)) return;
+      for (const st of stacks) this.manager.dropItem(st, x + 0.5, y + 0.5, z + 0.5, 10, undefined, true);
+    };
     this.world.onChunkReady = (c) => this.manager.onChunkReady(c);
     this.world.onChunkUnloaded = (k) => this.manager.onChunkUnloaded(k);
   }
@@ -113,6 +118,8 @@ export class ServerEntities {
     this.world.update(targets);
     // Water and lava flow (budgeted per tick); what changed goes out as one batch.
     this.world.tickLiquids();
+    // Furnaces burn while their chunk is loaded; lighting up or going out is a block change like flowing water.
+    this.world.blockEntities.tick();
     const flowed = this.world.drainSimEdits();
     if (flowed.length > 0) this.host.broadcastBlocks(flowed);
     this.manager.targets = targets;

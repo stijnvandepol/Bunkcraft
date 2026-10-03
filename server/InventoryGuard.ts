@@ -74,6 +74,14 @@ export function parseInventory(raw: unknown): { stacks: Stack[]; slots: Stack[];
   return { stacks, slots };
 }
 
+/** Parses the stack on a player's cursor (`[]` or null = nothing). Same validation as an inventory row. */
+export function parseCursor(raw: unknown): { stack: Stack | null; error?: string } {
+  if (raw === undefined || raw === null || (Array.isArray(raw) && raw.length === 0)) return { stack: null };
+  const parsed = parseInventory([raw]);
+  if (parsed.error) return { stack: null, error: parsed.error };
+  return { stack: parsed.stacks[0] ?? null };
+}
+
 export function toRows(stacks: Stack[]): number[][] {
   return stacks.map((s) => (s.extra ? [s.id, s.count, s.damage ?? 0, ...s.extra] : [s.id, s.count, s.damage ?? 0]));
 }
@@ -157,11 +165,34 @@ export class InventoryGuard {
     return true;
   }
 
-  /** Validates a `state` inventory. Accepting makes it the new baseline. */
-  check(raw: unknown): StateCheck {
+  /**
+   * Items moved out of a container into the player's hands (a chest slot picked up, a furnace output taken): they
+   * belong to the pool from now on. Container transfers are neutral for the pool: what comes out of a container
+   * goes in here, what the player puts in is taken out with `spendTransfer`, so a correct transfer passes the next
+   * state check and an invented or duplicated stack does not.
+   */
+  creditTransfer(id: number, count: number, damage?: number): void {
+    this.creditPickup(id, count, damage);
+  }
+
+  /** Items the player put into a container: they must be in the pool (they were part of the checked state/cursor). */
+  spendTransfer(id: number, count: number, damage?: number): boolean {
+    const have = this.pool.get(id) ?? 0;
+    if (have < count) return false;
+    this.pool.set(id, have - count);
+    if (this.ledger.length < MAX_LEDGER) this.ledger.push({ id, count: -count, damage });
+    return true;
+  }
+
+  /**
+   * Validates a `state` inventory. Accepting makes it the new baseline. `cursor` is the stack on the mouse cursor of
+   * an open container screen: it counts as held, so picking a stack up does not make items "disappear" (and putting
+   * it back later is not an unexplained gain).
+   */
+  check(raw: unknown, cursor?: Stack | null): StateCheck {
     const parsed = parseInventory(raw);
     if (parsed.error) return { ok: false, reason: parsed.error, correction: this.correction() };
-    const next = totals(parsed.stacks);
+    const next = totals(cursor ? [...parsed.stacks, cursor] : parsed.stacks);
     if (this.trustNext) {
       this.trustNext = false;
       return this.accept(parsed.slots, next);
@@ -187,7 +218,8 @@ export class InventoryGuard {
   private craft(id: number, count: number, work: Map<number, number>, depth: number): boolean {
     if (depth > MAX_CRAFT_DEPTH) return false;
     for (const recipe of RECIPES) {
-      if (recipe.result.id !== id) continue;
+      // Smelting happens in real furnaces now: their output reaches the inventory as a container transfer.
+      if (recipe.result.id !== id || recipe.station === 'furnace') continue;
       const crafts = Math.ceil(count / recipe.result.count);
       const trial = new Map(work);
       let ok = true;
