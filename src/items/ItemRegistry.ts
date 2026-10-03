@@ -340,7 +340,8 @@ export function getItemDef(id: number): ItemDef | undefined {
   const v = b.variant;
   const name = v ? v.names[meta >> v.shift] : undefined;
   if (v && !name) return undefined;
-  def = { id, name: b.name, displayName: name ?? b.displayName, maxStack: 64 };
+  // Beds stack to 1 in Minecraft; every other block item stacks to 64.
+  def = { id, name: b.name, displayName: name ?? b.displayName, maxStack: block === BLOCK.BED ? 1 : 64 };
   blockItemDefs.set(id, def);
   return def;
 }
@@ -473,6 +474,18 @@ export function breakSeconds(blockId: number, held: number, onGround: boolean, i
   return Math.ceil(1 / perTick) / 20;
 }
 
+/**
+ * Durability a tool loses for mining a block (Minecraft's tool component): nothing for blocks that break
+ * instantly (hardness 0: torches, flowers, TNT), 2 for a sword, 1 for other tools; 0 when not holding a tool.
+ */
+export function miningWear(held: number, blockId: number, meta = 0): number {
+  const tool = getItemDef(held)?.tool;
+  if (!tool) return 0;
+  const hardness = miningOf(blockId, meta)?.hardness ?? getBlockDef(blockId)?.hardness ?? 1;
+  if (hardness <= 0) return 0;
+  return tool.kind === 'sword' ? 2 : 1;
+}
+
 export function canHarvest(blockId: number, held: number, meta = 0): boolean {
   const m = miningOf(blockId, meta);
   if (!m) return true;
@@ -554,7 +567,11 @@ export function blockDrop(blockId: number, held: number, meta = 0): ItemStack | 
   }
   if (WITH_SHEARS_ONLY.has(blockId)) {
     if (heldTool === 'shears') return { id: blockId, count: 1 };
-    if (blockId === B.DEAD_BUSH) return Math.random() < 0.5 ? { id: ITEM.STICK, count: rand(1, 2) } : null;
+    if (blockId === B.DEAD_BUSH) {
+      // 0-2 sticks, uniformly (Minecraft's loot table).
+      const n = rand(0, 2);
+      return n > 0 ? { id: ITEM.STICK, count: n } : null;
+    }
     return Math.random() < 0.125 ? { id: named('wheat_seeds'), count: 1 } : null;
   }
   switch (blockId) {

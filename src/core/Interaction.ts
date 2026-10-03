@@ -1,11 +1,11 @@
 import * as THREE from 'three';
 import type { EntityManager } from '../entities/EntityManager';
 import type { PlayerInventory } from '../items/Inventory';
-import { ITEM, blockDrop, breakSeconds, getItemDef, isBlockItem, itemBlock, itemFromState, itemId, itemMeta } from '../items/ItemRegistry';
+import { ITEM, blockDrop, breakSeconds, getItemDef, isBlockItem, itemBlock, itemFromState, itemId, itemMeta, miningWear } from '../items/ItemRegistry';
 import { toolUse } from '../items/ToolUse';
 import { facingFromYaw } from '../world/BlockStates';
 import { type GameMode, hasSurvivalRules } from '../player/GameMode';
-import { PHYSICS } from '../player/Physics';
+import { blockReach } from '../player/Physics';
 import type { Player } from '../player/Player';
 import type { PlayerStats } from '../player/PlayerStats';
 import type { HandRenderer } from '../rendering/HandRenderer';
@@ -90,6 +90,8 @@ export class Interaction {
   private readonly getMeta = (x: number, y: number, z: number): number => this.d.world.getMeta(x, y, z);
   private readonly shapeBoxes = new Float64Array(64);
   private readonly liquidRay: RayHit = createRayHit();
+  /** Block reach of the current game mode. */
+  private reach = 4.5;
 
   reset(): void {
     this.breakProgress = 0;
@@ -111,7 +113,8 @@ export class Interaction {
     const highlight = renderer.highlight;
     const pos = camera.position;
     camera.getWorldDirection(this.dir);
-    const hit = raycast(this.getBlock, pos.x, pos.y, pos.z, this.dir.x, this.dir.y, this.dir.z, PHYSICS.REACH, this.ray, this.getMeta);
+    this.reach = blockReach(!hasSurvivalRules(mode));
+    const hit = raycast(this.getBlock, pos.x, pos.y, pos.z, this.dir.x, this.dir.y, this.dir.z, this.reach, this.ray, this.getMeta);
     const mobHit = active && mode !== 'spectator'
       ? this.d.entities.raycastMob(pos.x, pos.y, pos.z, this.dir.x, this.dir.y, this.dir.z, Math.min(3, hit.hit ? hit.distance + 0.01 : 3))
       : null;
@@ -201,7 +204,7 @@ export class Interaction {
     const slot = hotbar.selected;
     if (id === ITEM.BUCKET) {
       const p = camera.position;
-      const lh = raycast(this.getBlock, p.x, p.y, p.z, this.dir.x, this.dir.y, this.dir.z, PHYSICS.REACH, this.liquidRay, this.getMeta, true);
+      const lh = raycast(this.getBlock, p.x, p.y, p.z, this.dir.x, this.dir.y, this.dir.z, this.reach, this.liquidRay, this.getMeta, true);
       // A solid block in the way (hit earlier than the liquid) means the liquid is out of sight.
       if (!lh.hit || !isLiquid(lh.id) || world.getMeta(lh.x, lh.y, lh.z) !== 0) return;
       if (hit.hit && hit.distance < lh.distance) return;
@@ -351,7 +354,7 @@ export class Interaction {
           if (top) entities.dropItem(top, hit.x + 0.5, hit.y + 1.3, hit.z + 0.5);
         }
         stats.addExhaustion(0.005);
-        if (getItemDef(held)?.tool) inventory.damageTool(hotbar.selected);
+        for (let w = miningWear(held, broken, brokenMeta); w > 0; w--) inventory.damageTool(hotbar.selected);
       }
     }
     this.breakProgress = 0;

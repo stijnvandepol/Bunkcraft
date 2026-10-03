@@ -6,6 +6,14 @@ import type { MobType } from './MobTypes';
 import type { Arrow } from './Arrow';
 import type { PrimedTnt } from './PrimedTnt';
 
+/** Ticks a skeleton waits after a shot before it draws again (Minecraft: 40 on Easy/Normal, 20 on Hard). */
+export const SKELETON_SHOT_INTERVAL = 40;
+
+/** Blocks within which a hostile mob notices its target (Minecraft's follow_range: 16, zombies 35). */
+export function followRange(type: MobType): number {
+  return type.followRange ?? 16;
+}
+
 export interface MobTarget {
   x: number;
   y: number;
@@ -129,8 +137,8 @@ export class Mob extends Entity {
     const distT = Math.hypot(dxT, dzT, target.y - this.y);
     let speed = 0;
 
-    // Follow range like Minecraft's: zombies and spiders notice players from 32 blocks, creepers and skeletons from 16.
-    const follow = t.ranged || t.kind === 'creeper' ? 16 : 32;
+    // Follow range like Minecraft's (attribute follow_range): zombies notice players from 35 blocks, the others from 16.
+    const follow = followRange(t);
     const hunting = t.hostile && target.attackable && distT < follow && !(t.neutralInLight && this.calm && !this.provoked);
     if (!hunting) this.aimTicks = 0;
     if (hunting) {
@@ -141,13 +149,14 @@ export class Mob extends Entity {
       this.lookAt(target.x, target.y + 1.5, target.z);
       const sees = distT < (t.ranged ? 16 : 4) ? this.canSee(getBlock, target) : false;
       if (t.ranged) {
-        // Skeleton: stop within 15 blocks with line of sight, draw for 1 s, shoot every 2 s.
+        // Skeleton (RangedBowAttackGoal): stop within 15 blocks with line of sight, wait 40 ticks after a shot, then
+        // draw for 20 ticks: one arrow every 3 s (Easy and Normal).
         if (sees && distT < 15) {
           speed = distT < 4 ? -t.walkSpeed : 0;
-          if (++this.aimTicks >= 20 && this.attackCooldown === 0) {
+          if (this.attackCooldown === 0 && ++this.aimTicks >= 20) {
             events.shoot(this, target);
             this.aimTicks = 0;
-            this.attackCooldown = 20;
+            this.attackCooldown = SKELETON_SHOT_INTERVAL;
           }
         } else {
           this.aimTicks = 0;

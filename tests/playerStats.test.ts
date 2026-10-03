@@ -35,11 +35,28 @@ describe('PlayerStats: natural regeneration', () => {
   });
 
   it('heals fast (every 10 ticks) with full hunger and saturation left', () => {
-    const { stats, player } = setup({ health: 10, hunger: 20, saturation: 5 });
+    const { stats, player } = setup({ health: 10, hunger: 20, saturation: 10 });
     ticks(stats, player, 10);
     expect(stats.health).toBe(11);
     ticks(stats, player, 10);
     expect(stats.health).toBe(12);
+  });
+
+  it('heals saturation / 6 for that much exhaustion when saturation is below 6 (Java FoodData)', () => {
+    const { stats, player } = setup({ health: 10, hunger: 20, saturation: 3 });
+    ticks(stats, player, 10);
+    expect(stats.health).toBeCloseTo(10.5, 6);
+    expect(stats.exhaustion).toBeCloseTo(3, 6);
+  });
+
+  it('restarts the regeneration timer while at full health (no instant heal after a hit)', () => {
+    const { stats, player } = setup({ health: MAX_HEALTH, hunger: 18, saturation: 0 });
+    ticks(stats, player, 500);
+    stats.damage(2, 'fall', 'survival');
+    ticks(stats, player, 79);
+    expect(stats.health).toBe(MAX_HEALTH - 2);
+    ticks(stats, player, 1);
+    expect(stats.health).toBe(MAX_HEALTH - 1);
   });
 
   it('does nothing at full health', () => {
