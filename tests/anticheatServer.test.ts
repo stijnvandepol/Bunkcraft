@@ -139,4 +139,20 @@ describe('arcade movement enforcement on the server', () => {
     for (let i = 1; i <= 30; i++) { clock += 50; pos(me.x, me.y + Math.min(4, i * 0.3), me.z); }
     expect(ws.of('teleport').length).toBeGreaterThan(0);
   });
+
+  it('shots need a unit direction; a far origin is replaced by the server eye; the admin list shows suspicion', () => {
+    const server = room();
+    const { ws, me } = enter(server, 'gunner');
+    const ammo = () => ws.of('ammo').length;
+    const before = ammo();
+    clock += 1000;
+    ws.say({ t: 'fire', slot: 0, ox: me.x, oy: me.y + 1.62, oz: me.z, dx: 0, dy: 0, dz: 5, ads: false });
+    expect(ammo()).toBe(before);
+    ws.say({ t: 'fire', slot: 0, ox: me.x + 1.5, oy: me.y + 1.62, oz: me.z, dx: 0, dy: 0, dz: 1, ads: false });
+    expect(ammo()).toBe(before + 1);
+    expect(metrics.cheatEvents.get('origin')).toBeGreaterThan(0);
+    const row = server.playerList().find((p) => p.name === 'gunner')!;
+    expect(row.suspicion).toBe(0);
+    expect(row.strikes).toBe(0);
+  });
 });

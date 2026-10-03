@@ -85,6 +85,7 @@ export const ADMIN_HTML = `<!doctype html>
       r.players.forEach(function (p) {
         var li = el('li');
         li.append(el('span', p.name + (p.op ? ' (op)' : '')), el('span', p.ip + ' / ' + p.pingMs + ' ms', 'mute'));
+        if (p.suspicion !== undefined) li.append(el('span', 'suspicion ' + p.suspicion + ' / strikes ' + p.strikes, p.suspicion >= 50 ? 'err' : 'mute'));
         li.append(act('Kick', function () {
           api('POST', owner === 'main' ? '/main/kick' : '/rooms/' + code + '/kick', { name: p.name }).then(refresh, fail);
         }), act('Block IP', function () {
