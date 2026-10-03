@@ -214,8 +214,8 @@ inventory), maar ook daar moet de vorm kloppen. `INVENTORY_GUARD=warn` logt alle
 **Wat niet wordt voorkomen** (eerlijk, zodat je weet waar de grenzen liggen):
 
 - Welk werkblad of welke oven werd gebruikt en of die dichtbij stond: de recepten zelf worden gecontroleerd, het station niet.
-- Items die als blok geplaatst of opgegeten worden: verbruik wordt vertrouwd (het verlaagt alleen het saldo). Wie een blok plaatst
-  en het item daarna toch dropt, kan dat een keer doen met items die hij daadwerkelijk had.
+- Opgegeten items: verbruik wordt vertrouwd (het verlaagt alleen het saldo). Geplaatste blokken worden wél afgeboekt
+  (`authorizeEdit`): een blok dat de speler niet heeft en ook niet uit zijn voorraad kan craften, wordt geweigerd.
 - Gereedschapsschade terugzetten naar 0 (repareren zonder recept) en de volgorde van slots.
 - Health, honger en `stats`: die geeft de client op (alleen getallen en lengte worden gecontroleerd).
 - Een speler die al vóór deze versie vals speelde: zijn opgeslagen inventory geldt als beginsituatie.

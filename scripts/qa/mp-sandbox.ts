@@ -637,7 +637,7 @@ async function pwlimit(): Promise<void> {
   check('password: after 5 wrong tries even the right password is refused for a while', !res.ok && /Too many/.test(res.kick.reason), !res.ok ? res.kick.reason : 'let in');
   const other = await createRoom(base(), { name: 'Other', gameMode: 'survival', password: 'x' });
   const res2 = await tryJoin(new Bot('Innocent'), base(), other.code, { password: 'x' });
-  info('password: the limit is per address over ALL games', res2.ok ? 'another game still works' : `another game with the right password is also refused: "${res2.kick.reason}" (a friend typo-ing 5× locks the whole household out of every locked game for 10 min)`);
+  check('password: the limit is per game (another game still works)', res2.ok, res2.ok ? '' : `another game with the right password is also refused: "${res2.kick.reason}"`);
 }
 
 // ---------------------------------------------------------------- shared chests

@@ -13,8 +13,10 @@ browsertests via de Vite-devproxy (`scripts/qa/vite.qa.config.ts`: geen HMR, gee
 - **Gerepareerd in deze ronde (met regressietests in `tests/multiplayerQa.test.ts`):** gelijktijdige blokwijzigingen gaven
   verschillende werelden, emmers/melk/stoofpot werden door de inventory guard "gecorrigeerd", en een typfout in een
   wachtwoord werd voor altijd hergebruikt.
-- **Open:** blokken plaatsen die je niet hebt (items uit het niets), schokkerige interpolatie van andere spelers, en de nacht
-  is erg zwaar als vrienden bij elkaar staan.
+- **Gerepareerd in ronde 2:** blokken plaatsen die je niet hebt (items uit het niets), schokkerige interpolatie van andere
+  spelers, de te zware nacht voor vrienden bij elkaar, de wachtwoordlimiet over alle games en de blijvende doodsmelding.
+  Zie *Ronde 2* hieronder.
+- **Open:** zie *Nog open* onderaan *Ronde 2*.
 
 ## Gerepareerd
 
@@ -47,56 +49,76 @@ minuten (en die limiet geldt per adres voor álle games).
 - Repro: `mp_browser.py` (*after a typo the game asks for the password again*).
 - Fix: `NetClient` vergeet het wachtwoord van die game bij een `kick` met `code: 'password'`.
 
-## Open bugs (geprioriteerd)
+## Ronde 2: de open bugs gerepareerd
 
-### 1. Items uit het niets via plaatsen en breken (hoog, anti-cheat)
+### 4. Items uit het niets via plaatsen en breken (hoog, anti-cheat): gerepareerd
 
-De server controleert bij `block` niet of je het blok hebt. Een aangepaste client plaatst diamanterts, breekt het, laat de
-diamant vallen (gedekt door het breekkrediet), raapt hem op en de inventory wordt geaccepteerd.
+Een aangepaste client plaatste diamanterts, brak het en hield de diamant.
 
-- Repro: `npx tsx scripts/qa/mp-sandbox.ts guard` (check *placing a block you do not own*).
-- Voorstel: bij plaatsen in survival het item van de pool afboeken (`spendTransfer` op `itemFromState(id, meta)`) en
-  weigeren als het er niet is. Let op: dan moet de client vlak na craften eerst een `state` sturen, anders worden legitiem
-  gecrafte blokken geweigerd. Een goedkopere tussenstap: breekkrediet niet geven voor blokken die dezelfde speler de
-  laatste 60 s zelf plaatste en die hij niet in zijn pool had.
+- Fix: `InventoryGuard.authorizeEdit` (aangeroepen in `GameServer.onBlock`, alleen survival met `inventoryGuard: enforce`)
+  bepaalt per blokwijziging wat die kost (`classifyEdit`):
+  - **plaatsen** boekt één item af: `itemFromState(id, meta)` (kleur- en houtvarianten blijven, richting/helft valt weg),
+    redstone-stof → `redstone`, een slab op een slab (dubbel) kost een tweede slab, een andere kleur op dezelfde plek is
+    een nieuw blok;
+  - net gecraft maar nog geen `state` gestuurd: de guard craft het blok ter plekke uit de pool (log → planken → geplaatst);
+  - **deuren en bedden**: de tweede helft is gratis, maar alleen direct na de betaalde eerste helft op de juiste plek;
+  - **emmers**: gieten vraagt een volle emmer en geeft de lege terug, scheppen vult een lege;
+  - **gratis**: breken, hendels/deuren/luiken omzetten, een tweede kist die een dubbele kist maakt, schoffel/schop/bijl
+    (akkerland, pad, gestripte stam; schaar op pompoen geeft alleen zaadkrediet als je een schaar hebt);
+  - creative en de eerste `state` na een modewissel worden niet gecontroleerd (`trustNextState`).
+  Geweigerd → `reject`, de client zet het blok terug. Botten, vuur en groei door beendermeel doet de server zelf, die komen
+  nooit als `block` binnen. Zaadjes planten bestaat in het spel nog niet.
+- Tests: `tests/placementGuard.test.ts` plaatst **alle 507 creative-blokitems** (incl. varianten 1024+, slabs, trappen,
+  deuren, bedden, planten, redstone) in zes richtingen met precies één item: nooit geweigerd en de pool is daarna leeg;
+  zonder het item wordt elk geweigerd. Plus slab-dubbel, deur-/bedhelften, emmers, craft-op-plaatsen, gereedschap.
+  `tests/containersServer.test.ts` controleert de weigering over echte WebSockets.
+- QA-scripts: `mp-sandbox.ts` en `mp_browser.py` geven de bots hun blokken nu eerlijk (via een modewissel), want plaatsen
+  uit het niets mag niet meer. `mp-sandbox.ts guard edits drops chest tnt persist restart`: alles PASS, ook *placing a
+  block you do not own … does NOT create a diamond*.
 
-### 2. Andere spelers bewegen schokkerig (middel)
+### 5. Andere spelers bewegen schokkerig (middel): gerepareerd
 
-Een bot loopt met precies 4,32 blokken/s en stuurt 20 keer per seconde zijn positie; een browser op 120 fps tekent hem.
+- Server (`server/PoseTrail.ts`): de laatste `pos`-berichten staan op een ontvangsttijdlijn; elke Minecraft-snapshot toont
+  de positie 60 ms in het verleden op een vaste tickklok (stapt per tick, trekt langzaam bij naar de echte tijd, springt bij
+  een stall of teleport). Arcade houdt het nieuwste bericht (lag compensation is daarop gebouwd).
+- Client (`RemotePlayers`): snapshots krijgen een tijdstempel op een vaste klok (één tick per snapshot) in plaats van het
+  moment waarop de pagina het bericht afhandelde; na de nieuwste snapshot wordt maximaal 100 ms geëxtrapoleerd in plaats van
+  stil te staan. Nog steeds 100 ms achter.
+- Meting (`mp_interp.py`, nu op de frameklok van de game en met de machinebelasting erbij; de machine had een load van
+  40–75 door andere processen, dus de getallen schommelen). A/B door elkaar, oude versie op eigen poorten:
 
-| Meting | Waarde |
-|---|---|
-| Snapshots aankomst | regelmatig, 48–55 ms |
-| Stap per snapshot (verwacht 0,216) | wisselend 0 / 0,22 / 0,44 |
-| Getekende snelheid | gemiddeld 4,6–4,8 b/s, stdev 26–29 % |
-| Frames zonder beweging tijdens lopen | 7–10 % |
+| | Voor | Na |
+|---|---|---|
+| Stap per snapshot (verwacht 0,216) | 0 / 0,22 / 0,44 | 0,21–0,24 |
+| Getekende snelheid, stdev | 17–34 % | 8–9 % (één uitschieter 30 % bij load 76) |
+| Frames stilstand tijdens lopen | 30–242 van ~950 (3–25 %) | 0 |
+| Gemiddelde snelheid (echt 4,317) | 4,4–5,0 | 4,25–4,34 |
 
-Oorzaak: de server zet in elke 20 Hz-tick de laatst ontvangen positie in `snap`. De `pos`-berichten van de client komen ook
-op 20 Hz maar niet in fase met de tick, dus soms staan er twee in één tick en soms geen: de beweging stottert, ook al komt
-alles netjes binnen.
+  Bij lage load (eerder in de sessie, alleen de serverfix): stdev 5–10 %, 0 frames stilstand; zonder fix 31–34 %, 9–10 %.
+- Test: `tests/poseTrail.test.ts` (ongelijke stappen met de oude manier, gelijke met de trail; teleport, yaw).
 
-- Repro: `python3 scripts/qa/mp_interp.py` (met `start-servers.sh`).
-- Voorstel: een volgnummer of client-tijd in `pos` en de remote buffer interpoleren op die tijdlijn, of de server de positie
-  laten bemonsteren op ontvangsttijd (lineair tussen de laatste twee `pos`).
+### 6. De nacht is te zwaar voor vrienden bij elkaar (middel): gerepareerd
 
-### 3. De nacht is te zwaar voor vrienden die bij elkaar staan (middel, balans)
+- Fix: `hostileCapPerExtraPlayer` is weg. De cap schaalt zoals in Minecraft met het aantal chunks binnen 4 chunks van een
+  speler, elke chunk één keer geteld (`capAreas` in `MobSpawner.ts`): drie spelers bij elkaar ≈ 1,2 × de
+  singleplayer-cap (18 → ~22 in plaats van 34), spelers ver uit elkaar elk een volle cap (max 48).
+- Tests: `tests/mobSpawner.test.ts` (chunks één keer tellen; drie spelers samen op middernacht krijgen ~singleplayer).
+- Niet opnieuw met browsers gemeten (de 9 doden in 45 s); de cap is wel de oorzaak die het rapport aanwees.
 
-Drie spelers staan stil bij de spawn (geen wapens, niet vechten). Na `/time set midnight` gingen ze in 45 s **negen keer**
-dood. De mobcap telt per extra speler 8 vijanden bij (`hostileCapPerExtraPlayer`), maar al die vijanden komen op dezelfde
-plek af als de spelers samen staan: drie keer de dichtheid van singleplayer.
+### 7. Kleine dingen: gerepareerd
 
-- Repro: `mp_browser.py` (sectie *mobs at night*, regels *X died*).
-- Voorstel: de extra cap alleen geven voor spelers die ver uit elkaar staan (bijv. > 64 blokken), of de cap per groep spelers
-  in plaats van per speler.
+- **Wachtwoordlimiet** geldt nu per game én adres (`<code>|<ip>`). Test in `tests/serverRooms.test.ts`.
+  `mp-sandbox.ts pwlimit` meldt nu *another game still works*.
+- **Oude doodsmelding**: dat was de onzichtbare schermlezer-regio (`#sr-announcer`), die "You died. …" bewaarde. Respawnen
+  leegt hem nu en het verbroken-scherm kondigt zijn eigen tekst aan.
 
-### 4. Kleine dingen (laag)
+### Nog open
 
-- **Wachtwoordlimiet geldt per adres over alle games.** Vijf typfouten van één huisgenoot blokkeren het hele huishouden 10
-  minuten voor elke game met wachtwoord (`mp-sandbox.ts pwlimit`). Overweeg de limiet per adres én per game.
-- **Ban op adres raakt huisgenoten** (gedocumenteerd). In de test kwam een tweede speler van hetzelfde IP niet meer binnen.
-- **Melding na herstart** toonde nog de oude doodsmelding eronder: *Server restarting. Reconnecting automatically... /
-  You died. Alice was slain by Zombie*.
-- **Docs:** `SERVER.md` noemde `/weather` een stub en zei dat kisten niet bestaan; bijgewerkt.
+- Na een geweigerde plaatsing krijgt de client alleen het blok terug, niet het item (de lokale inventory loopt dan één
+  achter tot de volgende `state`). Bij eerlijk spel komt weigeren niet voor; een correctie sturen kan net gecrafte items
+  wissen, daarom bewust niet gedaan.
+- Ban op adres raakt huisgenoten (gedocumenteerd).
+- Mobs 's nachts met 3 browsers opnieuw meten (`mp_browser.py`, sectie *mobs at night*).
 
 ## Wat goed werkt
 
