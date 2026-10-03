@@ -80,7 +80,7 @@ const NATURAL = [
   'orange_tulip', 'oxeye_daisy', 'cornflower', 'lily_of_the_valley', 'red_mushroom', 'brown_mushroom', 'pumpkin', 'melon_slice', 'moss_block',
   'mud', 'red_sand', 'ice', 'granite', 'diorite', 'andesite', 'tuff', 'calcite', 'cobbled_deepslate', 'raw_iron', 'raw_gold', 'raw_copper', 'coal',
   'lapis_lazuli', 'redstone', 'diamond', 'emerald', 'flint', 'string', 'bone', 'feather', 'gunpowder', 'porkchop', 'beef', 'mutton', 'chicken',
-  'rotten_flesh', 'spider_eye', 'glowstone_dust', 'stick', 'wheat_seeds',
+  'rotten_flesh', 'spider_eye', 'glowstone_dust', 'stick', 'wheat_seeds', 'leather',
 ];
 /**
  * Results nobody can make yet, and why: wheat and the foods that need farming, leather (no cow drops yet), mud (needs wheat),

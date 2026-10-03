@@ -27,6 +27,8 @@ export class HandRenderer {
   private readonly spriteCanvas = document.createElement('canvas');
   private readonly layers: THREE.BufferAttribute;
   private readonly light = { value: new THREE.Vector2(1, 0) };
+  /** Enchantment glint on the held item: x = on (0/1), y = time in seconds. */
+  private readonly glint = { value: new THREE.Vector2(0, 0) };
   private heldId = -1;
   private iconVersion = -1;
   private swing = 1;
@@ -90,16 +92,25 @@ export class HandRenderer {
     this.spriteTexture.minFilter = THREE.NearestFilter;
     this.spriteTexture.colorSpace = THREE.NoColorSpace;
     this.sprite = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.ShaderMaterial({
-      uniforms: { ...shared, uMap: { value: this.spriteTexture } },
+      uniforms: { ...shared, uMap: { value: this.spriteTexture }, uGlint: this.glint },
       side: THREE.DoubleSide,
       vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
       fragmentShader: `${lightGlsl}
         uniform sampler2D uMap;
+        uniform vec2 uGlint;
         varying vec2 vUv;
         void main() {
           vec4 t = texture2D(uMap, vUv);
           if (t.a < 0.5) discard;
-          gl_FragColor = vec4(t.rgb * handLight(), 1.0);
+          vec3 c = t.rgb * handLight();
+          if (uGlint.x > 0.5) {
+            // Enchantment glint: two purple bands sliding diagonally over the item (cheap, no extra pass).
+            float a = fract((vUv.x + vUv.y * 0.6) * 1.2 - uGlint.y * 0.45);
+            float b = fract((vUv.x * 0.7 - vUv.y) * 0.9 + uGlint.y * 0.3);
+            float band = smoothstep(0.0, 0.18, a) * (1.0 - smoothstep(0.18, 0.36, a)) + 0.6 * smoothstep(0.0, 0.12, b) * (1.0 - smoothstep(0.12, 0.24, b));
+            c += vec3(0.5, 0.25, 0.95) * (0.18 + band * 0.55);
+          }
+          gl_FragColor = vec4(c, 1.0);
         }`,
     }));
     this.root.add(this.arm, this.block, this.sprite);
@@ -143,8 +154,9 @@ export class HandRenderer {
    * @param bobPhase  walk phase from the camera (radians), bobAmount 0..1.3
    * @param light     packed light at the player (sky << 4 | block)
    */
-  update(dt: number, held: number, bobPhase: number, bobAmount: number, light: number, eating: boolean, aspect: number): void {
+  update(dt: number, held: number, bobPhase: number, bobAmount: number, light: number, eating: boolean, aspect: number, glint = false, time = 0): void {
     this.setHeld(held);
+    this.glint.value.set(glint ? 1 : 0, time);
     this.swing = Math.min(1, this.swing + dt / SWING_TIME);
     this.equip = Math.min(1, this.equip + dt * 5);
     this.eating = eating ? this.eating + dt : 0;

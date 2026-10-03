@@ -3,6 +3,8 @@ import { FOG_GLSL, LIGHT_GLSL, type WorldUniforms } from '../rendering/Materials
 import type { BlockIcons } from '../ui/BlockIcons';
 import type { World } from '../world/World';
 import type { ItemEntity } from './ItemEntity';
+import { hasEnchants } from '../items/EnchantRules';
+import { ITEM } from '../items/ItemRegistry';
 
 const MAX = 192;
 const ATLAS = 1024;
@@ -23,6 +25,7 @@ export class ItemRenderer {
   private readonly texture: THREE.CanvasTexture;
   private readonly cells = new Map<number, number>();
   private iconVersion = -1;
+  private readonly time = { value: 0 };
   private frame = 0;
 
   constructor(uniforms: WorldUniforms, private readonly icons: BlockIcons) {
@@ -47,17 +50,22 @@ export class ItemRenderer {
     this.geometry = g;
 
     const material = new THREE.ShaderMaterial({
-      uniforms: { ...uniforms, uIcons: { value: this.texture } },
+      uniforms: { ...uniforms, uIcons: { value: this.texture }, uTime: this.time },
       vertexShader: /* glsl */ `
         attribute vec4 iPos;   // xyz + size
-        attribute vec4 iData;  // atlas cell x, y, sky, block
+        attribute vec4 iData;  // atlas cell x (+32 = enchanted), y, sky, block
         varying vec2 vUv;
         varying vec2 vLight;
         varying vec3 vWorldPos;
+        varying float vGlint;
+        varying vec2 vLocal;
         void main() {
           vec3 right = vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]);
           vec3 world = iPos.xyz + right * position.x * iPos.w + vec3(0.0, position.y * iPos.w, 0.0);
-          vUv = (iData.xy + uv) / ${PER_ROW.toFixed(1)};
+          vGlint = step(31.5, iData.x);
+          float cx = iData.x - 32.0 * vGlint;
+          vLocal = uv;
+          vUv = (vec2(cx, iData.y) + uv) / ${PER_ROW.toFixed(1)};
           vUv.y = 1.0 - ((iData.y + 1.0 - uv.y) / ${PER_ROW.toFixed(1)});
           vLight = iData.zw;
           vWorldPos = world;
@@ -68,13 +76,20 @@ export class ItemRenderer {
         ${LIGHT_GLSL}
         ${FOG_GLSL}
         uniform sampler2D uIcons;
+        uniform float uTime;
         varying vec2 vUv;
         varying vec2 vLight;
         varying vec3 vWorldPos;
+        varying float vGlint;
+        varying vec2 vLocal;
         void main() {
           vec4 tex = texture2D(uIcons, vUv);
           if (tex.a < 0.5) discard;
-          gl_FragColor = vec4(applyFog(tex.rgb * combineLight(vLight.x, vLight.y, 1.0), vWorldPos), 1.0);
+          vec3 c = tex.rgb * combineLight(vLight.x, vLight.y, 1.0);
+          // Enchanted items shimmer purple (the same sliding band as the held item).
+          float a = fract((vLocal.x + vLocal.y * 0.6) * 1.2 - uTime * 0.45);
+          c += vGlint * vec3(0.5, 0.25, 0.95) * (0.18 + 0.55 * smoothstep(0.0, 0.18, a) * (1.0 - smoothstep(0.18, 0.36, a)));
+          gl_FragColor = vec4(applyFog(c, vWorldPos), 1.0);
         }
       `,
     });
@@ -115,12 +130,13 @@ export class ItemRenderer {
       p[i * 4 + 3] = it.stack.count > 1 ? 0.42 : 0.36;
       const cell = this.cellFor(it.stack.id);
       const light = it.lightAt(world, this.frame, x, y + 0.2, z);
-      d[i * 4] = cell % PER_ROW;
+      const glint = it.stack.id === ITEM.ENCHANTED_BOOK || hasEnchants(it.stack.data);
+      d[i * 4] = (cell % PER_ROW) + (glint ? 32 : 0);
       d[i * 4 + 1] = Math.floor(cell / PER_ROW);
       d[i * 4 + 2] = (light >> 4) / 15;
       d[i * 4 + 3] = (light & 15) / 15;
     }
-    void time;
+    this.time.value = time;
     this.iPos.needsUpdate = true;
     this.iData.needsUpdate = true;
     this.geometry.instanceCount = n;

@@ -87,6 +87,7 @@ export function buildCreativeTabs(): CreativeTab[] {
   const functional = ids([
     B.CRAFTING_TABLE, B.FURNACE, byName('chest'), B.BOOKSHELF, byName('ladder'), B.TORCH, byName('lantern'), B.GLOWSTONE, blk('sea_lantern'),
     blk('carved_pumpkin'), blk('jack_o_lantern'), byName('bed'), B.TNT, byName('iron_bars'), byName('glass_pane'),
+    B.ENCHANTING_TABLE, ...variants(B.ANVIL), B.GRINDSTONE,
   ]);
 
   const redstone = ids([itm('redstone'), blk('redstone_block'), B.TNT]);

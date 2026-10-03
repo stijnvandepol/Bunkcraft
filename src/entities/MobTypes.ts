@@ -1,4 +1,4 @@
-import { ITEM, type ItemStack } from '../items/ItemRegistry';
+import { ITEM, ITEM_ID, type ItemStack } from '../items/ItemRegistry';
 import { BLOCK } from '../world/BlockRegistry';
 
 export type MobKind = 'pig' | 'cow' | 'sheep' | 'chicken' | 'zombie' | 'creeper' | 'skeleton' | 'spider' | 'player' | 'player_red' | 'player_blue';
@@ -162,7 +162,8 @@ export const MOB_TYPES = {
       },
       ...quadLegs(4, 12, 2, -8, 4, ['#3c291c', '#4a3324']),
     ],
-    drops: () => [...stack(ITEM.BEEF, rnd(1, 3))],
+    // Leather 0-2 (books, so enchanting tables, need it).
+    drops: () => [...stack(ITEM.BEEF, rnd(1, 3)), ...stack(ITEM_ID.leather, rnd(0, 2))],
   },
   sheep: {
     kind: 'sheep', name: 'Sheep', health: 8, width: 0.9, height: 1.3, walkSpeed: 1.2, runSpeed: 2.4, hostile: false, attack: 0,

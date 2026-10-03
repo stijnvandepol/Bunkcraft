@@ -67,7 +67,11 @@ import { type ArcadeFrame, ArcadeSession } from './ArcadeSession';
 import { AudioEngine } from './Audio';
 import { CameraController } from './Camera';
 import { Input } from './Input';
-import { Interaction } from './Interaction';
+import { Interaction, type StationKind } from './Interaction';
+import { Progression } from './Progression';
+import { encodeData as encodeItemData } from '../items/ItemRegistry';
+import { hasEnchants, powerBonus, punchKnockback } from '../items/EnchantRules';
+import type { ContainerView } from '../ui/SurvivalInventory';
 import { Renderer } from './Renderer';
 import { WeatherSystem } from './WeatherSystem';
 import { DynamicResolution, suggestPreset } from './AdaptiveQuality';
@@ -119,6 +123,8 @@ export class Game {
   private readonly itemRenderer: ItemRenderer;
   private readonly tntRenderer: TntRenderer;
   private readonly arrowRenderer: ArrowRenderer;
+  /** Experience, orbs, armor enchantments and the enchanting screens. */
+  private readonly progression: Progression;
   private readonly tmpDir = new THREE.Vector3();
   private readonly debug = new DebugOverlay();
   private readonly remote = new RemotePlayers();
@@ -210,6 +216,7 @@ export class Game {
       const armor = this.playerInventory.armorTotals();
       this.stats.armorPoints = armor.points;
       this.stats.armorToughness = armor.toughness;
+      this.progression?.onArmorChanged();
     };
     this.stats.onArmorHit = (wear) => void this.playerInventory.wearArmor(wear);
     this.stack = new ScreenStack(root.querySelector<HTMLElement>('#screens')!);
@@ -220,6 +227,12 @@ export class Game {
       multiplayer: () => this.net !== null, arcade: () => this.arcade !== null || this.meta?.worldType === 'arena',
     });
     this.chat.onSend = (text) => {
+      // /enchant and /xp change only this player's items and bar: handled here, also on a server.
+      const own = text.startsWith('/') ? this.progression.command(text) : null;
+      if (own) {
+        for (const line of own) this.chat.add(line, true);
+        return;
+      }
       if (this.net) return this.net.sendChat(text);
       // Singleplayer has no server: the slash commands run locally.
       if (!text.startsWith('/')) return;
@@ -236,7 +249,14 @@ export class Game {
     this.itemRenderer = new ItemRenderer(this.renderer.uniforms, this.icons);
     this.tntRenderer = new TntRenderer(this.renderer.uniforms);
     this.arrowRenderer = new ArrowRenderer(this.renderer.uniforms);
-    this.renderer.scene.add(this.mobRenderer.group, this.itemRenderer.mesh, this.tntRenderer.mesh, this.arrowRenderer.mesh);
+    this.progression = new Progression({
+      stats: this.stats, inventory: this.playerInventory, hotbar: this.hotbar, player: this.player, audio: this.audio,
+      uniforms: this.renderer.uniforms, world: () => this.world, entities: () => this.entities, mode: () => this.mode,
+      openView: (view) => this.openStationView(view), multiplayer: () => this.net !== null,
+      rules: () => (this.meta as { rules?: { keepInventory?: boolean } } | null)?.rules,
+    });
+    this.renderer.scene.add(this.mobRenderer.group, this.itemRenderer.mesh, this.tntRenderer.mesh, this.arrowRenderer.mesh, this.progression.orbRenderer.mesh);
+    this.renderer.shadowExcluded.push(this.progression.orbRenderer.mesh);
     this.renderer.scene.add(this.remote.weapons);
     this.renderer.shadowExcluded.push(this.mobRenderer.group, this.itemRenderer.mesh, this.tntRenderer.mesh, this.arrowRenderer.mesh, this.remote.weapons);
     this.renderer.afterMain = (three) => {
@@ -498,7 +518,7 @@ export class Game {
     this.interaction = new Interaction({
       world, player: this.player, stats: this.stats, inventory: this.playerInventory, hotbar: this.hotbar,
       entities, renderer: this.renderer, hand: this.hand, audio: this.audio, camera: this.cam.camera,
-      attackRemote: (id) => this.net?.sendAttack(id),
+      attackRemote: (id, data) => this.net?.sendAttack(id, encodeItemData(data)),
       igniteTnt: (x, y, z) => {
         if (this.net) {
           // The server validates, removes the block and simulates the fuse.
@@ -511,17 +531,24 @@ export class Game {
       },
       chestsAllowed: () => !this.net,
       openChest: (x, y, z) => this.openChest(x, y, z),
+      openStation: (kind, x, y, z) => this.openStation(kind, x, y, z),
       useBed: (x, y, z) => this.useBed(x, y, z),
-      shootArrow: (power, pickup) => {
+      shootArrow: (power, pickup, ench) => {
         const cam = this.cam.camera;
         const dir = cam.getWorldDirection(this.tmpDir);
         if (this.net) {
-          this.net.sendShoot(cam.position.x, cam.position.y - 0.1, cam.position.z, dir.x, dir.y, dir.z, power);
+          this.net.sendShoot(cam.position.x, cam.position.y - 0.1, cam.position.z, dir.x, dir.y, dir.z, power,
+            encodeItemData(this.hotbar.selectedStack.data));
           return;
         }
         // Player bow: speed 3 × power blocks/tick, inaccuracy 1, critical at full draw.
-        entities.shootArrow(cam.position.x, cam.position.y - 0.1, cam.position.z, dir.x, dir.y, dir.z,
+        const arrow = entities.shootArrow(cam.position.x, cam.position.y - 0.1, cam.position.z, dir.x, dir.y, dir.z,
           power * 3, 1, null, true, power >= 1, pickup);
+        if (arrow && ench) {
+          arrow.powerBonus = powerBonus(ench.power);
+          arrow.punch = punchKnockback(ench.punch);
+          arrow.flame = ench.flame > 0;
+        }
       },
     });
     return world;
@@ -722,6 +749,20 @@ export class Game {
     this.survivalInventory.open(this.nearbyStations(), { title: 'Chest', slots });
   }
 
+  /** Opens an enchanting table, anvil or grindstone (singleplayer and multiplayer: nothing is stored in the block). */
+  private openStation(kind: StationKind, x: number, y: number, z: number): void {
+    if (!this.world || this.state !== 'playing') return;
+    this.progression.open(kind, x, y, z);
+  }
+
+  /** Shows a station's slots above the inventory, like a chest. */
+  private openStationView(view: ContainerView): void {
+    this.state = 'inventory';
+    this.suppressPause = this.input.locked;
+    this.input.exitLock();
+    this.survivalInventory.open(this.nearbyStations(), view);
+  }
+
   /** A bed sets the respawn point; at night it also sleeps until the morning (singleplayer). */
   private useBed(x: number, y: number, z: number): void {
     if (!this.meta || this.arcade) return;
@@ -803,6 +844,9 @@ export class Game {
     entities.dropHook = (stack, x, y, z, delay, yaw) => {
       net.sendDrop(stack.id, stack.count, stack.damage, x, y, z, yaw, delay, encodeData(stack.data));
       return true;
+    };
+    entities.xpTakeHook = (orb) => {
+      if (mirror.shouldTakeOrb(orb, performance.now() / 1000)) net.sendTake(orb.netId);
     };
     entities.takeHook = (item) => {
       // Only ask when the whole stack fits; the server hands it to the first asker.
@@ -933,6 +977,11 @@ export class Game {
         if (left > 0) this.entities?.dropItem({ id: msg.itemId, count: left, damage: msg.damage, data }, this.player.x, this.player.y + 1, this.player.z, 40, undefined, true);
         break;
       }
+      case 'orbs': this.netEntities?.applyOrbs(msg, performance.now() / 1000); break;
+      case 'xpgain':
+        this.netEntities?.orbTaken(msg.id);
+        if (Number.isFinite(msg.value) && msg.value > 0) this.progression.pickupXp(Math.min(msg.value, 100_000));
+        break;
       case 'block': world?.applyRemoteEdit(msg.x, msg.y, msg.z, msg.id, msg.meta ?? 0); break;
       case 'blocks':
         for (let i = 0; i + 4 < msg.edits.length; i += 5) {
@@ -1066,6 +1115,7 @@ export class Game {
       this.input.exitLock();
     }
     this.interaction?.reset();
+    this.progression.onDeath();
     // Drop the whole inventory where the player died.
     const p = this.player;
     for (let i = 0; i < 36; i++) {
@@ -1297,6 +1347,7 @@ export class Game {
     this.itemRenderer.update(e.items, alpha, this.time, world);
     this.tntRenderer.update(e.tnt, alpha, world);
     this.arrowRenderer.update(e.arrows, alpha, world);
+    this.progression.update(alpha, this.time, hasSurvivalRules(this.mode) && !this.arcade);
   }
 
   private updateMenu(dt: number): void {
@@ -1337,7 +1388,7 @@ export class Game {
   }
 
   /** Reused every game tick (no per-tick allocations). */
-  private readonly mobTarget = { x: 0, y: 0, z: 0, attackable: false };
+  private readonly mobTarget = { x: 0, y: 0, z: 0, attackable: false, collects: true };
 
   private readonly pickupItem = (s: ItemStack): number => {
     const left = this.playerInventory.add(s);
@@ -1350,6 +1401,7 @@ export class Game {
       const p = this.player;
       const yaw = Math.atan2(p.x - mob.x, p.z - mob.z);
       if (this.stats.damage(damage, 'mob', this.mode, mob.type.name, yaw)) {
+        this.progression.thorns(mob);
         // Knockback away from the attacker.
         const d = Math.hypot(p.x - mob.x, p.z - mob.z) || 1;
         p.vx += ((p.x - mob.x) / d) * 8;
@@ -1491,6 +1543,8 @@ export class Game {
     const target = this.mobTarget;
     target.x = p.x; target.y = p.y; target.z = p.z;
     target.attackable = alive && hasSurvivalRules(this.mode);
+    target.collects = alive && this.mode !== 'spectator';
+    if (this.entities) this.entities.xpPickup = target.collects ? this.progression.pickupXp : null;
     this.entities?.tick(
       target,
       // Rain and thunder count as extra darkness for the spawn rules.
@@ -1594,7 +1648,7 @@ export class Game {
       this.arcade.update(f, input);
     } else {
       this.hand.update(dt, this.hotbar.selectedBlock, this.cam.bobPhase, this.cam.bobStrength, light,
-        this.interaction!.eating, window.innerWidth / Math.max(1, window.innerHeight));
+        this.interaction!.eating, window.innerWidth / Math.max(1, window.innerHeight), hasEnchants(this.hotbar.selectedStack.data), this.time);
     }
     this.renderer.particles.update(dt, world);
     this.renderer.clouds.update(dt, this.cycle);

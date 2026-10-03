@@ -1,8 +1,10 @@
 import { EntityManager } from '../src/entities/EntityManager';
 import type { Mob, MobEvents, MobTarget } from '../src/entities/Mob';
 import { type ItemStack, ITEM, blockDrop, encodeData, getItemDef } from '../src/items/ItemRegistry';
+import { fireAspectTicks, levelOf, meleeBonus, powerBonus, punchKnockback } from '../src/items/EnchantRules';
+import { canCarry } from '../src/items/Enchanting';
 import {
-  type ArrowEntry, type ItemEntry, type MobEntry, NET_MOB_KINDS, type ServerMessage, type TntEntry,
+  type ArrowEntry, type ItemEntry, type MobEntry, NET_MOB_KINDS, type OrbEntry, type ServerMessage, type TntEntry,
 } from '../src/net/protocol';
 import { type GameMode, hasSurvivalRules } from '../src/player/GameMode';
 import { BLOCK, getBlockDef } from '../src/world/BlockRegistry';
@@ -62,6 +64,7 @@ export class ServerEntities {
   private players: EntityPlayer[] = [];
   private tickCount = 0;
   private sentAnything = new Set<number>();
+  private sentOrbs = new Set<number>();
 
   constructor(
     seed: number,
@@ -91,6 +94,7 @@ export class ServerEntities {
     this.world.liquids.clear();
     this.world.drainSimEdits();
     this.sentAnything.clear();
+    this.sentOrbs.clear();
     this.tickCount = 0;
   }
 
@@ -128,22 +132,36 @@ export class ServerEntities {
 
   // ---------------------------------------------------------------- player requests
 
-  attack(p: EntityPlayer, mobId: number): void {
+  attack(p: EntityPlayer, mobId: number, ench?: Record<string, number>): void {
     const m = this.manager.mobs.find((e) => e.netId === mobId);
     if (!m || m.dead || m.removed || !p.hasPos) return;
     const d = Math.hypot(m.x - p.x, m.y + m.height / 2 - (p.y + 1.62), m.z - p.z);
     if (d > ATTACK_REACH) return;
-    const damage = getItemDef(p.held)?.tool?.damage ?? 1;
+    // Only enchantments the held item can carry count (the client cannot claim Sharpness on a stick).
+    const e = weaponEnchants(p.held, ench);
+    const kind = m.type.kind;
+    const damage = (getItemDef(p.held)?.tool?.damage ?? 1) + meleeBonus(e, kind === 'zombie' || kind === 'skeleton', kind === 'spider');
+    m.looting = levelOf(e, 'looting');
     // Sprint hits knock back further, like Minecraft.
-    if (m.hurt(damage, p.x, p.z, p.flags & 1 ? 1.6 : 1, true)) this.mobSound(m, 'hurt');
+    if (m.hurt(damage, p.x, p.z, (p.flags & 1 ? 1.6 : 1) + levelOf(e, 'knockback') * 0.6, true)) {
+      this.mobSound(m, 'hurt');
+      const fire = levelOf(e, 'fire_aspect');
+      if (fire) m.igniteTicks = Math.max(m.igniteTicks, fireAspectTicks(fire));
+    }
   }
 
-  shoot(p: EntityPlayer, x: number, y: number, z: number, dx: number, dy: number, dz: number, power: number): void {
+  shoot(p: EntityPlayer, x: number, y: number, z: number, dx: number, dy: number, dz: number, power: number, ench?: Record<string, number>): void {
     if (p.held !== ITEM.BOW || !p.hasPos) return;
     if (![x, y, z, dx, dy, dz, power].every(Number.isFinite) || power < 0.1 || power > 1) return;
     if (Math.hypot(x - p.x, y - (p.y + 1.62), z - p.z) > 4 || Math.hypot(dx, dy, dz) < 1e-6) return;
     // Player bow: speed 3 × power blocks/tick, inaccuracy 1, critical at full draw.
-    this.manager.shootArrow(x, y, z, dx, dy, dz, power * 3, 1, null, true, power >= 1, false);
+    const arrow = this.manager.shootArrow(x, y, z, dx, dy, dz, power * 3, 1, null, true, power >= 1, false);
+    const e = weaponEnchants(p.held, ench);
+    if (arrow) {
+      arrow.powerBonus = powerBonus(levelOf(e, 'power'));
+      arrow.punch = punchKnockback(levelOf(e, 'punch'));
+      arrow.flame = levelOf(e, 'flame') > 0;
+    }
   }
 
   ignite(p: EntityPlayer, x: number, y: number, z: number): void {
@@ -156,6 +174,13 @@ export class ServerEntities {
   }
 
   take(p: EntityPlayer, itemId: number): void {
+    const orb = this.manager.orbs.find((e) => e.netId === itemId);
+    if (orb) {
+      if (orb.removed || !p.hasPos || Math.hypot(orb.x - p.x, orb.y - (p.y + 0.8), orb.z - p.z) > TAKE_REACH) return;
+      orb.removed = true;
+      this.host.send(p.id, { t: 'xpgain', id: orb.netId, value: orb.value });
+      return;
+    }
     const it = this.manager.items.find((e) => e.netId === itemId);
     if (!it || it.removed || it.pickupDelay > 0 || !p.hasPos) return;
     if (Math.hypot(it.x - p.x, it.y - (p.y + 0.8), it.z - p.z) > TAKE_REACH) return;
@@ -256,7 +281,7 @@ export class ServerEntities {
   // ---------------------------------------------------------------- snapshots
 
   private sendSnapshots(players: EntityPlayer[]): void {
-    const { mobs, items, arrows, tnt } = this.manager;
+    const { mobs, items, arrows, tnt, orbs } = this.manager;
     for (const p of players) {
       const m: MobEntry[] = [], i: ItemEntry[] = [], a: ArrowEntry[] = [], b: TntEntry[] = [];
       for (const e of mobs) {
@@ -278,6 +303,16 @@ export class ServerEntities {
         if (e.removed || Math.hypot(e.x - p.x, e.y - p.y, e.z - p.z) > SEND_RADIUS) continue;
         b.push([e.netId, r2(e.x), r2(e.y), r2(e.z), e.fuse]);
       }
+      // Experience orbs travel in their own optional message (older clients ignore it).
+      const o: OrbEntry[] = [];
+      for (const e of orbs) {
+        if (e.removed || Math.hypot(e.x - p.x, e.y - p.y, e.z - p.z) > SEND_ITEM_RADIUS) continue;
+        o.push([e.netId, e.value, r2(e.x), r2(e.y), r2(e.z)]);
+      }
+      if (o.length > 0 || this.sentOrbs.has(p.id)) {
+        this.host.send(p.id, { t: 'orbs', o });
+        if (o.length > 0) this.sentOrbs.add(p.id); else this.sentOrbs.delete(p.id);
+      }
       const any = m.length + i.length + a.length + b.length > 0;
       // An empty list is sent once so the client clears what it still shows.
       if (!any && !this.sentAnything.has(p.id)) continue;
@@ -288,5 +323,14 @@ export class ServerEntities {
 
   forget(playerId: number): void {
     this.sentAnything.delete(playerId);
+    this.sentOrbs.delete(playerId);
   }
+}
+
+/** The enchantments a player claims for the held item, limited to what that item can carry. */
+function weaponEnchants(held: number, ench: Record<string, number> | undefined): Record<string, number> | undefined {
+  if (!ench) return undefined;
+  const out: Record<string, number> = {};
+  for (const [k, v] of Object.entries(ench)) if (canCarry(held, k)) out[k] = v;
+  return out;
 }

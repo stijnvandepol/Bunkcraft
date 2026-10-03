@@ -47,6 +47,8 @@ describe('inventory guard accepts what the client sends', () => {
   it('still rejects too many rows and broken data columns', () => {
     expect(parseInventory(Array.from({ length: 41 }, () => [0, 0, 0])).error).toBeDefined();
     expect(parseInventory([[armorId, 1, 0, 0.5, 2]]).error).toBeDefined();
-    expect(parseInventory([[armorId, 1, 0, ...Array(14).fill(1)]]).error).toBeDefined();
+    // Room for enchantments, repair cost and a custom name (40 numbers per row), not more.
+    expect(parseInventory([[armorId, 1, 0, ...Array(14).fill(1)]]).error).toBeUndefined();
+    expect(parseInventory([[armorId, 1, 0, ...Array(38).fill(1)]]).error).toBeDefined();
   });
 });

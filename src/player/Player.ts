@@ -28,6 +28,8 @@ export class Player {
   pitch = 0;
   onGround = false;
   inWater = false;
+  /** Depth Strider of the worn boots as 0..1 (see EnchantRules.depthStriderFactor). */
+  depthStrider = 0;
   headInWater = false;
   flying = false;
   sprinting = false;
@@ -115,7 +117,8 @@ export class Player {
     this.sprinting = input.sprint && f > 0 && !this.inWater && this.canSprint;
     let speed: number;
     if (this.flying) speed = this.sprinting ? PHYSICS.FLY_SPRINT_SPEED : PHYSICS.FLY_SPEED;
-    else if (this.inWater) speed = this.inLava ? PHYSICS.SWIM_SPEED * 0.5 : PHYSICS.SWIM_SPEED;
+    // Depth Strider (boots) brings the water speed up towards the walking speed, a third per level.
+    else if (this.inWater) speed = this.inLava ? PHYSICS.SWIM_SPEED * 0.5 : PHYSICS.SWIM_SPEED + (PHYSICS.WALK_SPEED - PHYSICS.SWIM_SPEED) * this.depthStrider;
     else speed = (this.sprinting ? PHYSICS.SPRINT_SPEED : PHYSICS.WALK_SPEED) * this.speedMultiplier;
     const sin = Math.sin(this.yaw), cos = Math.cos(this.yaw);
     const tx = (-sin * f + cos * s) * speed;

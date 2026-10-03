@@ -4,6 +4,14 @@ import { type GameMode, hasSurvivalRules } from './GameMode';
 import { PHYSICS } from './Physics';
 import { ARMOR_CAUSES, armorWear, reduceDamage } from './Armor';
 import type { Player } from './Player';
+import { Experience } from './Experience';
+import { respirationKeepsAir } from '../items/EnchantRules';
+
+/**
+ * A damage modifier (enchantments now; effects and difficulty can add theirs): gets the damage after armor and returns
+ * what is left. Applied in order of registration.
+ */
+export type DamageModifier = (amount: number, cause: DamageCause) => number;
 
 export type DamageCause =
   | 'fall' | 'drown' | 'lava' | 'fire' | 'cactus' | 'void' | 'suffocate' | 'starve' | 'mob' | 'explosion' | 'arrow' | 'poison' | 'lightning';
@@ -62,6 +70,19 @@ export class PlayerStats {
   armorToughness = 0;
   /** Fired when armor took a hit: every worn piece loses this much durability. */
   onArmorHit: ((wear: number) => void) | null = null;
+  /** Experience points and level (saved with the stats). */
+  readonly xp = new Experience();
+  /** Seed of the enchanting table's offers; changes after every enchant (saved with the stats). */
+  enchantSeed = (Math.random() * 0x7fffffff) | 0;
+  /** Respiration level of the worn helmet (air lasts longer). */
+  respiration = 0;
+  /** Protection enchantments and other damage modifiers (see DamageModifier). */
+  readonly damageModifiers: DamageModifier[] = [];
+
+  /** Adds a damage modifier (the local registry until a shared damage pipeline exists). */
+  registerDamageModifier(fn: DamageModifier): void {
+    if (!this.damageModifiers.includes(fn)) this.damageModifiers.push(fn);
+  }
 
   reset(): void {
     this.health = MAX_HEALTH;
@@ -87,6 +108,8 @@ export class PlayerStats {
       amount = reduceDamage(amount, this.armorPoints, this.armorToughness);
       this.onArmorHit?.(armorWear(raw));
     }
+    for (const mod of this.damageModifiers) amount = mod(amount, cause);
+    if (amount <= 0) return false;
     let dealt = amount;
     if (this.invulnerable > 0) {
       if (amount <= this.lastDamage) return false;
@@ -140,7 +163,7 @@ export class PlayerStats {
 
     // Drowning: 300 ticks of air, then 2 damage per second.
     if (p.headInWater) {
-      this.air--;
+      if (!respirationKeepsAir(this.respiration)) this.air--;
       if (this.air <= -20) {
         this.air = 0;
         this.damage(2, 'drown', mode);
@@ -200,14 +223,18 @@ export class PlayerStats {
   }
 
   serialize(): number[] {
-    return [this.health, this.hunger, this.saturation, this.exhaustion, this.air];
+    return [this.health, this.hunger, this.saturation, this.exhaustion, this.air, this.xp.total, this.enchantSeed];
   }
 
   load(d: number[] | undefined): void {
     this.reset();
     this.wasDead = false;
+    this.xp.set(0);
     if (!d) return;
     [this.health, this.hunger, this.saturation, this.exhaustion, this.air] = d;
+    // Experience and the enchanting seed were added later (absent in old saves).
+    this.xp.set(Number.isFinite(d[5]) ? d[5] : 0);
+    if (Number.isFinite(d[6])) this.enchantSeed = d[6] | 0;
     if (this.health <= 0) {
       this.wasDead = true;
       this.reset();

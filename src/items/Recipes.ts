@@ -61,6 +61,10 @@ add(id('ladder'), 3, 'table', one(ITEM.STICK, 7));
 add(B.TORCH, 4, 'hand', any(COAL, 1), one(ITEM.STICK));
 add(id('lantern'), 1, 'table', one(id('iron_nugget'), 8), one(B.TORCH));
 add(B.BOOKSHELF, 1, 'table', any(PLANKS, 6));
+// Enchanting blocks (Java 1.21 counts).
+add(B.ENCHANTING_TABLE, 1, 'table', one(id('book')), one(ITEM.DIAMOND, 2), one(B.OBSIDIAN, 4));
+add(B.ANVIL, 1, 'table', one(id('iron_block'), 3), one(id('iron_ingot'), 4));
+add(B.GRINDSTONE, 1, 'table', one(ITEM.STICK, 2), any([SLAB_FIRST + PARTIAL_MATERIALS.findIndex((m) => m.name === 'stone')], 1), any(PLANKS, 2));
 WOODS.forEach((_, w) => {
   add(itemFromState(B.DOOR, w << 5), 3, 'table', one(planksOf(w), 6));
   add(itemFromState(B.TRAPDOOR, w << 4), 2, 'table', one(planksOf(w), 6));
@@ -252,7 +256,7 @@ export const RECIPE_CATEGORIES: { id: RecipeCategory | 'all'; name: string }[] =
 ];
 
 const COLORED = new Set<number>([B.WOOL, B.CARPET, B.BED, B.STAINED_TERRACOTTA, B.STAINED_GLASS, B.CONCRETE, B.STAINED_GLASS_PANE, B.GLAZED_TERRACOTTA]);
-const FUNCTIONAL = new Set<number>([B.CRAFTING_TABLE, B.BOOKSHELF, B.TORCH, B.FURNACE, B.TNT, id('chest'), id('ladder'), id('lantern')]);
+const FUNCTIONAL = new Set<number>([B.ENCHANTING_TABLE, B.ANVIL, B.GRINDSTONE, B.CRAFTING_TABLE, B.BOOKSHELF, B.TORCH, B.FURNACE, B.TNT, id('chest'), id('ladder'), id('lantern')]);
 
 /** Which tab of the recipe book a recipe belongs to (derived from the result, so new recipes sort themselves). */
 export function recipeCategory(r: Recipe): RecipeCategory {

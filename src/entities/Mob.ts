@@ -13,6 +13,8 @@ export interface MobTarget {
   attackable: boolean;
   /** Which player this is (multiplayer server); echoed back in attack and shoot events. */
   id?: number;
+  /** Experience orbs fly to this player (false for spectators). */
+  collects?: boolean;
 }
 
 export interface MobEvents {
@@ -64,6 +66,10 @@ export class Mob extends Entity {
   provoked = false;
   /** Ticks since the player last hurt this mob (player-kill drops). */
   hurtByPlayer = 0;
+  /** Ticks of fire left from Fire Aspect or a Flame arrow (1 damage a second). */
+  igniteTicks = 0;
+  /** Looting level of the last player weapon that hit it (extra drops). */
+  looting = 0;
   /** Bow draw progress in ticks (skeleton). */
   aimTicks = 0;
   private targetX = 0;

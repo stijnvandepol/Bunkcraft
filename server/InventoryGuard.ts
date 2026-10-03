@@ -1,5 +1,5 @@
 import { ARMOR_SLOTS, INVENTORY_SLOTS } from '../src/items/Inventory';
-import { ITEM, blockDrop, getItemDef, maxDurability } from '../src/items/ItemRegistry';
+import { ITEM, blockDrop, getItemDef, itemId, maxDurability } from '../src/items/ItemRegistry';
 import { RECIPES } from '../src/items/Recipes';
 import { BLOCK, SLAB_FIRST, STAIRS_FIRST } from '../src/world/BlockRegistry';
 
@@ -28,8 +28,17 @@ export interface Stack {
   extra?: number[];
 }
 
-/** A row is [id, count, damage, ...data pairs]: room for a handful of enchantments. */
-const MAX_ROW_LENGTH = 16;
+/** A row is [id, count, damage, ...data pairs]: room for the enchantments, the repair cost and a custom name. */
+const MAX_ROW_LENGTH = 40;
+
+/**
+ * Item changes that are not recipes: the enchanting table turns a book into an enchanted book, the grindstone turns it back.
+ * The guard treats them as one-ingredient recipes.
+ */
+const CONVERSIONS: { result: number; from: number }[] = [
+  { result: ITEM.ENCHANTED_BOOK, from: itemId('book') },
+  { result: itemId('book'), from: ITEM.ENCHANTED_BOOK },
+];
 
 export type StateCheck = { ok: true; inventory: number[][] } | { ok: false; reason: string; correction: number[][] };
 
@@ -130,6 +139,9 @@ export class InventoryGuard {
     if (best) add(best.id, blockId >= SLAB_FIRST && blockId < STAIRS_FIRST ? 2 : best.count);
     const hand = blockDrop(blockId, 0);
     if (hand && hand.id !== best?.id) add(hand.id, hand.count);
+    // Fortune (up to x4 and +3) on ores, and Silk Touch dropping the block itself: the tool's enchantments are not tracked.
+    if (best && best.id >= 256) add(best.id, best.count * 3 + 3);
+    if (!best || best.id !== blockId) add(blockId, 1);
     if (blockId === BLOCK.GRAVEL || (best && best.id === ITEM.FLINT)) add(ITEM.FLINT, 1); // gravel
     add(ITEM.STICK, 1); // leaves (5 %); harmless, only valid as a drop
   }
@@ -186,6 +198,14 @@ export class InventoryGuard {
   /** Makes `count` of `id` from the pool `work`, crafting up to a few levels deep. */
   private craft(id: number, count: number, work: Map<number, number>, depth: number): boolean {
     if (depth > MAX_CRAFT_DEPTH) return false;
+    for (const c of CONVERSIONS) {
+      if (c.result !== id) continue;
+      const have = work.get(c.from) ?? 0;
+      if (have >= count) {
+        work.set(c.from, have - count);
+        return true;
+      }
+    }
     for (const recipe of RECIPES) {
       if (recipe.result.id !== id) continue;
       const crafts = Math.ceil(count / recipe.result.count);

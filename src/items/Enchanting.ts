@@ -108,6 +108,23 @@ export interface EnchantChoice {
 
 export const MAX_BOOKSHELVES = 15;
 
+/**
+ * Bookshelves that power a table: the ring two blocks away (5×5 minus the inner 3×3) at the table's height and one above,
+ * each only when the block between it and the table is open (air, a plant, a torch...). At most 15 count (Java 1.21).
+ */
+export function countBookshelves(isShelf: (dx: number, dy: number, dz: number) => boolean, isOpen: (dx: number, dy: number, dz: number) => boolean): number {
+  let n = 0;
+  for (let dy = 0; dy <= 1; dy++) {
+    for (let dz = -2; dz <= 2; dz++) {
+      for (let dx = -2; dx <= 2; dx++) {
+        if (Math.abs(dx) !== 2 && Math.abs(dz) !== 2) continue;
+        if (isShelf(dx, dy, dz) && isOpen(Math.trunc(dx / 2), dy, Math.trunc(dz / 2))) n++;
+      }
+    }
+  }
+  return Math.min(MAX_BOOKSHELVES, n);
+}
+
 /** Level requirement of one of the three slots (0 = the slot is empty), from the table's bookshelves (up to 15). */
 export function slotCost(random: EnchantRandom, slot: number, bookshelves: number): number {
   const b = Math.min(MAX_BOOKSHELVES, Math.max(0, Math.floor(bookshelves)));

@@ -923,3 +923,53 @@ html, body {
 .arc-stat-bar { height: calc(var(--s) * 3); background: #000; }
 .arc-stat-bar i { display: block; height: 100%; background: #ffff55; }
 .arc-loadout-note { color: #a0a0a0; }
+
+/* ---------------------------------------------------------------- experience and enchanting */
+
+.xp-wrap { position: relative; width: calc(var(--s) * 182); height: calc(var(--s) * 5); margin-bottom: calc(var(--s) * 2); }
+.xp-bar { display: block; width: 100%; height: 100%; image-rendering: pixelated; }
+.xp-level {
+  position: absolute; left: 0; right: 0; top: calc(var(--s) * -9); text-align: center; color: #80ff20; pointer-events: none;
+  text-shadow: var(--s) 0 0 #000, calc(var(--s) * -1) 0 0 #000, 0 var(--s) 0 #000, 0 calc(var(--s) * -1) 0 #000;
+}
+
+/* Enchantment glint: a purple sheen sliding over the icon, clipped to its shape by a CSS mask. */
+.glint {
+  position: absolute; left: 50%; top: 50%; width: calc(var(--s) * 16); height: calc(var(--s) * 16); transform: translate(-50%, -50%);
+  pointer-events: none; -webkit-mask-size: 100% 100%; mask-size: 100% 100%;
+  background: linear-gradient(120deg, rgba(128, 64, 255, 0.22) 0%, rgba(128, 64, 255, 0.22) 38%, rgba(200, 140, 255, 0.75) 48%, rgba(128, 64, 255, 0.22) 58%, rgba(128, 64, 255, 0.22) 100%);
+  background-size: 300% 300%; mix-blend-mode: screen; animation: glint-slide 2.6s linear infinite;
+}
+@keyframes glint-slide { from { background-position: 100% 0; } to { background-position: 0 100%; } }
+.hotbar-slot .glint.hidden { display: none; }
+.item-name.enchanted { color: #55ffff; }
+
+.mc-tooltip .tt-name.tt-enchanted { color: #55ffff; }
+.mc-tooltip .tt-name.tt-custom { font-style: italic; }
+.mc-tooltip .tt-line { color: #aaaaaa; }
+
+/* Station screens (enchanting table, anvil, grindstone) above the inventory. */
+.inv-box-row { display: flex; gap: calc(var(--s) * 6); align-items: flex-start; }
+.inv-box.station { margin-bottom: calc(var(--s) * 6); }
+.inv-box.station .inv-grid { grid-template-columns: repeat(3, calc(var(--s) * 18)); column-gap: calc(var(--s) * 8); }
+.inv-box.station-enchant .inv-grid { grid-template-columns: repeat(2, calc(var(--s) * 18)); column-gap: calc(var(--s) * 4); }
+.inv-box.station .inv-grid > .inv-slot:nth-child(3) { box-shadow: 0 0 0 var(--s) #5a5a5a; }
+.ench-panel { display: flex; flex-direction: column; gap: calc(var(--s) * 1); }
+.ench-offers { display: flex; flex-direction: column; gap: var(--s); }
+.ench-offer {
+  width: calc(var(--s) * 108); height: calc(var(--s) * 19); display: flex; align-items: center; gap: calc(var(--s) * 3);
+  padding: 0 calc(var(--s) * 3); box-sizing: border-box; background: #8b7d6b; border: var(--s) solid #373737; cursor: default;
+}
+.ench-offer.empty { background: #8b8b8b; }
+.ench-offer.ok { background: #a29276; cursor: pointer; }
+.ench-offer.ok:hover { background: #c0ae8a; }
+.ench-glyphs { width: calc(var(--s) * 90); height: calc(var(--s) * 9); image-rendering: pixelated; flex: 1 1 auto; }
+.ench-lapis { color: #5577ff; text-shadow: var(--shadow); min-width: calc(var(--s) * 6); }
+.ench-cost { color: #407f10; text-shadow: none; }
+.ench-offer.ok .ench-cost { color: #80ff20; text-shadow: var(--shadow); }
+.station-note { color: #404040; font-size: calc(var(--fs) * 0.75); max-width: calc(var(--s) * 108); }
+.anvil-panel { display: flex; flex-direction: column; gap: calc(var(--s) * 3); width: calc(var(--s) * 110); }
+.anvil-name { width: 100%; }
+.anvil-cost { color: #80ff20; text-shadow: var(--shadow); min-height: var(--fs); }
+.anvil-cost.bad { color: #ff6060; }
+.grind-panel { width: calc(var(--s) * 100); }

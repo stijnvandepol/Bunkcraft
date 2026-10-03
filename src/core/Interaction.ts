@@ -3,6 +3,9 @@ import type { EntityManager } from '../entities/EntityManager';
 import type { PlayerInventory } from '../items/Inventory';
 import { ITEM, blockDrop, breakSeconds, getItemDef, isBlockItem, itemBlock, itemFromState, itemId, itemMeta } from '../items/ItemRegistry';
 import { toolUse } from '../items/ToolUse';
+import { type MiningEnchants } from '../items/ItemRegistry';
+import { fireAspectTicks, levelOf, meleeBonus } from '../items/EnchantRules';
+import { oreXp } from '../player/Experience';
 import { facingFromYaw } from '../world/BlockStates';
 import { type GameMode, hasSurvivalRules } from '../player/GameMode';
 import { PHYSICS } from '../player/Physics';
@@ -24,9 +27,24 @@ import type { Renderer } from './Renderer';
 
 const EAT_TIME = 1.6;
 
+/** Blocks that open a screen of the enchanting system. */
+export type StationKind = 'enchant' | 'anvil' | 'grindstone';
+const STATIONS: Record<number, StationKind> = { [BLOCK.ENCHANTING_TABLE]: 'enchant', [BLOCK.ANVIL]: 'anvil', [BLOCK.GRINDSTONE]: 'grindstone' };
+
+/** Mobs Smite and Bane of Arthropods are made for (kinds that do not exist yet are listed for the mob developers). */
+const UNDEAD = new Set(['zombie', 'skeleton', 'husk', 'stray', 'drowned', 'zombie_villager', 'wither_skeleton', 'phantom', 'zombified_piglin']);
+const ARTHROPODS = new Set(['spider', 'cave_spider', 'silverfish', 'endermite', 'bee']);
+
+/** What an arrow carries from an enchanted bow. */
+export interface BowEnchants {
+  power: number;
+  punch: number;
+  flame: number;
+}
+
 /** Blocks a right click does something to (instead of placing against them). */
 function isUsable(id: number): boolean {
-  if (SHAPE[id] === SHAPE_DOOR || id === BLOCK.CHEST) return true;
+  if (SHAPE[id] === SHAPE_DOOR || id === BLOCK.CHEST || STATIONS[id]) return true;
   const kind = SHAPE[id] === SHAPE_BOX ? BOX_KIND[id] : 0;
   return kind === BOX_TRAPDOOR || kind === BOX_GATE || kind === BOX_BED;
 }
@@ -42,18 +60,20 @@ export interface InteractionDeps {
   hand: HandRenderer;
   audio: AudioEngine;
   camera: THREE.PerspectiveCamera;
-  /** Multiplayer: asks the server to hit one of its mobs. */
-  attackRemote(mobId: number): void;
+  /** Multiplayer: asks the server to hit one of its mobs (with the enchantments of the held weapon). */
+  attackRemote(mobId: number, data?: Record<string, number>): void;
   /** Lights the TNT block at a position; false when not allowed. */
   igniteTnt(x: number, y: number, z: number): boolean;
   /** Fires an arrow from the eye along the view direction (power 0..1). */
-  shootArrow(power: number, pickup: boolean): void;
+  shootArrow(power: number, pickup: boolean, ench?: BowEnchants): void;
   /** Whether chests may be placed (singleplayer only: the server does not store containers). */
   chestsAllowed?(): boolean;
   /** Opens the chest at a position (its container screen). */
   openChest?(x: number, y: number, z: number): void;
   /** Right click on a bed: sets the spawn point and sleeps through the night. */
   useBed?(x: number, y: number, z: number): void;
+  /** Opens the enchanting table, anvil or grindstone at a position. */
+  openStation?(kind: StationKind, x: number, y: number, z: number): void;
 }
 
 /**
@@ -240,6 +260,10 @@ export class Interaction {
       this.d.hand.swingHand();
     } else if (kind === BOX_BED) this.d.useBed?.(hit.x, hit.y, hit.z);
     else if (hit.id === BLOCK.CHEST) this.d.openChest?.(hit.x, hit.y, hit.z);
+    else if (STATIONS[hit.id]) {
+      this.d.hand.swingHand();
+      this.d.openStation?.(STATIONS[hit.id], hit.x, hit.y, hit.z);
+    }
   }
 
   private useDoor(hit: RayHit): void {
@@ -270,20 +294,29 @@ export class Interaction {
   private attack(mob: import('../entities/Mob').Mob, mode: GameMode): void {
     const { player, hotbar, inventory, audio, hand, stats } = this.d;
     hand.swingHand();
-    const tool = getItemDef(hotbar.selectedBlock)?.tool;
-    const damage = tool ? tool.damage : 1;
+    const held = hotbar.selectedStack;
+    const tool = getItemDef(held.id)?.tool;
+    const ench = held.data;
+    // Sharpness, Smite and Bane of Arthropods add damage; Knockback pushes further; Fire Aspect sets the mob alight.
+    const damage = (tool ? tool.damage : 1) + meleeBonus(ench, UNDEAD.has(mob.type.kind), ARTHROPODS.has(mob.type.kind));
+    const knockback = (player.sprinting ? 1.6 : 1) + levelOf(ench, 'knockback') * 0.6;
     // A server mob is hit by the server (damage from the held item, sound comes back with it).
     let hit = false;
     if (mob.remote) {
       if (mob.hurtTime === 0 && !mob.dead) {
-        this.d.attackRemote(mob.netId);
+        this.d.attackRemote(mob.netId, ench);
         mob.hurtTime = 10; // no second request during its invulnerability frames
         hit = true;
       }
-    } else if (mob.hurt(damage, player.x, player.z, player.sprinting ? 1.6 : 1, true)) {
-      // Sprint hits knock back further, like Minecraft.
-      audio.playMob(mob.type.kind, 'hurt', 1);
-      hit = true;
+    } else {
+      mob.looting = levelOf(ench, 'looting');
+      if (mob.hurt(damage, player.x, player.z, knockback, true)) {
+        // Sprint hits knock back further, like Minecraft.
+        audio.playMob(mob.type.kind, 'hurt', 1);
+        const fire = levelOf(ench, 'fire_aspect');
+        if (fire > 0) mob.igniteTicks = Math.max(mob.igniteTicks, fireAspectTicks(fire));
+        hit = true;
+      }
     }
     if (hit) {
       if (hasSurvivalRules(mode)) {
@@ -315,7 +348,8 @@ export class Interaction {
     const survival = hasSurvivalRules(mode);
     const held = hotbar.selectedBlock;
     const hitMeta = this.getMeta(hit.x, hit.y, hit.z);
-    const seconds = survival ? breakSeconds(hit.id, held, player.onGround, player.headInWater, hitMeta) : 0;
+    const ench = this.miningEnchants();
+    const seconds = survival ? breakSeconds(hit.id, held, player.onGround, player.headInWater, hitMeta, ench) : 0;
     this.breakProgress = seconds <= 0 ? 1 : this.breakProgress + dt / seconds;
 
     // Arm swings continuously while mining.
@@ -341,8 +375,13 @@ export class Interaction {
       renderer.particles.spawnBreak(hit.x, hit.y, hit.z, broken, light, world.tintAt(hit.x, hit.z, broken, brokenMeta));
       audio.play('break', stateSound(def, brokenMeta));
       if (survival) {
-        const drop = blockDrop(broken, held, brokenMeta);
+        const drop = blockDrop(broken, held, brokenMeta, ench);
         if (drop) entities.dropItem(drop, hit.x + 0.5, hit.y + 0.3, hit.z + 0.5);
+        // Ores give experience unless Silk Touch kept the ore whole (and only when the tool can harvest them).
+        if (drop && !ench.silk_touch) {
+          const xp = oreXp(getBlockDef(broken)?.name ?? '');
+          if (xp > 0) entities.spawnXp(hit.x + 0.5, hit.y + 0.4, hit.z + 0.5, xp);
+        }
         if (broken === BLOCK.CHEST) for (const s of world.containers.take(hit.x, hit.y, hit.z)) entities.dropItem(s, hit.x + 0.5, hit.y + 0.5, hit.z + 0.5);
         // A plant or torch on top breaks with its support and drops too.
         // (the upper half of a door that went with the lower one is no extra drop)
@@ -357,6 +396,18 @@ export class Interaction {
     this.breakProgress = 0;
     this.breakKey = -1;
     this.breakCooldown = survival ? 0.3 : 0.18;
+  }
+
+  /** Enchantments of the held tool plus Aqua Affinity of the helmet. Reused object: no allocation per frame. */
+  private readonly mining: MiningEnchants = {};
+  private miningEnchants(): MiningEnchants {
+    const data = this.d.hotbar.selectedStack.data;
+    const m = this.mining;
+    m.efficiency = levelOf(data, 'efficiency');
+    m.fortune = levelOf(data, 'fortune');
+    m.silk_touch = levelOf(data, 'silk_touch');
+    m.aqua_affinity = levelOf(this.d.inventory.armor[0]?.data, 'aqua_affinity');
+    return m;
   }
 
   private place(mode: GameMode): void {
@@ -429,6 +480,8 @@ export class Interaction {
   private updateBow(dt: number, input: Input, mode: GameMode): void {
     const { inventory, hotbar, audio, hand } = this.d;
     const survival = hasSurvivalRules(mode);
+    const bow = hotbar.selectedStack.data;
+    const infinity = levelOf(bow, 'infinity') > 0;
     const hasArrow = !survival || inventory.count(ITEM.ARROW) > 0;
     if (input.rightDown && hasArrow) {
       this.bowDraw += dt;
@@ -440,11 +493,12 @@ export class Interaction {
     this.bowDraw = this.bowPull = 0;
     const power = Math.min(1, (f * f + f * 2) / 3);
     if (power < 0.1 || !hasArrow) return;
-    this.d.shootArrow(power, survival);
+    // Infinity: the arrow is not used up (and cannot be picked up again).
+    this.d.shootArrow(power, survival && !infinity, { power: levelOf(bow, 'power'), punch: levelOf(bow, 'punch'), flame: levelOf(bow, 'flame') });
     audio.playBow(power);
     hand.swingHand();
     if (survival) {
-      inventory.remove(ITEM.ARROW, 1);
+      if (!infinity) inventory.remove(ITEM.ARROW, 1);
       inventory.damageTool(hotbar.selected);
     }
   }

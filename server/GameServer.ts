@@ -1,3 +1,4 @@
+import { enchantsOf } from '../src/items/EnchantRules';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { WebSocket } from 'ws';
@@ -704,15 +705,15 @@ export class GameServer {
       case 'pos': return this.onPos(s, msg);
       case 'block': return this.onBlock(s, msg);
       case 'chat': return this.onChat(s, msg.text);
-      case 'attack': return void (s.attacks.take() && entities.attack(s, Number(msg.id)));
+      case 'attack': return void (s.attacks.take() && entities.attack(s, Number(msg.id), enchantData(msg.e)));
       case 'shoot':
-        return void (s.shots.take() && entities.shoot(s, msg.x, msg.y, msg.z, msg.dx, msg.dy, msg.dz, msg.power));
+        return void (s.shots.take() && entities.shoot(s, msg.x, msg.y, msg.z, msg.dx, msg.dy, msg.dz, msg.power, enchantData(msg.e)));
       case 'ignite': return void (s.edits.take() && entities.ignite(s, msg.x, msg.y, msg.z));
       case 'take': return void (s.takes.take() && entities.take(s, Number(msg.id)));
       case 'drop':
         if (!s.drops.take()) return;
         if (!this.dropAllowed(s, msg)) return;
-        return entities.drop(s, { id: msg.id, count: msg.count, damage: msg.damage, data: decodeData(Array.isArray(msg.data) ? msg.data.slice(0, 16).map(Number) : undefined) }, msg.x, msg.y, msg.z, msg.yaw, msg.delay);
+        return entities.drop(s, { id: msg.id, count: msg.count, damage: msg.damage, data: decodeData(Array.isArray(msg.data) ? msg.data.slice(0, MAX_ITEM_DATA).map(Number) : undefined) }, msg.x, msg.y, msg.z, msg.yaw, msg.delay);
       case 'state': return this.onState(s, msg);
     }
   }
@@ -1078,4 +1079,13 @@ function round(v: number): number {
 
 export function parseGameMode(v: string | undefined): GameMode {
   return GAME_MODES.includes(v as GameMode) ? (v as GameMode) : 'survival';
+}
+
+/** Numbers of item data a client may send with a stack (enchantments, repair cost and a custom name). */
+const MAX_ITEM_DATA = 40;
+
+/** Enchantments a client sent with an attack or shot (key/level pairs): decoded and clamped to real levels. */
+function enchantData(raw: unknown): Record<string, number> | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  return enchantsOf(decodeData(raw.slice(0, MAX_ITEM_DATA).map(Number)));
 }

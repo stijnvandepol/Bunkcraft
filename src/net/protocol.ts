@@ -63,6 +63,8 @@ export type ItemEntry = [number, number, number, number, number, number];
 export type ArrowEntry = [number, number, number, number, number, number, number];
 /** Lit TNT: [id, x, y, z, fuse]. */
 export type TntEntry = [number, number, number, number, number];
+/** Experience orb: [id, value, x, y, z]. */
+export type OrbEntry = [number, number, number, number, number];
 
 // ---------------------------------------------------------------- client → server
 
@@ -78,13 +80,16 @@ export type ClientMessage =
   | { t: 'block'; seq: number; x: number; y: number; z: number; id: number; meta?: number }
   | { t: 'chat'; text: string }
   | { t: 'state'; inventory: number[][]; stats: number[] }
-  /** Melee hit on a server mob (damage comes from the held item the server knows). */
-  | { t: 'attack'; id: number }
-  /** Bow shot; power 0..1. */
-  | { t: 'shoot'; x: number; y: number; z: number; dx: number; dy: number; dz: number; power: number }
+  /**
+   * Melee hit on a server mob (damage comes from the held item the server knows). `e`: the weapon's enchantments as
+   * key/level pairs (ITEM_DATA_KEYS indices, optional; the server clamps them and ignores those the weapon cannot have).
+   */
+  | { t: 'attack'; id: number; e?: number[] }
+  /** Bow shot; power 0..1. `e`: the bow's enchantments (Power, Punch, Flame), like `attack`. */
+  | { t: 'shoot'; x: number; y: number; z: number; dx: number; dy: number; dz: number; power: number; e?: number[] }
   /** Flint and steel on a TNT block. */
   | { t: 'ignite'; x: number; y: number; z: number }
-  /** Pick up a dropped item entity. */
+  /** Pick up a dropped item entity or an experience orb. */
   | { t: 'take'; id: number }
   /** Arcade: choose the primary weapon for the next life (rifle, smg, shotgun, sniper). */
   | { t: 'loadout'; primary: string }
@@ -179,7 +184,14 @@ export type ServerMessage =
   /** A weapon slot a remote player holds (third-person model). */
   | { t: 'holds'; id: number; weapon: string }
   /** The requested item entity is yours. */
-  | { t: 'taken'; id: number; itemId: number; count: number; damage?: number; data?: number[] };
+  | { t: 'taken'; id: number; itemId: number; count: number; damage?: number; data?: number[] }
+  /**
+   * Experience orbs around the player (10 Hz while there are any, one empty list when the last one is gone). A separate
+   * optional message so the binary `ent` frame stays as it is; old clients ignore it.
+   */
+  | { t: 'orbs'; o: OrbEntry[] }
+  /** The requested orb is yours: add `value` experience. */
+  | { t: 'xpgain'; id: number; value: number };
 
 /** No 0/O/1/I/L: game codes are read aloud and typed on phones. */
 export const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';

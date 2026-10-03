@@ -5,7 +5,7 @@ import {
   FACING_CCW, FACING_CW, FACING_DX, FACING_DZ, SLAB_BOTTOM, SLAB_DOUBLE, SLAB_HALF_MASK, SLAB_TOP, STAIR_TOP_BIT, canCombineSlab, doorMeta, facingFromYaw,
   isDoorUpper, placedOnUpperHalf, stairMeta,
 } from './BlockStates';
-import { BED_HEAD_BIT, BOX_BED, BOX_CARPET, BOX_GATE, BOX_LADDER, BOX_TRAPDOOR, TRAPDOOR_TOP_BIT, ladderSide } from './BoxShapes';
+import { BED_HEAD_BIT, BOX_ANVIL, BOX_BED, BOX_CARPET, BOX_GATE, BOX_GRINDSTONE, BOX_LADDER, BOX_TRAPDOOR, TRAPDOOR_TOP_BIT, ladderSide } from './BoxShapes';
 import { CHUNK_HEIGHT } from './constants';
 
 /** What the player is aiming at and holding when they press Use. */
@@ -147,6 +147,8 @@ export function resolvePlacement(c: PlaceContext): Placement | null {
       case BOX_TRAPDOOR:
         return { x, y, z, id, meta: facingFromYaw(c.yaw) | (upper ? TRAPDOOR_TOP_BIT : 0) };
       case BOX_GATE:
+      case BOX_ANVIL:
+      case BOX_GRINDSTONE:
         return { x, y, z, id, meta: facingFromYaw(c.yaw) };
       case BOX_LADDER: {
         // Fixed to the side of a solid block that was clicked.
