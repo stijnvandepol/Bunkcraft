@@ -10,6 +10,7 @@ import { deathXp, totalXpForLevel } from '../player/Experience';
 import { type GameMode, hasSurvivalRules } from '../player/GameMode';
 import type { Player } from '../player/Player';
 import type { DamageCause, PlayerStats } from '../player/PlayerStats';
+import { registerDamageModifier } from '../player/Damage';
 import type { WorldUniforms } from '../rendering/Materials';
 import type { Hotbar } from '../ui/Hotbar';
 import { type StationContext, anvilView, enchantingView, grindstoneView } from '../ui/StationScreens';
@@ -59,7 +60,14 @@ export class Progression {
       if (level % 5 === 0) d.audio.playUi('levelup');
       else this.playXp();
     };
-    d.stats.registerDamageModifier(this.protection);
+    // Protection enchantments run in the shared damage pipeline (Damage.ts, stage 'post': after armor and Resistance).
+    registerDamageModifier({
+      id: 'enchant-protection',
+      stage: 'post',
+      apply: (amount, ctx) => (ctx.target === d.stats ? this.protection(amount, ctx.source.kind) : amount),
+    });
+    // The pipeline can ask for worn levels too ("protection" = all four pieces).
+    d.stats.enchantLookup = (name) => d.inventory.armor.reduce((sum, s) => sum + levelOf(s.data, name), 0);
   }
 
   // ---------------------------------------------------------------- experience
@@ -104,7 +112,7 @@ export class Progression {
 
   // ---------------------------------------------------------------- armor enchantments
 
-  /** Protection, Fire/Blast/Projectile Protection and Feather Falling of the worn armor (registered as a damage modifier). */
+  /** Protection, Fire/Blast/Projectile Protection and Feather Falling of the worn armor (a damage modifier). */
   private readonly protection = (amount: number, cause: DamageCause): number => {
     const armor = this.d.inventory.armor;
     const epf = totalEpf([armor[0].data, armor[1].data, armor[2].data, armor[3].data], cause);

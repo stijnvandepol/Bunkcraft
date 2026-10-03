@@ -2,7 +2,7 @@ import { BLOCK, CUBE_ID, PARTIAL_MATERIALS, SLAB_FIRST, STAIRS_FIRST } from '../
 import { DYES, PARTIAL_EXT, WALL_MATERIALS, WOODS } from '../world/Content';
 import { ARMOR_MATERIALS } from './ItemContent';
 import type { PlayerInventory } from './Inventory';
-import { ITEM, type ItemStack, getItemDef, itemBlock, itemFromState, itemId } from './ItemRegistry';
+import { ITEM, type ItemStack, getItemDef, itemBlock, itemFromState, itemId, SHIELD } from './ItemRegistry';
 
 export type Station = 'hand' | 'table' | 'furnace';
 
@@ -136,6 +136,7 @@ add(ITEM.BUCKET, 1, 'table', one(id('iron_ingot'), 3));
 add(ITEM.SHEARS, 1, 'hand', one(id('iron_ingot'), 2));
 add(ITEM.FLINT_AND_STEEL, 1, 'hand', one(id('iron_ingot')), one(ITEM.FLINT));
 add(ITEM.BOW, 1, 'table', one(ITEM.STICK, 3), one(ITEM.STRING, 3));
+add(SHIELD, 1, 'table', any(PLANKS, 6), one(id('iron_ingot')));
 add(ITEM.ARROW, 4, 'table', one(ITEM.FLINT), one(ITEM.STICK), one(ITEM.FEATHER));
 
 // ---------------------------------------------------------------- tools, weapons and armor
@@ -263,7 +264,7 @@ export function recipeCategory(r: Recipe): RecipeCategory {
   if (r.station === 'furnace') return 'smelting';
   const item = r.result.id;
   const def = getItemDef(item);
-  if (def?.armor || def?.tool?.kind === 'sword' || item === ITEM.BOW || item === ITEM.ARROW) return 'combat';
+  if (def?.armor || def?.tool?.kind === 'sword' || item === ITEM.BOW || item === ITEM.ARROW || item === SHIELD) return 'combat';
   if (def?.tool || item === ITEM.BUCKET || item === ITEM.FLINT_AND_STEEL) return 'tools';
   if (def?.food) return 'food';
   const block = itemBlock(item);

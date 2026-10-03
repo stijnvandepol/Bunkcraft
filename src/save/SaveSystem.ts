@@ -1,3 +1,4 @@
+import type { Difficulty } from '../world/Difficulty';
 import type { WeatherState } from '../world/Weather';
 import type { GameMode } from '../player/GameMode';
 import type { ImportedPack } from '../rendering/TexturePacks';
@@ -50,6 +51,14 @@ export interface WorldMeta {
   day?: number;
   /** Weather timers and flags; absent = a fresh clear cycle. */
   weather?: WeatherState;
+  /** World difficulty; absent = Normal. */
+  difficulty?: Difficulty;
+  /** Game rules that differ from the defaults (GameRules.ts). */
+  rules?: Record<string, boolean | number>;
+  /** Respawn point at a bed block (or a /spawnpoint position when `point`); absent = the world spawn. */
+  bed?: { x: number; y: number; z: number; point?: boolean };
+  /** Status effects: [effect index, amplifier, ticks left]. */
+  effects?: number[][];
 }
 
 export interface ChunkEditRecord {

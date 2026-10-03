@@ -1,14 +1,18 @@
 import { EntityManager } from '../src/entities/EntityManager';
 import { explosionDamage, explosionDropChance } from '../src/entities/Explosion';
 import type { Mob, MobEvents, MobTarget } from '../src/entities/Mob';
-import { type ItemStack, ITEM, blockDrop, encodeData, getItemDef } from '../src/items/ItemRegistry';
+import { type ItemStack, ITEM, blockDrop, encodeData, getItemDef, itemId } from '../src/items/ItemRegistry';
 import { fireAspectTicks, levelOf, meleeBonus, powerBonus, punchKnockback } from '../src/items/EnchantRules';
 import { canCarry } from '../src/items/Enchanting';
 import {
-  type ArrowEntry, type ItemEntry, type MobEntry, NET_MOB_KINDS, type OrbEntry, type ServerMessage, type TntEntry,
+  type ArrowEntry, type FallEntry, type ItemEntry, type MobEntry, NET_MOB_KINDS, type OrbEntry, type ServerMessage, type TntEntry,
 } from '../src/net/protocol';
 import { type GameMode, hasSurvivalRules } from '../src/player/GameMode';
+import { attackCharge, attackScale, attackSpeedOf, isSword, meleeDamage, planAttack, sweepDamage, sweepVictims } from '../src/player/Melee';
+import { type Difficulty, hostilesAllowed } from '../src/world/Difficulty';
+import type { RuleReader } from '../src/world/GameRules';
 import { BLOCK, getBlockDef } from '../src/world/BlockRegistry';
+import { boneMealTarget, useBoneMeal } from '../src/world/Growth';
 import { ServerWorld } from './ServerWorld';
 
 /** Entities are sent to a player when they are this close (blocks). */
@@ -17,6 +21,7 @@ const SEND_ITEM_RADIUS = 48;
 /** Lenient reach checks (the client uses 4.5 for blocks, 5 in creative, and 3 for mobs). */
 const ATTACK_REACH = 6.5;
 const IGNITE_REACH = 8;
+const BONE_MEAL_REACH = 8;
 const TAKE_REACH = 2.6;
 const SOUND_RADIUS = 24;
 /** Player drops bypass the manager's item cap (death drops must not vanish), so the server caps them itself. */
@@ -46,6 +51,16 @@ export interface EntityHost {
 
 const r2 = (v: number) => Math.round(v * 100) / 100;
 
+/** Per player: what the server needs to scale melee damage by the attack cooldown without trusting the client. */
+interface CombatRecord {
+  /** Clock time (ms) of the last attack and of the last change of the held item (both restart the cooldown). */
+  lastAttack: number;
+  heldSince: number;
+  held: number;
+  lastY: number;
+  falling: boolean;
+}
+
 /** Time of day (0 sunrise … 0.25 noon … 0.75 midnight) → 0 night … 1 day, like the client's DayCycle. */
 export function dayFactorAt(time: number): number {
   const a = time * Math.PI * 2;
@@ -66,6 +81,12 @@ export class ServerEntities {
   private tickCount = 0;
   private sentAnything = new Set<number>();
   private sentOrbs = new Set<number>();
+  private readonly combat = new Map<number, CombatRecord>();
+  /** Clock for the attack cooldown in ms (the tests replace it). */
+  attackClock: () => number = () => Date.now();
+  /** Game rules and difficulty of this world (set by GameServer; absent in the tests = defaults). */
+  rules: RuleReader | null = null;
+  private sentFalling = new Set<number>();
 
   constructor(
     seed: number,
@@ -82,6 +103,12 @@ export class ServerEntities {
       const drop = hasSurvivalRules(this.mode) ? blockDrop(id, 0) : null;
       if (drop) this.manager.dropItem(drop, x + 0.5, y + 0.3, z + 0.5);
     };
+    // Decayed leaves, uprooted plants and sand that could not land drop their item (survival rules).
+    this.world.onBlockDrop = (id, meta, x, y, z) => {
+      const drop = hasSurvivalRules(this.mode) ? blockDrop(id, 0, meta) : null;
+      if (drop) this.manager.dropItem(drop, x + 0.5, y + 0.3, z + 0.5);
+    };
+    this.world.skyDarkness = () => Math.round((1 - dayFactorAt(this.getTime())) * 11 + (this.host.skyDarkness?.() ?? 0));
     this.manager = new EntityManager(this.world, seed);
     // A broken chest or furnace spills its contents (survival rules; creative empties it, like Minecraft).
     this.world.blockEntities.onDrops = (x, y, z, stacks) => {
@@ -98,15 +125,36 @@ export class ServerEntities {
     this.world.update([]);
     // Flowing liquid resumes from the saved edits when its chunks load again.
     this.world.liquids.clear();
+    this.world.updates.clear();
     this.world.drainSimEdits();
     this.sentAnything.clear();
     this.sentOrbs.clear();
     this.tickCount = 0;
   }
 
+  /** `/gamerule randomTickSpeed <n>` (the command UI is built elsewhere): picks per chunk section per tick. */
+  setRandomTickSpeed(n: number): void {
+    this.world.ticker.setSpeed(n);
+  }
+
+  get randomTickSpeed(): number {
+    return this.world.ticker.speed;
+  }
+
   /** The game mode changed (/gamemode): mobs and block drops follow the new rules. */
   setMode(mode: GameMode): void {
     this.mode = mode;
+  }
+
+  /** Peaceful removes the hostile mobs and stops them spawning. */
+  setDifficulty(d: Difficulty): void {
+    this.manager.peaceful = !hostilesAllowed(d);
+  }
+
+  /** Re-reads the rules that switch spawning (call after /gamerule). */
+  applyRules(): void {
+    this.manager.spawningEnabled = this.rules ? this.rules.get('doMobSpawning') : true;
+    if (this.rules) this.setRandomTickSpeed(this.rules.get('randomTickSpeed'));
   }
 
   get mobCount(): number {
@@ -116,6 +164,7 @@ export class ServerEntities {
   /** One 20 Hz tick with everyone who is in the game. */
   tick(players: EntityPlayer[]): void {
     this.players = players;
+    for (const p of players) this.trackCombat(p);
     const active = players.filter((p) => p.hasPos);
     if (active.length === 0) return;
     const attackable = hasSurvivalRules(this.mode);
@@ -123,6 +172,8 @@ export class ServerEntities {
     this.world.update(targets);
     // Water and lava flow (budgeted per tick); what changed goes out as one batch.
     this.world.tickLiquids();
+    // Random ticks and block updates; their changes join the liquid batch (one message, capped per tick).
+    this.world.tickGrowth(targets);
     // Furnaces burn while their chunk is loaded; lighting up or going out is a block change like flowing water.
     this.world.blockEntities.tick();
     const flowed = this.world.drainSimEdits();
@@ -140,21 +191,57 @@ export class ServerEntities {
 
   // ---------------------------------------------------------------- player requests
 
+  private trackCombat(p: EntityPlayer): CombatRecord {
+    let r = this.combat.get(p.id);
+    if (!r) {
+      r = { lastAttack: -Infinity, heldSince: -Infinity, held: p.held, lastY: p.y, falling: false };
+      this.combat.set(p.id, r);
+    }
+    if (p.held !== r.held) {
+      // Switching items restarts the cooldown (no swapping between two swords for full hits).
+      r.held = p.held;
+      r.heldSince = this.attackClock();
+    }
+    r.falling = p.y < r.lastY - 1e-3;
+    r.lastY = p.y;
+    return r;
+  }
+
   attack(p: EntityPlayer, mobId: number, ench?: Record<string, number>): void {
     const m = this.manager.mobs.find((e) => e.netId === mobId);
     if (!m || m.dead || m.removed || !p.hasPos) return;
     const d = Math.hypot(m.x - p.x, m.y + m.height / 2 - (p.y + 1.62), m.z - p.z);
     if (d > ATTACK_REACH) return;
+    // The client reports nothing about its cooldown: the server counts it from the attacks it has seen, so spam
+    // clicking only gets the weak, scaled hits (one tick of leniency for network jitter).
+    const rec = this.trackCombat(p);
+    const now = this.attackClock();
+    const def = getItemDef(p.held);
+    const speed = attackSpeedOf(def?.name);
+    const ticks = (now - Math.max(rec.lastAttack, rec.heldSince)) / 50 + 1;
+    rec.lastAttack = now;
+    const plan = planAttack({
+      charge: attackCharge(ticks, speed), onGround: (p.flags & 4) !== 0, fallDistance: rec.falling ? 1 : 0, inWater: false,
+      sprinting: (p.flags & 1) !== 0, sword: isSword(def?.name),
+    });
     // Only enchantments the held item can carry count (the client cannot claim Sharpness on a stick).
     const e = weaponEnchants(p.held, ench);
     const kind = m.type.kind;
-    const damage = (getItemDef(p.held)?.tool?.damage ?? 1) + meleeBonus(e, kind === 'zombie' || kind === 'skeleton', kind === 'spider');
+    const enchantBonus = meleeBonus(e, kind === 'zombie' || kind === 'skeleton', kind === 'spider');
+    const scale = attackScale(ticks, speed);
+    const damage = meleeDamage({ base: def?.tool?.damage ?? 1, enchantBonus, scale, crit: plan.crit });
     m.looting = levelOf(e, 'looting');
-    // Sprint hits knock back further, like Minecraft.
-    if (m.hurt(damage, p.x, p.z, (p.flags & 1 ? 1.6 : 1) + levelOf(e, 'knockback') * 0.6, true)) {
+    const edge = levelOf(e, 'sweeping_edge');
+    // Sprint hits knock back further, like Minecraft; Knockback adds to it.
+    if (m.hurt(damage, p.x, p.z, (plan.sprintKnock ? 1.6 : 1) + levelOf(e, 'knockback') * 0.6, true, { kind: 'player', byPlayer: true })) {
       this.mobSound(m, 'hurt');
       const fire = levelOf(e, 'fire_aspect');
       if (fire) m.igniteTicks = Math.max(m.igniteTicks, fireAspectTicks(fire));
+      if (plan.sweep) {
+        for (const o of sweepVictims(m, this.manager.mobs)) {
+          if (!o.dead && !o.removed) o.hurt(sweepDamage(def?.tool?.damage ?? 1, edge / (edge + 1)), p.x, p.z, 0.4, true, { kind: 'player', byPlayer: true });
+        }
+      }
     }
   }
 
@@ -179,6 +266,14 @@ export class ServerEntities {
     this.world.setBlock(x, y, z, BLOCK.AIR);
     this.host.broadcastBlock(x, y, z, BLOCK.AIR);
     this.manager.primeTnt(x, y, z);
+  }
+
+  /** Bone meal on a block: the player must hold it and be in reach; the growth goes out with the next block batch. */
+  boneMeal(p: EntityPlayer, x: number, y: number, z: number): void {
+    if (!p.hasPos || p.held !== itemId('bone_meal') || ![x, y, z].every(Number.isInteger)) return;
+    if (Math.hypot(x + 0.5 - p.x, y + 0.5 - (p.y + 1.62), z + 0.5 - p.z) > BONE_MEAL_REACH) return;
+    if (!boneMealTarget(this.world.getBlock(x, y, z))) return;
+    useBoneMeal(this.world.ticker, x, y, z);
   }
 
   take(p: EntityPlayer, itemId: number): void {
@@ -253,7 +348,9 @@ export class ServerEntities {
   private explode(by: string, x: number, y: number, z: number, power: number, inWater: boolean, tnt: boolean): void {
     const positions: number[] = [];
     const dropChance = explosionDropChance(power, tnt);
-    const destroyed = inWater ? [] : this.world.explode(x, y, z, power * 1.3, positions);
+    // Creepers only break blocks while mobGriefing is on; TNT always does.
+    const grief = tnt || !this.rules || this.rules.get('mobGriefing');
+    const destroyed = inWater || !grief ? [] : this.world.explode(x, y, z, power * 1.3, positions);
     for (let i = 0; i < destroyed.length; i++) {
       const id = destroyed[i];
       if (id === BLOCK.TNT) {
@@ -327,11 +424,29 @@ export class ServerEntities {
       if (any) this.sentAnything.add(p.id); else this.sentAnything.delete(p.id);
       this.host.send(p.id, { t: 'ent', m, i, a, b });
     }
+    this.sendFalling(players);
+  }
+
+  /** Falling sand and gravel: a separate small message so the binary entity frame stays as it is. */
+  private sendFalling(players: EntityPlayer[]): void {
+    const falling = this.world.updates.falling;
+    for (const p of players) {
+      const f: FallEntry[] = [];
+      for (const e of falling) {
+        if (e.removed || Math.hypot(e.x - p.x, e.y - p.y, e.z - p.z) > SEND_RADIUS) continue;
+        f.push([e.netId, e.id, e.meta, r2(e.x), r2(e.y), r2(e.z)]);
+      }
+      if (f.length === 0 && !this.sentFalling.has(p.id)) continue;
+      if (f.length > 0) this.sentFalling.add(p.id); else this.sentFalling.delete(p.id);
+      this.host.send(p.id, { t: 'fall', f });
+    }
   }
 
   forget(playerId: number): void {
     this.sentAnything.delete(playerId);
     this.sentOrbs.delete(playerId);
+    this.combat.delete(playerId);
+    this.sentFalling.delete(playerId);
   }
 }
 

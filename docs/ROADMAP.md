@@ -83,7 +83,7 @@ wat al is doorgevoerd.
    - **Stromend water en lava** met de Minecraft 1.21-regels (water 7 blokken per 5 ticks, lava 3 blokken per 30 ticks, oneindige bron, obsidiaan/cobblestone, vallend water) en **emmers** (ijzeren emmer, water- en lavaemmer). Budget van 600 updates en 200 blokwijzigingen per tick; in multiplayer simuleert de server.
    - Nog te doen op deze basis: **ladders, muurfakkels, gewassen** (groeifase in `meta`), **oven met een richting** (en een brandende staat), **bed** (2 blokken), vallend zand en grind, waterlogged slabs, stroming die entities meeduwt, lava-fakkels/vuur, trapdoors en hekken (zelfde `partial`-machinerie).
    - Bewust anders dan Minecraft: de trapvorm wordt afgeleid uit de buren (niet opgeslagen) en lava vertraagt niet willekeurig (`random.nextInt(4)`).
-5. **Landbouw (M):** saplings, tarwe, brood en een schoffel. Hernieuwbaar hout en voedsel.
+5. **Landbouw (M):** saplings (**gedaan**), tarwe, brood en een schoffel. Hernieuwbaar hout en voedsel.
 6. **Meer survival-inhoud (M):** harnas met een armor-bar: **Gedaan** (zie §4b). XP-orbs met een XP-balk, enchanting, anvil en grindstone: **Gedaan** (zie §4c). Skeleton (schiet elke 2 s, verbrandt in daglicht; drops botten en pijlen) en spin (klimt, springt, neutraal in fel licht; drops draad en spinnenoog met Poison) zijn **Gedaan**.
 7. **Structuren (M per stuk):** dungeon met spawner en kisten, mijnschachten, later dorpen.
 8. **Eindspel (L):** een "Underworld"-dimensie of een stronghold met een eindbaas en credits.
@@ -242,13 +242,28 @@ mobs (varkensoog, nachtelijke spawns in groepen, dierdichtheid), wereldgeneratie
 ertsaders, `genVersion` voor bestaande werelden).
 
 **Fundamenten die bijna alles blokkeren (eerst):**
-1. Random-tick systeem (planten, bladverval, farmland, vuur, ijs).
+1. Random-tick systeem: **Gedaan** (`RandomTicks.ts`, `Growth.ts`, `BlockUpdates.ts`, `Trees.ts`; zie [`GAMEPLAY.md`](GAMEPLAY.md#groei-en-vallende-blokken)).
+   Saplings (alle 7 houtsoorten), bladverval, gras/mycelium, suikerriet, cactus, paddenstoelen, ijs, bone meal, vallend zand en grind; singleplayer en server.
+   Meting (`scripts/bench-randomticks.ts`, CPU-tijd op een zwaar belaste machine): singleplayer render distance 12 / sim-afstand 8 chunks ≈ 0,1 ms per tick,
+   server ≈ 0,05–0,08 ms per speler; in de browser (Playwright, `scripts/growth-shots.py`) p50 0,2 ms. Open: farmland en gewassen (via
+   `RandomTicker.register` en `registerBoneMeal`), vuur, sneeuwlagen (geen blok), bamboe/kelp/vines (geen blokken), grote 2×2-bomen (dark oak, jungle,
+   spruce), big oak, de `/gamerule randomTickSpeed`-UI (setter: `RandomTicker.setSpeed`, server: `ServerEntities.setRandomTickSpeed`), geluid bij landen.
 2. Block entities (kisten, ovens, spawners) met opslag per wereld en server-sync. **Gedaan voor kist, dubbele kist en oven** (singleplayer save v4, `world.json` op de server, `container`-protocol); spawner, bord, bed en banner kunnen zich registreren met `registerBlockEntityKind`.
-3. Eén centrale schade-pijplijn (moeilijkheidsgraad, harnas, effecten, enchantments).
+3. Eén centrale schade-pijplijn (moeilijkheidsgraad, harnas, effecten, enchantments). **Gedaan** (zie `GAMEPLAY.md`):
+   `Damage.ts` met difficulty, i-frames, schild, harnas, Resistance, enchant-hooks en absorption; game rules en
+   difficulty per wereld (UI, `/difficulty`, `/gamerule`); 1.9+-gevecht (cooldown, crits, sweep, server-check);
+   bedden met spawnpunt en slapen (multiplayer-regel); statuseffecten met HUD en `/effect`; schild.
+   **Nog open:** enchantments vullen `registerDamageModifier` (Protection, Feather Falling, Sharpness via
+   `meleeDamage.enchantBonus`, Sweeping Edge via `sweepDamage(…, edge)`); Night Vision/Invisibility renderen;
+   blok-pose en model van het schild in de hand; bijl-mobs/PvP voor het uitschakelen van schilden; doodsberichten in
+   multiplayer-chat (de server ziet de dood niet: health is client-autoritatief); zombies die deuren breken op Hard;
+   Easy-specifieke mobregels (cave spiders); `difficulty`/`rules`/`bed`/`effects` in `.bunkworld`-export;
+   slapen versnelt nu direct naar de ochtend
+   (geen tijd-animatie) en de server kent geen fase "iedereen in bed maar nog geen 100 ticks" in de HUD.
 
-**Fase 1, early game loop:** saplings en bladverval, landbouw (schoffel, farmland, tarwe, brood, bone meal), bed met
+**Fase 1, early game loop:** ~~saplings en bladverval~~ (gedaan), landbouw (schoffel, farmland, tarwe, brood, bone meal), bed met
 spawnpunt en nacht overslaan, difficulty en game rules, harnas, attack cooldown met crits en sweep, kist met loot-tabellen,
-vallend zand en grind, XP-orbs, ladders/hekken/trapdoors/knoppen, echte oven met kooktijd.
+~~vallend zand en grind~~ (gedaan), XP-orbs, ladders/hekken/trapdoors/knoppen, echte oven met kooktijd.
 
 **Fase 2, mid game:** fokken en baby's, weer, dungeons met spawner, meer mobs (enderman, witch, slime, wolf, paard),
 status-effecten, schild, vuur, enchanting, anvil en grindstone, mijnschachten en kleine structuren, vissen, meer planten.
