@@ -12,7 +12,7 @@ import { MobRenderer } from '../entities/MobRenderer';
 import { NetClient, type WelcomeMessage } from '../net/NetClient';
 import { NetEntities } from '../net/NetEntities';
 import { type ClientMessage, type ServerMessage, formatCode, normalizeCode } from '../net/protocol';
-import { gameTypeDef } from '../modes/GameTypes';
+import { TEAM_COLORS, gameTypeDef } from '../modes/GameTypes';
 import { inviteLink, inviteText, rememberGame } from '../net/RoomApi';
 import { RemotePlayers } from '../net/RemotePlayers';
 import { Chat } from '../ui/Chat';
@@ -72,7 +72,15 @@ import { ContainerScreens } from './ContainerScreens';
 import { Renderer } from './Renderer';
 import { WeatherSystem } from './WeatherSystem';
 import { DynamicResolution, suggestPreset } from './AdaptiveQuality';
-import { SettingsStore } from './Settings';
+import { type Settings, SettingsStore } from './Settings';
+import { applyAccessibilityDocument, effectiveParticles, limitFlash, mobSoundLabel, paletteFor } from './Accessibility';
+import { GamepadController, type PadContext, cleanName } from './Gamepad';
+import { needsAutoJump } from './InputMath';
+import { TouchControls, type TouchContext } from './TouchControls';
+import { announce } from '../ui/Announcer';
+import { MenuNav } from '../ui/MenuNav';
+import { Subtitles } from '../ui/Subtitles';
+import { setSurvivalColorBlind } from '../ui/SurvivalHud';
 
 type GameState = 'menu' | 'loading' | 'playing' | 'paused' | 'inventory' | 'dead' | 'chat';
 
@@ -128,6 +136,20 @@ export class Game {
   private readonly debug = new DebugOverlay();
   private readonly remote = new RemotePlayers();
   private readonly chat = new Chat();
+  private readonly subtitles = new Subtitles();
+  private readonly touch: TouchControls;
+  private readonly pad: GamepadController;
+  private readonly menuNav: MenuNav;
+  private readonly touchCtx: TouchContext = { playing: false, arcade: false, chat: false, overlay: false };
+  private readonly padCtx: PadContext = { state: 'menu', playing: false, arcade: false };
+  /** Was the player walking forward last frame (releases a toggled sprint when they stop). */
+  private wasMovingForward = false;
+  private readonly solidAt = (x: number, y: number, z: number): boolean => !!SOLID[this.getBlock(x, y, z)];
+  /** Feedback channels for the arcade session: captions and controller rumble. */
+  private readonly feedback = {
+    caption: (label: string, x: number, z: number) => this.caption(label, x, z),
+    haptic: (strong: number, weak: number, ms: number) => this.pad.rumble(strong, weak, ms),
+  };
   /** Mobs plus remote players, handed to the mob renderer each frame. */
   private readonly renderMobs: Mob[] = [];
   /** Multiplayer connection (null in singleplayer). */
@@ -289,9 +311,31 @@ export class Game {
       this.inventory.close();
       this.survivalInventory.open(this.nearbyStations());
     };
-    this.stats.onHurt = () => this.audio.playHurt();
+    this.stats.onHurt = () => {
+      this.audio.playHurt();
+      this.pad.rumble(0.7, 0.5, 200);
+    };
     this.initAudioHooks();
     this.input.onKeyDown = (code) => this.onKey(code);
+    // Touch, gamepad and keyboard menus: virtual presses go through the same shortcuts as keys.
+    this.input.onAction = (action) => this.onKey(`Virtual${action}`);
+    this.touch = new TouchControls(root, this.input, this.hotbar);
+    this.touch.onPause = () => this.input.exitLock();
+    this.touch.onClose = () => this.padBack();
+    this.touch.onModeChange = () => applyGuiScale(this.settings.values.guiScale);
+    this.menuNav = new MenuNav(() => this.stack.top, () => this.settings.values.menuRepeatDelay);
+    this.menuNav.attachKeyboard();
+    this.pad = new GamepadController(this.input, this.settings.values, this.menuNav, {
+      start: () => this.padStart(),
+      back: () => this.padBack(),
+      onConnection: (name, connected) => announce(connected ? `Controller connected: ${name}` : 'Controller disconnected', true),
+    });
+    root.append(this.subtitles.el);
+    // Screen readers: chat and advancement toasts are live regions, the canvas has a name.
+    this.chat.el.setAttribute('aria-live', 'polite');
+    this.toasts.el.setAttribute('aria-live', 'polite');
+    canvas.setAttribute('role', 'img');
+    canvas.setAttribute('aria-label', 'BunkCraft game view');
     this.input.onLockChange = (locked) => this.onLockChange(locked);
     this.settings.onChange((_, key) => this.applySettings(key));
     this.applySettings();
@@ -360,6 +404,7 @@ export class Game {
       push: (el) => this.stack.push(el),
       pop: () => this.stack.pop(),
       openResourcePacks: () => this.openResourcePacks(),
+      padName: () => (this.pad.connected ? cleanName(this.pad.name) : ''),
       credits: () => [
         VERSION,
         `Textures: ${this.packCredit}`,
@@ -427,11 +472,12 @@ export class Game {
     if (key === 'texturePack') void this.applyTexturePack();
     const s = this.settings.values;
     this.renderer.applySettings(s);
+    this.applyAccessibility(s, key);
     this.dynamicResolution.enabled = s.dynamicResolution;
     if (!s.dynamicResolution) this.renderer.setDynamicScale(1);
     this.updateMenuBlur();
     this.cam.baseFov = s.fov;
-    this.cam.viewBobbing = s.viewBobbing;
+    this.cam.viewBobbing = s.viewBobbing && !s.reducedMotion;
     if (!key || key === 'keybinds') {
       this.input.setBindings(resolveKeybinds(s.keybinds));
       this.arcade?.setBindings(this.input);
@@ -449,6 +495,48 @@ export class Game {
         this.world.chunks.remeshAll();
       }
     }
+  }
+
+  /** Accessibility, touch and controller options that act outside the renderer. */
+  private applyAccessibility(s: Settings, key?: string): void {
+    const input = this.input;
+    if (!key || key === 'touchControls') input.applyTouchSetting(s.touchControls);
+    input.setToggle(KB.SNEAK, s.toggleSneak);
+    input.setToggle(KB.SPRINT, s.toggleSprint);
+    input.setToggle(KB.ATTACK, s.toggleAttack);
+    input.setToggle(KB.USE, s.toggleUse);
+    this.cam.reducedMotion = s.reducedMotion;
+    this.cam.fovEffects = s.fovEffects / 100;
+    this.renderer.particles.density = { all: 1, decreased: 0.5, minimal: 0.25 }[effectiveParticles(s)];
+    if (s.reducedMotion) this.renderer.uniforms.uSway.value = 0;
+    applyAccessibilityDocument(s);
+    this.subtitles.setEnabled(s.subtitles);
+    const palette = paletteFor(s.colorBlindSafe);
+    TEAM_COLORS.red = palette.teamA;
+    TEAM_COLORS.blue = palette.teamB;
+    setSurvivalColorBlind(s.colorBlindSafe);
+    this.touch.applySettings(s);
+    this.pad.applySettings(s);
+  }
+
+  /** Sound caption with a direction arrow (Subtitles option); x/z are the sound's world position. */
+  private caption(label: string, x?: number, z?: number): void {
+    if (!this.subtitles.enabled) return;
+    const p = this.player;
+    this.subtitles.push(label, x === undefined ? 0 : x - p.x, z === undefined ? 0 : z - p.z, p.yaw);
+  }
+
+  /** Start button: pause in the world, resume from the pause screen or an overlay. */
+  private padStart(): void {
+    if (this.state === 'playing' && this.input.locked) this.input.exitLock();
+    else if (this.state === 'inventory' || this.state === 'chat' || (this.state === 'paused' && this.stack.depth === 1)) void this.resumeGame();
+  }
+
+  /** B button: one screen back, or back to the game. */
+  private padBack(): void {
+    if ((this.state === 'paused' || this.state === 'menu') && this.stack.depth > 1) this.stack.pop();
+    else if (this.state === 'paused' || this.state === 'inventory') void this.resumeGame();
+    else if (this.state === 'chat') this.chat.close();
   }
 
   /** Menu backdrop blur only when the GPU has headroom (Fancy, full dynamic resolution). */
@@ -894,6 +982,7 @@ export class Game {
       getBlock: this.getBlock,
       getLight: (x, y, z) => this.world ? this.world.getLight(x, y, z) : 0xf0,
       selfId: welcome.id, selfName: name, info,
+      feedback: this.feedback,
       // The next match is on another map: this world is wrong now, so join the game again.
       onMapChange: () => this.rejoinServer(),
     });
@@ -943,6 +1032,7 @@ export class Game {
         if (msg.event === 'arrow') this.audio.playArrowHit(volume, msg);
         else if (msg.event === 'shoot') this.audio.playBow(volume * 0.6);
         else this.audio.playMob(msg.kind, msg.event, volume, msg);
+        if (volume > 0.05) this.caption(msg.event === 'arrow' ? 'Arrow hits' : mobSoundLabel(msg.kind, msg.event), msg.x, msg.z);
         break;
       }
       case 'taken': {
@@ -1084,6 +1174,7 @@ export class Game {
     this.survivalInventory.close();
     this.chat.close();
     this.state = 'dead';
+    announce(`You died. ${this.stats.deathMessage}`);
     if (this.input.locked) {
       this.suppressPause = true;
       this.input.exitLock();
@@ -1160,8 +1251,9 @@ export class Game {
 
   private showClickToPlay(): void {
     this.stack.clear();
-    this.stack.push(h('div', { class: 'screen click-to-play', onclick: () => void this.resumeGame() },
-      h('div', { class: 'click-hint', text: 'Click to play' })));
+    const hint = this.input.touchMode ? 'Tap to play' : this.input.padMode ? 'Press A to play' : 'Click to play';
+    this.stack.push(h('div', { class: 'screen click-to-play', tabIndex: 0, role: 'button', 'aria-label': hint, onclick: () => void this.resumeGame() },
+      h('div', { class: 'click-hint', text: hint })));
   }
 
   private onLockChange(locked: boolean): void {
@@ -1181,6 +1273,7 @@ export class Game {
 
   private pause(): void {
     this.state = 'paused';
+    announce('Game paused');
     void this.saveGame(true);
     this.stack.clear();
     this.stack.push(pauseScreen({
@@ -1210,11 +1303,15 @@ export class Game {
     return s;
   }
 
+  /** Is this key event the action's bound key, or a virtual press (touch button, gamepad)? */
+  private keyIs(code: string, action: number): boolean {
+    return this.input.matches(code, action) || code === `Virtual${action}`;
+  }
+
   private onKey(code: string): void {
     if (this.chat.isOpen) return;
-    const input = this.input;
-    const command = code === input.bound(KB.COMMAND);
-    if ((command || code === input.bound(KB.CHAT)) && this.net && this.state === 'playing' && this.input.locked) {
+    const command = this.keyIs(code, KB.COMMAND);
+    if ((command || this.keyIs(code, KB.CHAT)) && this.net && this.state === 'playing' && this.input.locked) {
       this.state = 'chat';
       this.suppressPause = this.input.locked;
       this.input.exitLock();
@@ -1230,7 +1327,7 @@ export class Game {
       this.hud.setVisible(!this.hudHidden);
       this.arcade?.setHudVisible(!this.hudHidden);
     }
-    if (this.arcade && code === input.bound(KB.LOADOUT)) {
+    if (this.arcade && this.keyIs(code, KB.LOADOUT)) {
       // The loadout menu needs the mouse, like the inventory.
       if (this.state === 'playing' && this.input.locked) {
         this.state = 'inventory';
@@ -1241,7 +1338,7 @@ export class Game {
         void this.resumeGame();
       }
     }
-    if (!this.arcade && code === input.bound(KB.INVENTORY)) {
+    if (!this.arcade && this.keyIs(code, KB.INVENTORY)) {
       if (this.state === 'playing' && this.input.locked && this.mode !== 'spectator') {
         this.state = 'inventory';
         this.suppressPause = this.input.locked;
@@ -1252,7 +1349,7 @@ export class Game {
         void this.resumeGame();
       }
     }
-    if (!this.arcade && code === input.bound(KB.DROP) && this.state === 'playing' && this.input.locked && this.mode !== 'spectator') {
+    if (!this.arcade && this.keyIs(code, KB.DROP) && this.state === 'playing' && this.input.locked && this.mode !== 'spectator') {
       // Drop one item from the selected slot (Q), like Minecraft.
       const s = this.hotbar.selectedStack;
       if (s.count > 0) {
@@ -1283,6 +1380,7 @@ export class Game {
     const cpuStart = performance.now();
     this.time += dt;
 
+    this.updateInputDevices(dt);
     switch (this.state) {
       case 'menu': this.updateMenu(dt); break;
       case 'loading': this.updateLoading(); break;
@@ -1304,6 +1402,24 @@ export class Game {
     if (this.debug.tick(dt, performance.now() - cpuStart)) this.updateDebug();
     this.input.endFrame();
   };
+
+  /** Touch HUD, controller and captions: run before the game reads the input. */
+  private updateInputDevices(dt: number): void {
+    const playing = this.state === 'playing' && this.input.locked;
+    const arcade = this.arcade !== null;
+    const t = this.touchCtx;
+    t.playing = playing;
+    t.arcade = arcade;
+    t.chat = this.net !== null && !arcade;
+    t.overlay = this.state === 'inventory' || this.state === 'chat';
+    this.touch.update(dt, t);
+    const c = this.padCtx;
+    c.state = this.state;
+    c.playing = playing;
+    c.arcade = arcade;
+    this.pad.update(dt, c);
+    this.subtitles.update(dt);
+  }
 
   private updateEntitiesRender(): void {
     const e = this.entities, world = this.world;
@@ -1389,6 +1505,7 @@ export class Game {
       this.entities?.skeletonShoot(mob, p.x, p.y, p.z);
       const d = Math.hypot(mob.x - p.x, mob.y - p.y, mob.z - p.z);
       this.audio.playBow(Math.max(0, 1 - d / 16) * 0.6);
+      if (d < 16) this.caption('Skeleton shoots', mob.x, mob.z);
     },
     arrowHit: (arrow, damage) => {
       const p = this.player;
@@ -1404,12 +1521,16 @@ export class Game {
     },
     arrowImpact: (arrow) => {
       const p = this.player;
-      this.audio.playArrowHit(1 - Math.hypot(arrow.x - p.x, arrow.y - p.y, arrow.z - p.z) / 16);
+      const vol = 1 - Math.hypot(arrow.x - p.x, arrow.y - p.y, arrow.z - p.z) / 16;
+      this.audio.playArrowHit(vol);
+      if (vol > 0.05) this.caption('Arrow hits', arrow.x, arrow.z);
     },
     tntExplode: (t) => this.explode(null, t.x, t.y + 0.49, t.z, 4, t.inWater),
     sound: (mob, kind) => {
       const d = Math.hypot(mob.x - this.player.x, mob.y - this.player.y, mob.z - this.player.z);
-      this.audio.playMob(mob.type.kind, kind, Math.max(0, 1 - d / 16), mob);
+      const vol = Math.max(0, 1 - d / 16);
+      this.audio.playMob(mob.type.kind, kind, vol, mob);
+      if (vol > 0.05) this.caption(mobSoundLabel(mob.type.kind, kind), mob.x, mob.z);
     },
   };
 
@@ -1451,6 +1572,8 @@ export class Game {
     const p = this.player;
     const d = Math.hypot(p.x - x, p.y + 0.9 - y, p.z - z);
     this.audio.playExplosion(1, { x, y, z });
+    this.caption('Explosion', x, z);
+    if (d < 40) this.pad.rumble(Math.min(1, 1.2 - d / 40), 0.7, 350);
     const reach = power * 2;
     if (d < reach) {
       const impact = 1 - d / reach;
@@ -1552,12 +1675,24 @@ export class Game {
       const move = this.move;
       const arcade = this.arcade;
       const control = active && this.state !== 'dead' && !arcade?.dead;
-      move.forward = control ? (input.actionDown(KB.FORWARD) ? 1 : 0) - (input.actionDown(KB.BACK) ? 1 : 0) : 0;
-      move.strafe = control ? (input.actionDown(KB.RIGHT) ? 1 : 0) - (input.actionDown(KB.LEFT) ? 1 : 0) : 0;
+      // Keys give -1/0/1; sticks and the touch joystick add analog values on top.
+      const keyFwd = (input.actionDown(KB.FORWARD) ? 1 : 0) - (input.actionDown(KB.BACK) ? 1 : 0);
+      const keyStrafe = (input.actionDown(KB.RIGHT) ? 1 : 0) - (input.actionDown(KB.LEFT) ? 1 : 0);
+      move.forward = control ? Math.max(-1, Math.min(1, keyFwd + input.axisForward)) : 0;
+      move.strafe = control ? Math.max(-1, Math.min(1, keyStrafe + input.axisStrafe)) : 0;
       move.jump = control && input.actionDown(KB.JUMP);
       move.jumpPressed = control && input.actionPressed(KB.JUMP);
       // Arcade: always sprinting at the weapon's pace, bunny hop friendly air control, no sneaking.
-      move.sprint = control && (arcade !== null || input.actionDown(KB.SPRINT));
+      move.sprint = control && (arcade !== null || input.actionDown(KB.SPRINT) || input.sprintAxis);
+      // A toggled sprint ends when the player stops walking forward.
+      if (this.wasMovingForward && move.forward <= 0) input.releaseLatch(KB.SPRINT);
+      this.wasMovingForward = move.forward > 0;
+      // Touch auto-jump: walking into a one-block step.
+      if (control && !arcade && input.touchMode && this.settings.values.touchAutoJump && p.onGround && p.horizontalCollision
+        && (move.forward !== 0 || move.strafe !== 0)) {
+        const sin = Math.sin(p.yaw), cos = Math.cos(p.yaw);
+        if (needsAutoJump(this.solidAt, p.x, p.y, p.z, -sin * move.forward + cos * move.strafe, -cos * move.forward - sin * move.strafe)) move.jump = true;
+      }
       move.descend = control && arcade === null && input.actionDown(KB.SNEAK);
       if (arcade) {
         p.speedMultiplier = arcade.speedMultiplier;
@@ -1592,7 +1727,7 @@ export class Game {
     this.audio.setListener(eye.x, eye.y, eye.z, p.yaw);
     this.audioProbe.update(dt, this.audio.env, eye.x, eye.y, eye.z, this.cycle.dayFactor, this.underwater);
     this.hud.setUnderwater(this.underwater);
-    this.hud.setHurt(this.arcade ? this.arcade.hurt * 0.8 : this.stats.hurtTime / 10);
+    this.hud.setHurt(limitFlash(this.arcade ? this.arcade.hurt * 0.8 : this.stats.hurtTime / 10, this.settings.values));
     if (!this.arcade) this.hud.survival.update({ health: this.stats.health, hunger: this.stats.hunger, air: this.stats.air, maxAir: MAX_AIR, armor: this.stats.armorPoints }, this.time);
 
     if (this.net) {
@@ -1614,8 +1749,10 @@ export class Game {
       f.bobStrength = this.cam.bobStrength;
       f.light = Math.max(0.35, Math.min(1, ((light >> 4) / 15) * this.cycle.daylight + (light & 15) / 15));
       f.aspect = window.innerWidth / Math.max(1, window.innerHeight);
-      f.lookX = input.mouseDX;
-      f.lookY = input.mouseDY;
+      // Weapon sway follows the look input; Reduced Motion turns it off.
+      const sway = this.settings.values.reducedMotion ? 0 : 1;
+      f.lookX = input.mouseDX * sway;
+      f.lookY = input.mouseDY * sway;
       this.arcade.update(f, input);
     } else {
       this.hand.update(dt, this.hotbar.selectedBlock, this.cam.bobPhase, this.cam.bobStrength, light,

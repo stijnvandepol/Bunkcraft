@@ -8,18 +8,23 @@ import type { MobKind } from './MobTypes';
 
 /** Tunables, grouped so the tests and the F3 overlay can read them. */
 export const SPAWN = {
-  /** Hostile mobs alive at once for one player (Minecraft: 70 per 289 chunks); each extra player adds some. */
-  hostileCap: 40,
-  hostileCapPerExtraPlayer: 20,
-  hostileCapMax: 100,
+  /**
+   * Hostile mobs alive at once for one player; each extra player adds some. Minecraft spreads its cap of 70 over
+   * 289 chunks and spawns up to 128 blocks out, so a player rarely meets more than a handful at once: with all
+   * of them inside our 28-64 block ring the cap must be lower to feel the same (first measured: 16 hostiles
+   * within 32 blocks at midnight, which made bare-handed survival unwinnable).
+   */
+  hostileCap: 18,
+  hostileCapPerExtraPlayer: 8,
+  hostileCapMax: 48,
   /** Darkness (0 noon … 11 midnight) from which the full cap applies, and the share of it available by day. */
   fullDarkness: 7,
-  daylightCapShare: 0.4,
+  daylightCapShare: 0.25,
   /** Pack spawn attempts per player per tick while below the cap (Minecraft attempts on every tick). */
-  hostileAttemptsPerTick: 2,
-  /** A hostile spawns 24–48 blocks away from a player, never closer. */
-  minDistance: 24,
-  maxDistance: 48,
+  hostileAttemptsPerTick: 1,
+  /** A hostile spawns 28–64 blocks away from a player, never closer. */
+  minDistance: 28,
+  maxDistance: 64,
   /** Hostile mobs further than this despawn at once; between `randomDespawn` and this at 1/800 per tick. */
   instantDespawn: 128,
   randomDespawn: 32,
@@ -42,8 +47,8 @@ interface SpawnEntry {
 
 /** Overworld monster table: Minecraft weights (100 each), pack sizes as in the 1.21 spawner data. */
 export const HOSTILE_TABLE: readonly SpawnEntry[] = [
-  { kind: 'zombie', weight: 100, min: 4, max: 4 },
-  { kind: 'skeleton', weight: 100, min: 4, max: 4 },
+  { kind: 'zombie', weight: 100, min: 2, max: 4 },
+  { kind: 'skeleton', weight: 100, min: 2, max: 3 },
   { kind: 'creeper', weight: 100, min: 1, max: 1 },
   { kind: 'spider', weight: 100, min: 1, max: 2 },
 ];
