@@ -5,7 +5,7 @@ import {
   efficiencyBonus, sweepDamage, respirationKeepsAir, gravelFlintChance, fortuneSaplingChance, depthStriderFactor, fortuneExtra, lootingExtra,
 } from '../src/items/EnchantRules';
 import {
-  EnchantRandom, anvilCombine, applyMending, applyOffer, canCarry, canPayOffer, enchantability, enchanted, glyphText, grindstoneResult, isBook,
+  EnchantRandom, anvilCombine, countBookshelves, applyMending, applyOffer, canCarry, canPayOffer, enchantability, enchanted, glyphText, grindstoneResult, isBook,
   nextEnchantSeed, slotCost, stackLabel, tableAccepts, tableOffers, targetsOf,
 } from '../src/items/Enchanting';
 import { ITEM, ITEM_DATA_KEYS, ITEM_ID, blockDrop, breakSeconds, decodeData, encodeData, itemId, sameItem, stackFromArray, stackToArray, type ItemStack } from '../src/items/ItemRegistry';
@@ -535,6 +535,21 @@ describe('enchantments on mining', () => {
       Math.random = real;
     }
     expect(itemId('lapis_lazuli')).toBeGreaterThan(0);
+  });
+});
+
+describe('bookshelves around the table', () => {
+  it('counts the 5x5 ring at two heights, up to 15, only with open space between', () => {
+    expect(countBookshelves(() => true, () => true)).toBe(15);
+    expect(countBookshelves((dx, dy, dz) => dx === 2 && dy === 0 && dz === 0, () => true)).toBe(1);
+    // A block between the shelf and the table blocks it.
+    expect(countBookshelves((dx, dy, dz) => dx === 2 && dy === 0 && dz === 0, (dx, _dy, dz) => !(dx === 1 && dz === 0))).toBe(0);
+    // The inner ring does not count.
+    expect(countBookshelves((dx, _dy, dz) => Math.abs(dx) <= 1 && Math.abs(dz) <= 1, () => true)).toBe(0);
+    // 16 ring positions x 2 heights = 32 candidates.
+    let n = 0;
+    countBookshelves(() => { n++; return false; }, () => true);
+    expect(n).toBe(32);
   });
 });
 
