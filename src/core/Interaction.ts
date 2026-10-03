@@ -54,6 +54,8 @@ export interface InteractionDeps {
   openChest?(x: number, y: number, z: number): void;
   /** Right click on a bed: sets the spawn point and sleeps through the night. */
   useBed?(x: number, y: number, z: number): void;
+  /** Right click on a mob (feed, tame, shear, milk, ride); true when it did something. */
+  useMob?(mob: import('../entities/Mob').Mob): boolean;
 }
 
 /**
@@ -135,6 +137,12 @@ export class Interaction {
       if (input.leftClicked) this.d.hand.swingHand();
     }
     highlight.setProgress(this.breakProgress);
+
+    // ---- Use on a mob (right mouse): breeding, taming, shearing, milking, riding ----
+    if (mobHit && input.rightClicked && this.d.useMob?.(mobHit.mob)) {
+      this.d.hand.swingHand();
+      return;
+    }
 
     // ---- Use: eat or place (right mouse) ----
     const held = this.d.hotbar.selectedStack;

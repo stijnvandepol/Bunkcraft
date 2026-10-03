@@ -34,7 +34,7 @@ export function initMob(m: Mob, rnd: () => number = Math.random): void {
     case 'slime':
       m.size = 1 << Math.floor(rnd() * 3);
       m.refreshSize();
-      m.health = m.size * m.size;
+      m.health = m.maxHp = m.size * m.size;
       break;
     case 'wolf':
       m.variant = WOOL.RED;
@@ -42,11 +42,11 @@ export function initMob(m: Mob, rnd: () => number = Math.random): void {
     case 'horse': {
       // Minecraft: health 15 + rand(8) + rand(9); speed attribute (0.45 + 3 × rand(0.3)) × 0.25, ×43.17 = blocks/s;
       // jump strength 0.4 + 3 × rand(0.2).
-      m.health = 15 + Math.floor(rnd() * 8) + Math.floor(rnd() * 9);
+      m.health = m.maxHp = 15 + Math.floor(rnd() * 8) + Math.floor(rnd() * 9);
       m.rideSpeed = (0.45 + rnd() * 0.3 + rnd() * 0.3 + rnd() * 0.3) * 0.25 * 43.17;
       const jump = 0.4 + rnd() * 0.2 + rnd() * 0.2 + rnd() * 0.2;
       // Launch speed that reaches the jump height under the game's gravity (32 blocks/s²).
-      m.rideJump = Math.sqrt(2 * 32 * horseJumpHeight(jump));
+      m.rideJumpSpeed = Math.sqrt(2 * 32 * horseJumpHeight(jump));
       m.variant = Math.floor(rnd() * HORSE_COATS.length);
       break;
     }

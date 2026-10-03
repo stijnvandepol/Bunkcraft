@@ -342,7 +342,7 @@ export class EntityManager implements MobWorld {
       const c = this.spawnMob('slime', m.x + (Math.random() - 0.5) * m.width, m.y + 0.2, m.z + (Math.random() - 0.5) * m.width);
       c.size = m.size / 2;
       c.refreshSize();
-      c.health = c.size * c.size;
+      c.health = c.maxHp = c.size * c.size;
       c.persistent = m.persistent;
     }
   }

@@ -169,15 +169,24 @@ export class Mob extends Entity {
   pendingTeleport = false;
   /** Horse temper 0..100: every failed taming ride adds 5 (Minecraft). */
   temper = 0;
-  /** Horse stats rolled at spawn: speed in blocks/s and jump velocity. */
+  /** Horse stats rolled at spawn: speed in blocks/s and jump launch speed. */
   rideSpeed = 0;
-  rideJump = 0;
+  rideJumpSpeed = 0;
+  /** Rider input for this tick (set by the game while mounted). */
+  rideForward = 0;
+  rideStrafe = 0;
+  rideYaw = 0;
+  rideJump = false;
   /** A player rides this mob (horses). */
   rider: MobTarget | null = null;
+
+  /** Maximum health: the type's, 40 for a tamed wolf, rolled per horse. */
+  maxHp: number;
 
   constructor(readonly type: MobType) {
     super(type.width, type.height);
     this.health = type.health;
+    this.maxHp = type.health;
     this.yaw = Math.random() * Math.PI * 2;
     this.prevYaw = this.yaw;
   }

@@ -705,6 +705,7 @@ export class GameServer {
       case 'block': return this.onBlock(s, msg);
       case 'chat': return this.onChat(s, msg.text);
       case 'attack': return void (s.attacks.take() && entities.attack(s, Number(msg.id)));
+      case 'usemob': return void (s.attacks.take() && entities.useMob(s, Number(msg.id)));
       case 'shoot':
         return void (s.shots.take() && entities.shoot(s, msg.x, msg.y, msg.z, msg.dx, msg.dy, msg.dz, msg.power));
       case 'ignite': return void (s.edits.take() && entities.ignite(s, msg.x, msg.y, msg.z));

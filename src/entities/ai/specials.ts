@@ -385,11 +385,53 @@ export class LayEggGoal implements Goal {
 
 // ---------------------------------------------------------------- horses
 
-/** An untamed horse that is ridden bucks its rider off after a while; temper grows each time (taming). */
+/**
+ * A ridden horse. Untamed: it wanders under the rider and after 2-5 s either accepts him (a random 0..99 below its
+ * temper) or bucks him off and gets 5 temper more (Minecraft's taming). Tamed and saddled: it follows the rider's
+ * input (`rideForward`, `rideStrafe`, `rideYaw`, `rideJump`) at its own rolled speed and jump strength.
+ */
 export class HorseRiddenGoal implements Goal {
   readonly flags = FLAG.MOVE | FLAG.LOOK | FLAG.JUMP;
+  private ticks = 0;
+  private buckAt = 0;
   constructor(private readonly m: Mob) {}
   canUse(): boolean { return this.m.rider !== null; }
-  start(): void { this.m.nav.stop(); }
+  start(): void {
+    this.m.nav.stop();
+    this.ticks = 0;
+    this.buckAt = 40 + Math.floor(Math.random() * 60);
+  }
+  tick(): void {
+    const m = this.m, r = m.rider!;
+    this.ticks++;
+    if (!m.tamed) {
+      if (Math.random() < 0.05) m.yaw += (Math.random() - 0.5) * 1.5;
+      m.setMove(m.x - Math.sin(m.yaw) * 2, m.z - Math.cos(m.yaw) * 2, m.type.walkSpeed);
+      if (this.ticks < this.buckAt) return;
+      if (Math.random() * 100 < m.temper) {
+        m.ownerId = r.id ?? 0;
+        m.persistent = true;
+        m.homeChunk = -1;
+        m.events?.fx?.(m, 'tame');
+      } else {
+        m.temper = Math.min(100, m.temper + 5);
+        m.rider = null;
+        m.vy = 5;
+        m.events?.sound(m, 'angry');
+        m.events?.fx?.(m, 'smoke');
+      }
+      return;
+    }
+    if (!m.saddled) return;
+    m.yaw = m.rideYaw;
+    const f = m.rideForward < 0 ? m.rideForward * 0.25 : m.rideForward, s = m.rideStrafe * 0.5;
+    const sin = Math.sin(m.yaw), cos = Math.cos(m.yaw);
+    const wx = (-sin * f - cos * s) * m.rideSpeed, wz = (-cos * f + sin * s) * m.rideSpeed;
+    // Full speed at once on the ground (ground friction runs after the move), drifting in the air.
+    const accel = m.onGround ? 1 : 0.1;
+    m.vx += (wx - m.vx) * accel;
+    m.vz += (wz - m.vz) * accel;
+    if (m.rideJump && m.onGround) m.vy = m.rideJumpSpeed;
+    m.wantJump = f > 0 && m.onGround && m.horizontalCollision;
+  }
 }
-

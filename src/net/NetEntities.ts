@@ -4,7 +4,7 @@ import { ItemEntity } from '../entities/ItemEntity';
 import { Mob } from '../entities/Mob';
 import { MOB_TYPES } from '../entities/MobTypes';
 import { PrimedTnt } from '../entities/PrimedTnt';
-import { NET_MOB_KINDS, type ServerMessage } from './protocol';
+import { MOB_FLAG, NET_MOB_KINDS, type ServerMessage } from './protocol';
 
 /** Entities are drawn this far in the past so two 10 Hz snapshots always bracket the frame. */
 const INTERPOLATION_DELAY = 0.15;
@@ -55,12 +55,19 @@ export class NetEntities {
       const m = tr.entity;
       m.headYaw = headYaw;
       m.headPitch = headPitch;
-      m.onGround = (flags & 1) !== 0;
-      m.burning = flags & 2 ? 20 : 0;
-      m.health = flags & 4 ? 0 : m.type.health;
+      m.onGround = (flags & MOB_FLAG.GROUND) !== 0;
+      m.burning = flags & MOB_FLAG.BURNING ? 20 : 0;
+      m.health = flags & MOB_FLAG.DEAD ? 0 : m.type.health;
       m.hurtTime = hurtTime;
-      m.prevFuse = m.fuse = fuse;
       m.deathTime = deathTime;
+      m.sitting = (flags & MOB_FLAG.SITTING) !== 0;
+      m.ownerId = flags & MOB_FLAG.TAMED ? 0 : -1;
+      m.angryTicks = flags & MOB_FLAG.ANGRY ? 1 : 0;
+      m.busy = flags & MOB_FLAG.BUSY ? 20 : 0;
+      const baby = (flags & MOB_FLAG.BABY) !== 0;
+      if (m.type.kind === 'creeper') m.prevFuse = m.fuse = fuse;
+      else applyVariant(m, fuse);
+      if (baby !== m.baby) m.setBaby(baby);
       this.push(tr, now, x, y, z, yaw);
     }
     this.prune(this.mobs, seen, (m) => { m.removed = true; });
@@ -216,4 +223,14 @@ export class NetEntities {
       map.clear();
     }
   }
+}
+
+/** The variant byte of a mirrored mob (see MobEntry): sheep colour, slime size, collar, horse coat and saddle. */
+function applyVariant(m: Mob, v: number): void {
+  if (m.type.kind === 'slime') {
+    if (m.size !== v && v > 0) { m.size = v; m.refreshSize(); }
+    return;
+  }
+  if (m.type.kind === 'horse') { m.variant = v & 15; m.saddled = (v & 16) !== 0; return; }
+  m.variant = v;
 }

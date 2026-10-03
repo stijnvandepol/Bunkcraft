@@ -2,11 +2,12 @@ import { EntityManager } from '../src/entities/EntityManager';
 import type { Mob, MobEvents, MobSound, MobTarget } from '../src/entities/Mob';
 import { type ItemStack, ITEM, blockDrop, encodeData, getItemDef } from '../src/items/ItemRegistry';
 import {
-  type ArrowEntry, type ItemEntry, type MobEntry, NET_MOB_KINDS, type ServerMessage, type TntEntry,
+  type ArrowEntry, type ItemEntry, MOB_FLAG, type MobEntry, NET_MOB_KINDS, type ServerMessage, type TntEntry,
 } from '../src/net/protocol';
 import { type GameMode, hasSurvivalRules } from '../src/player/GameMode';
 import { BLOCK, getBlockDef } from '../src/world/BlockRegistry';
 import { ServerWorld } from './ServerWorld';
+import { useOnMob } from '../src/entities/MobInteraction';
 
 /** Entities are sent to a player when they are this close (blocks). */
 const SEND_RADIUS = 64;
@@ -26,6 +27,9 @@ export interface EntityPlayer {
   flags: number;
   held: number;
   hasPos: boolean;
+  /** View direction (endermen notice stares). */
+  yaw?: number;
+  pitch?: number;
 }
 
 export interface EntityHost {
@@ -81,6 +85,8 @@ export class ServerEntities {
     this.manager = new EntityManager(this.world, seed);
     this.world.onChunkReady = (c) => this.manager.onChunkReady(c);
     this.world.onChunkUnloaded = (k) => this.manager.onChunkUnloaded(k);
+    // Sheep grazing changes blocks: every client must see it.
+    this.manager.blockHook = (x, y, z, id) => host.broadcastBlock(x, y, z, id);
   }
 
   /** Drops everything that lives only while players are around (mobs respawn from the seed). */
@@ -109,7 +115,7 @@ export class ServerEntities {
     const active = players.filter((p) => p.hasPos);
     if (active.length === 0) return;
     const attackable = hasSurvivalRules(this.mode);
-    const targets: MobTarget[] = active.map((p) => ({ x: p.x, y: p.y, z: p.z, attackable, id: p.id }));
+    const targets: MobTarget[] = active.map((p) => ({ x: p.x, y: p.y, z: p.z, attackable, id: p.id, held: p.held, yaw: p.yaw, pitch: p.pitch }));
     this.world.update(targets);
     // Water and lava flow (budgeted per tick); what changed goes out as one batch.
     this.world.tickLiquids();
@@ -135,7 +141,20 @@ export class ServerEntities {
     if (d > ATTACK_REACH) return;
     const damage = getItemDef(p.held)?.tool?.damage ?? 1;
     // Sprint hits knock back further, like Minecraft.
-    if (m.hurt(damage, p.x, p.z, p.flags & 1 ? 1.6 : 1, true)) this.mobSound(m, 'hurt');
+    if (m.hurt(damage, p.x, p.z, p.flags & 1 ? 1.6 : 1, true, { x: p.x, y: p.y, z: p.z, attackable: true, id: p.id })) this.mobSound(m, 'hurt');
+  }
+
+  /** Right click on a mob with the held item; the client pays for it when told (`mobused`). Riding is singleplayer only. */
+  useMob(p: EntityPlayer, mobId: number): void {
+    const m = this.manager.mobs.find((e) => e.netId === mobId);
+    if (!m || m.dead || m.removed || !p.hasPos) return;
+    if (Math.hypot(m.x - p.x, m.y + m.height / 2 - (p.y + 1.62), m.z - p.z) > ATTACK_REACH) return;
+    // The mob's events (hearts, sounds) go through this server's handlers.
+    m.events = this.events;
+    m.world = this.manager;
+    const r = useOnMob(m, p.held, p.id);
+    if (r.action === 'none' || r.action === 'mount') return;
+    this.host.send(p.id, { t: 'mobused', action: r.action, consume: r.consume, give: r.give, damageTool: r.damageTool });
   }
 
   shoot(p: EntityPlayer, x: number, y: number, z: number, dx: number, dy: number, dz: number, power: number): void {
@@ -181,7 +200,18 @@ export class ServerEntities {
   private readonly events: MobEvents = {
     attack: (mob, damage, target) => {
       if (target.id === undefined) return;
-      this.host.send(target.id, { t: 'hurt', amount: damage, cause: 'mob', by: mob.type.name, yaw: Math.atan2(target.x - mob.x, target.z - mob.z) });
+      this.host.send(target.id, {
+        t: 'hurt', amount: damage, cause: 'mob', by: mob.type.name, yaw: Math.atan2(target.x - mob.x, target.z - mob.z), poison: mob.type.poison,
+      });
+    },
+    potion: (mob, target) => {
+      // Placeholder until the effects module: a splash of poison (see Game.witchPotion).
+      if (target.id === undefined) return;
+      this.host.send(target.id, { t: 'hurt', amount: 1, cause: 'mob', by: mob.type.name, yaw: Math.atan2(target.x - mob.x, target.z - mob.z), poison: 100 });
+    },
+    fx: (mob, fx) => {
+      const msg: ServerMessage = { t: 'mobfx', id: mob.netId, fx };
+      for (const p of this.players) if (p.hasPos && Math.hypot(p.x - mob.x, p.z - mob.z) < 48) this.host.send(p.id, msg);
     },
     explode: (mob) => this.explode(mob.type.name, mob.x, mob.y + 0.5, mob.z, 3, false),
     tntExplode: (t) => this.explode('', t.x, t.y + 0.49, t.z, 4, t.inWater),
@@ -263,8 +293,8 @@ export class ServerEntities {
         if (e.removed || Math.hypot(e.x - p.x, e.y - p.y, e.z - p.z) > SEND_RADIUS) continue;
         const kind = NET_MOB_KINDS.indexOf(e.type.kind as typeof NET_MOB_KINDS[number]);
         if (kind < 0) continue;
-        m.push([e.netId, kind, r2(e.x), r2(e.y), r2(e.z), r2(e.yaw), r2(e.headYaw), r2(e.headPitch),
-          (e.onGround ? 1 : 0) | (e.burning > 0 ? 2 : 0) | (e.dead ? 4 : 0), e.hurtTime, e.fuse, e.deathTime]);
+        m.push([e.netId, kind, r2(e.x), r2(e.y), r2(e.z), r2(e.yaw), r2(e.headYaw), r2(e.headPitch), mobFlags(e), e.hurtTime,
+          e.type.kind === 'creeper' ? e.fuse : mobVariant(e), e.deathTime]);
       }
       for (const e of items) {
         if (e.removed || Math.hypot(e.x - p.x, e.y - p.y, e.z - p.z) > SEND_ITEM_RADIUS) continue;
@@ -289,4 +319,18 @@ export class ServerEntities {
   forget(playerId: number): void {
     this.sentAnything.delete(playerId);
   }
+}
+
+/** Snapshot flag bits of a mob (MOB_FLAG). */
+export function mobFlags(e: Mob): number {
+  return (e.onGround ? MOB_FLAG.GROUND : 0) | (e.burning > 0 ? MOB_FLAG.BURNING : 0) | (e.dead ? MOB_FLAG.DEAD : 0)
+    | (e.baby ? MOB_FLAG.BABY : 0) | (e.sitting ? MOB_FLAG.SITTING : 0) | (e.tamed ? MOB_FLAG.TAMED : 0)
+    | (e.angryTicks > 0 ? MOB_FLAG.ANGRY : 0) | (e.busy > 0 ? MOB_FLAG.BUSY : 0);
+}
+
+/** The kind-specific byte sent in the fuse slot (see MobEntry). */
+export function mobVariant(e: Mob): number {
+  if (e.type.kind === 'slime') return e.size;
+  if (e.type.kind === 'horse') return (e.variant & 15) | (e.saddled ? 16 : 0);
+  return e.variant & 255;
 }

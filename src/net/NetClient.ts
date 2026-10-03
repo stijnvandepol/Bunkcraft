@@ -144,6 +144,10 @@ export class NetClient {
     this.send({ t: 'attack', id });
   }
 
+  sendUseMob(id: number): void {
+    this.send({ t: 'usemob', id });
+  }
+
   sendShoot(x: number, y: number, z: number, dx: number, dy: number, dz: number, power: number): void {
     this.send({ t: 'shoot', x, y, z, dx, dy, dz, power });
   }

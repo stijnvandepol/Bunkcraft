@@ -11,8 +11,15 @@ import type { GameMode } from '../player/GameMode';
  */
 export const PROTOCOL_VERSION = 4;
 
-/** Mob kinds in network order (index in entity snapshots). */
-export const NET_MOB_KINDS = ['pig', 'cow', 'sheep', 'chicken', 'zombie', 'creeper', 'skeleton', 'spider'] as const;
+/** Mob kinds in network order (index in entity snapshots). APPEND-ONLY. */
+export const NET_MOB_KINDS = ['pig', 'cow', 'sheep', 'chicken', 'zombie', 'creeper', 'skeleton', 'spider',
+  'wolf', 'enderman', 'slime', 'drowned', 'husk', 'stray', 'cave_spider', 'witch', 'horse'] as const;
+
+/** Mob snapshot flag bits (MobEntry index 8). */
+export const MOB_FLAG = { GROUND: 1, BURNING: 2, DEAD: 4, BABY: 8, SITTING: 16, TAMED: 32, ANGRY: 64, BUSY: 128 } as const;
+
+/** Right-click outcomes (see entities/MobInteraction.ts UseResult). */
+export type UseAction = 'none' | 'feed' | 'tame' | 'tame_fail' | 'sit' | 'stand' | 'shear' | 'milk' | 'dye' | 'saddle' | 'mount';
 export type NetMobKind = typeof NET_MOB_KINDS[number];
 
 /** Saved per player on the server (by name). */
@@ -55,7 +62,11 @@ export interface MatchInfo {
 /** Snapshot entry: [id, x, y, z, yaw, pitch, flags, heldItem]. flags: 1 sprinting, 2 flying, 4 on ground. */
 export type SnapshotEntry = [number, number, number, number, number, number, number, number];
 
-/** Mob snapshot: [id, kind, x, y, z, yaw, headYaw, headPitch, flags, hurtTime, fuse, deathTime]. flags: 1 on ground, 2 burning, 4 dead. */
+/**
+ * Mob snapshot: [id, kind, x, y, z, yaw, headYaw, headPitch, flags, hurtTime, fuse, deathTime]. flags: MOB_FLAG bits.
+ * `fuse` is the creeper fuse for creepers and the kind's `variant` byte for every other kind (sheep colour and
+ * shorn bit, slime size, collar colour, horse coat with the saddle in bit 4).
+ */
 export type MobEntry = [number, number, number, number, number, number, number, number, number, number, number, number];
 /** Dropped item: [id, itemId, count, x, y, z]. */
 export type ItemEntry = [number, number, number, number, number, number];
@@ -80,6 +91,8 @@ export type ClientMessage =
   | { t: 'state'; inventory: number[][]; stats: number[] }
   /** Melee hit on a server mob (damage comes from the held item the server knows). */
   | { t: 'attack'; id: number }
+  /** Right click on a server mob with the held item (feed, tame, shear, milk, dye, saddle). */
+  | { t: 'usemob'; id: number }
   /** Bow shot; power 0..1. */
   | { t: 'shoot'; x: number; y: number; z: number; dx: number; dy: number; dz: number; power: number }
   /** Flint and steel on a TNT block. */
@@ -151,7 +164,11 @@ export type ServerMessage =
   /** Entities around the player (10 Hz). Lists replace what the client knows. */
   | { t: 'ent'; m: MobEntry[]; i: ItemEntry[]; a: ArrowEntry[]; b: TntEntry[] }
   /** A mob or arrow hurt this player. */
-  | { t: 'hurt'; amount: number; cause: 'mob' | 'arrow'; by: string; yaw: number }
+  | { t: 'hurt'; amount: number; cause: 'mob' | 'arrow'; by: string; yaw: number; poison?: number }
+  /** The server applied a right click on a mob: what it costs the held stack (see entities/MobInteraction). */
+  | { t: 'mobused'; action: UseAction; consume: number; give?: number; damageTool?: boolean }
+  /** Hearts, smoke and similar over a mob. */
+  | { t: 'mobfx'; id: number; fx: 'love' | 'smoke' | 'angry' | 'tame' | 'poof' }
   /** An explosion: destroyed blocks as x, y, z triples; the client plays effects and takes its own damage. */
   | { t: 'boom'; x: number; y: number; z: number; power: number; by: string; water: boolean; blocks: number[] }
   | { t: 'msound'; kind: string; event: 'idle' | 'hurt' | 'death' | 'fuse' | 'angry' | 'teleport' | 'arrow' | 'shoot'; x: number; y: number; z: number }

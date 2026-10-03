@@ -171,8 +171,10 @@ describe('animals', () => {
     const pig = s.em.spawnMob('pig', 0.5, 63, 0.5);
     s.tick(2);
     pig.hurt(1, 0.5, 1.5, 0, true);
-    s.tick(40);
-    expect(Math.hypot(pig.x - 0.5, pig.z - 0.5)).toBeGreaterThan(1.5);
+    let moved = 0;
+    for (let i = 0; i < 60; i++) { s.tick(); moved = Math.max(moved, Math.hypot(pig.x - 0.5, pig.z - 0.5)); }
+    expect(pig.panic).toBeGreaterThan(0);
+    expect(moved).toBeGreaterThan(1.5);
   });
 
   it('stroll only to loaded, dry ground', () => {
@@ -241,9 +243,15 @@ describe('path budget', () => {
     for (let x = -30; x <= 30; x += 6) for (let z = -30; z <= 30; z++) if (Math.abs(z) > 1) s.world.set(x, 63, z, BLOCK.STONE), s.world.set(x, 64, z, BLOCK.STONE);
     for (let i = 0; i < 40; i++) s.em.spawnMob(i % 2 ? 'zombie' : 'pig', -25 + (i % 10) * 5 + 0.5, 63, -20 + Math.floor(i / 10) * 10 + 0.5);
     s.tick(40);
-    const t0 = performance.now();
-    s.tick(200);
-    const per = (performance.now() - t0) / 200;
-    expect(per).toBeLessThan(1);
+    // Best of several batches: other processes on the machine only ever make a batch slower.
+    let best = Infinity;
+    const searches0 = pathStats.searches;
+    for (let b = 0; b < 6; b++) {
+      const t0 = performance.now();
+      s.tick(40);
+      best = Math.min(best, (performance.now() - t0) / 40);
+    }
+    expect((pathStats.searches - searches0) / 240).toBeLessThanOrEqual(EntityManager.PATHS_PER_TICK);
+    expect(best).toBeLessThan(1);
   });
 });

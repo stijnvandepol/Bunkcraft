@@ -9,6 +9,8 @@ import { TntRenderer } from '../entities/TntRenderer';
 import { ArrowRenderer } from '../entities/ArrowRenderer';
 import type { Mob, MobEvents } from '../entities/Mob';
 import { MobRenderer } from '../entities/MobRenderer';
+import { type UseResult, canUseOnMob, useOnMob } from '../entities/MobInteraction';
+import { mount as mountHorse, rideStep } from '../entities/Riding';
 import { NetClient, type WelcomeMessage } from '../net/NetClient';
 import { NetEntities } from '../net/NetEntities';
 import { type ClientMessage, type ServerMessage, formatCode, normalizeCode } from '../net/protocol';
@@ -512,6 +514,7 @@ export class Game {
       chestsAllowed: () => !this.net,
       openChest: (x, y, z) => this.openChest(x, y, z),
       useBed: (x, y, z) => this.useBed(x, y, z),
+      useMob: (mob) => this.useMob(mob),
       shootArrow: (power, pickup) => {
         const cam = this.cam.camera;
         const dir = cam.getWorldDirection(this.tmpDir);
@@ -911,7 +914,16 @@ export class Game {
     switch (msg.t) {
       case 'snap': this.remote.snapshot(msg.players, this.net?.id ?? -1, performance.now() / 1000); break;
       case 'ent': this.netEntities?.apply(msg, performance.now() / 1000); break;
-      case 'hurt': this.hurtByServer(msg.cause, msg.amount, msg.by, msg.yaw); break;
+      case 'hurt':
+        this.hurtByServer(msg.cause, msg.amount, msg.by, msg.yaw);
+        if (msg.poison) this.stats.poison = Math.max(this.stats.poison, msg.poison);
+        break;
+      case 'mobused': this.applyMobUse(msg); break;
+      case 'mobfx': {
+        const m = this.entities?.mobs.find((e) => e.netId === msg.id);
+        if (m) this.mobRenderer.emote(msg.fx, m.x, m.y + m.height, m.z, m.width);
+        break;
+      }
       case 'boom':
         world?.applyRemoteRemovals(msg.blocks);
         this.explosionEffects(msg.by, msg.x, msg.y, msg.z, msg.power);
@@ -1337,7 +1349,9 @@ export class Game {
   }
 
   /** Reused every game tick (no per-tick allocations). */
-  private readonly mobTarget = { x: 0, y: 0, z: 0, attackable: false };
+  private readonly mobTarget = { x: 0, y: 0, z: 0, attackable: false, held: 0, yaw: 0, pitch: 0 };
+  /** The horse the player rides (singleplayer), null on foot. */
+  private mount: Mob | null = null;
 
   private readonly pickupItem = (s: ItemStack): number => {
     const left = this.playerInventory.add(s);
@@ -1350,6 +1364,8 @@ export class Game {
       const p = this.player;
       const yaw = Math.atan2(p.x - mob.x, p.z - mob.z);
       if (this.stats.damage(damage, 'mob', this.mode, mob.type.name, yaw)) {
+        // Cave spiders poison (7 s on Normal).
+        if (mob.type.poison) this.stats.poison = Math.max(this.stats.poison, mob.type.poison);
         // Knockback away from the attacker.
         const d = Math.hypot(p.x - mob.x, p.z - mob.z) || 1;
         p.vx += ((p.x - mob.x) / d) * 8;
@@ -1388,6 +1404,11 @@ export class Game {
       const d = Math.hypot(mob.x - this.player.x, mob.y - this.player.y, mob.z - this.player.z);
       this.audio.playMob(mob.type.kind, kind, Math.max(0, 1 - d / 16), mob);
     },
+    fx: (mob, kind) => this.mobRenderer.emote(kind, mob.x, mob.y + mob.height, mob.z, mob.width),
+    // TODO: XP orbs once the XP system exposes awardXp (breeding gives 1-7).
+    xp: () => undefined,
+    potion: (mob) => this.witchPotion(mob.type.name, mob.x, mob.z),
+
   };
 
   /**
@@ -1441,6 +1462,59 @@ export class Game {
   }
 
   /** Damage from a server mob or arrow: same hurt camera, knockback and rules as a local hit. */
+  /**
+   * A witch's potion hits the player: Poison for 5 s plus a splash. Placeholder until the effects module brings real
+   * potions (slowness, weakness, harming); onzeker how far this matches the witch's choice of potion.
+   */
+  private witchPotion(by: string, x: number, z: number): void {
+    const p = this.player;
+    if (!hasSurvivalRules(this.mode) || this.stats.dead) return;
+    this.stats.damage(1, 'mob', this.mode, by, Math.atan2(p.x - x, p.z - z));
+    this.stats.poison = Math.max(this.stats.poison, 100);
+    for (let i = 0; i < 4; i++) this.renderer.particles.spawnBreak(Math.floor(p.x), Math.floor(p.y + 1), Math.floor(p.z), BLOCK.GLASS, 0xf0, 0x8a2ab0);
+    this.audio.playMob('witch', 'hurt', 0.6);
+  }
+
+  /** Right click on a mob: feed, tame, shear, milk, dye, saddle or mount. True when something happened. */
+  private useMob(mob: Mob): boolean {
+    const held = this.hotbar.selectedStack.id;
+    if (mob.remote) {
+      if (!this.net || !canUseOnMob(mob, held, this.net.id)) return false;
+      this.net.sendUseMob(mob.netId);
+      return true;
+    }
+    const r = useOnMob(mob, held, 0);
+    if (r.action === 'none') return false;
+    if (r.action === 'mount') {
+      if (this.mount) return false;
+      this.mount = mob;
+      mountHorse(this.player, mob, this.mobTarget);
+      return true;
+    }
+    this.applyMobUse(r);
+    return true;
+  }
+
+  /** What using an item on a mob costs: the item is eaten, swapped (bucket → milk) or worn (shears). */
+  private applyMobUse(r: UseResult): void {
+    const inv = this.playerInventory, slot = this.hotbar.selected;
+    if (r.action === 'shear') this.audio.playMob('sheep', 'hurt', 0.4);
+    if (!hasSurvivalRules(this.mode)) {
+      if (r.give) inv.add({ id: r.give, count: 1 });
+      this.hotbar.refresh();
+      return;
+    }
+    if (r.damageTool) inv.damageTool(slot);
+    if (r.give) {
+      if (inv.get(slot).count <= r.consume) inv.set(slot, { id: r.give, count: 1 });
+      else {
+        inv.consumeSlot(slot, r.consume);
+        if (inv.add({ id: r.give, count: 1 }) > 0) this.entities?.dropItem({ id: r.give, count: 1 }, this.player.x, this.player.y + 1, this.player.z, 40);
+      }
+    } else if (r.consume > 0) inv.consumeSlot(slot, r.consume);
+    this.hotbar.refresh();
+  }
+
   private hurtByServer(cause: 'mob' | 'arrow', amount: number, by: string, yaw: number): void {
     const p = this.player;
     if (!this.stats.damage(amount, cause, this.mode, by, yaw)) return;
@@ -1491,6 +1565,8 @@ export class Game {
     const target = this.mobTarget;
     target.x = p.x; target.y = p.y; target.z = p.z;
     target.attackable = alive && hasSurvivalRules(this.mode);
+    target.held = this.hotbar.selectedStack.id;
+    target.yaw = p.yaw; target.pitch = p.pitch;
     this.entities?.tick(
       target,
       // Rain and thunder count as extra darkness for the spawn rules.
@@ -1539,7 +1615,9 @@ export class Game {
         p.airAccel = arcade.airAccel;
       }
       while (this.accumulator >= PHYSICS.STEP) {
-        p.step(move, this.getBlock, this.getMeta);
+        // Riding: the horse moves, the player sits on it (sneak gets off).
+        if (this.mount && !rideStep(p, this.mount, move, ((this.stepCount % STEPS_PER_TICK) + 1) / STEPS_PER_TICK)) this.mount = null;
+        if (!this.mount) p.step(move, this.getBlock, this.getMeta);
         move.jumpPressed = false;
         this.accumulator -= PHYSICS.STEP;
         if (++this.stepCount % STEPS_PER_TICK === 0) this.gameTick();
