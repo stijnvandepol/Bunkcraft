@@ -37,7 +37,9 @@ describe('block ids', () => {
   });
 
   it('leaves room for what comes next', () => {
-    expect(Math.max(...BLOCK_DEFS.map((d) => d.id))).toBeLessThan(230);
+    // Content grows from the bottom of the id range, redstone (and later systems) from the top (254 downwards).
+    expect(BLOCK_DEFS.length).toBeLessThan(230);
+    expect(new Set(BLOCK_DEFS.map((d) => d.id)).size).toBe(BLOCK_DEFS.length);
   });
 });
 
