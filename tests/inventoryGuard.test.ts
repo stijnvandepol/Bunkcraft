@@ -71,6 +71,25 @@ describe('InventoryGuard: items only enter through routes the server saw', () =>
     expect(g.check(inv([ITEM.DIAMOND, 1, 0])).ok).toBe(false); // no recipe at all
   });
 
+  it('container transfers are neutral: withdrawn items pass, deposited ones leave the pool, a cursor counts as held', () => {
+    const g = new InventoryGuard([{ id: ITEM.COAL, count: 10 }]);
+    // Ten coal picked up onto the cursor: the state without them plus the cursor still adds up.
+    expect(g.check(inv(), { id: ITEM.COAL, count: 10 }).ok).toBe(true);
+    // Put into a chest: they leave the pool, so claiming them again fails.
+    expect(g.spendTransfer(ITEM.COAL, 10)).toBe(true);
+    expect(g.spendTransfer(ITEM.COAL, 1)).toBe(false);
+    expect(g.check(inv([ITEM.COAL, 10, 0])).ok).toBe(false);
+    // Taken back out: allowed again.
+    const h = new InventoryGuard([]);
+    h.creditTransfer(ITEM.IRON_INGOT, 3);
+    expect(h.check(inv([ITEM.IRON_INGOT, 3, 0])).ok).toBe(true);
+  });
+
+  it('smelting is not instant crafting any more (it goes through a furnace)', () => {
+    const g = new InventoryGuard([{ id: BLOCK.IRON_ORE, count: 1 }, { id: ITEM.COAL, count: 1 }]);
+    expect(g.check(inv([ITEM.IRON_INGOT, 1, 0])).ok).toBe(false);
+  });
+
   it('refuses stack sizes the client could not build', () => {
     const g = new InventoryGuard([{ id: BLOCK.DIRT, count: 64 }, { id: BLOCK.DIRT, count: 64 }]);
     expect(g.check(inv([BLOCK.DIRT, 100, 0])).ok).toBe(false);
