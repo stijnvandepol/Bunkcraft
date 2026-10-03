@@ -8,7 +8,9 @@ import { type RoomInfo, browseRooms, createRoom, forgetGame, lookupRoom, ownerTo
 import { GAME_TYPES, type GameType, gameTypeDef } from '../modes/GameTypes';
 import { MAP_SETTINGS, MENU_DEFAULT_MAP, type MapSetting, getMap, mapName } from '../modes/maps';
 import { installButton } from '../pwa/Pwa';
-import { button, h, menuScreen, screen } from './dom';
+import { button, dirtBackground, h, menuScreen, screen } from './dom';
+import { cheatsAllowed } from '../save/SaveSystem';
+import { TIP_COUNT, modeHint, modeName, t, tip } from './i18n';
 import { difficultyButton, gameRulesScreen } from './GameRulesScreen';
 import { DEFAULT_DIFFICULTY, type Difficulty } from '../world/Difficulty';
 import { GameRules } from '../world/GameRules';
@@ -18,7 +20,7 @@ import type { ScreenStack } from './Screens';
 export interface MenuActions {
   listWorlds(): Promise<WorldMeta[]>;
   playWorld(meta: WorldMeta): void;
-  createWorld(name: string, seedText: string, mode: GameMode, extra?: { difficulty: Difficulty; rules?: Record<string, boolean | number> }): void;
+  createWorld(name: string, seedText: string, mode: GameMode, extra?: { difficulty: Difficulty; rules?: Record<string, boolean | number>; cheats?: boolean }): void;
   deleteWorld(id: string): Promise<void>;
   /** Persists changed world metadata (rename, game mode). */
   saveWorld(meta: WorldMeta): Promise<void>;
@@ -30,6 +32,10 @@ export interface MenuActions {
   logo(): HTMLCanvasElement;
   /** Fallback world icon (data URL) when a world has no screenshot yet. */
   defaultWorldIcon(): string;
+  /** Key names for the {inventory}, {chat}, {command}, {sprint}, {drop} placeholders in loading tips. */
+  tipKeys?(): Record<string, string>;
+  /** Opens the Language screen on the title screen (the Options button next to it opens the rest). */
+  openLanguage?(): void;
 }
 
 export const VERSION = 'BunkCraft 1.0';
@@ -68,6 +74,21 @@ function store(key: string, value: string): void {
   try { localStorage.setItem(key, value); } catch { /* private mode: nothing to remember */ }
 }
 
+/** Minecraft's date splashes (Christmas, New Year, Halloween) win over the random ones on those days. */
+export function dateSplash(now: Date): string | null {
+  const m = now.getMonth() + 1, d = now.getDate();
+  if (m === 12 && d >= 24 && d <= 26) return 'Merry X-mas!';
+  if (m === 1 && d === 1) return 'Happy new year!';
+  if (m === 10 && d === 31) return 'OOoooOOOoooo! Spooky!';
+  return null;
+}
+
+/** "yyyy/MM/dd HH:mm" like the Minecraft world list. */
+export function formatWorldDate(ts: number): string {
+  const d = new Date(ts), p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}/${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
 const SPLASHES = [
   'Now in your browser!', 'Greedy meshed!', 'Made of typed arrays!', '60 frames per second!',
   'Web Workers inside!', 'Procedurally generated!', 'Pixel perfect!', 'Ambient occlusion!',
@@ -84,7 +105,7 @@ export class MainMenu {
 
   showTitle(): void {
     this.stack.clear();
-    const splashText = SPLASHES[Math.floor(Math.random() * SPLASHES.length)];
+    const splashText = dateSplash(new Date()) ?? SPLASHES[Math.floor(Math.random() * SPLASHES.length)];
     const splash = h('div', { class: 'splash', text: splashText });
     // Long splashes shrink, like Minecraft's 1.8 × 100 / (width + 32) rule.
     splash.style.setProperty('--splash-scale', String(Math.min(1.8, (1.8 * 100) / (splashText.length * 6 + 32))));
@@ -92,22 +113,31 @@ export class MainMenu {
     logo.classList.add('logo');
 
     this.stack.push(screen('title-screen',
-      h('div', { class: 'logo-wrap' }, logo, h('div', { class: 'edition', text: 'Browser Edition' })),
+      h('div', { class: 'logo-wrap' }, logo, h('div', { class: 'edition', text: t('title.edition') })),
       splash,
       h('div', { class: 'title-buttons' },
-        button('Singleplayer', () => void this.showWorlds()),
-        button('Multiplayer', () => void this.showMultiplayer()),
-        button('BunkCraft Realms', () => undefined, { disabled: true }),
+        button(t('title.singleplayer'), () => void this.showWorlds()),
+        button(t('title.multiplayer'), () => void this.showMultiplayer()),
+        button(t('title.realms'), () => undefined, { disabled: true }),
         h('div', { class: 'gap' }),
         h('div', { class: 'row' },
-          button('Options...', () => this.actions.openOptions(), { cls: 'half' }),
-          button('Quit Game', () => this.quit(), { cls: 'half' }),
+          this.actions.openLanguage ? this.iconButton('icon-lang', t('title.language'), () => this.actions.openLanguage!()) : null,
+          button(t('title.options'), () => this.actions.openOptions(), { cls: 'half' }),
+          button(t('title.quit'), () => this.quit(), { cls: 'half' }),
         ),
       ),
       installButton('pwa-install-title'),
       h('div', { class: 'footer-left', text: VERSION }),
-      h('div', { class: 'footer-right', text: 'Not affiliated with Mojang' }),
+      h('div', { class: 'footer-right', text: t('title.disclaimer') }),
     ));
+  }
+
+  /** Small square icon button (Language), drawn from CSS so it stays crisp at every GUI scale. */
+  private iconButton(icon: string, title: string, onClick: () => void): HTMLButtonElement {
+    const b = button('', onClick, { cls: `icon ${icon}` });
+    b.title = title;
+    b.setAttribute('aria-label', title);
+    return b;
   }
 
   /**
@@ -397,50 +427,51 @@ export class MainMenu {
   /** "Connection Lost" / failed to connect screen. */
   showDisconnected(reason: string): void {
     this.stack.clear();
-    this.stack.push(menuScreen('Disconnected', [
+    this.stack.push(menuScreen(t('disconnected.title'), [
       h('div', { class: 'hint', text: reason }),
-    ], [button('Back to Title Screen', () => this.showTitle())]));
+    ], [button(t('disconnected.back'), () => this.showTitle())]));
   }
 
   /** A browser tab cannot close itself unless script-opened; leave fullscreen and say so. */
   private quit(): void {
     if (document.fullscreenElement) void document.exitFullscreen();
     window.close();
-    this.stack.push(menuScreen('Quit Game', [
-      h('div', { class: 'hint', text: 'Thanks for playing! You can now close this browser tab.' }),
-    ], [button('Back to Title', () => this.stack.pop())]));
+    this.stack.push(menuScreen(t('quit.title'), [
+      h('div', { class: 'hint', text: t('quit.text') }),
+    ], [button(t('quit.back'), () => this.stack.pop())]));
   }
 
   async showWorlds(): Promise<void> {
     const worlds = await this.actions.listWorlds();
+    worlds.sort((a, b) => b.lastPlayed - a.lastPlayed);
     let selected: WorldMeta | null = worlds[0] ?? null;
     let filter = '';
     const list = h('div', { class: 'world-list' });
-    const search = h('input', { class: 'mc-input', placeholder: 'Search...', maxLength: 32 });
-    const play = button('Play Selected World', () => selected && this.actions.playWorld(selected), { cls: 'w150' });
-    const del = button('Delete', () => selected && this.confirmDelete(selected), { cls: 'w72' });
+    const search = h('input', { class: 'mc-input', placeholder: t('worlds.search'), maxLength: 32 });
+    const play = button(t('worlds.play'), () => selected && this.actions.playWorld(selected), { cls: 'w150' });
+    const del = button(t('worlds.delete'), () => selected && this.confirmDelete(selected), { cls: 'w72' });
     let status = '';
     let statusError = false;
-    const edit = button('Edit', () => selected && this.showEdit(selected), { cls: 'w72' });
-    const recreate = button('Re-Create', () => selected && this.showCreate({ name: selected.name, seed: selected.seedText, mode: selected.gameMode }), { cls: 'w72' });
-    const exportBtn = button('Export', () => {
+    const edit = button(t('worlds.edit'), () => selected && this.showEdit(selected), { cls: 'w72' });
+    const recreate = button(t('worlds.recreate'), () => selected && this.showCreate({ name: selected.name, seed: selected.seedText, mode: selected.gameMode }), { cls: 'w72' });
+    const exportBtn = button(t('worlds.export'), () => {
       if (!selected) return;
-      this.actions.transfer.exportWorld(selected).then(() => say(`Exported '${selected?.name}'`), (e) => say(describeError(e), true));
+      this.actions.transfer.exportWorld(selected).then(() => say(t('worlds.exported', selected?.name ?? '')), (e) => say(describeError(e), true));
     }, { cls: 'w72' });
-    const importBtn = button('Import', () => void (async () => {
+    const importBtn = button(t('worlds.import'), () => void (async () => {
       const file = await pickFile('.bunkworld,.zip,application/zip');
       if (!file) return;
       try {
         const imported = await this.actions.transfer.importFile(file);
         worlds.splice(0, worlds.length, ...(await this.actions.listWorlds()));
         selected = worlds.find((w) => w.id === imported[0]?.id) ?? selected;
-        say(imported.length === 1 ? `Imported '${imported[0].name}'` : `Imported ${imported.length} worlds`);
+        say(imported.length === 1 ? t('worlds.imported', imported[0].name) : t('worlds.importedMany', imported.length));
       } catch (e) {
         say(describeError(e), true);
       }
     })(), { cls: 'w72' });
-    const backupBtn = button('Backup All', () => {
-      this.actions.transfer.backupAll().then((n) => say(`Backup of ${n} world${n === 1 ? '' : 's'} downloaded`), (e) => say(describeError(e), true));
+    const backupBtn = button(t('worlds.backupAll'), () => {
+      this.actions.transfer.backupAll().then((n) => say(t('worlds.backupDone', n)), (e) => say(describeError(e), true));
     }, { cls: 'w72' });
     const say = (text: string, isError = false) => { status = text; statusError = isError; render(); };
 
@@ -448,18 +479,26 @@ export class MainMenu {
       const shown = worlds.filter((w) => w.name.toLowerCase().includes(filter));
       list.replaceChildren();
       if (status) list.append(h('div', { class: statusError ? 'error' : 'hint', text: status }));
-      if (shown.length === 0) list.append(h('div', { class: 'world-empty', text: worlds.length ? 'No worlds found' : 'No worlds yet — create one!' }));
+      if (shown.length === 0) list.append(h('div', { class: 'world-empty', text: worlds.length ? t('worlds.notFound') : t('worlds.empty') }));
       for (const w of shown) {
-        const item = h('div', { class: `world-item${w === selected ? ' selected' : ''}` },
-          h('img', { class: 'world-icon', src: w.icon ?? this.actions.defaultWorldIcon(), alt: '', draggable: false }),
+        const mode = w.gameMode ?? 'creative';
+        const details = [t('worlds.mode', modeName(mode))];
+        if (cheatsAllowed(w)) details.push(t('worlds.cheats'));
+        details.push(t('worlds.version', VERSION.replace(/^BunkCraft /, '')));
+        const item = h('div', { class: `world-item${w === selected ? ' selected' : ''}`, tabIndex: 0 },
+          h('div', { class: 'world-icon-wrap' }, h('img', { class: 'world-icon', src: w.icon ?? this.actions.defaultWorldIcon(), alt: '', draggable: false })),
           h('div', { class: 'world-text' },
             h('div', { class: 'world-name', text: w.name }),
-            h('div', { class: 'world-meta', text: `${w.id} (${new Date(w.lastPlayed).toLocaleString()})` }),
-            h('div', { class: 'world-meta', text: `${GAME_MODE_NAMES[w.gameMode ?? 'creative']} Mode, Seed: ${w.seedText || w.seed}` }),
+            h('div', { class: 'world-meta', text: `${w.id} (${formatWorldDate(w.lastPlayed)})` }),
+            h('div', { class: 'world-meta', text: details.join(', ') }),
           ),
         );
         item.addEventListener('click', () => { selected = w; render(); });
         item.addEventListener('dblclick', () => this.actions.playWorld(w));
+        item.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') this.actions.playWorld(w);
+          else if (e.key === ' ') { e.preventDefault(); selected = w; render(); }
+        });
         list.append(item);
       }
       play.disabled = del.disabled = edit.disabled = recreate.disabled = exportBtn.disabled = !selected;
@@ -468,13 +507,13 @@ export class MainMenu {
     search.addEventListener('input', () => { filter = search.value.toLowerCase(); render(); });
     render();
 
-    const el = menuScreen('Select World', [list], [
-      h('div', { class: 'row' }, play, button('Create New World', () => this.showCreate(), { cls: 'w150' })),
+    const el = menuScreen(t('worlds.title'), [list], [
+      h('div', { class: 'row' }, play, button(t('worlds.create'), () => this.showCreate(), { cls: 'w150' })),
       h('div', { class: 'row' },
         edit,
         del,
         recreate,
-        button('Back', () => this.stack.pop(), { cls: 'w72' }),
+        button(t('common.back'), () => this.stack.pop(), { cls: 'w72' }),
       ),
       h('div', { class: 'row' }, exportBtn, importBtn, backupBtn),
     ], { list: true, tallFooter: true, cls: 'worlds-screen' });
@@ -488,114 +527,145 @@ export class MainMenu {
   }
 
   private confirmDelete(world: WorldMeta): void {
-    this.stack.push(menuScreen('Are you sure you want to delete this world?', [
-      h('div', { class: 'hint', text: `'${world.name}' will be lost forever! (A long time!)` }),
+    this.stack.push(menuScreen(t('worlds.deleteTitle'), [
+      h('div', { class: 'hint', text: t('worlds.deleteText', world.name) }),
     ], [
-      button('Delete', async () => {
+      button(t('common.delete'), async () => {
         await this.actions.deleteWorld(world.id);
         this.stack.pop();
         this.stack.pop();
         void this.showWorlds();
       }, { cls: 'w150' }),
-      button('Cancel', () => this.stack.pop(), { cls: 'w150' }),
+      button(t('common.cancel'), () => this.stack.pop(), { cls: 'w150' }),
     ]));
   }
 
-  /** Rename a world and change its game mode (the world itself is untouched). */
+  /** Rename a world, change its game mode and cheats, or download a backup (the world itself is untouched). */
   private showEdit(world: WorldMeta): void {
     const name = h('input', { class: 'mc-input', value: world.name, maxLength: 32 });
     let mode: GameMode = world.gameMode ?? 'creative';
-    const modeHint = h('div', { class: 'hint', text: GAME_MODE_HINTS[mode] });
-    const modeButton = button(`Game Mode: ${GAME_MODE_NAMES[mode]}`, () => {
+    let cheats = cheatsAllowed(world);
+    const modeHint$ = h('div', { class: 'hint', text: modeHint(mode, GAME_MODE_HINTS[mode]) });
+    const modeButton = button(t('create.mode', modeName(mode)), () => {
       mode = GAME_MODES[(GAME_MODES.indexOf(mode) + 1) % GAME_MODES.length];
-      modeButton.textContent = `Game Mode: ${GAME_MODE_NAMES[mode]}`;
-      modeHint.textContent = GAME_MODE_HINTS[mode];
+      modeButton.textContent = t('create.mode', modeName(mode));
+      modeHint$.textContent = modeHint(mode, GAME_MODE_HINTS[mode]);
+    });
+    const cheatText = () => t('edit.cheats', cheats ? t('common.on') : t('common.off'));
+    const cheatButton = button(cheatText(), () => { cheats = !cheats; cheatButton.textContent = cheatText(); });
+    const info = h('div', { class: 'hint' });
+    const backup = button(t('edit.backup'), () => {
+      this.actions.transfer.exportWorld(world).then(() => { info.textContent = t('edit.backupDone'); }, (e) => { info.textContent = describeError(e); });
     });
     const save = async () => {
       world.name = name.value.trim() || world.name;
       world.gameMode = mode;
+      world.cheats = cheats;
       await this.actions.saveWorld(world);
       this.stack.pop();
       this.stack.pop();
       void this.showWorlds();
     };
     name.addEventListener('keydown', (e) => { if (e.key === 'Enter') void save(); });
-    this.stack.push(menuScreen('Edit World', [
+    this.stack.push(menuScreen(t('edit.title'), [
       h('div', { style: COLUMN },
-        h('div', { class: 'field-label', text: 'World Name' }), name,
-        modeButton, modeHint,
-        h('div', { class: 'hint', text: `Seed: ${world.seedText || world.seed}` }),
+        h('div', { class: 'field-label', text: t('edit.name') }), name,
+        modeButton, modeHint$,
+        cheatButton,
+        backup,
+        info,
+        h('div', { class: 'hint', text: t('worlds.seed', world.seedText || world.seed) }),
       ),
     ], [
-      button('Save', () => void save(), { cls: 'w150' }),
-      button('Cancel', () => this.stack.pop(), { cls: 'w150' }),
+      button(t('common.save'), () => void save(), { cls: 'w150' }),
+      button(t('common.cancel'), () => this.stack.pop(), { cls: 'w150' }),
     ]));
     window.setTimeout(() => name.select(), 0);
   }
 
   showCreate(prefill: ShareParams = {}): void {
     const name = h('input', { class: 'mc-input', value: prefill.name ?? 'New World', maxLength: 32 });
-    const seed = h('input', { class: 'mc-input', placeholder: 'Leave blank for a random seed', maxLength: 32, value: prefill.seed ?? '' });
+    const seed = h('input', { class: 'mc-input', placeholder: t('create.seed.placeholder'), maxLength: 32, value: prefill.seed ?? '' });
     let mode: GameMode = prefill.mode ?? 'survival';
+    // Like Minecraft, cheats default on in Creative and off elsewhere until the player picks.
+    let cheats: boolean | null = null;
+    const cheatsOn = () => cheats ?? mode === 'creative';
     let difficulty: Difficulty = DEFAULT_DIFFICULTY;
     const rules = new GameRules();
     const create = () => this.actions.createWorld(name.value.trim() || 'New World', seed.value.trim(), mode,
-      { difficulty: mode === 'hardcore' ? 'hard' : difficulty, rules: rules.serialize() });
+      { difficulty: mode === 'hardcore' ? 'hard' : difficulty, rules: rules.serialize(), cheats: cheatsOn() });
     for (const input of [name, seed]) input.addEventListener('keydown', (e) => { if (e.key === 'Enter') create(); });
 
-    const column = 'display: flex; flex-direction: column; align-items: center; gap: calc(var(--s) * 4);';
-    const modeHint = h('div', { class: 'hint', text: GAME_MODE_HINTS[mode] });
-    const modeButton = button(`Game Mode: ${GAME_MODE_NAMES[mode]}`, () => {
+    const modeHint$ = h('div', { class: 'hint', text: modeHint(mode, GAME_MODE_HINTS[mode]) });
+    const cheatText = () => t('create.cheats', cheatsOn() ? t('common.on') : t('common.off'));
+    const cheatButton = button(cheatText(), () => { cheats = !cheatsOn(); cheatButton.textContent = cheatText(); });
+    const modeButton = button(t('create.mode', modeName(mode)), () => {
       mode = GAME_MODES[(GAME_MODES.indexOf(mode) + 1) % GAME_MODES.length];
-      modeButton.textContent = `Game Mode: ${GAME_MODE_NAMES[mode]}`;
-      modeHint.textContent = GAME_MODE_HINTS[mode];
+      modeButton.textContent = t('create.mode', modeName(mode));
+      modeHint$.textContent = modeHint(mode, GAME_MODE_HINTS[mode]);
+      cheatButton.textContent = cheatText();
       (diffButton as HTMLButtonElement & { refresh?: () => void }).refresh?.();
     });
     const diffButton = difficultyButton(() => difficulty, (d) => { difficulty = d; }, () => mode === 'hardcore');
-    const gameTab = h('div', { style: column },
-      h('div', { class: 'field-label', text: 'World Name' }), name,
+    const gameTab = h('div', { style: COLUMN },
+      h('div', { class: 'field-label', text: t('create.name') }), name,
       modeButton,
-      modeHint,
-      prefill.seed ? h('div', { class: 'hint', text: `Seed: ${prefill.seed}` }) : null,
+      modeHint$,
       diffButton,
     );
-    const worldTab = h('div', { class: 'hidden', style: column },
-      button('World Type: Default', () => undefined, { disabled: true }),
-      h('div', { class: 'field-label', text: 'Seed for the World Generator' }), seed,
-      button('Game Rules...', () => this.stack.push(gameRulesScreen(rules, () => this.stack.pop()))),
+    // Placeholders for what the generator does not support yet (structures, bonus chest) stay visibly disabled.
+    const worldTab = h('div', { class: 'hidden', style: COLUMN },
+      button(t('create.worldType'), () => undefined, { disabled: true }),
+      h('div', { class: 'field-label', text: t('create.seed') }), seed,
+      prefill.seed ? h('div', { class: 'hint', text: t('worlds.seed', prefill.seed) }) : null,
+      button(t('create.structures'), () => undefined, { disabled: true }),
+      button(t('create.bonusChest'), () => undefined, { disabled: true }),
     );
-    const tabs = [['Game', gameTab], ['World', worldTab]] as const;
+    const moreTab = h('div', { class: 'hidden', style: COLUMN },
+      cheatButton,
+      h('div', { class: 'hint', text: t('create.cheats.hint') }),
+      button(t('create.gameRules'), () => this.stack.push(gameRulesScreen(rules, () => this.stack.pop()))),
+    );
+    const tabs = [[t('create.tab.game'), gameTab], [t('create.tab.world'), worldTab], [t('create.tab.more'), moreTab]] as const;
     const tabButtons: HTMLButtonElement[] = [];
     tabs.forEach(([label, panel], i) => {
-      const t = h('button', { class: `tab${i === 0 ? ' active' : ''}`, text: label });
-      t.addEventListener('click', () => {
+      const tb = h('button', { class: `tab${i === 0 ? ' active' : ''}`, text: label });
+      tb.addEventListener('click', () => {
         tabs.forEach(([, p]) => p.classList.add('hidden'));
         tabButtons.forEach((b) => b.classList.remove('active'));
         panel.classList.remove('hidden');
-        t.classList.add('active');
+        tb.classList.add('active');
       });
-      tabButtons.push(t);
+      tabButtons.push(tb);
     });
 
-    this.stack.push(menuScreen('Create New World', [
+    this.stack.push(menuScreen(t('create.title'), [
       h('div', { class: 'tabs' }, ...tabButtons),
-      gameTab, worldTab,
+      gameTab, worldTab, moreTab,
     ], [
-      button('Create New World', create, { cls: 'w150' }),
-      button('Cancel', () => this.stack.pop(), { cls: 'w150' }),
+      button(t('create.button'), create, { cls: 'w150' }),
+      button(t('common.cancel'), () => this.stack.pop(), { cls: 'w150' }),
     ]));
     window.setTimeout(() => name.select(), 0);
   }
 
-  /** Loading screen with a progress bar; returns an updater. */
+  /** Loading screen: dirt background, a progress bar with percentage and rotating tips about the real controls. */
   showLoading(title: string): (status: string, progress: number) => void {
     this.stack.clear();
-    const status = h('div', { class: 'hint', text: 'Preparing...' });
+    dirtBackground();
+    const status = h('div', { class: 'hint', text: t('loading.preparing') });
     const bar = h('div', { class: 'progress-fill' });
-    this.stack.push(screen('loading', h('div', { text: title }), status, h('div', { class: 'progress' }, bar)));
+    const tipEl = h('div', { class: 'loading-tip' });
+    let n = Math.floor(Math.random() * TIP_COUNT);
+    const showTip = () => { tipEl.textContent = t('loading.tip', tip(n++, this.actions.tipKeys?.() ?? {})); };
+    showTip();
+    const el = screen('loading', h('div', { text: title }), status, h('div', { class: 'progress' }, bar), tipEl);
+    const timer = window.setInterval(() => (el.isConnected ? showTip() : window.clearInterval(timer)), 5000);
+    this.stack.push(el);
     return (text, p) => {
-      status.textContent = text;
-      bar.style.width = `${Math.round(Math.min(1, p) * 100)}%`;
+      const pct = Math.round(Math.min(1, p) * 100);
+      status.textContent = `${text} ${pct}%`;
+      bar.style.width = `${pct}%`;
     };
   }
 }
@@ -606,42 +676,42 @@ export function deathScreen(opts: {
   respawn(): void; spectate(): void; title(): void;
 }): HTMLDivElement {
   return screen('death-screen',
-    h('div', { class: 'death-title', text: opts.hardcore ? 'Game over!' : 'You died!' }),
+    h('div', { class: 'death-title', text: opts.hardcore ? t('death.hardcore') : t('death.title') }),
     h('div', { class: 'death-message', text: opts.message }),
-    h('div', { class: 'death-score' }, 'Score: ', h('b', { text: String(opts.score) })),
+    h('div', { class: 'death-score' }, `${t('death.score')}: `, h('b', { text: String(opts.score) })),
     h('div', { style: 'height: calc(var(--s) * 12)' }),
     opts.hardcore
-      ? button('Spectate World', opts.spectate)
-      : button('Respawn', opts.respawn),
-    button('Title Screen', opts.title),
+      ? button(t('death.spectate'), opts.spectate)
+      : button(t('death.respawn'), opts.respawn),
+    button(t('death.titleScreen'), opts.title),
   );
 }
 
 /** "Game Menu" laid out like Minecraft's pause screen. */
 export function pauseScreen(actions: {
-  resume(): void; options(): void; quit(): void; multiplayer?: boolean; advancements?: () => void; invite?: () => void; seed?: string;
+  resume(): void; options(): void; quit(): void; multiplayer?: boolean; advancements?: () => void; statistics?: () => void; invite?: () => void; seed?: string;
   /** The world's difficulty (read-only on a server and in Hardcore) and the Game Rules screen (singleplayer). */
   difficulty?: { get(): Difficulty; set(d: Difficulty): void; locked: boolean };
   gameRules?: () => void;
 }): HTMLDivElement {
   const off = () => undefined;
-  const copySeed = button('Copy Seed', () => {
-    const ok = () => { copySeed.textContent = 'Copied!'; window.setTimeout(() => { copySeed.textContent = 'Copy Seed'; }, 1500); };
+  const copySeed = button(t('pause.copySeed'), () => {
+    const ok = () => { copySeed.textContent = t('common.copied'); window.setTimeout(() => { copySeed.textContent = t('pause.copySeed'); }, 1500); };
     navigator.clipboard?.writeText(actions.seed ?? '').then(ok, () => { copySeed.textContent = actions.seed ?? ''; });
   }, { cls: 'half', disabled: !actions.seed });
   return screen('menu-bg pause',
-    h('div', { class: 'screen-header', style: 'flex-basis: calc(var(--s) * 50)' }, h('h2', { class: 'screen-title', text: 'Game Menu' })),
+    h('div', { class: 'screen-header', style: 'flex-basis: calc(var(--s) * 50)' }, h('h2', { class: 'screen-title', text: t('pause.title') })),
     h('div', { class: 'title-buttons', style: 'top: calc(25% + var(--s) * 8)' },
-      button('Back to Game', actions.resume),
-      h('div', { class: 'row' }, button('Advancements', actions.advancements ?? off, { cls: 'half', disabled: !actions.advancements }), button('Statistics', off, { cls: 'half', disabled: true })),
-      h('div', { class: 'row' }, copySeed, button('Report Bugs', off, { cls: 'half', disabled: true })),
-      h('div', { class: 'row' }, button('Options...', actions.options, { cls: 'half' }), actions.invite
-        ? button('Invite Friends', actions.invite, { cls: 'half' })
-        : button('Open to LAN', off, { cls: 'half', disabled: true })),
+      button(t('pause.back'), actions.resume),
+      h('div', { class: 'row' }, button(t('pause.advancements'), actions.advancements ?? off, { cls: 'half', disabled: !actions.advancements }), button(t('pause.statistics'), actions.statistics ?? off, { cls: 'half', disabled: !actions.statistics })),
+      h('div', { class: 'row' }, copySeed, button(t('pause.reportBugs'), off, { cls: 'half', disabled: true })),
+      h('div', { class: 'row' }, button(t('pause.options'), actions.options, { cls: 'half' }), actions.invite
+        ? button(t('pause.invite'), actions.invite, { cls: 'half' })
+        : button(t('pause.lan'), off, { cls: 'half', disabled: true })),
       actions.difficulty ? h('div', { class: 'row' },
         Object.assign(difficultyButton(actions.difficulty.get, actions.difficulty.set, () => actions.difficulty!.locked), { className: 'mc-btn half' }),
-        button('Game Rules...', actions.gameRules ?? off, { cls: 'half', disabled: !actions.gameRules })) : null,
-      button(actions.multiplayer ? 'Disconnect' : 'Save and Quit to Title', actions.quit),
+        button(t('create.gameRules'), actions.gameRules ?? off, { cls: 'half', disabled: !actions.gameRules })) : null,
+      button(actions.multiplayer ? t('pause.disconnect') : t('pause.saveQuit'), actions.quit),
     ),
   );
 }

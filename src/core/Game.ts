@@ -33,7 +33,7 @@ import { HandRenderer } from '../rendering/HandRenderer';
 import {
   IMPORTED_PREFIX, MINECRAFT_LAYOUT, type PackImage, builtinResolver, findBuiltinPack, importMinecraftArchive, importedResolver, loadPack,
 } from '../rendering/TexturePacks';
-import { type WorldMeta, SaveSystem, newWorldId } from '../save/SaveSystem';
+import { type WorldMeta, SaveSystem, cheatsAllowed, newWorldId } from '../save/SaveSystem';
 import { BlockIcons } from '../ui/BlockIcons';
 import { DebugOverlay } from '../ui/DebugOverlay';
 import { h } from '../ui/dom';
@@ -45,6 +45,7 @@ import { createLogo } from '../ui/Logo';
 import { AdvancementTracker } from '../player/Advancements';
 import { AdvancementToasts } from '../ui/AdvancementToasts';
 import { advancementsScreen } from '../ui/AdvancementsScreen';
+import { statisticsScreen } from '../ui/StatisticsScreen';
 import { initKeyboardLock, keyboardLockActive } from '../pwa/KeyboardLock';
 import { showToast } from '../pwa/Toast';
 import { parseShareParams } from '../save/share';
@@ -53,8 +54,8 @@ import { downloadBlob } from '../ui/download';
 import { MainMenu, VERSION, deathScreen, inviteScreen, pauseScreen } from '../ui/MainMenu';
 import { resourcePacksScreen } from '../ui/ResourcePacksMenu';
 import { ScreenStack } from '../ui/Screens';
-import { optionsScreen } from '../ui/SettingsMenu';
-import { KB, resolveKeybinds } from './Keybinds';
+import { type OptionsNav, languageScreen, optionsScreen } from '../ui/SettingsMenu';
+import { KB, keyDisplayName, resolveKeybinds } from './Keybinds';
 import { SurvivalInventory } from '../ui/SurvivalInventory';
 import { WorkerPool } from '../workers/WorkerPool';
 import { BLOCK, SOLID, getBlockDef } from '../world/BlockRegistry';
@@ -86,7 +87,7 @@ import { gameRulesScreen } from '../ui/GameRulesScreen';
 import type { Difficulty } from '../world/Difficulty';
 import { WeatherSystem } from './WeatherSystem';
 import { DynamicResolution, suggestPreset } from './AdaptiveQuality';
-import { type Settings, SettingsStore } from './Settings';
+import { MAX_FPS_UNLIMITED, type Settings, SettingsStore } from './Settings';
 import { applyAccessibilityDocument, effectiveParticles, limitFlash, mobSoundLabel, paletteFor } from './Accessibility';
 import { GamepadController, type PadContext, cleanName } from './Gamepad';
 import { needsAutoJump } from './InputMath';
@@ -95,6 +96,9 @@ import { announce } from '../ui/Announcer';
 import { MenuNav } from '../ui/MenuNav';
 import { Subtitles } from '../ui/Subtitles';
 import { setSurvivalColorBlind } from '../ui/SurvivalHud';
+import { detectLanguage, setLanguage, t } from '../ui/i18n';
+import { StatTracker } from '../player/StatTracker';
+import { LOCAL_COMMAND_USAGE, SERVER_COMMAND_USAGE } from '../ui/chatLogic';
 
 type GameState = 'menu' | 'loading' | 'playing' | 'paused' | 'inventory' | 'dead' | 'chat';
 
@@ -207,6 +211,11 @@ export class Game {
 
   private last = 0;
   private frameDt = 0;
+  /** Statistics screen counters (saved in WorldMeta.statistics). */
+  readonly statTracker = new StatTracker();
+  private statLast: { x: number; z: number; ground: boolean } | null = null;
+  /** Frame limiter (Options > Max Framerate); 0 = unlimited. */
+  private minFrameMs = 0;
   private time = 0;
   private accumulator = 0;
   private stepCount = 0;
@@ -313,8 +322,9 @@ export class Game {
         return;
       }
       if (this.net) return this.net.sendChat(text);
-      // Singleplayer has no server: the slash commands run locally.
-      if (!text.startsWith('/')) return;
+      // Singleplayer has no server: messages are echoed and the slash commands run locally (with Allow Cheats).
+      if (!text.startsWith('/')) return this.chat.add(`<Player> ${text}`);
+      if (!this.meta || !cheatsAllowed(this.meta)) return this.chat.add(t('chat.noCheats'), true);
       const lines = this.weatherSys.localCommand(text) ?? this.worldRules.localCommand(text) ?? [`Unknown command: ${text.split(/\s+/)[0]}. Type /help for help.`];
       for (const line of lines) this.chat.add(line, true);
     };
@@ -357,6 +367,8 @@ export class Game {
       listWorlds: () => this.save.listWorlds(),
       playWorld: (m) => void this.enterWorld(m),
       createWorld: (name, seed, mode, extra) => void this.createWorld(name, seed, mode, extra),
+      openLanguage: () => this.stack.push(languageScreen(this.settings, { ...this.optionsNav(), languageChanged: () => this.menu.showTitle() })),
+      tipKeys: () => this.tipKeys(),
       deleteWorld: (id) => this.save.deleteWorld(id),
       saveWorld: (meta) => this.save.saveWorld(meta),
       transfer: new WorldTransfer(this.save),
@@ -432,6 +444,7 @@ export class Game {
     const info = gl.getExtension('WEBGL_debug_renderer_info');
     this.gpuName = info ? String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL)) : 'WebGL2';
     if (this.settings.fresh) {
+      this.settings.set('language', detectLanguage());
       const memory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
       this.settings.setMany(suggestPreset(this.gpuName, navigator.hardwareConcurrency || 0, memory).values);
     }
@@ -460,7 +473,11 @@ export class Game {
   // ---------------------------------------------------------------- settings
 
   private openOptions(): void {
-    this.stack.push(optionsScreen(this.settings, {
+    this.stack.push(optionsScreen(this.settings, this.optionsNav()));
+  }
+
+  private optionsNav(): OptionsNav {
+    return {
       push: (el) => this.stack.push(el),
       pop: () => this.stack.pop(),
       openResourcePacks: () => this.openResourcePacks(),
@@ -473,7 +490,13 @@ export class Game {
         'Terrain, mobs, sounds, music, sky and procedural textures: generated in code',
         'Not affiliated with Mojang or Microsoft',
       ],
-    }));
+      languageChanged: () => {
+        // Rebuild what sits below Options (title or pause menu) in the new language, then reopen Options.
+        if (this.state === 'menu') this.menu.showTitle();
+        else this.showPauseMenu();
+        this.openOptions();
+      },
+    };
   }
 
   private openResourcePacks(): void {
@@ -538,6 +561,12 @@ export class Game {
     this.updateMenuBlur();
     this.cam.baseFov = s.fov;
     this.cam.viewBobbing = s.viewBobbing && !s.reducedMotion;
+    setLanguage(s.language);
+    this.chat.applySettings(s);
+    this.hud.setAttackIndicator(s.attackIndicator);
+    this.input.rawInput = s.rawInput;
+    this.mobRenderer.distanceScale = s.entityDistance / 100;
+    this.minFrameMs = s.maxFps >= MAX_FPS_UNLIMITED ? 0 : 1000 / s.maxFps;
     if (!key || key === 'keybinds') {
       this.input.setBindings(resolveKeybinds(s.keybinds));
       this.arcade?.setBindings(this.input);
@@ -686,6 +715,7 @@ export class Game {
       world, player: this.player, stats: this.stats, inventory: this.playerInventory, hotbar: this.hotbar,
       entities, renderer: this.renderer, hand: this.hand, audio: this.audio, camera: this.cam.camera,
       attackRemote: (id, data) => this.net?.sendAttack(id, encodeItemData(data)),
+      onStat: (key) => this.statTracker.add(key),
       igniteTnt: (x, y, z) => {
         if (this.net) {
           // The server validates, removes the block and simulates the fuse.
@@ -732,6 +762,8 @@ export class Game {
   private enterMenu(): void {
     this.stopArcade();
     this.state = 'menu';
+    this.chat.close();
+    this.chat.setVisible(false);
     this.meta = null;
     this.weatherSys.stop();
     this.hud.setVisible(false);
@@ -747,7 +779,13 @@ export class Game {
     this.menu.showTitle();
   }
 
-  private async createWorld(name: string, seedText: string, mode: GameMode, extra?: { difficulty: Difficulty; rules?: Record<string, boolean | number> }): Promise<void> {
+  /** Key names for the loading tips (the player's own bindings). */
+  private tipKeys(): Record<string, string> {
+    const key = (kb: number) => keyDisplayName(this.input.bound(kb));
+    return { inventory: key(KB.INVENTORY), chat: key(KB.CHAT), command: key(KB.COMMAND), sprint: key(KB.SPRINT), drop: key(KB.DROP) };
+  }
+
+  private async createWorld(name: string, seedText: string, mode: GameMode, extra?: { difficulty: Difficulty; rules?: Record<string, boolean | number>; cheats?: boolean }): Promise<void> {
     let seed: number;
     if (!seedText) seed = (Math.random() * 4294967296) >>> 0;
     else if (/^-?\d+$/.test(seedText)) seed = Number(BigInt.asUintN(32, BigInt(seedText)));
@@ -757,6 +795,7 @@ export class Game {
       created: Date.now(), lastPlayed: Date.now(), player: null, genVersion: GEN_VERSION_CURRENT,
       hotbar: [...DEFAULT_HOTBAR], selectedSlot: 0, time: 0.08, gameMode: mode,
       difficulty: extra?.difficulty, rules: extra?.rules,
+      ...(extra?.cheats === undefined ? {} : { cheats: extra.cheats }),
     };
     await this.save.saveWorld(meta);
     await this.enterWorld(meta);
@@ -764,8 +803,8 @@ export class Game {
 
   private async enterWorld(meta: WorldMeta): Promise<void> {
     this.audio.unlock();
-    this.loadingProgress = this.menu.showLoading('Loading world');
-    this.loadingProgress('Reading save data...', 0);
+    this.loadingProgress = this.menu.showLoading(t('loading.world'));
+    this.loadingProgress(t('loading.reading'), 0);
     const edits = await this.save.loadEdits(meta.id);
     this.startSession(meta, edits);
   }
@@ -789,6 +828,13 @@ export class Game {
     this.stats.effects.load(meta.effects, this.stats);
     this.worldRules.load(meta);
     this.advancements.load(meta.advancements);
+    this.statTracker.load(meta.statistics);
+    this.statLast = null;
+    if (!this.net) {
+      this.chat.clear();
+      this.chat.setCommands(LOCAL_COMMAND_USAGE);
+      this.chat.setVisible(true);
+    }
     this.score = 0;
     // A save made on the death screen: hardcore becomes spectator, others respawn at spawn.
     const diedBeforeSave = this.stats.wasDead;
@@ -891,6 +937,7 @@ export class Game {
     meta.effects = this.stats.effects.serialize();
     this.worldRules.save(meta);
     meta.advancements = this.advancements.serialize();
+    meta.statistics = this.statTracker.serialize();
     meta.gameMode = this.mode;
     meta.selectedSlot = this.hotbar.selected;
     meta.time = this.cycle.time;
@@ -928,7 +975,7 @@ export class Game {
     this.renderer.three.domElement.toBlob((blob) => {
       if (!blob) return;
       downloadBlob(blob, name);
-      showToast(`Saved screenshot ${name}`);
+      showToast(t('hud.screenshot', name));
     }, 'image/png');
   }
 
@@ -1059,6 +1106,7 @@ export class Game {
     if (welcome.gameType === 'minecraft') for (const p of welcome.players) this.remote.add(p.id, p.name);
     if (welcome.gameType !== 'minecraft') this.startArcade(welcome, (m) => net.send(m), name);
     this.chat.clear();
+    this.chat.setCommands(SERVER_COMMAND_USAGE);
     this.chat.setVisible(true);
     if (welcome.motd) this.chat.add(welcome.motd, true);
     if (this.arcade) this.chat.add(this.arcadeHint, true);
@@ -1294,6 +1342,7 @@ export class Game {
   // ---------------------------------------------------------------- death
 
   private onDeath(): void {
+    this.statTracker.add('deaths');
     this.inventory.close();
     this.survivalInventory.close();
     this.chat.close();
@@ -1405,12 +1454,17 @@ export class Game {
     this.state = 'paused';
     announce('Game paused');
     void this.saveGame(true);
+    this.showPauseMenu();
+  }
+
+  private showPauseMenu(): void {
     this.stack.clear();
     this.stack.push(pauseScreen({
       resume: () => void this.resumeGame(),
       options: () => this.openOptions(),
       quit: () => void this.quitToTitle(),
       multiplayer: this.net !== null,
+      statistics: this.net ? undefined : () => this.stack.push(statisticsScreen(this.statTracker, () => this.stack.pop())),
       advancements: this.net ? undefined : () => this.stack.push(advancementsScreen(this.advancements, this.icons, () => this.stack.pop())),
       invite: this.roomCode ? () => this.openInvite(this.roomCode!) : undefined,
       seed: !this.net && this.meta && this.meta.worldType !== 'arena' ? this.meta.seedText || String(this.meta.seed) : undefined,
@@ -1448,7 +1502,8 @@ export class Game {
   private onKey(code: string): void {
     if (this.chat.isOpen) return;
     const command = this.keyIs(code, KB.COMMAND);
-    if ((command || this.keyIs(code, KB.CHAT)) && this.net && this.state === 'playing' && this.input.locked) {
+    const chatAvailable = this.net !== null || (this.meta !== null && !this.arcade);
+    if ((command || this.keyIs(code, KB.CHAT)) && chatAvailable && this.state === 'playing' && this.input.locked) {
       this.state = 'chat';
       this.suppressPause = this.input.locked;
       this.input.exitLock();
@@ -1457,6 +1512,11 @@ export class Game {
     }
     if (code === 'F3') this.debug.toggle();
     if (code === 'F2' && this.world) this.wantScreenshot = true;
+    // F11: fullscreen like Minecraft (the page's own fullscreen; the browser's F11 is a different mode).
+    if (code === 'F11') {
+      if (document.fullscreenElement) void document.exitFullscreen();
+      else void document.documentElement.requestFullscreen().catch(() => undefined);
+    }
     // With keyboard lock (fullscreen) Esc arrives as a key press instead of ending pointer lock.
     if (code === 'Escape' && keyboardLockActive() && this.state === 'playing') this.input.exitLock();
     if (code === 'F1' && this.state === 'playing') {
@@ -1510,6 +1570,8 @@ export class Game {
 
   private readonly frame = (now: number): void => {
     requestAnimationFrame(this.frame);
+    // Max Framerate: skip this display refresh while the previous frame is too recent.
+    if (this.minFrameMs > 0 && now - this.last < this.minFrameMs - 1.5) return;
     const rawDt = (now - this.last) / 1000;
     this.frameDt = Math.min(rawDt, 0.1);
     const dt = Math.min(rawDt, 0.1);
@@ -1609,7 +1671,7 @@ export class Game {
       }
     }
     const total = (r * 2 + 1) ** 2;
-    this.loadingProgress?.(ready === 0 ? 'Generating terrain...' : 'Building chunk meshes...', ready / total);
+    this.loadingProgress?.(ready === 0 ? t('loading.terrain') : t('loading.meshes'), ready / total);
     // Keep the camera at the spawn so the first frame after loading is correct.
     this.cam.camera.position.set(this.player.x, this.player.y + PHYSICS.EYE_HEIGHT, this.player.z);
     if (world.chunks.isAreaReady(this.player.x, this.player.z, r)) this.finishLoading();
@@ -1638,7 +1700,10 @@ export class Game {
         this.cam.hurtSide = Math.sin(yaw - p.yaw) >= 0 ? 1 : -1;
       }
     },
-    killed: (mob) => this.advancements.onMobKilled(mob.type.hostile),
+    killed: (mob) => {
+      this.statTracker.add('killed');
+      this.advancements.onMobKilled(mob.type.hostile);
+    },
     playerArrowHit: () => this.advancements.onArrowHitMob(),
     explode: (mob) => this.explode(mob, mob.x, mob.y + 0.5, mob.z, 3),
     shoot: (mob) => {
@@ -1798,6 +1863,23 @@ export class Game {
     if (stats.dead && (this.state === 'playing' || this.state === 'inventory' || this.state === 'chat' || this.state === 'paused')) this.onDeath();
   }
 
+  /** Statistics: time played, distance walked (not flying) and jumps, from per-frame position changes. */
+  private trackStats(dt: number): void {
+    const p = this.player, st = this.statTracker;
+    st.add('playMs', dt * 1000);
+    const last = this.statLast;
+    if (last) {
+      if (!p.flying && !p.noclip) st.addWalk(Math.hypot(p.x - last.x, p.z - last.z));
+      if (last.ground && !p.onGround && p.vy > 4) st.add('jumps');
+    }
+    if (!last) this.statLast = { x: p.x, z: p.z, ground: p.onGround };
+    else {
+      last.x = p.x;
+      last.z = p.z;
+      last.ground = p.onGround;
+    }
+  }
+
   private updatePlaying(dt: number): void {
     const world = this.world!;
     const p = this.player;
@@ -1815,6 +1897,8 @@ export class Game {
         if (input.wheel !== 0) this.hotbar.select(this.hotbar.selected + input.wheel);
       }
     }
+
+    if (this.state === 'playing' && !this.arcade) this.trackStats(dt);
 
     if (this.state !== 'paused') {
       // Fixed-step simulation, rendered with interpolation.
@@ -1834,8 +1918,8 @@ export class Game {
       // A toggled sprint ends when the player stops walking forward.
       if (this.wasMovingForward && move.forward <= 0) input.releaseLatch(KB.SPRINT);
       this.wasMovingForward = move.forward > 0;
-      // Touch auto-jump: walking into a one-block step.
-      if (control && !arcade && input.touchMode && this.settings.values.touchAutoJump && p.onGround && p.horizontalCollision
+      // Auto-jump: walking into a one-block step (touch setting, or Options > Controls > Auto-Jump).
+      if (control && !arcade && (input.touchMode ? this.settings.values.touchAutoJump : this.settings.values.autoJump) && p.onGround && p.horizontalCollision
         && (move.forward !== 0 || move.strafe !== 0)) {
         const sin = Math.sin(p.yaw), cos = Math.cos(p.yaw);
         if (needsAutoJump(this.solidAt, p.x, p.y, p.z, -sin * move.forward + cos * move.strafe, -cos * move.forward - sin * move.strafe)) move.jump = true;
@@ -1885,12 +1969,19 @@ export class Game {
     this.audioProbe.update(dt, this.audio.env, eye.x, eye.y, eye.z, this.cycle.dayFactor, this.underwater);
     this.hud.setUnderwater(this.underwater);
     this.hud.setHurt(limitFlash(this.arcade ? this.arcade.hurt * 0.8 : this.stats.hurtTime / 10, this.settings.values));
-    if (!this.arcade) this.hud.survival.update({ health: Math.ceil(this.stats.health), hunger: this.stats.hunger, air: this.stats.air, maxAir: MAX_AIR, armor: this.stats.armorPoints }, this.time);
+    if (!this.arcade) this.hud.survival.update({
+      health: Math.ceil(this.stats.health), hunger: this.stats.hunger, air: this.stats.air, maxAir: MAX_AIR, armor: this.stats.armorPoints,
+      hardcore: this.mode === 'hardcore', poison: this.stats.effects.level('poison') > 0, wither: this.stats.effects.level('wither') > 0,
+      hurtTime: this.stats.hurtTime, saturation: this.stats.saturation,
+    }, this.time);
     if (!this.arcade) {
       const fx = this.hud.effects;
       fx.updateEffects(this.stats.effects, this.time);
       fx.updateAbsorption(hasSurvivalRules(this.mode) ? this.stats.absorption : 0);
-      fx.updateCooldown(this.interaction?.cooldown.charge ?? 1, this.state === 'playing' && this.mode !== 'spectator');
+      const charge = this.interaction?.cooldown.charge ?? 1;
+      const showCooldown = this.state === 'playing' && this.mode !== 'spectator';
+      fx.updateCooldown(charge, showCooldown && this.settings.values.attackIndicator === 'crosshair');
+      this.hud.setAttackCharge(showCooldown ? charge : 1);
     }
 
     if (this.net) {
@@ -1962,38 +2053,40 @@ export class Game {
     const target = ray?.hit ? `${getBlockDef(ray.id)?.displayName} @ ${ray.x}, ${ray.y}, ${ray.z}` : '—';
     const e = this.entities;
     const near = this.countMobsNear(p.x, p.z, 64);
+    // Grouped like Minecraft 1.21's F3: left = version, performance, renderer counts, then position and world
+    // state; right = memory, system/display, then the targeted block. F3 text stays English, as in Minecraft.
+    const towards: Record<string, string> = { north: 'Towards negative Z', south: 'Towards positive Z', east: 'Towards positive X', west: 'Towards negative X' };
     d.set([
       `BunkCraft 1.0 (WebGL2 · three.js r${THREE.REVISION})`,
       `${d.fps} fps · frame ${d.frameMs.toFixed(2)} ms CPU · worst ${d.worstMs.toFixed(1)} ms`,
-      `Chunks: ${stats.loaded} loaded · ${stats.meshed} meshed · ${visible} rendered`,
-      `Draw calls: ${r.drawCalls} (+${r.shadowCalls} shadow) · Triangles: ${(r.triangles / 1000).toFixed(1)}k`,
+      `C: ${visible}/${stats.loaded} (meshed ${stats.meshed}) D: ${world.chunks.renderDistance} · Draw calls: ${r.drawCalls} (+${r.shadowCalls} shadow)`,
+      `E: ${e?.mobs.length ?? 0} mobs, ${e?.items.length ?? 0} items · P: ${this.renderer.particles.active}${this.renderer.precipitation.count > 0 ? ` · Rain: ${this.renderer.precipitation.count}` : ''} · Tris: ${(r.triangles / 1000).toFixed(1)}k`,
       `Workers: ${this.pool.size} · queue ${this.pool.queued} · gen ${this.pool.genMs.toFixed(1)} ms · mesh ${this.pool.meshMs.toFixed(1)} ms`,
-      `Entities: ${e?.mobs.length ?? 0} mobs · ${e?.items.length ?? 0} items · Particles: ${this.renderer.particles.active}${this.renderer.precipitation.count > 0 ? ` · Precipitation: ${this.renderer.precipitation.count}` : ''}`,
+      '',
+      `XYZ: ${p.x.toFixed(3)} / ${p.y.toFixed(5)} / ${p.z.toFixed(3)}`,
+      `Block: ${bx} ${by} ${bz}`,
+      `Chunk: ${bx & 15} ${by} ${bz & 15} in ${bx >> 4} ${bz >> 4}`,
+      `Facing: ${facing} (${towards[facing] ?? ''}) (${yawDeg.toFixed(1)} / ${((-p.pitch * 180) / Math.PI).toFixed(1)})`,
+      `Light: ${Math.max(light >> 4, light & 15)} (${light >> 4} sky, ${light & 15} block)`,
+      `Biome: ${BIOME_NAMES[world.biomeName(bx, bz)]}`,
+      `Day ${this.cycle.day + 1} · ${this.cycle.clock()} · Moon: ${MOON_PHASE_NAMES[this.cycle.moonPhase]}`,
+      this.weatherSys.debugLine(),
       `Mobs within 64: ${near.hostile} hostile · ${near.passive} passive${this.net ? ' (server)' : ''}`,
       '',
-      `XYZ: ${p.x.toFixed(3)} / ${p.y.toFixed(3)} / ${p.z.toFixed(3)}`,
-      `Block: ${bx} ${by} ${bz}`,
-      `Chunk: ${bx >> 4} ${bz >> 4} (in chunk ${bx & 15} ${by} ${bz & 15})`,
-      `Facing: ${facing} (${yawDeg.toFixed(1)} / ${((-p.pitch * 180) / Math.PI).toFixed(1)})`,
-      `Biome: ${BIOME_NAMES[world.biomeName(bx, bz)]}`,
-      `Light: ${light >> 4} sky, ${light & 15} block`,
-      `${this.audio.debugLine()} · enclosure ${this.audio.env.enclosure.toFixed(2)}`,
-      `Time: ${this.cycle.clock()} · Day ${this.cycle.day + 1} · Moon: ${MOON_PHASE_NAMES[this.cycle.moonPhase]}`,
-      this.weatherSys.debugLine(),
-      `Render distance: ${world.chunks.renderDistance} chunks`,
       `${GAME_MODE_NAMES[this.mode]} · ${p.flying ? 'Flying' : p.onGround ? 'On ground' : 'Airborne'}${p.sprinting ? ' · Sprinting' : ''}${p.inWater ? ' · In water' : ''}`,
       `Health ${this.stats.health} · Food ${this.stats.hunger} (sat ${this.stats.saturation.toFixed(1)}) · Air ${this.stats.air}`,
+      `${this.audio.debugLine()} · enclosure ${this.audio.env.enclosure.toFixed(2)}`,
     ], [
-      mem ? `JS heap: ${(mem.usedJSHeapSize / 1048576).toFixed(0)} / ${(mem.totalJSHeapSize / 1048576).toFixed(0)} MB` : 'JS heap: n/a',
-      `World blocks: ${(worldBlocks / 1e6).toFixed(2)}M (${(worldBlocks / 1048576).toFixed(1)} MB)`,
-      `Edited chunks: ${world.edits.size}`,
+      mem ? `Mem: ${Math.round((mem.usedJSHeapSize / mem.totalJSHeapSize) * 100)}% ${(mem.usedJSHeapSize / 1048576).toFixed(0)}/${(mem.totalJSHeapSize / 1048576).toFixed(0)}MB` : 'Mem: n/a',
+      `World blocks: ${(worldBlocks / 1e6).toFixed(2)}M (${(worldBlocks / 1048576).toFixed(1)} MB) · edited chunks ${world.edits.size}`,
       `Upload queue: ${stats.uploadQueue} · in flight ${stats.genInFlight}g/${stats.meshInFlight}m`,
       '',
-      `Display: ${window.innerWidth}×${window.innerHeight} @ ${this.renderer.three.getPixelRatio().toFixed(2)}x`
+      `CPU: ${navigator.hardwareConcurrency || '?'} threads`,
+      `Display: ${window.innerWidth}x${window.innerHeight} @ ${this.renderer.three.getPixelRatio().toFixed(2)}x`
         + (this.dynamicResolution.enabled ? ` (dynamic ${Math.round(this.dynamicResolution.scale * 100)}%)` : ''),
-      `GPU: ${this.gpuName.replace(/^ANGLE \(|\)$/g, '').split(',').slice(0, 2).join(',')}`,
+      `${this.gpuName.replace(/^ANGLE \(|\)$/g, '').split(',').slice(0, 2).join(',')}`,
       '',
-      `Targeted: ${target}`,
+      `Targeted Block: ${target}`,
       `Holding: ${getItemDef(this.hotbar.selectedBlock)?.displayName ?? 'Empty hand'}`,
       `Seed: ${world.seed}`,
     ]);

@@ -78,6 +78,8 @@ export interface InteractionDeps {
   useBed?(x: number, y: number, z: number): void;
   /** Opens the enchanting table, anvil or grindstone at a position. */
   openStation?(kind: StationKind, x: number, y: number, z: number): void;
+  /** Statistics hook: a block was broken or placed. */
+  onStat?(key: 'mined' | 'placed'): void;
   /** Bone meal on a block (grows saplings, scatters grass); true when the item is used up. */
   boneMeal?(x: number, y: number, z: number): boolean;
 }
@@ -441,6 +443,7 @@ export class Interaction {
     const brokenMeta = world.getMeta(hit.x, hit.y, hit.z);
     const broken = world.breakBlock(hit.x, hit.y, hit.z);
     if (broken) {
+      this.d.onStat?.('mined');
       renderer.particles.spawnBreak(hit.x, hit.y, hit.z, broken, light, world.tintAt(hit.x, hit.z, broken, brokenMeta));
       audio.play('break', stateSound(def, brokenMeta));
       if (survival) {
@@ -525,6 +528,7 @@ export class Interaction {
     if (!world.setBlock(x, y, z, id, placed.meta | baseMeta)) return;
     if (placed.neighbor) world.setBlock(placed.neighbor.x, placed.neighbor.y, placed.neighbor.z, placed.neighbor.id, placed.neighbor.meta);
     if (placed.upper) world.setBlock(placed.upper.x, placed.upper.y, placed.upper.z, id, placed.upper.meta | baseMeta);
+    this.d.onStat?.('placed');
     const def = getBlockDef(id)!;
     audio.play('place', stateSound(def, baseMeta));
     hand.swingHand();

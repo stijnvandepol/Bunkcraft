@@ -84,6 +84,8 @@ export class SurvivalInventory {
   private stations = new Set<Station>();
   private box: ContainerView | null = null;
   private category: string = 'craftable';
+  /** Slot under the mouse: the target of number keys (swap with the hotbar) and Q (drop). */
+  private hovered: SlotRef | null = null;
 
   constructor(private readonly icons: BlockIcons, private readonly inv: PlayerInventory, private readonly actions: SurvivalInventoryActions) {
     this.tooltip = h('div', { class: 'mc-tooltip hidden' });
@@ -132,12 +134,53 @@ export class SurvivalInventory {
         this.actions.close();
       }
     });
+    // Tooltip and cursor stack follow the pointer with transforms only (no layout work per mouse move).
     this.el.addEventListener('mousemove', (e) => {
-      this.tooltip.style.left = `${e.clientX + 12}px`;
-      this.tooltip.style.top = `${e.clientY - 24}px`;
-      this.cursorEl.style.left = `${e.clientX - 12}px`;
-      this.cursorEl.style.top = `${e.clientY - 12}px`;
+      this.tooltip.style.transform = `translate3d(${e.clientX + 12}px, ${e.clientY - 24}px, 0)`;
+      this.cursorEl.style.transform = `translate3d(${e.clientX - 12}px, ${e.clientY - 12}px, 0)`;
     });
+    window.addEventListener('keydown', (e) => this.onKey(e));
+  }
+
+  /**
+   * Minecraft's inventory keys over the hovered slot: 1–9 swap it with that hotbar slot, Q drops one item
+   * (Ctrl+Q the whole stack).
+   */
+  private onKey(e: KeyboardEvent): void {
+    if (!this.isOpen || !this.hovered || e.target === this.search || this.cursor.count > 0) return;
+    const ref = this.hovered;
+    const digit = /^Digit([1-9])$/.exec(e.code);
+    if (digit) {
+      const hot: SlotRef = { group: 'inv', index: Number(digit[1]) - 1 };
+      if (hot.group === ref.group && hot.index === ref.index) return;
+      const a = cloneStack(this.get(ref)), b = cloneStack(this.get(hot));
+      if ((b.count && !this.accepts(ref, b)) || (a.count && !this.accepts(hot, a))) return;
+      this.set(ref, b);
+      this.set(hot, a);
+      this.renderSlots();
+    } else if (e.code === 'KeyQ') {
+      const s = this.get(ref);
+      if (!s.count) return;
+      const n = e.ctrlKey || e.metaKey ? s.count : 1;
+      this.actions.drop({ ...cloneStack(s), count: n });
+      this.set(ref, { ...cloneStack(s), count: s.count - n });
+      this.renderSlots();
+    }
+  }
+
+  /** Double click with a stack on the cursor: collect matching items from the inventory, up to a full stack. */
+  private collect(): void {
+    const cur = this.cursor;
+    const max = PlayerInventory.maxStack(cur.id);
+    for (let i = 0; i < INVENTORY_SLOTS && cur.count < max; i++) {
+      const s = this.inv.get(i);
+      if (!s.count || !sameItem(s, cur)) continue;
+      const n = Math.min(s.count, max - cur.count);
+      cur.count += n;
+      this.inv.set(i, { ...cloneStack(s), count: s.count - n });
+    }
+    this.renderCursor();
+    this.renderSlots();
   }
 
   /** Re-render after the inventory changed elsewhere (pickups while open). */
@@ -325,8 +368,11 @@ export class SurvivalInventory {
         return;
       }
       if (e.shiftKey) this.quickMove(ref);
+      else if (e.detail === 2 && e.button === 0 && this.cursor.count > 0 && ref.group !== 'armor') this.collect();
       else this.click(ref, e.button === 2);
     });
+    el.addEventListener('mouseenter', () => { this.hovered = ref; });
+    el.addEventListener('mouseleave', () => { if (this.hovered === ref) this.hovered = null; });
     this.tooltipOn(el, () => {
       const nodes = tooltipNodes(this.get(ref));
       return nodes.length ? nodes : ref.group === 'armor' ? ['Helmet', 'Chestplate', 'Leggings', 'Boots'][ref.index] : '';

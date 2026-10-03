@@ -34,6 +34,25 @@ export interface Settings {
   texturePack: string;
   /** Action id → key code or "Mouse<n>" ('' = Not Bound); see Keybinds.ts. */
   keybinds: KeybindMap;
+  /** UI language (see src/ui/i18n.ts). */
+  language: 'en' | 'nl';
+  /** Frame limiter in frames per second; MAX_FPS_UNLIMITED (260) = no limit. */
+  maxFps: number;
+  /** Mob render distance in % (Minecraft's Entity Distance, 50–500%). */
+  entityDistance: number;
+  /** Where the attack cooldown indicator is drawn. */
+  attackIndicator: 'crosshair' | 'hotbar' | 'off';
+  /** Raw (unaccelerated) mouse input where the browser supports it. */
+  rawInput: boolean;
+  /** Jump automatically onto one-block ledges while moving. */
+  autoJump: boolean;
+  /** Chat settings (Minecraft's Chat Settings screen). */
+  chatOpacity: number;
+  chatTextSize: number;
+  chatLineSpacing: number;
+  chatWidth: number;
+  chatColors: boolean;
+  chatSuggestions: boolean;
 
   // ---- Accessibility & comfort
   /** Captions for sounds ("[Zombie groans] ←"). */
@@ -80,6 +99,8 @@ export interface Settings {
   padLayout: 'default' | 'southpaw';
 }
 
+export const MAX_FPS_UNLIMITED = 260;
+
 export const DEFAULT_SETTINGS: Settings = {
   renderDistance: 8,
   renderScale: 100,
@@ -102,6 +123,18 @@ export const DEFAULT_SETTINGS: Settings = {
   invertMouse: false,
   texturePack: 'pixel-perfection',
   keybinds: defaultKeybinds(),
+  language: 'en',
+  maxFps: MAX_FPS_UNLIMITED,
+  entityDistance: 100,
+  attackIndicator: 'crosshair',
+  rawInput: true,
+  autoJump: false,
+  chatOpacity: 100,
+  chatTextSize: 100,
+  chatLineSpacing: 0,
+  chatWidth: 100,
+  chatColors: true,
+  chatSuggestions: true,
   subtitles: false,
   reducedMotion: false,
   reduceFlashes: false,
@@ -188,6 +221,12 @@ const NUMBER_RANGES = {
   masterVolume: [0, 100],
   brightness: [0, 100],
   guiScale: [0, 4],
+  maxFps: [30, MAX_FPS_UNLIMITED],
+  entityDistance: [50, 500],
+  chatOpacity: [0, 100],
+  chatTextSize: [50, 100],
+  chatLineSpacing: [0, 100],
+  chatWidth: [40, 100],
   textScale: [100, 200],
   stickCurve: [0, 100],
   fovEffects: [0, 100],
@@ -205,12 +244,14 @@ const ENUM_VALUES = {
   particles: ['all', 'decreased', 'minimal'],
   clouds: ['fancy', 'off'],
   spatialAudio: ['stereo', 'hrtf'],
+  language: ['en', 'nl'],
+  attackIndicator: ['crosshair', 'hotbar', 'off'],
   touchControls: ['auto', 'on', 'off'],
   padLayout: ['default', 'southpaw'],
 } as const satisfies Partial<Record<keyof Settings, readonly string[]>>;
 
 const BOOLEAN_KEYS = [
-  'dynamicResolution', 'viewBobbing', 'invertMouse',
+  'dynamicResolution', 'viewBobbing', 'invertMouse', 'rawInput', 'autoJump', 'chatColors', 'chatSuggestions',
   'subtitles', 'reducedMotion', 'reduceFlashes', 'colorBlindSafe', 'highContrast',
   'toggleSneak', 'toggleSprint', 'toggleAttack', 'toggleUse',
   'touchAutoJump', 'touchGestures', 'touchLeftHanded', 'touchSprintPush',

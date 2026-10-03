@@ -1,5 +1,5 @@
 import {
-  type GraphicsQuality, MAX_RENDER_DISTANCE, type ParticleLevel, QUALITY_PRESETS,
+  type GraphicsQuality, MAX_FPS_UNLIMITED, MAX_RENDER_DISTANCE, type ParticleLevel, QUALITY_PRESETS,
   type Settings, type SettingsStore, type ShadowQuality, detectPreset,
 } from '../core/Settings';
 import {
@@ -8,12 +8,15 @@ import {
 import { keyboardLockEnabled, keyboardLockSupported, setKeyboardLockEnabled } from '../pwa/KeyboardLock';
 import { installButton } from '../pwa/Pwa';
 import { button, cycleButton, h, menuScreen, slider } from './dom';
+import { LANGUAGES, LANGUAGE_NAMES, type Language, getLanguage, setLanguage, t } from './i18n';
 
 export interface OptionsNav {
   push(el: HTMLElement): void;
   pop(): void;
   openResourcePacks(): void;
   credits(): string[];
+  /** The language changed: the game rebuilds the screens below the Options screen. */
+  languageChanged?(): void;
   /** Name of the connected controller, if any. */
   padName?(): string;
 }
@@ -29,7 +32,7 @@ const percent = (name: string) => (v: number) => `${name}: ${v}%`;
 const holdOrToggle = (store: SettingsStore, label: string, key: BooleanKey) => toggle(store, label, key, 'Toggle', 'Hold');
 
 function fullscreenButton(): HTMLButtonElement {
-  const label = () => `Fullscreen: ${document.fullscreenElement ? 'ON' : 'OFF'}`;
+  const label = () => t('options.fullscreen', document.fullscreenElement ? t('common.on') : t('common.off'));
   const btn = button(label(), () => {
     if (document.fullscreenElement) void document.exitFullscreen();
     else void document.documentElement.requestFullscreen().catch(() => undefined);
@@ -40,7 +43,7 @@ function fullscreenButton(): HTMLButtonElement {
 
 /** Chromium: receive Esc in fullscreen so it pauses the game instead of leaving fullscreen. */
 function lockEscButton(): HTMLButtonElement {
-  const label = () => `Lock Esc in Fullscreen: ${keyboardLockEnabled() ? 'ON' : 'OFF'}`;
+  const label = () => t('options.lockEsc', keyboardLockEnabled() ? t('common.on') : t('common.off'));
   const btn = button(label(), () => {
     setKeyboardLockEnabled(!keyboardLockEnabled());
     btn.textContent = label();
@@ -48,42 +51,52 @@ function lockEscButton(): HTMLButtonElement {
   return btn;
 }
 
-const fovLabel = (v: number) => `FOV: ${v === 70 ? 'Normal' : v === 110 ? 'Quake Pro' : v}`;
+const fovLabel = (v: number) => t('options.fov', v === 70 ? t('options.fov.normal') : v === 110 ? t('options.fov.quakePro') : v);
+const onOff = () => ({ on: t('common.on'), off: t('common.off') });
 
 /** Options hub, structured like Minecraft 1.21's Options screen. */
 export function optionsScreen(store: SettingsStore, nav: OptionsNav): HTMLDivElement {
   const s = store.values;
   const presetIds = [...QUALITY_PRESETS.map((p) => p.id), 'custom'];
-  const presetNames = Object.fromEntries([...QUALITY_PRESETS.map((p) => [p.id, p.name]), ['custom', 'Custom']]);
-  const quality = cycleButton<string>('Quality', presetIds, presetNames, detectPreset(s)?.id ?? 'custom', (id) => {
+  const presetNames = Object.fromEntries([...QUALITY_PRESETS.map((p) => [p.id, p.name]), ['custom', t('options.quality.custom')]]);
+  const quality = cycleButton<string>(t('options.quality'), presetIds, presetNames, detectPreset(s)?.id ?? 'custom', (id) => {
     const p = QUALITY_PRESETS.find((q) => q.id === id);
     if (p) store.setMany(p.values);
   });
 
-  return menuScreen('Options', [
+  return menuScreen(t('options.title'), [
     h('div', { class: 'grid2' },
       slider(30, 110, 1, s.fov, fovLabel, (v) => store.set('fov', v)),
       quality,
       h('div', { class: 'section-label' }),
-      button('Video Settings...', () => nav.push(videoSettingsScreen(store, nav))),
-      button('Music & Sounds...', () => nav.push(soundScreen(store, nav))),
-      button('Controls...', () => nav.push(controlsScreen(store, nav))),
-      button('Resource Packs...', () => nav.openResourcePacks()),
-      button('Touch Settings...', () => nav.push(touchScreen(store, nav))),
-      button('Controller Settings...', () => nav.push(controllerScreen(store, nav, nav.padName?.() ?? ''))),
-      button('Accessibility Settings...', () => nav.push(accessibilityScreen(store, nav))),
-      button('Credits & Attribution...', () => nav.push(creditsScreen(nav))),
+      button(t('options.video'), () => nav.push(videoSettingsScreen(store, nav))),
+      button(t('options.sound'), () => nav.push(soundScreen(store, nav))),
+      button(t('options.controls'), () => nav.push(controlsScreen(store, nav))),
+      button(t('options.chat'), () => nav.push(chatSettingsScreen(store, nav))),
+      button(t('options.language'), () => nav.push(languageScreen(store, nav))),
+      button(t('options.resourcePacks'), () => nav.openResourcePacks()),
+      button(t('options.touch'), () => nav.push(touchScreen(store, nav))),
+      button(t('options.controller'), () => nav.push(controllerScreen(store, nav, nav.padName?.() ?? ''))),
+      button(t('options.accessibility'), () => nav.push(accessibilityScreen(store, nav))),
+      button(t('options.credits'), () => nav.push(creditsScreen(nav))),
       h('div', { class: 'wide' }, fullscreenButton()),
       keyboardLockSupported() ? lockEscButton() : null,
       installButton(),
     ),
-  ], [button('Done', () => nav.pop())]);
+  ], [button(t('common.done'), () => nav.pop())]);
+}
+
+/** Max Framerate slider text: 30–250 FPS, the top step is Unlimited (Minecraft's range). */
+export function framerateLabel(v: number): string {
+  return t('video.maxFps', v >= MAX_FPS_UNLIMITED ? t('video.maxFps.unlimited') : `${v} FPS`);
 }
 
 /** Video Settings: quality presets on top, then the individual options as a 2-column list. */
 export function videoSettingsScreen(store: SettingsStore, nav: OptionsNav): HTMLDivElement {
-  const root = menuScreen('Video Settings', [], [button('Done', () => nav.pop())], { list: true });
+  const root = menuScreen(t('video.title'), [], [button(t('common.done'), () => nav.pop())], { list: true });
   const body = root.querySelector<HTMLElement>('.screen-body')!;
+  const toggle = (label: string, on: boolean, set: (v: boolean) => void) =>
+    cycleButton<'on' | 'off'>(label, ['on', 'off'], onOff(), on ? 'on' : 'off', (v) => set(v === 'on'));
 
   // Rebuilt after a preset is applied so every control shows the new values.
   const render = () => {
@@ -98,26 +111,29 @@ export function videoSettingsScreen(store: SettingsStore, nav: OptionsNav): HTML
     const refresh = () => {
       const active = detectPreset(store.values);
       QUALITY_PRESETS.forEach((p, i) => presetButtons[i].classList.toggle('selected', p === active));
-      info.textContent = active ? `${active.name}: ${active.description}` : 'Custom: your own combination';
+      info.textContent = active ? `${active.name}: ${active.description}` : t('video.custom');
     };
     const tracked = <T>(fn: (v: T) => void) => (v: T) => { fn(v); refresh(); };
 
     body.replaceChildren(h('div', { class: 'grid2' },
-      h('div', { class: 'section-label', text: 'Graphics Quality' }),
+      h('div', { class: 'section-label', text: t('video.presets') }),
       h('div', { class: 'wide row', style: 'justify-content: center' }, ...presetButtons),
       info,
       h('div', { class: 'section-label' }),
-      cycleButton<GraphicsQuality>('Graphics', ['fancy', 'fast'], { fancy: 'Fancy', fast: 'Fast' }, s.graphics, tracked((v) => store.set('graphics', v))),
-      slider(2, MAX_RENDER_DISTANCE, 1, s.renderDistance, (v) => `Render Distance: ${v} chunks`, tracked((v) => store.set('renderDistance', v))),
-      cycleButton<ShadowQuality>('Shadows', ['off', 'low', 'high', 'ultra'], { off: 'OFF', low: 'Low', high: 'High', ultra: 'Ultra' }, s.shadows, tracked((v) => store.set('shadows', v))),
-      slider(50, 200, 25, s.renderScale, (v) => `Render Scale: ${v}%`, tracked((v) => store.set('renderScale', v))),
-      cycleButton<'on' | 'off'>('Dynamic Resolution', ['on', 'off'], { on: 'ON', off: 'OFF' }, s.dynamicResolution ? 'on' : 'off', (v) => store.set('dynamicResolution', v === 'on')),
-      cycleButton<ParticleLevel>('Particles', ['all', 'decreased', 'minimal'], { all: 'All', decreased: 'Decreased', minimal: 'Minimal' }, s.particles, tracked((v) => store.set('particles', v))),
-      cycleButton<'fancy' | 'off'>('Clouds', ['fancy', 'off'], { fancy: 'Fancy', off: 'OFF' }, s.clouds, (v) => store.set('clouds', v)),
-      slider(0, 100, 1, s.brightness, (v) => `Brightness: ${v === 0 ? 'Moody' : v === 100 ? 'Bright' : `${v}%`}`, (v) => store.set('brightness', v)),
-      cycleButton<string>('GUI Scale', ['0', '1', '2', '3', '4'], { 0: 'Auto', 1: '1', 2: '2', 3: '3', 4: '4' }, String(s.guiScale), (v) => store.set('guiScale', Number(v))),
-      cycleButton<'on' | 'off'>('View Bobbing', ['on', 'off'], { on: 'ON', off: 'OFF' }, s.viewBobbing ? 'on' : 'off', (v) => store.set('viewBobbing', v === 'on')),
+      cycleButton<GraphicsQuality>(t('video.graphics'), ['fancy', 'fast'], { fancy: t('video.graphics.fancy'), fast: t('video.graphics.fast') }, s.graphics, tracked((v) => store.set('graphics', v))),
+      slider(2, MAX_RENDER_DISTANCE, 1, s.renderDistance, (v) => t('video.renderDistance', v), tracked((v) => store.set('renderDistance', v))),
+      cycleButton<ShadowQuality>(t('video.shadows'), ['off', 'low', 'high', 'ultra'], { off: t('common.off'), low: t('video.shadows.low'), high: t('video.shadows.high'), ultra: t('video.shadows.ultra') }, s.shadows, tracked((v) => store.set('shadows', v))),
+      slider(50, 200, 25, s.renderScale, (v) => t('video.renderScale', v), tracked((v) => store.set('renderScale', v))),
+      toggle(t('video.dynamicResolution'), s.dynamicResolution, (v) => store.set('dynamicResolution', v)),
+      cycleButton<ParticleLevel>(t('video.particles'), ['all', 'decreased', 'minimal'], { all: t('video.particles.all'), decreased: t('video.particles.decreased'), minimal: t('video.particles.minimal') }, s.particles, tracked((v) => store.set('particles', v))),
+      cycleButton<'fancy' | 'off'>(t('video.clouds'), ['fancy', 'off'], { fancy: t('video.graphics.fancy'), off: t('common.off') }, s.clouds, (v) => store.set('clouds', v)),
+      slider(0, 100, 1, s.brightness, (v) => t('video.brightness', v === 0 ? t('video.brightness.moody') : v === 100 ? t('video.brightness.bright') : `${v}%`), (v) => store.set('brightness', v)),
+      cycleButton<string>(t('video.guiScale'), ['0', '1', '2', '3', '4'], { 0: t('common.auto'), 1: '1', 2: '2', 3: '3', 4: '4' }, String(s.guiScale), (v) => store.set('guiScale', Number(v))),
+      toggle(t('video.viewBobbing'), s.viewBobbing, (v) => store.set('viewBobbing', v)),
       slider(30, 110, 1, s.fov, fovLabel, (v) => store.set('fov', v)),
+      slider(30, MAX_FPS_UNLIMITED, 10, s.maxFps, framerateLabel, (v) => store.set('maxFps', v)),
+      slider(50, 500, 25, s.entityDistance, (v) => t('video.entityDistance', v), (v) => store.set('entityDistance', v)),
+      cycleButton<'crosshair' | 'hotbar' | 'off'>(t('video.attackIndicator'), ['crosshair', 'hotbar', 'off'], { crosshair: t('video.attackIndicator.crosshair'), hotbar: t('video.attackIndicator.hotbar'), off: t('common.off') }, s.attackIndicator, (v) => store.set('attackIndicator', v)),
       fullscreenButton(),
     ));
     refresh();
@@ -128,28 +144,75 @@ export function videoSettingsScreen(store: SettingsStore, nav: OptionsNav): HTML
 
 function soundScreen(store: SettingsStore, nav: OptionsNav): HTMLDivElement {
   const s = store.values;
-  const vol = (name: string) => (v: number) => `${name}: ${v === 0 ? 'OFF' : `${v}%`}`;
-  return menuScreen('Music & Sound Options', [
+  const vol = (name: string) => (v: number) => `${name}: ${v === 0 ? t('common.off') : `${v}%`}`;
+  return menuScreen(t('sound.title'), [
     h('div', { class: 'grid2' },
-      h('div', { class: 'wide' }, slider(0, 100, 1, s.masterVolume, vol('Master Volume'), (v) => store.set('masterVolume', v))),
-      slider(0, 100, 1, s.musicVolume, vol('Music'), (v) => store.set('musicVolume', v)),
-      slider(0, 100, 1, s.soundVolume, vol('Blocks & Actions'), (v) => store.set('soundVolume', v)),
-      slider(0, 100, 1, s.ambientVolume, vol('Ambient'), (v) => store.set('ambientVolume', v)),
-      slider(0, 100, 1, s.uiVolume, vol('Interface'), (v) => store.set('uiVolume', v)),
-      cycleButton<'stereo' | 'hrtf'>('3D Sound', ['stereo', 'hrtf'], { stereo: 'Stereo', hrtf: 'Headphones (HRTF)' }, s.spatialAudio, (v) => store.set('spatialAudio', v)),
+      h('div', { class: 'wide' }, slider(0, 100, 1, s.masterVolume, vol(t('sound.master')), (v) => store.set('masterVolume', v))),
+      slider(0, 100, 1, s.musicVolume, vol(t('sound.music')), (v) => store.set('musicVolume', v)),
+      slider(0, 100, 1, s.soundVolume, vol(t('sound.blocks')), (v) => store.set('soundVolume', v)),
+      slider(0, 100, 1, s.ambientVolume, vol(t('sound.ambient')), (v) => store.set('ambientVolume', v)),
+      slider(0, 100, 1, s.uiVolume, vol(t('sound.ui')), (v) => store.set('uiVolume', v)),
+      cycleButton<'stereo' | 'hrtf'>(t('sound.spatial'), ['stereo', 'hrtf'], { stereo: t('sound.stereo'), hrtf: t('sound.hrtf') }, s.spatialAudio, (v) => store.set('spatialAudio', v)),
     ),
-  ], [button('Done', () => nav.pop())], { list: true });
+  ], [button(t('common.done'), () => nav.pop())], { list: true });
 }
 
 function controlsScreen(store: SettingsStore, nav: OptionsNav): HTMLDivElement {
   const s = store.values;
-  return menuScreen('Controls', [
+  return menuScreen(t('controls.title'), [
     h('div', { class: 'grid2' },
-      slider(10, 200, 1, s.sensitivity, (v) => `Sensitivity: ${v}%`, (v) => store.set('sensitivity', v)),
-      cycleButton<'on' | 'off'>('Invert Mouse', ['off', 'on'], { on: 'ON', off: 'OFF' }, s.invertMouse ? 'on' : 'off', (v) => store.set('invertMouse', v === 'on')),
-      button('Key Binds...', () => nav.push(keyBindsScreen(store, nav))),
+      button(t('controls.mouse'), () => nav.push(mouseScreen(store, nav))),
+      cycleButton<'on' | 'off'>(t('controls.autoJump'), ['off', 'on'], onOff(), s.autoJump ? 'on' : 'off', (v) => store.set('autoJump', v === 'on')),
+      h('div', { class: 'wide' }, button(t('controls.keybinds'), () => nav.push(keyBindsScreen(store, nav)))),
     ),
-  ], [button('Done', () => nav.pop())], { list: true });
+  ], [button(t('common.done'), () => nav.pop())], { list: true });
+}
+
+function mouseScreen(store: SettingsStore, nav: OptionsNav): HTMLDivElement {
+  const s = store.values;
+  return menuScreen(t('mouse.title'), [
+    h('div', { class: 'grid2' },
+      slider(10, 200, 1, s.sensitivity, (v) => t('mouse.sensitivity', v), (v) => store.set('sensitivity', v)),
+      cycleButton<'on' | 'off'>(t('mouse.invert'), ['off', 'on'], onOff(), s.invertMouse ? 'on' : 'off', (v) => store.set('invertMouse', v === 'on')),
+      cycleButton<'on' | 'off'>(t('mouse.raw'), ['on', 'off'], onOff(), s.rawInput ? 'on' : 'off', (v) => store.set('rawInput', v === 'on')),
+    ),
+  ], [button(t('common.done'), () => nav.pop())], { list: true });
+}
+
+function chatSettingsScreen(store: SettingsStore, nav: OptionsNav): HTMLDivElement {
+  const s = store.values;
+  return menuScreen(t('chat.title'), [
+    h('div', { class: 'grid2' },
+      slider(0, 100, 1, s.chatOpacity, (v) => t('chat.opacity', v), (v) => store.set('chatOpacity', v)),
+      slider(50, 100, 1, s.chatTextSize, (v) => t('chat.size', v), (v) => store.set('chatTextSize', v)),
+      slider(0, 100, 1, s.chatLineSpacing, (v) => t('chat.spacing', v), (v) => store.set('chatLineSpacing', v)),
+      slider(40, 100, 1, s.chatWidth, (v) => t('chat.width', v), (v) => store.set('chatWidth', v)),
+      cycleButton<'on' | 'off'>(t('chat.colors'), ['on', 'off'], onOff(), s.chatColors ? 'on' : 'off', (v) => store.set('chatColors', v === 'on')),
+      cycleButton<'on' | 'off'>(t('chat.suggestions'), ['on', 'off'], onOff(), s.chatSuggestions ? 'on' : 'off', (v) => store.set('chatSuggestions', v === 'on')),
+    ),
+  ], [button(t('common.done'), () => nav.pop())], { list: true });
+}
+
+/** Language screen: one button per language; the choice applies at once and the screens below are rebuilt. */
+export function languageScreen(store: SettingsStore, nav: OptionsNav): HTMLDivElement {
+  const buttons = LANGUAGES.map((lang: Language) => {
+    const btn = button(LANGUAGE_NAMES[lang], () => {
+      if (getLanguage() === lang) return;
+      store.set('language', lang);
+      setLanguage(lang);
+      // The game rebuilds the screens below (title or pause menu, then Options) in the new language.
+      nav.pop();
+      nav.languageChanged?.();
+    });
+    btn.classList.toggle('selected', getLanguage() === lang);
+    return btn;
+  });
+  return menuScreen(t('language.title'), [
+    h('div', { style: 'display: flex; flex-direction: column; align-items: center; gap: calc(var(--s) * 4);' },
+      ...buttons,
+      h('div', { class: 'hint', text: t('language.hint') }),
+    ),
+  ], [button(t('common.done'), () => nav.pop())], { list: true });
 }
 
 /** Accessibility & comfort: captions, motion, flashes, colours, contrast, text size, toggle/hold. */
@@ -301,22 +364,22 @@ function keyBindsScreen(store: SettingsStore, nav: OptionsNav): HTMLDivElement {
       .sort((a, b) => a.k.name.localeCompare(b.k.name, 'en', { numeric: true }));
     for (const { k, i } of inCat) {
       keyButtons[i] = button('', () => listen(i), { cls: 'keybind' });
-      resetButtons[i] = button('Reset', () => bind(i, k.defaultCode));
+      resetButtons[i] = button(t('common.reset'), () => bind(i, k.defaultCode));
       rows.push(h('div', { class: 'keybind-label', text: k.name }), keyButtons[i], resetButtons[i]);
     }
   }
 
   render();
-  return menuScreen('Key Binds', [h('div', { class: 'keybinds' }, ...rows)], [
-    button('Reset Keys', () => setKeybinds(defaultKeybinds()), { cls: 'w150' }),
-    button('Done', () => nav.pop(), { cls: 'w150' }),
+  return menuScreen(t('keybinds.title'), [h('div', { class: 'keybinds' }, ...rows)], [
+    button(t('keybinds.resetAll'), () => setKeybinds(defaultKeybinds()), { cls: 'w150' }),
+    button(t('common.done'), () => nav.pop(), { cls: 'w150' }),
   ], { list: true });
 }
 
 function creditsScreen(nav: OptionsNav): HTMLDivElement {
-  return menuScreen('Credits & Attribution', [
+  return menuScreen(t('options.credits').replace('...', ''), [
     h('div', { class: 'hint', style: 'display: flex; flex-direction: column; gap: calc(var(--s) * 6);' },
       ...nav.credits().map((line) => h('div', { text: line })),
     ),
-  ], [button('Done', () => nav.pop())], { list: true });
+  ], [button(t('common.done'), () => nav.pop())], { list: true });
 }
