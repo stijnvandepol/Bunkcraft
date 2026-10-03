@@ -133,6 +133,8 @@ Nog open: gebakken buffers voor veelgebruikte geluiden (minder CPU), geluiden va
 - **Werkende keybind-remapping:** **Gedaan.** Key Binds-scherm zoals Minecraft 1.21 (categorieën, `> key <`, Esc = Not Bound, conflicten rood, Reset Keys); toetsen en muisknoppen, opgeslagen in `bunkcraft.settings`. Centrale tabel in `src/core/Keybinds.ts`.
 - **Contexthints en ontdekken van recepten (S):** voor nieuwe spelers.
 - **Toegankelijkheid (S–M):** ondertitels voor geluiden, reduced motion (hurt cam, bobbing en FOV-kick uit) en kleurenblind-veilige balken.
+- **UI op Minecraft 1.21-niveau:** **Gedaan** (zie [`docs/UI.md`](UI.md)): Nederlands/Engels (`src/ui/i18n.ts`), Language-, Mouse- en Chat Settings-schermen, Max Framerate/Entity Distance/FOV Effects/Attack Indicator/Auto-Jump/Raw Input, chatgeschiedenis en `/`-aanvulling, Allow Cheats en chat in singleplayer, Statistics, laadscherm met tips, toetsenbordnavigatie in menu's, F3 zoals 1.21, effect-hearts, inventory-sneltoetsen, en een screenshot- en pixel-diff-suite (`scripts/ui-shots.py`).
+- **UI vervolg (S–M):** drag-split en muiswiel in de inventory, 2×2 crafting-raster, offhand-slot en speler-preview (eerst API afstemmen met furnace/enchanting), toegankelijkheidsknop op het titelscherm, overige schermen vertalen (sleutels toevoegen aan `i18n.ts`), aanvals-cooldown koppelen aan `hud.setAttackCharge`.
 - **`navigator.storage.persist()`:** **Gedaan.** Safari wist anders werelden na 7 dagen zonder bezoek.
 - **Gamepad (M)** via de Gamepad API.
 - **Touchbediening (L):** joystick, slepen om te kijken en knoppen. Vereist voor mobiele portals.

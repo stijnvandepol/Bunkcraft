@@ -1013,3 +1013,6 @@ html, body {
 .arc-stat-bar { height: calc(var(--s) * 3); background: #000; }
 .arc-stat-bar i { display: block; height: 100%; background: #ffff55; }
 .arc-loadout-note { color: #a0a0a0; }
+
+/* The hotbar row lines up under the 27 storage slots, not under the armor column (Minecraft layout). */
+.inv-armor-row + .inv-hotbar { margin-left: calc(var(--s) * 22); }

@@ -564,6 +564,8 @@ export class Game {
   private enterMenu(): void {
     this.stopArcade();
     this.state = 'menu';
+    this.chat.close();
+    this.chat.setVisible(false);
     this.meta = null;
     this.weatherSys.stop();
     this.hud.setVisible(false);
