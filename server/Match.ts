@@ -115,6 +115,7 @@ export class Match {
   private nextMatchMsg = 0;
   private nextRoster = 0;
   private nextModeMsg = 0;
+  private readonly sentScores = { red: 0, blue: 0 };
   private modeDirty = false;
   private joinCounter = 0;
   /** Player who changes team at their next respawn because the other team lost players (0 = nobody). */
@@ -451,7 +452,8 @@ export class Match {
       }
     }
 
-    if (now >= this.nextMatchMsg) this.broadcastMatch();
+    // Objective points (zones, captures) show up at once, not only with the once-a-second update.
+    if (now >= this.nextMatchMsg || this.scores.red !== this.sentScores.red || this.scores.blue !== this.sentScores.blue) this.broadcastMatch();
     if (now >= this.nextRoster) this.broadcastRoster();
     if (this.modeDirty || now >= this.nextModeMsg) this.broadcastMode();
   }
@@ -668,6 +670,8 @@ export class Match {
 
   private broadcastMatch(): void {
     this.nextMatchMsg = this.host.now() + 1;
+    this.sentScores.red = this.scores.red;
+    this.sentScores.blue = this.scores.blue;
     this.host.broadcast(this.matchMessage());
   }
 
