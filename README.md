@@ -82,10 +82,11 @@ Overige scripts:
 | Rechtermuisknop (vasthouden) | Eten (Survival) |
 | <kbd>Q</kbd> | Item laten vallen |
 | <kbd>E</kbd> | Inventory / crafting |
-| <kbd>T</kbd> / <kbd>/</kbd> | Chat / commando (multiplayer) |
+| <kbd>T</kbd> / <kbd>/</kbd> | Chat / commando (↑/↓ geschiedenis, <kbd>Tab</kbd> vult commando's aan; in singleplayer alleen met Allow Cheats) |
 | <kbd>F3</kbd> | Debug- en performance-overlay |
 | <kbd>F1</kbd> | HUD verbergen |
 | <kbd>F2</kbd> | Screenshot (PNG-download) |
+| <kbd>F11</kbd> | Volledig scherm |
 | <kbd>Esc</kbd> | Muis vrijgeven / pauzemenu |
 
 Alle toetsen behalve <kbd>F1</kbd>, <kbd>F2</kbd>, <kbd>F3</kbd> en <kbd>Esc</kbd> zijn aan te passen via
@@ -121,7 +122,9 @@ Options → Controls → Key Binds, ook naar muisknoppen (zoals in Minecraft).
 - Blokwolken, geanimeerd water met reflecties en golfjes, onderwatereffect, view bobbing en sprint-FOV.
 
 **Menu's**
-- Opgebouwd zoals Minecraft 1.21: titelscherm met panorama, wereldselectie met screenshots, Options-hub met submenu's, pauzemenu en een F3-scherm.
+- Opgebouwd zoals Minecraft 1.21: titelscherm met panorama, wereldselectie met screenshots, Options-hub met submenu's (Video, Music & Sounds, Controls, Mouse, Chat, Language), pauzemenu met Statistics en een F3-scherm. Zie [`docs/UI.md`](docs/UI.md).
+- In het Engels en Nederlands (Options → Language), met toetsenbordnavigatie (pijltjes, Tab, Enter, Esc).
+- In de inventory: <kbd>1</kbd>–<kbd>9</kbd> boven een slot wisselt met de hotbar, <kbd>Q</kbd> gooit een item weg, dubbelklik verzamelt.
 - Procedurele geluidseffecten en generatieve achtergrondmuziek.
 
 ## Multiplayer

@@ -1,6 +1,6 @@
 import type { BlockSound } from '../core/audio/profiles';
 import { TINT_BIRCH, TINT_FOLIAGE, TINT_GRASS, TINT_NONE, TINT_SPRUCE } from './BiomeColors';
-import { BOX_BED, BOX_CARPET, BOX_FENCE, BOX_GATE, BOX_LADDER, BOX_NONE, BOX_PANE, BOX_TRAPDOOR, BOX_WALL, isTall } from './BoxShapes';
+import { BOX_ANVIL, BOX_BED, BOX_CARPET, BOX_FENCE, BOX_GATE, BOX_GRINDSTONE, BOX_LADDER, BOX_NONE, BOX_PANE, BOX_TABLE, BOX_TRAPDOOR, BOX_WALL, isTall } from './BoxShapes';
 import { CUBES, CUBE_FIRST, DYES, type MineTool, PARTIAL_EXT, WALL_MATERIALS, WOODS, titleCase } from './Content';
 
 /**
@@ -188,6 +188,15 @@ export const BLOCK = {
   LANTERN: 83,
   SAPLING: 84,
   IRON_BARS: 85,
+  /** A furnace that is burning (same state bits as FURNACE; emits light 13, drops a plain furnace). */
+  LIT_FURNACE: 86,
+  /**
+   * Enchanting, anvil and grindstone: ids from the top of the range so they never meet the append-only content tables
+   * (CUBE_FIRST upwards).
+   */
+  ENCHANTING_TABLE: 250,
+  ANVIL: 251,
+  GRINDSTONE: 252,
   /** Sentinel returned for blocks in chunks that are not loaded (treated as solid). */
   UNLOADED: 255,
 } as const;
@@ -433,12 +442,39 @@ BLOCK_DEFS.push(
     sound: 'stone', hardness: 2, tool: 'pickaxe', minTier: 0,
   }),
   box(B.LADDER, 'ladder', 'Ladder', BOX_LADDER, { all: 'ladder' }, { solid: false, hardness: 0.4, metaMask: 3, sound: 'ladder' }),
-  cube(B.CHEST, 'chest', 'Chest', { top: 'chest_top', bottom: 'chest_top', side: 'chest_side', front: 'chest_front' }, 2.5, 'wood', { facing: true, tool: 'axe' }),
+  cube(B.CHEST, 'chest', 'Chest', { top: 'chest_top', bottom: 'chest_top', side: 'chest_side', front: 'chest_front' }, 2.5, 'wood', { facing: true, tool: 'axe', metaMask: 0x0f }),
+  // Burning furnace: its own id because block light is looked up per id (state 0-1 is the facing, like FURNACE).
+  cube(B.LIT_FURNACE, 'lit_furnace', 'Furnace', { top: 'furnace_top', bottom: 'furnace_top', side: 'furnace_side', front: 'furnace_front_on' }, 1.2, 'stone', { facing: true, light: 13, inInventory: false }),
   {
     id: B.LANTERN, name: 'lantern', displayName: 'Lantern', shape: 'model', solid: false, transparent: true, hardness: 3.5, sound: 'metal',
     light: 15, inInventory: true, textures: { all: 'lantern' }, model: [[5, 0, 5, 11, 7, 11], [6, 7, 6, 10, 9, 10]], tool: 'pickaxe', minTier: 0,
   },
+  // Enchanting, anvil, grindstone (see items/Enchanting): obsidian table light 7 like Minecraft's.
+  box(B.ENCHANTING_TABLE, 'enchanting_table', 'Enchanting Table', BOX_TABLE,
+    { top: 'enchanting_table_top', side: 'enchanting_table_side', bottom: 'enchanting_table_bottom' },
+    { sound: 'stone', hardness: 5, tool: 'pickaxe', minTier: 0, light: 7 }),
+  box(B.ANVIL, 'anvil', 'Anvil', BOX_ANVIL, { top: 'anvil_top', side: 'anvil' }, {
+    sound: 'metal', hardness: 5, tool: 'pickaxe', minTier: 0, metaMask: 0x0f,
+    variant: {
+      shift: 2, count: 3, names: ['Anvil', 'Chipped Anvil', 'Damaged Anvil'],
+      textures: [{ top: 'anvil_top', side: 'anvil' }, { top: 'chipped_anvil_top', side: 'anvil' }, { top: 'damaged_anvil_top', side: 'anvil' }],
+    },
+  }),
+  box(B.GRINDSTONE, 'grindstone', 'Grindstone', BOX_GRINDSTONE, { top: 'grindstone_round', side: 'grindstone_side', bottom: 'grindstone_round' }, {
+    sound: 'stone', hardness: 2, tool: 'pickaxe', minTier: 0, metaMask: 3,
+  }),
 );
+
+// ---- Growth states (see Growth.ts): sapling stage, persistent leaves, sugar cane and cactus age ----
+/** Sapling: the wood is bits 0-2, the growth stage bit 5 (above the variant lookup mask of 31). */
+export const SAPLING_STAGE_BIT = 32;
+/** Leaves: bit 0 = persistent (placed by a player, never decays). */
+export const LEAVES_PERSISTENT_BIT = 1;
+for (const def of BLOCK_DEFS) {
+  if (def.id === B.SAPLING) def.metaMask = 7 | SAPLING_STAGE_BIT;
+  else if (def.id === B.CACTUS || def.id === CUBE_ID.sugar_cane) def.metaMask = 15;
+  else if (def.shape === 'cube' && def.sway && def.transparent) def.metaMask = LEAVES_PERSISTENT_BIT;
+}
 
 BLOCK_DEFS.sort((a, b) => a.id - b.id);
 

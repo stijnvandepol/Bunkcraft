@@ -208,6 +208,24 @@ describe('movement validator: rules', () => {
     expect(run(sw, arcadeMaxSpeed(1.08))).toBe(true);
   });
 
+  it('a flag carrier (10% slower) running at full speed is caught; at carrier pace it is not', () => {
+    const run = (speed: number) => {
+      const v = flat(undefined, arcadeMaxSpeed(1) * 0.9).v;
+      let x = -28;
+      v.reset(x, 64, 0.5, 0);
+      for (let i = 1; i <= 15 * 20; i++) {
+        x += speed * 0.05;
+        if (x > 28) { x = -28; v.reset(x, 64, 0.5, i * 0.05); continue; }
+        if (!v.check(x, 64, 0.5, i * 0.05).ok) return i * 0.05;
+      }
+      return -1;
+    };
+    expect(run(arcadeMaxSpeed(1) * 0.9)).toBe(-1);
+    const caught = run(arcadeMaxSpeed(1));
+    expect(caught).toBeGreaterThan(0);
+    expect(caught).toBeLessThan(15);
+  });
+
   it('rejects positions outside the bounds and ignores nothing after reset (server teleport)', () => {
     const w = new TestWorld().fill(-30, 63, -30, 30, 63, 30, BLOCK.STONE);
     const v = new MovementValidator({ getBlock: w.get }, { maxSpeed: SPEED, inBounds: (x, z) => Math.abs(x) < 10 && Math.abs(z) < 10 });

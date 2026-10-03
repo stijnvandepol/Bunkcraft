@@ -20,7 +20,7 @@
 :root {
   --s: 2px;
   --font: 'BunkCraft Pixel', monospace;
-  --fs: calc(var(--s) * 8);
+  --fs: calc(var(--s) * 8 * var(--ts, 1));
   --shadow: var(--s) var(--s) 0 #3f3f3f;
   --btn-face: #6f6f6f;
   --btn-hi: #a8a8a8;
@@ -45,11 +45,17 @@ html, body {
   -moz-osx-font-smoothing: grayscale;
   font-smooth: never;
   text-rendering: optimizeSpeed;
+  /* Touch: no pull-to-refresh, pinch zoom, double-tap zoom, callout or tap flash. Menus still scroll. */
+  overscroll-behavior: none;
+  touch-action: pan-x pan-y;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 #app { position: fixed; inset: 0; }
 
 #game {
+  touch-action: none;
   position: absolute;
   inset: 0;
   width: 100%;
@@ -105,6 +111,8 @@ html, body {
   padding: calc(var(--s) * 4) 0;
   scrollbar-width: thin;
   scrollbar-color: #8b8b8b #000;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
 }
 
 /* List screens (Video Settings, Select World…): dark list area with separators. */
@@ -176,8 +184,24 @@ html, body {
 .mc-btn.icon { width: calc(var(--s) * 20); padding: 0; }
 .grid2 > .mc-btn, .grid2 > .mc-slider { width: 100%; }
 
-/* Modern hover: same stone face, white outline. */
+/* Modern hover: same stone face, white outline. Keyboard focus looks the same, like Minecraft's focused button. */
 .mc-btn:hover:not(:disabled), .mc-btn:focus-visible { border-color: #fff; outline: none; }
+.mc-slider:focus-within { border-color: #fff; }
+.mc-slider input:focus-visible { outline: none; }
+.mc-slider input:focus-visible::-webkit-slider-thumb { border-color: #fff; }
+.mc-slider input:focus-visible::-moz-range-thumb { border-color: #fff; }
+.tab:focus-visible, .inv-tab:focus-visible, .world-item:focus-visible { outline: var(--s) solid #fff; outline-offset: calc(var(--s) * -1); }
+
+/* Language button next to Options on the title screen: a pixel globe. */
+.mc-btn.icon-lang {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' shape-rendering='crispEdges'%3E%3Cpath fill='%23fff' d='M5 2h6v1h2v1h1v2h1v4h-1v2h-1v1h-2v1H5v-1H3v-1H2v-2H1V6h1V4h1V3h2z'/%3E%3Cpath fill='%2335a0e8' d='M5 3h6v1h2v2h1v4h-1v2h-2v1H5v-1H3v-2H2V6h1V4h2z'/%3E%3Cpath fill='%2342b84a' d='M5 4h3v2H6v1h1v2H5V8H4V6h1zM9 9h3v1h-1v2H9z'/%3E%3C/svg%3E");
+  background-size: calc(var(--s) * 16) calc(var(--s) * 16);
+  background-position: center;
+  background-repeat: no-repeat;
+  image-rendering: pixelated;
+}
+.title-buttons .row { position: relative; }
+.title-buttons .row .icon { position: absolute; left: calc(var(--s) * -24); top: 0; }
 .mc-btn.selected { border-color: #fff; color: #ffff55; }
 
 .mc-btn:disabled {
@@ -365,6 +389,27 @@ html, body {
   object-fit: cover;
 }
 
+/* Hovering or focusing a world shows Minecraft's "play" arrow over its icon. */
+.world-icon-wrap { position: relative; flex: 0 0 auto; width: calc(var(--s) * 32); height: calc(var(--s) * 32); }
+.world-icon-wrap .world-icon { width: 100%; height: 100%; display: block; }
+.world-item:hover .world-icon-wrap::before, .world-item:focus-visible .world-icon-wrap::before { content: ''; position: absolute; inset: 0; background: rgba(0, 0, 0, 0.45); }
+.world-item:hover .world-icon-wrap::after, .world-item:focus-visible .world-icon-wrap::after {
+  content: '';
+  position: absolute;
+  left: calc(var(--s) * 11);
+  top: calc(var(--s) * 8);
+  width: calc(var(--s) * 14);
+  height: calc(var(--s) * 16);
+  background: #fff;
+  clip-path: polygon(0 0, 100% 50%, 0 100%);
+}
+
+/* Statistics: a dark list of "label ... value" rows. */
+.stat-list { width: calc(var(--s) * 270); display: flex; flex-direction: column; }
+.stat-row { display: flex; justify-content: space-between; padding: calc(var(--s) * 3) calc(var(--s) * 4); background: rgba(255, 255, 255, 0.05); }
+.stat-row.alt { background: rgba(0, 0, 0, 0.25); }
+.stat-value { color: #fff; }
+
 .world-text { display: flex; flex-direction: column; gap: calc(var(--s) * 1); min-width: 0; padding-top: calc(var(--s) * 1); }
 .world-name { color: #fff; }
 .world-meta { color: #808080; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: none; }
@@ -374,9 +419,16 @@ html, body {
 
 /* ---------------------------------------------------------------- loading */
 
-.loading { background: #1b1b1b; justify-content: center; gap: calc(var(--s) * 8); }
-.progress { width: calc(var(--s) * 120); height: calc(var(--s) * 3); background: #3a3a3a; }
-.progress-fill { height: 100%; width: 0; background: #fff; transition: width 0.2s; }
+.loading {
+  background: linear-gradient(rgba(0, 0, 0, 0.35), rgba(0, 0, 0, 0.35)), var(--dirt, none) #1b1b1b;
+  background-size: auto, calc(var(--s) * 32) calc(var(--s) * 32);
+  image-rendering: pixelated;
+  justify-content: center;
+  gap: calc(var(--s) * 8);
+}
+.progress { width: calc(var(--s) * 182); height: calc(var(--s) * 5); background: #000; border: var(--s) solid #a0a0a0; padding: var(--s); }
+.progress-fill { height: 100%; width: 0; background: #fff; transition: width 0.2s; will-change: width; }
+.loading-tip { position: absolute; bottom: calc(var(--s) * 28); left: 10%; right: 10%; text-align: center; color: #a0a0a0; line-height: 1.4; }
 
 .click-to-play { justify-content: center; background: rgba(0, 0, 0, 0.35); cursor: pointer; }
 
@@ -461,6 +513,12 @@ html, body {
   border: var(--s) solid #000;
   box-shadow: inset 0 0 0 var(--s) #fff, inset 0 0 0 calc(var(--s) * 2) #a0a0a0;
 }
+
+.attack-hotbar {
+  position: absolute; right: calc(var(--s) * -24); bottom: calc(var(--s) * 3); width: calc(var(--s) * 18); height: calc(var(--s) * 18);
+  background: rgba(20, 20, 20, 0.55); border: var(--s) solid #000; display: flex; align-items: flex-end;
+}
+.attack-hotbar i { display: block; width: 100%; height: 0; background: #a0a0a0; }
 
 .slot-icon { width: calc(var(--s) * 16); height: calc(var(--s) * 16); image-rendering: pixelated; }
 
@@ -564,6 +622,9 @@ html, body {
 
 .mc-tooltip {
   position: fixed;
+  left: 0;
+  top: 0;
+  will-change: transform;
   padding: calc(var(--s) * 3) calc(var(--s) * 4);
   background: rgba(16, 0, 16, 0.94);
   border: var(--s) solid;
@@ -683,7 +744,9 @@ html, body {
 .inv-columns { display: flex; gap: calc(var(--s) * 8); }
 .inv-subtitle { color: #404040; margin: calc(var(--s) * 3) 0 calc(var(--s) * 2); }
 .inv-slot.disabled img { opacity: 0.35; }
-.cursor-stack { position: fixed; pointer-events: none; z-index: 40; width: calc(var(--s) * 16); height: calc(var(--s) * 16); }
+.tip-name { color: #fff; }
+.tip-lore { color: #a8a8a8; }
+.cursor-stack { position: fixed; left: 0; top: 0; will-change: transform; pointer-events: none; z-index: 40; width: calc(var(--s) * 16); height: calc(var(--s) * 16); }
 .cursor-stack img { width: 100%; height: 100%; image-rendering: pixelated; }
 
 /* ---------------------------------------------------------------- multiplayer */
@@ -692,18 +755,34 @@ html, body {
   position: absolute;
   left: calc(var(--s) * 2);
   bottom: calc(var(--s) * 40);
-  width: min(calc(var(--s) * 320), 60vw);
+  /* Chat Settings: width 40–100% of Minecraft's 320 GUI px, text size, line spacing and text opacity. */
+  --chat-size: 1;
+  --chat-gap: 0;
+  --chat-width: 1;
+  --chat-opacity: 1;
+  --chat-line: calc(var(--s) * (9 * var(--chat-size) + 4 * var(--chat-gap)));
+  width: min(calc(var(--s) * 320 * var(--chat-width)), 60vw);
+  font-size: calc(var(--fs) * var(--chat-size));
   z-index: 9;
   pointer-events: none;
   text-shadow: var(--shadow);
 }
 
-.chat-log { max-height: calc(var(--s) * 9 * 10); overflow: hidden; display: flex; flex-direction: column; }
-.chat-line { background: rgba(0, 0, 0, 0.5); padding: 0 calc(var(--s) * 2); line-height: calc(var(--s) * 9); white-space: pre-wrap; word-break: break-word; transition: opacity 0.5s; }
-.chat-line.system { color: #ffff55; }
+.chat-log { max-height: calc(var(--chat-line) * 10); overflow: hidden; display: flex; flex-direction: column; }
+.chat-line {
+  background: rgba(0, 0, 0, 0.5);
+  padding: 0 calc(var(--s) * 2);
+  line-height: var(--chat-line);
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: rgba(255, 255, 255, var(--chat-opacity));
+  transition: opacity 1s linear;
+  will-change: opacity;
+}
+.chat-line.system { color: rgba(255, 255, 85, var(--chat-opacity)); }
 .chat-line.faded { opacity: 0; }
-.chat.open .chat-log { overflow-y: auto; pointer-events: auto; max-height: calc(var(--s) * 9 * 20); }
-.chat.open .chat-line.faded { opacity: 1; }
+.chat.open .chat-log { overflow-y: auto; pointer-events: auto; max-height: calc(var(--chat-line) * 20); scrollbar-width: none; }
+.chat.open .chat-line.faded { opacity: 1; transition: none; }
 
 .chat-input {
   pointer-events: auto;
@@ -718,6 +797,20 @@ html, body {
   font-size: var(--fs);
   padding: 0 calc(var(--s) * 2);
 }
+
+/* Command suggestions: a list above the input line, the Tab target highlighted yellow like Minecraft. */
+.chat-suggest {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  margin-top: calc(var(--s) * 2);
+  background: rgba(0, 0, 0, 0.7);
+  padding: calc(var(--s) * 1) calc(var(--s) * 2);
+  width: max-content;
+  max-width: 100%;
+}
+.chat-suggest > div { color: #aaa; line-height: calc(var(--s) * 9); }
+.chat-suggest > div.sel { color: #ffff55; }
 
 .nametags { position: absolute; inset: 0; pointer-events: none; z-index: 4; overflow: hidden; }
 .nametag {
@@ -862,6 +955,39 @@ html, body {
 .arc-clock { min-width: calc(var(--s) * 50); padding: calc(var(--s) * 3) calc(var(--s) * 6); text-align: center; font-size: calc(var(--fs) * 1.5); background: rgba(0, 0, 0, 0.6); border: var(--s) solid #000; }
 .arc-subline { color: #c0c0c0; }
 .arc-banner { position: absolute; top: calc(var(--s) * 44); left: 50%; transform: translateX(-50%); font-size: calc(var(--fs) * 2); color: #ffff55; white-space: nowrap; }
+/* Objective modes (src/ui/ModeHud.ts) */
+.mode-hud { position: absolute; inset: 0; pointer-events: none; }
+.mode-markers { position: absolute; inset: 0; overflow: hidden; }
+.mode-marker { position: absolute; left: 0; top: 0; display: flex; flex-direction: column; align-items: center; gap: var(--s); will-change: transform; }
+.mm-icon { width: calc(var(--s) * 14); height: calc(var(--s) * 14); border: var(--s) solid #fff; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; font-size: calc(var(--fs) * 1); box-shadow: 0 0 0 var(--s) #000; }
+.mm-icon.zone.contested { animation: mode-blink 0.5s steps(2) infinite; }
+.mm-icon.zone.dim { opacity: 0.55; }
+.mm-icon.flag { border-radius: 0; width: calc(var(--s) * 10); height: calc(var(--s) * 7); clip-path: polygon(0 0, 100% 0, 70% 50%, 100% 100%, 0 100%); }
+.mm-icon.flag.dropped { animation: mode-blink 0.6s steps(2) infinite; }
+.mm-caption { font-size: calc(var(--fs) * 0.75); white-space: nowrap; }
+.mm-dist { font-size: calc(var(--fs) * 0.7); color: #e0e0e0; }
+@keyframes mode-blink { 50% { opacity: 0.35; } }
+.mode-bar { position: absolute; top: calc(var(--s) * 39); left: 50%; transform: translateX(-50%); display: flex; gap: calc(var(--s) * 2); }
+.mode-bar-half { width: calc(var(--s) * 60); height: calc(var(--s) * 3); background: rgba(0, 0, 0, 0.55); border: var(--s) solid #000; }
+.mode-bar-half:first-child { display: flex; justify-content: flex-end; }
+.mode-bar-fill { height: 100%; width: 0; }
+.mode-bar-fill.red { background: #e0463c; }
+.mode-bar-fill.blue { background: #3c7ae0; }
+.mode-panel { position: absolute; top: calc(var(--s) * 52); left: calc(var(--s) * 6); display: flex; flex-direction: column; gap: var(--s); }
+.mode-line { background: rgba(0, 0, 0, 0.45); padding: var(--s) calc(var(--s) * 3); }
+.mode-rounds { display: flex; align-items: center; gap: calc(var(--s) * 4); background: rgba(0, 0, 0, 0.45); padding: calc(var(--s) * 2) calc(var(--s) * 4); }
+.mode-pips { display: flex; gap: calc(var(--s) * 2); }
+.mode-pips i { width: calc(var(--s) * 5); height: calc(var(--s) * 5); border: var(--s) solid #000; background: rgba(255, 255, 255, 0.2); }
+.mode-alive { font-size: calc(var(--fs) * 1.2); }
+.mode-ladder { background: rgba(0, 0, 0, 0.45); padding: calc(var(--s) * 3) calc(var(--s) * 4); display: flex; flex-direction: column; gap: var(--s); }
+.mode-ladder-level { color: #ffd23f; }
+.mode-ladder-weapon { font-size: calc(var(--fs) * 1.4); }
+.mode-ladder-next { color: #c0c0c0; font-size: calc(var(--fs) * 0.8); }
+.mode-ladder-steps { display: flex; gap: calc(var(--s) * 1); margin-top: var(--s); }
+.mode-ladder-steps i { width: calc(var(--s) * 4); height: calc(var(--s) * 4); background: rgba(255, 255, 255, 0.2); border: var(--s) solid #000; }
+.mode-ladder-steps i.done { background: #9a8a3a; }
+.mode-ladder-steps i.now { background: #ffd23f; }
+.mode-toast { position: absolute; top: calc(var(--s) * 60); left: 50%; transform: translateX(-50%); font-size: calc(var(--fs) * 1.3); white-space: nowrap; }
 .arc-protect { position: absolute; top: calc(var(--s) * 70); left: 50%; transform: translateX(-50%); color: #7ec8ff; background: rgba(20, 60, 120, 0.5); padding: calc(var(--s) * 2) calc(var(--s) * 6); border: var(--s) solid #7ec8ff; white-space: nowrap; }
 
 /* Sniper scope: black ring, thin crosshair lines. */
@@ -877,6 +1003,7 @@ html, body {
 }
 .arc-board-scores { text-align: center; font-size: calc(var(--fs) * 2); margin-bottom: calc(var(--s) * 4); }
 .arc-row { display: grid; grid-template-columns: calc(var(--s) * 16) 1fr calc(var(--s) * 30) calc(var(--s) * 34) calc(var(--s) * 30) calc(var(--s) * 30); gap: calc(var(--s) * 4); padding: calc(var(--s) * 1) calc(var(--s) * 3); background: rgba(255, 255, 255, 0.05); }
+.arc-row.pts { grid-template-columns: calc(var(--s) * 16) 1fr calc(var(--s) * 30) calc(var(--s) * 30) calc(var(--s) * 34) calc(var(--s) * 30) calc(var(--s) * 30); }
 .arc-row.head { color: #a0a0a0; background: transparent; }
 .arc-row.self { background: rgba(255, 255, 255, 0.2); }
 .arc-row span { text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -923,3 +1050,269 @@ html, body {
 .arc-stat-bar { height: calc(var(--s) * 3); background: #000; }
 .arc-stat-bar i { display: block; height: 100%; background: #ffff55; }
 .arc-loadout-note { color: #a0a0a0; }
+
+/* ---------------------------------------------------------------- experience and enchanting */
+
+.xp-wrap { position: relative; width: calc(var(--s) * 182); height: calc(var(--s) * 5); margin-bottom: calc(var(--s) * 2); }
+.xp-bar { display: block; width: 100%; height: 100%; image-rendering: pixelated; }
+.xp-level {
+  position: absolute; left: 0; right: 0; top: calc(var(--s) * -9); text-align: center; color: #80ff20; pointer-events: none;
+  text-shadow: var(--s) 0 0 #000, calc(var(--s) * -1) 0 0 #000, 0 var(--s) 0 #000, 0 calc(var(--s) * -1) 0 #000;
+}
+
+/* Enchantment glint: a purple sheen sliding over the icon, clipped to its shape by a CSS mask. */
+.glint {
+  position: absolute; left: 50%; top: 50%; width: calc(var(--s) * 16); height: calc(var(--s) * 16); transform: translate(-50%, -50%);
+  pointer-events: none; -webkit-mask-size: 100% 100%; mask-size: 100% 100%;
+  background: linear-gradient(120deg, rgba(140, 70, 255, 0.38) 0%, rgba(140, 70, 255, 0.38) 36%, rgba(220, 160, 255, 0.95) 48%, rgba(140, 70, 255, 0.38) 60%, rgba(140, 70, 255, 0.38) 100%);
+  background-size: 300% 300%; mix-blend-mode: screen; animation: glint-slide 2.6s linear infinite;
+}
+@keyframes glint-slide { from { background-position: 100% 0; } to { background-position: 0 100%; } }
+.hotbar-slot .glint.hidden { display: none; }
+.item-name.enchanted { color: #55ffff; }
+
+.mc-tooltip .tt-name.tt-enchanted { color: #55ffff; }
+.mc-tooltip .tt-name.tt-custom { font-style: italic; }
+.mc-tooltip .tt-line { color: #aaaaaa; }
+
+/* Station screens (enchanting table, anvil, grindstone) above the inventory. */
+.inv-box-row { display: flex; gap: calc(var(--s) * 6); align-items: flex-start; }
+.inv-box.station { margin-bottom: calc(var(--s) * 6); }
+.inv-box.station .inv-grid { grid-template-columns: repeat(3, calc(var(--s) * 18)); column-gap: calc(var(--s) * 8); width: max-content; flex: 0 0 auto; }
+.inv-box.station-enchant .inv-grid { grid-template-columns: repeat(2, calc(var(--s) * 18)); column-gap: calc(var(--s) * 4); }
+.inv-box.station .inv-grid > .inv-slot:nth-child(3) { box-shadow: 0 0 0 var(--s) #5a5a5a; }
+.ench-panel { display: flex; flex-direction: column; gap: calc(var(--s) * 1); }
+.ench-offers { display: flex; flex-direction: column; gap: var(--s); }
+.ench-offer {
+  width: calc(var(--s) * 108); height: calc(var(--s) * 19); display: flex; align-items: center; gap: calc(var(--s) * 3);
+  padding: 0 calc(var(--s) * 3); box-sizing: border-box; background: #8b7d6b; border: var(--s) solid #373737; cursor: default;
+}
+.ench-offer.empty { background: #8b8b8b; }
+.ench-offer.ok { background: #a29276; cursor: pointer; }
+.ench-offer.ok:hover { background: #c0ae8a; }
+.ench-glyphs { width: calc(var(--s) * 90); height: calc(var(--s) * 9); image-rendering: pixelated; flex: 1 1 auto; }
+.ench-lapis { color: #5577ff; text-shadow: var(--shadow); min-width: calc(var(--s) * 6); }
+.ench-cost { color: #407f10; text-shadow: none; }
+.ench-offer.ok .ench-cost { color: #80ff20; text-shadow: var(--shadow); }
+.station-note { color: #404040; font-size: calc(var(--fs) * 0.75); max-width: calc(var(--s) * 108); }
+.anvil-panel { display: flex; flex-direction: column; gap: calc(var(--s) * 3); width: calc(var(--s) * 110); }
+.anvil-name { width: 100%; }
+.anvil-cost { color: #80ff20; text-shadow: var(--shadow); min-height: var(--fs); }
+.anvil-cost.bad { color: #ff6060; }
+.grind-panel { width: calc(var(--s) * 100); }
+
+/* The hotbar row lines up under the 27 storage slots, not under the armor column (Minecraft layout). */
+.inv-armor-row + .inv-hotbar { margin-left: calc(var(--s) * 22); }
+
+
+.arc-card.preset { width: calc(var(--s) * 64); }
+/* Furnace screen: input over flame over fuel, the progress arrow, the output (Minecraft's layout). */
+.furnace-ui { display: flex; align-items: center; gap: calc(var(--s) * 8); padding: calc(var(--s) * 2) calc(var(--s) * 30); }
+.furnace-ui.hidden, .inv-grid.hidden { display: none; }
+.furnace-left { display: flex; flex-direction: column; align-items: center; gap: calc(var(--s) * 2); }
+.furnace-flame { position: relative; width: calc(var(--s) * 14); height: calc(var(--s) * 14); background: #8b8b8b; clip-path: polygon(50% 0, 85% 45%, 100% 100%, 0 100%, 15% 45%); }
+.furnace-flame > i { position: absolute; left: 0; right: 0; bottom: 0; height: 0; background: linear-gradient(#ffe25a, #f08a1a 60%, #c8401a); }
+.furnace-arrow { position: relative; width: calc(var(--s) * 24); height: calc(var(--s) * 16); background: #8b8b8b; clip-path: polygon(0 30%, 60% 30%, 60% 0, 100% 50%, 60% 100%, 60% 70%, 0 70%); }
+.furnace-arrow > i { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: #fff; }
+.inv-slot.furnace-out { width: calc(var(--s) * 26); height: calc(var(--s) * 26); }
+/* ---------------------------------------------------------------- accessibility */
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Visible focus for keyboard (Tab) and controller (.pad-focus) navigation. */
+.mc-btn:focus-visible, .pad-focus, .click-to-play:focus-visible {
+  border-color: #fff;
+  outline: calc(var(--s) * 1) solid #ffff55;
+  outline-offset: calc(var(--s) * 1);
+}
+.mc-slider:has(.pad-focus), .mc-slider:focus-within { outline: calc(var(--s) * 1) solid #ffff55; outline-offset: calc(var(--s) * 1); }
+.mc-slider input:focus { outline: none; }
+.mc-input:focus-visible { outline: calc(var(--s) * 1) solid #ffff55; }
+
+.subtitles {
+  position: fixed;
+  right: calc(var(--s) * 4);
+  bottom: calc(var(--s) * 30);
+  z-index: 9;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--s);
+  max-width: 60vw;
+  pointer-events: none;
+}
+.subtitle { padding: var(--s) calc(var(--s) * 4); background: rgba(0, 0, 0, 0.65); color: #fff; }
+.touch-ui .subtitles { right: auto; bottom: auto; left: calc(var(--s) * 4); top: calc(var(--s) * 4); align-items: flex-start; }
+
+.notice {
+  position: fixed;
+  top: calc(var(--s) * 6);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  padding: calc(var(--s) * 3) calc(var(--s) * 8);
+  background: rgba(0, 0, 0, 0.8);
+  border: var(--s) solid #fff;
+  opacity: 0;
+  transition: opacity 0.2s;
+  pointer-events: none;
+}
+.notice.show { opacity: 1; }
+
+/* Larger text: buttons grow instead of clipping, the grid columns widen with the text. */
+.big-text .mc-btn { height: auto; min-height: calc(var(--s) * 20); white-space: normal; text-align: center; line-height: 1.1; padding-block: calc(var(--s) * 2); }
+.big-text .mc-slider { height: auto; min-height: calc(var(--s) * 20); }
+.big-text .mc-slider-label { position: static; display: block; padding: calc(var(--s) * 2) calc(var(--s) * 4); white-space: normal; text-align: center; line-height: 1.1; }
+.big-text .grid2 { grid-template-columns: repeat(2, minmax(0, calc(var(--s) * 150 * var(--ts, 1)))); max-width: 100%; }
+
+/* High contrast: solid black and white, no blur, no soft shadows. */
+.high-contrast { --btn-face: #000; --btn-hi: #000; --btn-lo: #000; }
+.high-contrast .mc-btn { background: #000; border-color: #fff; color: #fff; box-shadow: none; text-shadow: none; }
+.high-contrast .mc-btn:hover:not(:disabled), .high-contrast .mc-btn:focus-visible, .high-contrast .mc-btn.pad-focus { background: #fff; color: #000; }
+.high-contrast .mc-btn:disabled { color: #bdbdbd; background: #000; border-color: #bdbdbd; }
+.high-contrast .screen.menu-bg { background: rgba(0, 0, 0, 0.92); -webkit-backdrop-filter: none; backdrop-filter: none; }
+.high-contrast .screen-body.list { background: #000; box-shadow: none; border-color: #fff; }
+.high-contrast .hint, .high-contrast .field-label { color: #fff; }
+.high-contrast .mc-slider { background: #000; border-color: #fff; box-shadow: none; }
+.high-contrast .subtitle, .high-contrast .notice { background: #000; border: var(--s) solid #fff; }
+.high-contrast .hud, .high-contrast .screen { text-shadow: none; }
+
+@media (forced-colors: active) {
+  .mc-btn, .mc-slider, .mc-input { border: 2px solid ButtonText; }
+  .mc-btn:focus-visible, .mc-btn.pad-focus, .mc-btn:hover:not(:disabled) { outline: 3px solid Highlight; }
+  .mc-btn:disabled { border-color: GrayText; color: GrayText; }
+  .tb { border: 2px solid ButtonText; background: ButtonFace; color: ButtonText; }
+}
+
+.reduced-motion *, .reduced-motion *::before, .reduced-motion *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+}
+
+/* ---------------------------------------------------------------- touch controls */
+
+:root {
+  --sl: env(safe-area-inset-left, 0px);
+  --sr: env(safe-area-inset-right, 0px);
+  --st: env(safe-area-inset-top, 0px);
+  --sb: env(safe-area-inset-bottom, 0px);
+  --hb: 1;
+}
+
+/* Screens keep clear of notches and rounded corners. */
+.screen { padding-left: var(--sl); padding-right: var(--sr); padding-top: var(--st); padding-bottom: var(--sb); }
+
+.touch-hud {
+  position: fixed;
+  inset: 0;
+  z-index: 7;
+  pointer-events: none;
+  touch-action: none;
+  direction: ltr;
+  --tu: calc(clamp(44px, 13vmin, 72px) * var(--tc-scale, 1));
+  --small: max(40px, calc(var(--tu) * 0.7));
+  --lift: 0px;
+  --start: var(--sl);
+  --end: var(--sr);
+  --edge: 16px;
+}
+.touch-hud.lefty { direction: rtl; --start: var(--sr); --end: var(--sl); }
+@media (orientation: portrait) { .touch-hud { --lift: 84px; } }
+
+.tc-surface { position: absolute; inset: 0; pointer-events: auto; touch-action: none; }
+
+.tc-base {
+  position: absolute;
+  width: calc(var(--tu) * 2.2);
+  height: calc(var(--tu) * 2.2);
+  inset-inline-start: calc(var(--start) + var(--edge) + 8px);
+  bottom: calc(var(--sb) + var(--lift) + var(--edge) + 8px);
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.45);
+  background: rgba(255, 255, 255, 0.07);
+  opacity: calc(var(--tc-opacity, 0.65) * 1.2);
+  pointer-events: none;
+}
+.tc-base.active { background: rgba(255, 255, 255, 0.16); border-color: rgba(255, 255, 255, 0.8); }
+.tc-knob { position: absolute; left: 50%; top: 50%; width: 44%; height: 44%; margin: -22% 0 0 -22%; border-radius: 50%; background: rgba(255, 255, 255, 0.5); border: 2px solid rgba(255, 255, 255, 0.85); }
+
+.tb {
+  position: absolute;
+  pointer-events: auto;
+  touch-action: none;
+  width: var(--tu);
+  height: var(--tu);
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.6);
+  background: rgba(30, 30, 30, var(--tc-opacity, 0.65));
+  color: #fff;
+  font-family: var(--font);
+  font-size: max(10px, calc(var(--tu) * 0.2));
+  text-shadow: 1px 1px 0 #000;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.tb.pressed { background: rgba(255, 255, 255, 0.55); color: #000; text-shadow: none; }
+.tb:focus-visible { outline: 3px solid #ffff55; outline-offset: 2px; }
+
+.tb-attack { width: calc(var(--tu) * 1.3); height: calc(var(--tu) * 1.3); inset-inline-end: calc(var(--end) + var(--edge)); bottom: calc(var(--sb) + var(--lift) + var(--edge)); }
+.tb-jump { inset-inline-end: calc(var(--end) + var(--edge) + var(--tu) * 0.15); bottom: calc(var(--sb) + var(--lift) + var(--edge) + var(--tu) * 1.3 + 10px); }
+.tb-use { inset-inline-end: calc(var(--end) + var(--edge) + var(--tu) * 1.3 + 12px); bottom: calc(var(--sb) + var(--lift) + var(--edge) + var(--tu) * 0.2); }
+.tb-sneak { inset-inline-start: calc(var(--start) + var(--edge) + 8px); bottom: calc(var(--sb) + var(--lift) + var(--edge) + var(--tu) * 2.2 + 20px); width: calc(var(--tu) * 0.85); height: calc(var(--tu) * 0.85); }
+.tb-sprint { inset-inline-start: calc(var(--start) + var(--edge) + 8px + var(--tu) * 0.85 + 10px); bottom: calc(var(--sb) + var(--lift) + var(--edge) + var(--tu) * 2.2 + 20px); width: calc(var(--tu) * 0.85); height: calc(var(--tu) * 0.85); }
+
+.tc-menu-row { position: absolute; inset-inline-end: calc(var(--end) + 8px); top: calc(var(--st) + 8px); display: flex; flex-direction: row-reverse; gap: 6px; pointer-events: none; }
+.tc-menu-row .tb { position: static; width: var(--small); height: var(--small); border-radius: 8px; }
+
+.tc-hint {
+  position: absolute;
+  top: 24%;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 86vw;
+  padding: 10px 14px;
+  background: rgba(0, 0, 0, 0.8);
+  border: 2px solid #fff;
+  text-align: center;
+  pointer-events: auto;
+}
+.tc-hint-x { font: inherit; color: #000; background: #fff; border: 0; padding: 8px 12px; min-height: 40px; }
+
+/* Hotbar: tap or swipe; enlarged so slots are finger sized. */
+.touch-ui .hotbar-wrap { transform: translateX(-50%) scale(var(--hb, 1)); transform-origin: bottom center; padding-bottom: var(--sb); }
+.touch-ui .hotbar { pointer-events: auto; touch-action: none; }
+
+.touch-ui .hud { z-index: 8; }
+.tc-close {
+  position: fixed;
+  top: calc(var(--st) + 8px);
+  left: calc(var(--sl) + 8px);
+  z-index: 45;
+  width: 48px;
+  height: 48px;
+  font: inherit;
+  font-size: 20px;
+  color: #fff;
+  background: rgba(30, 30, 30, 0.9);
+  border: 2px solid #fff;
+  border-radius: 8px;
+}

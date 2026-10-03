@@ -40,7 +40,7 @@ export const MOVE = {
   /** The ground probe reaches this far below the feet. */
   SUPPORT_DEPTH: 0.05,
   /** Speed limit multiplier on top of the physics maximum (bunny hop steering, step-up, rounding). */
-  SPEED_ALLOWANCE: 1.1,
+  SPEED_ALLOWANCE: 1.03,
   /** The horizontal bucket holds this many seconds of movement (a lag spike that is released at once)... */
   BURST_SECONDS: 0.5,
   /** ...plus this many blocks (step-up, first packet). */

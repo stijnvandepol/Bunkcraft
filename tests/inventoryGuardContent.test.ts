@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { PlayerInventory } from '../src/items/Inventory';
-import { ALL_ITEMS, getItemDef, maxDurability } from '../src/items/ItemRegistry';
+import { ALL_ITEMS, LEGACY_ITEMS, getItemDef, maxDurability } from '../src/items/ItemRegistry';
+import { BLOCK } from '../src/world/BlockRegistry';
 import { InventoryGuard, parseInventory } from '../server/InventoryGuard';
 
 /**
@@ -47,6 +48,19 @@ describe('inventory guard accepts what the client sends', () => {
   it('still rejects too many rows and broken data columns', () => {
     expect(parseInventory(Array.from({ length: 41 }, () => [0, 0, 0])).error).toBeDefined();
     expect(parseInventory([[armorId, 1, 0, 0.5, 2]]).error).toBeDefined();
-    expect(parseInventory([[armorId, 1, 0, ...Array(14).fill(1)]]).error).toBeDefined();
+    // Room for enchantments, repair cost and a custom name (40 numbers per row), not more.
+    expect(parseInventory([[armorId, 1, 0, ...Array(14).fill(1)]]).error).toBeUndefined();
+    expect(parseInventory([[armorId, 1, 0, ...Array(38).fill(1)]]).error).toBeDefined();
+  });
+
+  it('a saved inventory with the old coloured wool ids is accepted after the client migrates it', () => {
+    // The server record still holds the pre-colour-family id; the client loads it as a wool variant.
+    const saved = [[BLOCK.RED_WOOL, 5, 0]];
+    const guard = new InventoryGuard(parseInventory(saved).slots);
+    const client = new PlayerInventory();
+    client.load(saved);
+    const r = guard.check(client.serialize());
+    expect(r.ok).toBe(true);
+    expect(client.serialize()[0][0]).toBe(LEGACY_ITEMS[BLOCK.RED_WOOL]);
   });
 });

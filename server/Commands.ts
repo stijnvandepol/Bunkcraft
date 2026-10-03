@@ -2,6 +2,9 @@ import { WEATHER_USAGE, parseWeatherCommand } from '../src/world/Weather';
 import { ALL_ITEMS, getItemDef } from '../src/items/ItemRegistry';
 import { NAME_PATTERN } from '../src/net/protocol';
 import { GAME_MODES, type GameMode } from '../src/player/GameMode';
+import { EFFECT_DEFS, MAX_EFFECT_TICKS, findEffect } from '../src/player/Effects';
+import { DIFFICULTIES, DIFFICULTY_NAMES, type Difficulty, parseDifficulty } from '../src/world/Difficulty';
+import { type GameRules, runGameRuleCommand } from '../src/world/GameRules';
 
 /** Moderation data of one game; lives in world.json. Names are compared case-insensitively. */
 export interface BanEntry { name: string; ipHash?: string; reason: string; by: string; at: number }
@@ -51,6 +54,18 @@ export interface CommandHost {
   give(name: string, itemId: number, count: number): boolean;
   seed(): number;
   spawn(name: string): void;
+  /** Difficulty and game rules (Minecraft game types only). */
+  survival?: {
+    readonly difficulty: Difficulty;
+    setDifficulty(d: Difficulty): void;
+    readonly rules: GameRules;
+    /** A rule changed: persist and tell the clients. */
+    rulesChanged(): void;
+  };
+  /** Sets a player's respawn point to where they stand (/spawnpoint); false when they are not online. */
+  setSpawnpoint?(name: string): boolean;
+  /** /effect: the client of `name` applies it. False when the player is not online. */
+  effect?(name: string, action: 'give' | 'clear', effect?: string, amp?: number, ticks?: number): boolean;
 }
 
 export const TIME_PRESETS: Record<string, number> = { day: 0.04, noon: 0.25, night: 0.55, midnight: 0.75 };
@@ -215,7 +230,7 @@ const COMMANDS: Record<string, Def> = {
     usage: '/time set day|noon|night|midnight', level: 'op', run: (h, a, args) => {
       if (h.arcade) return h.reply(a.name, 'The time is fixed in this game type');
       const key = (args[1] ?? '').toLowerCase();
-      if (args[0]?.toLowerCase() === 'set' && key in TIME_PRESETS) {
+      if (args[0]?.toLowerCase() === 'set' && Object.hasOwn(TIME_PRESETS, key)) {
         h.setTime(TIME_PRESETS[key]);
         h.broadcastSystem(`${a.name} set the time to ${key}`);
         return;
@@ -230,6 +245,60 @@ const COMMANDS: Record<string, Def> = {
       if (!h.setWeather) return h.reply(a.name, 'Weather is not available on this server yet.');
       if (h.setWeather(parsed.kind, parsed.ticks)) h.broadcastSystem(`${a.name} set the weather to ${parsed.kind}`);
       else h.reply(a.name, 'Weather is not available in this game type.');
+    },
+  },
+  difficulty: {
+    usage: '/difficulty [peaceful|easy|normal|hard]', level: 'op', run: (h, a, args) => {
+      if (h.arcade || !h.survival) return h.reply(a.name, 'Not available in this game type');
+      if (args.length === 0) return h.reply(a.name, `The difficulty is ${DIFFICULTY_NAMES[h.survival.difficulty]}`);
+      const d = parseDifficulty(args[0]);
+      if (!d) return h.reply(a.name, `Usage: /difficulty ${DIFFICULTIES.join('|')}`);
+      if (h.gameMode === 'hardcore' && d !== 'hard') return h.reply(a.name, 'Hardcore is locked at Hard.');
+      h.survival.setDifficulty(d);
+      h.broadcastSystem(`${a.name} set the difficulty to ${DIFFICULTY_NAMES[d]}`);
+    },
+  },
+  gamerule: {
+    usage: '/gamerule <rule> [value]', level: 'op', run: (h, a, args) => {
+      if (h.arcade || !h.survival) return h.reply(a.name, 'Not available in this game type');
+      const r = runGameRuleCommand(h.survival.rules, args);
+      if (!r.changed) return h.reply(a.name, r.reply);
+      h.survival.rulesChanged();
+      h.broadcastSystem(`${a.name}: ${r.reply}`);
+    },
+  },
+  spawnpoint: {
+    usage: '/spawnpoint [name]', level: 'op', run: (h, a, args) => {
+      if (h.arcade || !h.setSpawnpoint) return h.reply(a.name, 'Not available in this game type');
+      const n = args[0] ? nameArg(h, a, args) : a.name;
+      if (!n) return;
+      if (!h.setSpawnpoint(n)) return h.reply(a.name, `${n} is not online.`);
+      h.reply(a.name, `Set the spawn point of ${n} to where they stand.`);
+    },
+  },
+  effect: {
+    usage: '/effect give <name> <effect> [seconds] [level] | /effect clear <name> [effect]', level: 'all', run: (h, a, args) => {
+      if (h.arcade || !h.effect) return h.reply(a.name, 'Not available in this game type');
+      // Operators everywhere, everybody in creative games (like cheats in Minecraft's creative worlds).
+      if (!(h.gameMode === 'creative' || (h.moderated && (a.op || a.owner)))) return h.reply(a.name, 'You do not have permission to use that command.');
+      const action = (args[0] ?? '').toLowerCase();
+      if (action !== 'give' && action !== 'clear') return h.reply(a.name, `Usage: ${COMMANDS.effect.usage}`);
+      const n = nameArg(h, a, args, 1);
+      if (!n) return;
+      if (action === 'clear') {
+        const eff = args[2] ? findEffect(args[2]) : null;
+        if (args[2] && !eff) return h.reply(a.name, `Unknown effect "${args[2].slice(0, 24)}".`);
+        if (!h.effect(n, 'clear', eff ?? undefined)) return h.reply(a.name, `${n} is not online.`);
+        return h.reply(a.name, eff ? `Removed ${EFFECT_DEFS[eff].name} from ${n}.` : `Removed every effect from ${n}.`);
+      }
+      const eff = findEffect(args[2] ?? '');
+      if (!eff) return h.reply(a.name, `Unknown effect "${(args[2] ?? '').slice(0, 24)}".`);
+      const seconds = args[3] === undefined ? 30 : Number(args[3]);
+      const level = args[4] === undefined ? 1 : Number(args[4]);
+      if (!Number.isInteger(seconds) || seconds < 1 || seconds * 20 > MAX_EFFECT_TICKS) return h.reply(a.name, 'Seconds must be a whole number from 1 to 1000000.');
+      if (!Number.isInteger(level) || level < 1 || level > 256) return h.reply(a.name, 'Level must be a whole number from 1 to 256.');
+      if (!h.effect(n, 'give', eff, level - 1, seconds * 20)) return h.reply(a.name, `${n} is not online.`);
+      h.reply(a.name, `Gave ${EFFECT_DEFS[eff].name} ${level} for ${seconds} s to ${n}.`);
     },
   },
   give: {

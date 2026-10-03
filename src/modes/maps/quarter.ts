@@ -28,6 +28,18 @@ export const QUARTER: ArenaMapDef = {
   teamSpawns: [[34, 3], [36, 6], [33, 8], [37, 9]],
   ffaSpawns: [[8, 4], [22, 5], [22, 20], [34, 18], [5, 22]],
   highGround: [[5, 20], [20, 5], [20, 20], [13, 20], [34, 20]],
+  objectives: {
+    // Hardpoint order: the courtyard, the two gatehouse streets, then the two back squares.
+    zones: [
+      { name: 'Courtyard', x: 0, z: 6, r: 5 },
+      { name: 'West Gate', x: -12.5, z: 4.5, r: 5 },
+      { name: 'East Gate', x: 12.5, z: 4.5, r: 5 },
+      { name: 'West Square', x: -18.5, z: 26, r: 4 },
+      { name: 'East Square', x: 18.5, z: 26, r: 4 },
+    ],
+    dominationZones: [0, 1, 2],
+    flags: [{ team: 'red', x: -36.5, z: 28.5 }, { team: 'blue', x: 36.5, z: 28.5 }],
+  },
   build(_variant, b) {
     const { box, paint } = b;
 

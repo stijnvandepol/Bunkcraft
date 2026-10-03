@@ -63,6 +63,64 @@ describe('sanitizeSettings', () => {
   });
 });
 
+describe('sanitizeSettings: accessibility, touch and gamepad', () => {
+  it('has safe defaults: accessibility off, touch auto, pad on', () => {
+    const s = sanitizeSettings(null);
+    expect(s).toMatchObject({
+      subtitles: false, reducedMotion: false, reduceFlashes: false, colorBlindSafe: false, highContrast: false,
+      textScale: 100, fovEffects: 100, touchControls: 'auto', touchAutoJump: true, padEnabled: true, padLayout: 'default',
+    });
+  });
+
+  it('keeps valid values', () => {
+    const input = {
+      subtitles: true, reducedMotion: true, reduceFlashes: true, colorBlindSafe: true, highContrast: true,
+      textScale: 150, toggleSprint: true, stickCurve: 80, fovEffects: 20, menuRepeatDelay: 600,
+      touchControls: 'on', touchSensitivity: 150, touchLeftHanded: true, padLayout: 'southpaw', padDeadZone: 25, padInvertY: true,
+    };
+    expect(sanitizeSettings(input)).toMatchObject(input);
+  });
+
+  it('clamps the new numeric ranges', () => {
+    const s = sanitizeSettings({
+      textScale: 50, stickCurve: 500, fovEffects: -4, menuRepeatDelay: 5, touchSensitivity: 9999, touchButtonScale: 0,
+      touchOpacity: 3, padSensitivity: 0, padDeadZone: 99,
+    });
+    expect(s).toMatchObject({
+      textScale: 100, stickCurve: 100, fovEffects: 0, menuRepeatDelay: 150, touchSensitivity: 300, touchButtonScale: 60,
+      touchOpacity: 20, padSensitivity: 10, padDeadZone: 50,
+    });
+  });
+
+  it('rejects wrong types and unknown enum values', () => {
+    const s = sanitizeSettings({ touchControls: 'maybe', padLayout: 3, subtitles: 'yes', textScale: '150', stickCurve: NaN });
+    expect(s).toEqual(DEFAULT_SETTINGS);
+  });
+});
+
+describe('system accessibility defaults', () => {
+  it('turns on reduced motion for a first launch when the OS asks for it', () => {
+    stubStorage();
+    vi.stubGlobal('matchMedia', (q: string) => ({ matches: q.includes('prefers-reduced-motion') }));
+    const store = new SettingsStore();
+    expect(store.values.reducedMotion).toBe(true);
+    expect(store.values.viewBobbing).toBe(false);
+    expect(store.values.highContrast).toBe(false);
+  });
+
+  it('respects stored values over the OS preference', () => {
+    stubStorage(JSON.stringify({ reducedMotion: false }));
+    vi.stubGlobal('matchMedia', () => ({ matches: true }));
+    expect(new SettingsStore().values.reducedMotion).toBe(false);
+  });
+
+  it('turns on high contrast for prefers-contrast', () => {
+    stubStorage();
+    vi.stubGlobal('matchMedia', (q: string) => ({ matches: q.includes('prefers-contrast') }));
+    expect(new SettingsStore().values.highContrast).toBe(true);
+  });
+});
+
 describe('SettingsStore', () => {
   it('is fresh without stored data and loads defaults', () => {
     stubStorage();

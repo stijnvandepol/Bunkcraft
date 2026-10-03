@@ -8,6 +8,8 @@ import { caveFactor, cricketFactor, createEnvironment, estimateEnclosure, birdFa
 import { SCALES, chooseMood, generatePhrase, mulberry32, pulseAt, scaleNote, midiToHz, type PulseEvent } from '../src/core/audio/musicTheory';
 import { softClipCurve } from '../src/core/audio/mixer';
 import { BIOME } from '../src/world/Biomes';
+import { buildCatalog } from '../src/core/audio/catalog';
+import { WEAPONS } from '../src/modes/Weapons';
 
 describe('sound profiles', () => {
   it('every block declares a sound type that has a profile', () => {
@@ -315,5 +317,12 @@ describe('mix', () => {
     expect(Math.max(...c)).toBeLessThan(0.95);
     expect(Math.min(...c)).toBeGreaterThan(-0.95);
     for (let i = 1; i < c.length; i++) expect(c[i]).toBeGreaterThanOrEqual(c[i - 1]); // monotonic
+  });
+});
+
+describe('weapon sounds', () => {
+  it('every arcade weapon has a catalog entry', () => {
+    const names = new Set(buildCatalog().map((e) => e.name));
+    for (const w of WEAPONS) expect(names.has(`weapon.${w.id}`), w.id).toBe(true);
   });
 });
