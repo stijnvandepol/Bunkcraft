@@ -70,6 +70,8 @@ import { Input } from './Input';
 import { Interaction } from './Interaction';
 import { Renderer } from './Renderer';
 import { WorldRules } from './WorldRules';
+import { gameRulesScreen } from '../ui/GameRulesScreen';
+import type { Difficulty } from '../world/Difficulty';
 import { WeatherSystem } from './WeatherSystem';
 import { DynamicResolution, suggestPreset } from './AdaptiveQuality';
 import { SettingsStore } from './Settings';
@@ -257,7 +259,7 @@ export class Game {
     this.menu = new MainMenu(this.stack, {
       listWorlds: () => this.save.listWorlds(),
       playWorld: (m) => void this.enterWorld(m),
-      createWorld: (name, seed, mode) => void this.createWorld(name, seed, mode),
+      createWorld: (name, seed, mode, extra) => void this.createWorld(name, seed, mode, extra),
       deleteWorld: (id) => this.save.deleteWorld(id),
       saveWorld: (meta) => this.save.saveWorld(meta),
       transfer: new WorldTransfer(this.save),
@@ -553,7 +555,7 @@ export class Game {
     this.menu.showTitle();
   }
 
-  private async createWorld(name: string, seedText: string, mode: GameMode): Promise<void> {
+  private async createWorld(name: string, seedText: string, mode: GameMode, extra?: { difficulty: Difficulty; rules?: Record<string, boolean | number> }): Promise<void> {
     let seed: number;
     if (!seedText) seed = (Math.random() * 4294967296) >>> 0;
     else if (/^-?\d+$/.test(seedText)) seed = Number(BigInt.asUintN(32, BigInt(seedText)));
@@ -562,6 +564,7 @@ export class Game {
       id: newWorldId(), name, seed, seedText: seedText || String(seed),
       created: Date.now(), lastPlayed: Date.now(), player: null, genVersion: GEN_VERSION_CURRENT,
       hotbar: [...DEFAULT_HOTBAR], selectedSlot: 0, time: 0.08, gameMode: mode,
+      difficulty: extra?.difficulty, rules: extra?.rules,
     };
     await this.save.saveWorld(meta);
     await this.enterWorld(meta);
@@ -1195,6 +1198,13 @@ export class Game {
       advancements: this.net ? undefined : () => this.stack.push(advancementsScreen(this.advancements, this.icons, () => this.stack.pop())),
       invite: this.roomCode ? () => this.openInvite(this.roomCode!) : undefined,
       seed: !this.net && this.meta && this.meta.worldType !== 'arena' ? this.meta.seedText || String(this.meta.seed) : undefined,
+      difficulty: this.arcade ? undefined : {
+        get: () => this.worldRules.difficulty,
+        set: (d) => this.worldRules.setDifficulty(d),
+        // Servers change it with /difficulty; Hardcore is always Hard.
+        locked: this.net !== null || this.mode === 'hardcore' || this.meta?.gameMode === 'hardcore',
+      },
+      gameRules: this.net || this.arcade ? undefined : () => this.stack.push(gameRulesScreen(this.worldRules.rules, () => this.stack.pop(), () => this.worldRules.apply())),
     }));
   }
 
