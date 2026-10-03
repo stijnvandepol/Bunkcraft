@@ -2,6 +2,7 @@ import { BLOCK } from './BlockRegistry';
 import { CHUNK_HEIGHT, CHUNK_SIZE, SEA_LEVEL, blockIndex } from './constants';
 import { CaveCarver } from './CaveCarver';
 import { GEN_VERSION_CURRENT, normalizeGenVersion } from './GenVersion';
+import { GeneratorV3 } from './GeneratorV3';
 import { SimplexNoise, hash2, hash3, lerp, mulberry32, smoothstep } from './Noise';
 import { placeOreBlobs, resolveOres } from './OreTable';
 
@@ -63,12 +64,15 @@ export class TerrainGenerator {
   readonly carver: CaveCarver | null;
   private readonly ores: ReturnType<typeof resolveOres>;
   readonly genVersion: number;
+  /** Version 3+: the climate/biome/river generator takes over the whole surface (GeneratorV3.ts). */
+  private readonly v3: GeneratorV3 | null;
   private originX = 0;
   private originZ = 0;
 
   constructor(readonly seed: number, genVersion: number = GEN_VERSION_CURRENT) {
     this.genVersion = normalizeGenVersion(genVersion);
-    this.carver = this.genVersion >= 2 ? new CaveCarver(seed) : null;
+    this.v3 = this.genVersion >= 3 ? new GeneratorV3(seed, this.genVersion) : null;
+    this.carver = this.v3 ? this.v3.carver : this.genVersion >= 2 ? new CaveCarver(seed) : null;
     this.ores = this.genVersion >= 2 ? resolveOres(this.genVersion) : [];
     let s = seed;
     const next = () => (s = (Math.imul(s ^ (s >>> 15), 2246822519) + 0x9e3779b9) >>> 0);
@@ -86,6 +90,7 @@ export class TerrainGenerator {
   }
 
   heightAt(x: number, z: number): number {
+    if (this.v3) return this.v3.heightAt(x, z);
     const c = this.continental.fbm2(x * 0.0011, z * 0.0011, 4);
     const base = spline(c);
     const hilliness = smoothstep(-0.3, 0.6, this.hills.fbm2(x * 0.0021, z * 0.0021, 2));
@@ -98,6 +103,7 @@ export class TerrainGenerator {
   }
 
   biomeAt(x: number, z: number, h: number): number {
+    if (this.v3) return this.v3.biomeAt(x, z, h);
     if (h < SEA_LEVEL) return BIOME.OCEAN;
     const t = this.temperature.fbm2(x * 0.0009, z * 0.0009, 3);
     const hm = this.humidity.fbm2(x * 0.0011 + 300, z * 0.0011 - 300, 3);
@@ -112,14 +118,19 @@ export class TerrainGenerator {
 
   /** True when the surface block of this column is carved away by a cave or ravine (always false in version 1). */
   surfaceOpen(x: number, z: number): boolean {
+    if (this.v3) return this.v3.surfaceOpen(x, z);
     if (!this.carver) return false;
     const h = Math.floor(this.heightAt(x, z));
     const mn = Math.floor(Math.min(this.heightAt(x + 1, z), this.heightAt(x - 1, z), this.heightAt(x, z + 1), this.heightAt(x, z - 1)));
     return this.carver.carvedAt(x, h, z, h, mn);
   }
 
-  /** Fills `blocks` (length CHUNK_VOLUME) and `biomesOut` (16×16, x + z*16) for chunk (cx, cz). */
-  generate(cx: number, cz: number, blocks: Uint8Array, biomesOut?: Uint8Array): void {
+  /**
+   * Fills `blocks` (length CHUNK_VOLUME) and `biomesOut` (16×16, x + z*16) for chunk (cx, cz).
+   * Returns the block state bytes of the chunk (version 3: terracotta colours) or null when every state is the default.
+   */
+  generate(cx: number, cz: number, blocks: Uint8Array, biomesOut?: Uint8Array): Uint8Array | null {
+    if (this.v3) return this.v3.generate(cx, cz, blocks, biomesOut);
     blocks.fill(0);
     const ox = cx * CHUNK_SIZE;
     const oz = cz * CHUNK_SIZE;
@@ -166,6 +177,7 @@ export class TerrainGenerator {
       placeOreBlobs(blocks, this.seed, cx, cz, this.ores);
     } else this.placeOres(blocks, cx, cz);
     this.placeVegetation(blocks, ox, oz);
+    return null;
   }
 
   private surfaceBlock(biome: number, h: number, slope: number, wx: number, wz: number): number {

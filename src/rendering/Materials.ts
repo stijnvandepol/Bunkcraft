@@ -227,11 +227,13 @@ export function createWaterMaterial(u: WorldUniforms): THREE.ShaderMaterial {
       varying vec3 vWorldPos;
       varying vec3 vNormal;
       varying float vTop;
+      varying vec3 vWaterTint;
 
       void main() {
         int ni; float ao; float flags;
         vec4 world = worldPosition(ni, ao, flags);
         vTop = mod(floor(flags / 2.0), 2.0);
+        vWaterTint = tint.rgb;
         if (vTop > 0.5) {
           world.y += (sin(world.x * 0.9 + uTime * 1.6) * cos(world.z * 0.7 + uTime * 1.2)) * 0.035 - 0.02;
         }
@@ -253,11 +255,15 @@ export function createWaterMaterial(u: WorldUniforms): THREE.ShaderMaterial {
       varying vec3 vWorldPos;
       varying vec3 vNormal;
       varying float vTop;
+      varying vec3 vWaterTint;
 
       void main() {
         vec2 uvA = (vTop > 0.5 ? vWorldPos.xz : vUv) + vec2(uTime * 0.045, uTime * 0.03);
         vec2 uvB = (vTop > 0.5 ? vWorldPos.zx * 0.83 : vUv * 0.9) - vec2(uTime * 0.03, uTime * 0.05);
         vec3 tex = mix(texture(uAtlas, vec3(uvA, vLayer)).rgb, texture(uAtlas, vec3(uvB, vLayer)).rgb, 0.5);
+
+        // Biome water colour relative to the colour the texture is made for (#3F76E4): 1.0 in most biomes.
+        tex = clamp(tex * vWaterTint / vec3(0.247, 0.463, 0.894), 0.0, 1.0);
 
         vec3 n = vNormal;
         if (vTop > 0.5) {
