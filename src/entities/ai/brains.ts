@@ -1,4 +1,4 @@
-import type { Mob } from '../Mob';
+import { type Mob, followRange } from '../Mob';
 import {
   BreedGoal, CreeperSwellGoal, EatGrassGoal, FleeSunGoal, FloatGoal, FollowParentGoal, LeapAtTargetGoal, LookAtPlayerGoal,
   LoveFxGoal, MeleeAttackGoal, NearestPlayerTargetGoal, PanicGoal, RandomLookGoal, RangedAttackGoal, StrollGoal, TemptGoal,
@@ -25,7 +25,9 @@ export function setupBrain(m: Mob): void {
     g.add(8, new RandomLookGoal(m));
     g.add(9, new LoveFxGoal(m));
   };
-  const monster = (range: number): void => {
+  // Follow range (attribute follow_range): zombies 35, the others 16.
+  const monster = (_legacy: number): void => {
+    const range = followRange(m.type);
     g.add(0, new FloatGoal(m));
     g.add(7, new StrollGoal(m));
     g.add(8, new LookAtPlayerGoal(m, 8));
@@ -75,7 +77,7 @@ export function setupBrain(m: Mob): void {
       break;
     case 'slime':
       g.add(1, new SlimeHopGoal(m));
-      t.add(2, new NearestPlayerTargetGoal(m, 16));
+      t.add(2, new NearestPlayerTargetGoal(m, followRange(m.type)));
       break;
     case 'enderman':
       g.add(0, new FloatGoal(m));

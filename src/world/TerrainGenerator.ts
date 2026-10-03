@@ -2,6 +2,7 @@ import { BLOCK } from './BlockRegistry';
 import { CHUNK_HEIGHT, CHUNK_SIZE, SEA_LEVEL, blockIndex } from './constants';
 import { CaveCarver } from './CaveCarver';
 import { GEN_VERSION_CURRENT, normalizeGenVersion } from './GenVersion';
+import { oakTree, spruceTree, type TreeSink } from './Trees';
 import { SimplexNoise, hash2, hash3, lerp, mulberry32, smoothstep } from './Noise';
 import { placeOreBlobs, resolveOres } from './OreTable';
 
@@ -411,45 +412,31 @@ export class TerrainGenerator {
       || cur === BLOCK.TALL_GRASS || cur === BLOCK.DANDELION || cur === BLOCK.POPPY) blocks[i] = id;
   }
 
+  /** Tree shapes live in Trees.ts (shared with plant growth); this sink writes them into the chunk buffer being generated. */
+  private treeBlocks: Uint8Array = new Uint8Array(0);
+  private readonly treeSink: TreeSink = {
+    leaf: (x, y, z, id) => this.setIfAir(this.treeBlocks, x, y, z, id),
+    log: (x, y, z, id) => this.setLog(this.treeBlocks, x, y, z, id),
+    trunkBase: (x, y, z) => {
+      const blocks = this.treeBlocks;
+      if (x >= 0 && x < 16 && z >= 0 && z < 16 && y > 0) {
+        const under = blockIndex(x, y - 1, z);
+        if (blocks[under] === BLOCK.GRASS || blocks[under] === BLOCK.SNOWY_GRASS) blocks[under] = BLOCK.DIRT;
+      }
+    },
+  };
+
   /** Classic blob tree (oak/birch). (x, z) are chunk-local and may lie outside 0..15. */
   private oakTree(
     blocks: Uint8Array, x: number, y: number, z: number, height: number,
     log: number, leaves: number, wx: number, wz: number,
   ): void {
-    if (y + height + 1 >= CHUNK_HEIGHT) return;
-    const top = y + height - 1;
-    for (let ly = top - 2; ly <= top + 1; ly++) {
-      const r = ly >= top ? 1 : 2;
-      for (let dz = -r; dz <= r; dz++) {
-        for (let dx = -r; dx <= r; dx++) {
-          const corner = Math.abs(dx) === r && Math.abs(dz) === r;
-          if (corner && (ly === top + 1 || hash3(this.seed + 31, wx + dx, ly, wz + dz) < 0.5)) continue;
-          this.setIfAir(blocks, x + dx, ly, z + dz, leaves);
-        }
-      }
-    }
-    for (let i = 0; i < height; i++) this.setLog(blocks, x, y + i, z, log);
-    if (x >= 0 && x < 16 && z >= 0 && z < 16 && y > 0) {
-      const under = blockIndex(x, y - 1, z);
-      if (blocks[under] === BLOCK.GRASS || blocks[under] === BLOCK.SNOWY_GRASS) blocks[under] = BLOCK.DIRT;
-    }
+    this.treeBlocks = blocks;
+    oakTree(this.treeSink, this.seed, x, y, z, height, log, leaves, wx, wz, CHUNK_HEIGHT);
   }
 
   private spruceTree(blocks: Uint8Array, x: number, y: number, z: number, height: number): void {
-    if (y + height + 1 >= CHUNK_HEIGHT) return;
-    const top = y + height;
-    this.setIfAir(blocks, x, top, z, BLOCK.SPRUCE_LEAVES);
-    // Conical shape, alternating radii from the tip down: 1, 0, 1, 2, 1, 2, ...
-    for (let ly = top - 1; ly >= y + 2; ly--) {
-      const k = top - 1 - ly;
-      const r = k === 0 ? 1 : k === 1 ? 0 : k % 2 === 0 ? 1 : 2;
-      for (let dz = -r; dz <= r; dz++) {
-        for (let dx = -r; dx <= r; dx++) {
-          if (r > 0 && Math.abs(dx) === r && Math.abs(dz) === r) continue;
-          this.setIfAir(blocks, x + dx, ly, z + dz, BLOCK.SPRUCE_LEAVES);
-        }
-      }
-    }
-    for (let i = 0; i < height; i++) this.setLog(blocks, x, y + i, z, BLOCK.SPRUCE_LOG);
+    this.treeBlocks = blocks;
+    spruceTree(this.treeSink, x, y, z, height, CHUNK_HEIGHT);
   }
 }

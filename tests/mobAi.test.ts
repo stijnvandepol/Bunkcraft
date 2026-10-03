@@ -148,12 +148,12 @@ describe('hostile goals (no regressions)', () => {
     expect(s.em.mobs).toHaveLength(0);
   });
 
-  it('a skeleton keeps its distance and shoots every 2 s', () => {
+  it('a skeleton keeps its distance and shoots every 3 s', () => {
     const s = setup();
     s.em.spawnMob('skeleton', 10.5, 63, 0.5);
     s.tick(200);
-    expect(s.log.shots).toBeGreaterThanOrEqual(3);
-    expect(s.log.shots).toBeLessThanOrEqual(6);
+    expect(s.log.shots).toBeGreaterThanOrEqual(2);
+    expect(s.log.shots).toBeLessThanOrEqual(4);
   });
 
   it('hostiles ignore players who cannot be attacked', () => {

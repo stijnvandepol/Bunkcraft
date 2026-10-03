@@ -1,6 +1,7 @@
 import type { BlockGetter } from '../player/Collision';
 import type { ItemStack } from '../items/ItemRegistry';
-import { OPAQUE, SOLID } from '../world/BlockRegistry';
+import { OPAQUE, PARTIAL, SOLID } from '../world/BlockRegistry';
+import { collisionBoxes } from '../world/BlockShapes';
 import { Entity } from './Entity';
 import type { MobKind, MobType } from './MobTypes';
 import type { Arrow } from './Arrow';
@@ -8,6 +9,14 @@ import type { PrimedTnt } from './PrimedTnt';
 import { GoalSelector } from './ai/Goal';
 import { Navigator } from './ai/Navigator';
 import { setupBrain } from './ai/brains';
+
+/** Ticks a skeleton waits after a shot before it draws again (Minecraft: 40 on Easy/Normal, 20 on Hard). */
+export const SKELETON_SHOT_INTERVAL = 40;
+
+/** Blocks within which a hostile mob notices its target (Minecraft's follow_range: 16, zombies 35). */
+export function followRange(type: MobType): number {
+  return type.followRange ?? 16;
+}
 
 export interface MobTarget {
   x: number;
@@ -402,19 +411,10 @@ export class Mob extends Entity {
     }
   }
 
-  /** Line of sight from the mob's eyes to the target's eyes (no attacks through walls). */
+  /** Line of sight from the mob's eyes to the target's eyes (no attacks through walls, glass or closed doors). */
   canSee(getBlock: BlockGetter, t: AiTarget): boolean {
-    const ex = this.x, ey = this.y + this.eyeHeight, ez = this.z;
     const targetEye = isMob(t) ? t.y + t.eyeHeight : t.y + 1.62;
-    const dx = t.x - ex, dy = targetEye - ey, dz = t.z - ez;
-    const len = Math.hypot(dx, dy, dz);
-    const steps = Math.ceil(len / 0.25);
-    for (let i = 1; i < steps; i++) {
-      const f = i / steps;
-      const b = getBlock(Math.floor(ex + dx * f), Math.floor(ey + dy * f), Math.floor(ez + dz * f));
-      if (OPAQUE[b]) return false;
-    }
-    return true;
+    return lineOfSight(getBlock, Entity.metaGetter, this.x, this.y + this.eyeHeight, this.z, t.x, targetEye, t.z);
   }
 
   private groundBelow(getBlock: BlockGetter, x: number, z: number): number {
@@ -428,4 +428,78 @@ export class Mob extends Entity {
   protected override onLand(fall: number): void {
     if (this.type.kind !== 'chicken' && this.type.kind !== 'cave_spider' && fall > 3) this.health -= Math.ceil(fall - 3);
   }
+}
+
+const losBoxes = new Float64Array(64);
+
+/**
+ * Minecraft's `hasLineOfSight` (a COLLIDER clip): every block with a collision shape blocks the view, so glass,
+ * leaves and closed doors stop melee attacks too, while the open half of a slab or the gaps beside a fence post do
+ * not. Voxel traversal (Amanatides & Woo) visits every cell on the segment, so thin panes are never skipped.
+ * Without block states (`getMeta` null) partial blocks count as full, like the collision code.
+ */
+export function lineOfSight(
+  getBlock: BlockGetter, getMeta: BlockGetter | null,
+  ax: number, ay: number, az: number, bx: number, by: number, bz: number,
+): boolean {
+  const dx = bx - ax, dy = by - ay, dz = bz - az;
+  let x = Math.floor(ax), y = Math.floor(ay), z = Math.floor(az);
+  const ex = Math.floor(bx), ey = Math.floor(by), ez = Math.floor(bz);
+  const stepX = dx > 0 ? 1 : -1, stepY = dy > 0 ? 1 : -1, stepZ = dz > 0 ? 1 : -1;
+  const tdX = dx !== 0 ? Math.abs(1 / dx) : Infinity;
+  const tdY = dy !== 0 ? Math.abs(1 / dy) : Infinity;
+  const tdZ = dz !== 0 ? Math.abs(1 / dz) : Infinity;
+  let tmX = dx !== 0 ? (dx > 0 ? x + 1 - ax : ax - x) * tdX : Infinity;
+  let tmY = dy !== 0 ? (dy > 0 ? y + 1 - ay : ay - y) * tdY : Infinity;
+  let tmZ = dz !== 0 ? (dz > 0 ? z + 1 - az : az - z) * tdZ : Infinity;
+  // t runs 0..1 along the segment. The two end cells hold the eyes themselves, so only a partial block there (a door
+  // the mob or player stands in) can block; any block counts in the cells in between.
+  if (blocksEndCell(getBlock, getMeta, x, y, z, ax, ay, az, dx, dy, dz)) return false;
+  for (let guard = 0; guard < 512; guard++) {
+    if (tmX < tmY && tmX < tmZ) { if (tmX > 1) return true; x += stepX; tmX += tdX; }
+    else if (tmY < tmZ) { if (tmY > 1) return true; y += stepY; tmY += tdY; }
+    else { if (tmZ > 1) return true; z += stepZ; tmZ += tdZ; }
+    if (x === ex && y === ey && z === ez) return !blocksEndCell(getBlock, getMeta, x, y, z, ax, ay, az, dx, dy, dz);
+    const id = getBlock(x, y, z);
+    if (OPAQUE[id]) return false;
+    if (!SOLID[id]) continue;
+    if (!PARTIAL[id] || !getMeta) return false;
+    const n = collisionBoxes(id, getMeta(x, y, z), getBlock, getMeta, x, y, z, losBoxes);
+    if (segmentHitsBoxes(n, x, y, z, ax, ay, az, dx, dy, dz)) return false;
+  }
+  return true;
+}
+
+function blocksEndCell(
+  getBlock: BlockGetter, getMeta: BlockGetter | null, x: number, y: number, z: number,
+  ax: number, ay: number, az: number, dx: number, dy: number, dz: number,
+): boolean {
+  const id = getBlock(x, y, z);
+  if (!PARTIAL[id] || !SOLID[id] || !getMeta) return false;
+  const n = collisionBoxes(id, getMeta(x, y, z), getBlock, getMeta, x, y, z, losBoxes);
+  return segmentHitsBoxes(n, x, y, z, ax, ay, az, dx, dy, dz);
+}
+
+/** Does the segment a + t·d (t in 0..1) cross one of the first `n` boxes in `losBoxes` (cell-relative, at x, y, z)? */
+function segmentHitsBoxes(n: number, x: number, y: number, z: number, ax: number, ay: number, az: number, dx: number, dy: number, dz: number): boolean {
+  for (let k = 0; k < n; k++) {
+    const o = k * 6;
+    let tmin = 0, tmax = 1;
+    for (let axis = 0; axis < 3 && tmin <= tmax; axis++) {
+      const org = axis === 0 ? ax : axis === 1 ? ay : az;
+      const dir = axis === 0 ? dx : axis === 1 ? dy : dz;
+      const base = axis === 0 ? x : axis === 1 ? y : z;
+      const lo = base + losBoxes[o + axis], hi = base + losBoxes[o + 3 + axis];
+      if (dir === 0) {
+        if (org < lo || org > hi) tmin = 2;
+        continue;
+      }
+      let t1 = (lo - org) / dir, t2 = (hi - org) / dir;
+      if (t1 > t2) { const t = t1; t1 = t2; t2 = t; }
+      if (t1 > tmin) tmin = t1;
+      if (t2 < tmax) tmax = t2;
+    }
+    if (tmin <= tmax) return true;
+  }
+  return false;
 }

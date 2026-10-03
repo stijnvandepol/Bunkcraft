@@ -1,7 +1,6 @@
 import { ARMOR_SLOTS, INVENTORY_SLOTS } from '../src/items/Inventory';
-import { ITEM, blockDrop, getItemDef, maxDurability } from '../src/items/ItemRegistry';
+import { getItemDef, maxDurability, normalizeItem, possibleBlockDrops } from '../src/items/ItemRegistry';
 import { RECIPES } from '../src/items/Recipes';
-import { BLOCK, SLAB_FIRST, STAIRS_FIRST } from '../src/world/BlockRegistry';
 
 /**
  * Server-side plausibility check of a player's survival inventory.
@@ -55,7 +54,9 @@ export function parseInventory(raw: unknown): { stacks: Stack[]; slots: Stack[];
   const slots: Stack[] = [];
   for (const row of raw) {
     if (!Array.isArray(row) || row.length < 2 || row.length > MAX_ROW_LENGTH) return fail('bad slot');
-    const [id, count, damage] = row as unknown[];
+    const [rawId, count, damage] = row as unknown[];
+    // Saves from before the colour families hold the old wool ids; the client loads them as variants (stackFromArray).
+    const id = Number.isInteger(rawId) ? normalizeItem(rawId as number) : rawId;
     const extra = row.length > 3 ? (row.slice(3) as unknown[]) : undefined;
     if (extra && !extra.every((n) => Number.isInteger(n))) return fail('bad item data');
     if (!Number.isInteger(id) || !Number.isInteger(count)) return fail('bad slot numbers');
@@ -72,6 +73,14 @@ export function parseInventory(raw: unknown): { stacks: Stack[]; slots: Stack[];
     slots.push(stack);
   }
   return { stacks, slots };
+}
+
+/** Parses the stack on a player's cursor (`[]` or null = nothing). Same validation as an inventory row. */
+export function parseCursor(raw: unknown): { stack: Stack | null; error?: string } {
+  if (raw === undefined || raw === null || (Array.isArray(raw) && raw.length === 0)) return { stack: null };
+  const parsed = parseInventory([raw]);
+  if (parsed.error) return { stack: null, error: parsed.error };
+  return { stack: parsed.stacks[0] ?? null };
 }
 
 export function toRows(stacks: Stack[]): number[][] {
@@ -118,50 +127,68 @@ export class InventoryGuard {
     if (this.ledger.length < MAX_LEDGER) this.ledger.push({ id, count, damage });
   }
 
-  /** The player broke a block: the client may now spawn what that block can drop. */
-  creditBreak(blockId: number): void {
+  /** The player broke a block (with this state byte): the client may now spawn what that block can drop. */
+  creditBreak(blockId: number, meta = 0): void {
     const now = this.now();
     this.credits = this.credits.filter((c) => c.until > now);
-    const add = (id: number, count: number) => {
-      if (this.credits.length < MAX_BREAK_CREDITS) this.credits.push({ id, count, until: now + CREDIT_TTL_MS });
-    };
-    // The held tool is not tracked exactly, so credit the best case; gravel and leaves roll random drops.
-    const best = blockDrop(blockId, ITEM.DIAMOND_PICKAXE);
-    if (best) add(best.id, blockId >= SLAB_FIRST && blockId < STAIRS_FIRST ? 2 : best.count);
-    const hand = blockDrop(blockId, 0);
-    if (hand && hand.id !== best?.id) add(hand.id, hand.count);
-    if (blockId === BLOCK.GRAVEL || (best && best.id === ITEM.FLINT)) add(ITEM.FLINT, 1); // gravel
-    add(ITEM.STICK, 1); // leaves (5 %); harmless, only valid as a drop
+    // The held tool and the client's random roll are not known here, so credit every possible drop at its highest count.
+    for (const d of possibleBlockDrops(blockId, meta)) {
+      if (this.credits.length < MAX_BREAK_CREDITS) this.credits.push({ id: d.id, count: d.count, until: now + CREDIT_TTL_MS });
+    }
   }
 
-  /** May this item entity be created from the player's `drop` request? Consumes the backing. */
+  /** May this item entity be created from the player's `drop` request? Consumes the backing (nothing when refused). */
   authorizeDrop(id: number, count: number, damage?: number): boolean {
     const now = this.now();
-    this.credits = this.credits.filter((c) => c.until > now);
-    let need = count;
-    // A block just broken explains the drop; consume the credit.
+    this.credits = this.credits.filter((c) => c.until > now && c.count > 0);
+    // A block just broken explains the drop; whatever it does not cover must come out of the inventory (Q, death).
+    let credited = 0;
+    for (const c of this.credits) if (c.id === id) credited += c.count;
+    const need = Math.max(0, count - credited);
+    const have = this.pool.get(id) ?? 0;
+    if (have < need) return false;
+    let left = count - need;
     for (const c of this.credits) {
-      if (c.id !== id || c.count <= 0) continue;
-      const n = Math.min(need, c.count);
+      if (c.id !== id || left === 0) continue;
+      const n = Math.min(left, c.count);
       c.count -= n;
-      need -= n;
-      if (need === 0) break;
+      left -= n;
     }
     this.credits = this.credits.filter((c) => c.count > 0);
     if (need === 0) return true;
-    // Otherwise it must come out of the inventory (Q, death).
-    const have = this.pool.get(id) ?? 0;
-    if (have < need) return false;
     this.pool.set(id, have - need);
     if (this.ledger.length < MAX_LEDGER) this.ledger.push({ id, count: -need, damage });
     return true;
   }
 
-  /** Validates a `state` inventory. Accepting makes it the new baseline. */
-  check(raw: unknown): StateCheck {
+  /**
+   * Items moved out of a container into the player's hands (a chest slot picked up, a furnace output taken): they
+   * belong to the pool from now on. Container transfers are neutral for the pool: what comes out of a container
+   * goes in here, what the player puts in is taken out with `spendTransfer`, so a correct transfer passes the next
+   * state check and an invented or duplicated stack does not.
+   */
+  creditTransfer(id: number, count: number, damage?: number): void {
+    this.creditPickup(id, count, damage);
+  }
+
+  /** Items the player put into a container: they must be in the pool (they were part of the checked state/cursor). */
+  spendTransfer(id: number, count: number, damage?: number): boolean {
+    const have = this.pool.get(id) ?? 0;
+    if (have < count) return false;
+    this.pool.set(id, have - count);
+    if (this.ledger.length < MAX_LEDGER) this.ledger.push({ id, count: -count, damage });
+    return true;
+  }
+
+  /**
+   * Validates a `state` inventory. Accepting makes it the new baseline. `cursor` is the stack on the mouse cursor of
+   * an open container screen: it counts as held, so picking a stack up does not make items "disappear" (and putting
+   * it back later is not an unexplained gain).
+   */
+  check(raw: unknown, cursor?: Stack | null): StateCheck {
     const parsed = parseInventory(raw);
     if (parsed.error) return { ok: false, reason: parsed.error, correction: this.correction() };
-    const next = totals(parsed.stacks);
+    const next = totals(cursor ? [...parsed.stacks, cursor] : parsed.stacks);
     if (this.trustNext) {
       this.trustNext = false;
       return this.accept(parsed.slots, next);
@@ -175,38 +202,53 @@ export class InventoryGuard {
     for (const id of gains) {
       const need = (next.get(id) ?? 0) - (work.get(id) ?? 0);
       if (need <= 0) continue;
-      if (!this.craft(id, need, work, 0)) {
+      if (!this.craft(id, need, work, 0, next)) {
         const def = getItemDef(id);
         return { ok: false, reason: `${need} x ${def?.name ?? id} appeared without a pickup or recipe`, correction: this.correction() };
+      }
+      work.set(id, (work.get(id) ?? 0) + need); // the crafted items themselves
+    }
+    // Crafting consumes its ingredients: the new state may not still hold them.
+    for (const [id, n] of next) {
+      if (n > (work.get(id) ?? 0)) {
+        const def = getItemDef(id);
+        return { ok: false, reason: `${def?.name ?? id} was used in a recipe but is still there`, correction: this.correction() };
       }
     }
     return this.accept(parsed.slots, next);
   }
 
   /** Makes `count` of `id` from the pool `work`, crafting up to a few levels deep. */
-  private craft(id: number, count: number, work: Map<number, number>, depth: number): boolean {
+  private craft(id: number, count: number, work: Map<number, number>, depth: number, keep: Map<number, number>): boolean {
     if (depth > MAX_CRAFT_DEPTH) return false;
     for (const recipe of RECIPES) {
-      if (recipe.result.id !== id) continue;
+      // Smelting happens in real furnaces now: their output reaches the inventory as a container transfer.
+      if (recipe.result.id !== id || recipe.station === 'furnace') continue;
       const crafts = Math.ceil(count / recipe.result.count);
       const trial = new Map(work);
       let ok = true;
       for (const ing of recipe.ingredients) {
         const need = ing.count * crafts;
         let left = need;
-        // Take from the first allowed ids the player has; crafting a missing intermediate is a last resort.
-        for (const alt of ing.ids) {
-          const have = trial.get(alt) ?? 0;
-          const used = Math.min(have, left);
-          if (used > 0) { trial.set(alt, have - used); left -= used; }
-          if (left === 0) break;
-        }
+        // Take what the new state no longer holds first (oak planks kept, birch planks used), then craft a
+        // missing intermediate, and only then dip into items the new state still holds.
+        const take = (spareOnly: boolean) => {
+          for (const alt of ing.ids) {
+            const have = trial.get(alt) ?? 0;
+            const free = spareOnly ? Math.min(have, have - (keep.get(alt) ?? 0)) : have;
+            const used = Math.min(free, left);
+            if (used > 0) { trial.set(alt, have - used); left -= used; }
+            if (left === 0) break;
+          }
+        };
+        take(true);
         if (left > 0 && depth < MAX_CRAFT_DEPTH) {
           for (const alt of ing.ids) {
             if (alt === id) continue;
-            if (this.craft(alt, left, trial, depth + 1)) { left = 0; break; }
+            if (this.craft(alt, left, trial, depth + 1, keep)) { left = 0; break; }
           }
         }
+        if (left > 0) take(false);
         if (left > 0) { ok = false; break; }
       }
       if (!ok) continue;

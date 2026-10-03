@@ -1,5 +1,5 @@
 import { decodeBinary } from './binary';
-import { type ClientMessage, PROTOCOL_VERSION, type ServerMessage } from './protocol';
+import { type ClientMessage, type ContainerClientMessage, PROTOCOL_VERSION, type ServerMessage } from './protocol';
 import { identityKey, ownerToken, roomPassword } from './RoomApi';
 
 export type WelcomeMessage = Extract<ServerMessage, { t: 'welcome' }>;
@@ -156,6 +156,11 @@ export class NetClient {
     this.send({ t: 'ignite', x, y, z });
   }
 
+  /** Bone meal on a block (the server checks the held item and reach, then grows it). */
+  sendBoneMeal(x: number, y: number, z: number): void {
+    this.send({ t: 'bonemeal', x, y, z });
+  }
+
   sendTake(id: number): void {
     this.send({ t: 'take', id });
   }
@@ -166,6 +171,11 @@ export class NetClient {
 
   sendChat(text: string): void {
     this.send({ t: 'chat', text });
+  }
+
+  /** Chest and furnace screens (see ContainerScreens). */
+  sendContainer(msg: ContainerClientMessage): void {
+    this.send(msg);
   }
 
   sendState(inventory: number[][], stats: number[]): void {

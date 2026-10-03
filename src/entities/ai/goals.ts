@@ -1,6 +1,6 @@
 import { BLOCK } from '../../world/BlockRegistry';
 import { isBreedFood } from '../Breeding';
-import { BREED_COOLDOWN, LOVE_TICKS, type Mob, type MobTarget, isMob } from '../Mob';
+import { BREED_COOLDOWN, LOVE_TICKS, type Mob, type MobTarget, SKELETON_SHOT_INTERVAL, isMob } from '../Mob';
 import { FLAG, type Goal } from './Goal';
 import { pathGrid } from './Pathfinder';
 
@@ -371,10 +371,13 @@ export class LeapAtTargetGoal implements Goal {
   stop(): void { this.leapt = false; }
 }
 
-/** Skeleton: keep distance, draw for a second and shoot (Normal difficulty: one arrow per 2 s; Hard 1 s, onzeker). */
+/**
+ * Skeleton (RangedBowAttackGoal): stop within 15 blocks in sight, wait out the cooldown after a shot, then draw for 20
+ * ticks: one arrow every 3 s on Easy and Normal.
+ */
 export class RangedAttackGoal implements Goal {
   readonly flags = FLAG.MOVE | FLAG.LOOK;
-  constructor(private readonly m: Mob, private readonly interval = 40) {}
+  constructor(private readonly m: Mob, private readonly interval = SKELETON_SHOT_INTERVAL) {}
   canUse(): boolean { return this.m.target !== null && !isMob(this.m.target); }
   stop(): void { this.m.aimTicks = 0; this.m.nav.stop(); }
   tick(): void {
@@ -386,7 +389,7 @@ export class RangedAttackGoal implements Goal {
     if (sees && dist < 15) {
       m.nav.stop();
       if (dist < 4) m.setMove(t.x, t.z, -m.type.walkSpeed);
-      if (++m.aimTicks >= 20 && m.attackCooldown === 0) {
+      if (m.attackCooldown === 0 && ++m.aimTicks >= 20) {
         m.events?.shoot(m, t);
         m.aimTicks = 0;
         m.attackCooldown = this.interval;

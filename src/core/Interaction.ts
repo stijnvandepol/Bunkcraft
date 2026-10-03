@@ -1,11 +1,11 @@
 import * as THREE from 'three';
 import type { EntityManager } from '../entities/EntityManager';
 import type { PlayerInventory } from '../items/Inventory';
-import { ITEM, blockDrop, breakSeconds, getItemDef, isBlockItem, itemBlock, itemFromState, itemId, itemMeta } from '../items/ItemRegistry';
+import { ITEM, blockDrop, breakSeconds, getItemDef, isBlockItem, itemBlock, itemFromState, itemId, itemMeta, miningWear } from '../items/ItemRegistry';
 import { toolUse } from '../items/ToolUse';
 import { facingFromYaw } from '../world/BlockStates';
 import { type GameMode, hasSurvivalRules } from '../player/GameMode';
-import { PHYSICS } from '../player/Physics';
+import { blockReach } from '../player/Physics';
 import type { Player } from '../player/Player';
 import type { PlayerStats } from '../player/PlayerStats';
 import type { HandRenderer } from '../rendering/HandRenderer';
@@ -13,7 +13,9 @@ import type { Hotbar } from '../ui/Hotbar';
 import { BLOCK, BOX_KIND, PARTIAL, SHAPE, SHAPE_BOX, SHAPE_CROSS, SHAPE_DOOR, SHAPE_MODEL, SOLID, getBlockDef, stateSound } from '../world/BlockRegistry';
 import { collisionBoxes } from '../world/BlockShapes';
 import { BOX_BED, BOX_CARPET, BOX_GATE, BOX_TRAPDOOR } from '../world/BoxShapes';
+import { boneMealTarget } from '../world/Growth';
 import { isLiquid } from '../world/Liquids';
+import { needsSupport, plantCanStand } from '../world/PlantRules';
 import { resolveBucketTarget, resolvePlacement } from '../world/Placement';
 import { type RayHit, createRayHit, raycast } from '../world/Raycast';
 import type { World } from '../world/World';
@@ -26,7 +28,7 @@ const EAT_TIME = 1.6;
 
 /** Blocks a right click does something to (instead of placing against them). */
 function isUsable(id: number): boolean {
-  if (SHAPE[id] === SHAPE_DOOR || id === BLOCK.CHEST) return true;
+  if (SHAPE[id] === SHAPE_DOOR || id === BLOCK.CHEST || id === BLOCK.FURNACE || id === BLOCK.LIT_FURNACE) return true;
   const kind = SHAPE[id] === SHAPE_BOX ? BOX_KIND[id] : 0;
   return kind === BOX_TRAPDOOR || kind === BOX_GATE || kind === BOX_BED;
 }
@@ -48,14 +50,16 @@ export interface InteractionDeps {
   igniteTnt(x: number, y: number, z: number): boolean;
   /** Fires an arrow from the eye along the view direction (power 0..1). */
   shootArrow(power: number, pickup: boolean): void;
-  /** Whether chests may be placed (singleplayer only: the server does not store containers). */
+  /** Whether chests may be placed (optional veto). */
   chestsAllowed?(): boolean;
-  /** Opens the chest at a position (its container screen). */
-  openChest?(x: number, y: number, z: number): void;
+  /** Opens the container (chest, furnace) at a position: its screen. */
+  openContainer?(x: number, y: number, z: number): void;
   /** Right click on a bed: sets the spawn point and sleeps through the night. */
   useBed?(x: number, y: number, z: number): void;
   /** Right click on a mob (feed, tame, shear, milk, ride); true when it did something. */
   useMob?(mob: import('../entities/Mob').Mob): boolean;
+  /** Bone meal on a block (grows saplings, scatters grass); true when the item is used up. */
+  boneMeal?(x: number, y: number, z: number): boolean;
 }
 
 /**
@@ -92,6 +96,8 @@ export class Interaction {
   private readonly getMeta = (x: number, y: number, z: number): number => this.d.world.getMeta(x, y, z);
   private readonly shapeBoxes = new Float64Array(64);
   private readonly liquidRay: RayHit = createRayHit();
+  /** Block reach of the current game mode. */
+  private reach = 4.5;
 
   reset(): void {
     this.breakProgress = 0;
@@ -113,7 +119,8 @@ export class Interaction {
     const highlight = renderer.highlight;
     const pos = camera.position;
     camera.getWorldDirection(this.dir);
-    const hit = raycast(this.getBlock, pos.x, pos.y, pos.z, this.dir.x, this.dir.y, this.dir.z, PHYSICS.REACH, this.ray, this.getMeta);
+    this.reach = blockReach(!hasSurvivalRules(mode));
+    const hit = raycast(this.getBlock, pos.x, pos.y, pos.z, this.dir.x, this.dir.y, this.dir.z, this.reach, this.ray, this.getMeta);
     const mobHit = active && mode !== 'spectator'
       ? this.d.entities.raycastMob(pos.x, pos.y, pos.z, this.dir.x, this.dir.y, this.dir.z, Math.min(3, hit.hit ? hit.distance + 0.01 : 3))
       : null;
@@ -209,7 +216,7 @@ export class Interaction {
     const slot = hotbar.selected;
     if (id === ITEM.BUCKET) {
       const p = camera.position;
-      const lh = raycast(this.getBlock, p.x, p.y, p.z, this.dir.x, this.dir.y, this.dir.z, PHYSICS.REACH, this.liquidRay, this.getMeta, true);
+      const lh = raycast(this.getBlock, p.x, p.y, p.z, this.dir.x, this.dir.y, this.dir.z, this.reach, this.liquidRay, this.getMeta, true);
       // A solid block in the way (hit earlier than the liquid) means the liquid is out of sight.
       if (!lh.hit || !isLiquid(lh.id) || world.getMeta(lh.x, lh.y, lh.z) !== 0) return;
       if (hit.hit && hit.distance < lh.distance) return;
@@ -247,7 +254,7 @@ export class Interaction {
       this.d.audio.playDoor(open);
       this.d.hand.swingHand();
     } else if (kind === BOX_BED) this.d.useBed?.(hit.x, hit.y, hit.z);
-    else if (hit.id === BLOCK.CHEST) this.d.openChest?.(hit.x, hit.y, hit.z);
+    else if (hit.id === BLOCK.CHEST || hit.id === BLOCK.FURNACE || hit.id === BLOCK.LIT_FURNACE) this.d.openContainer?.(hit.x, hit.y, hit.z);
   }
 
   private useDoor(hit: RayHit): void {
@@ -351,7 +358,6 @@ export class Interaction {
       if (survival) {
         const drop = blockDrop(broken, held, brokenMeta);
         if (drop) entities.dropItem(drop, hit.x + 0.5, hit.y + 0.3, hit.z + 0.5);
-        if (broken === BLOCK.CHEST) for (const s of world.containers.take(hit.x, hit.y, hit.z)) entities.dropItem(s, hit.x + 0.5, hit.y + 0.5, hit.z + 0.5);
         // A plant or torch on top breaks with its support and drops too.
         // (the upper half of a door that went with the lower one is no extra drop)
         if (above !== world.getBlock(hit.x, hit.y + 1, hit.z) && !(SHAPE[broken] === SHAPE_DOOR && above === broken)) {
@@ -359,7 +365,7 @@ export class Interaction {
           if (top) entities.dropItem(top, hit.x + 0.5, hit.y + 1.3, hit.z + 0.5);
         }
         stats.addExhaustion(0.005);
-        if (getItemDef(held)?.tool) inventory.damageTool(hotbar.selected);
+        for (let w = miningWear(held, broken, brokenMeta); w > 0; w--) inventory.damageTool(hotbar.selected);
       }
     }
     this.breakProgress = 0;
@@ -382,6 +388,10 @@ export class Interaction {
     }
     const toolKind = getItemDef(item)?.tool?.kind;
     if (toolKind && this.useToolOnBlock(toolKind, mode)) return;
+    if (item === itemId('bone_meal')) {
+      this.useBoneMeal(mode);
+      return;
+    }
     if (!item || !isBlockItem(item)) return;
     if (itemBlock(item) === BLOCK.CHEST && this.d.chestsAllowed && !this.d.chestsAllowed()) return;
     // A block item is a block id plus the variant bits of its state (colour, wood, material).
@@ -403,10 +413,12 @@ export class Interaction {
       && m.y + m.height > y && m.y < y + 1 && m.z + m.width / 2 > z && m.z - m.width / 2 < z + 1)) return;
     // Plants and torches need a solid block underneath.
     if ((SHAPE[id] === SHAPE_CROSS || SHAPE[id] === SHAPE_MODEL) && !SOLID[world.getBlock(x, y - 1, z)]) return;
+    // Saplings want soil, sugar cane water beside its ground, cactus sand and no wall beside it.
+    if (needsSupport(id) && !plantCanStand(id, this.getBlock, x, y, z)) return;
     if (placed.upper && SHAPE[id] === SHAPE_DOOR && player.intersectsBlock(x, y + 1, z)) return;
     if (placed.upper && BOX_KIND[id] === BOX_BED && player.intersectsBlock(placed.upper.x, placed.upper.y, placed.upper.z)) return;
     if (!world.setBlock(x, y, z, id, placed.meta | baseMeta)) return;
-    if (id === BLOCK.CHEST) world.containers.clear(x, y, z);
+    if (placed.neighbor) world.setBlock(placed.neighbor.x, placed.neighbor.y, placed.neighbor.z, placed.neighbor.id, placed.neighbor.meta);
     if (placed.upper) world.setBlock(placed.upper.x, placed.upper.y, placed.upper.z, id, placed.upper.meta | baseMeta);
     const def = getBlockDef(id)!;
     audio.play('place', stateSound(def, baseMeta));
@@ -414,6 +426,17 @@ export class Interaction {
     renderer.particles.spawnFace(x - hit.nx, y - hit.ny, z - hit.nz, hit.nx, hit.ny, hit.nz, id, world.getLight(x, y, z), 3, world.tintAt(x, z, id, baseMeta));
     if (hasSurvivalRules(mode)) inventory.consumeSlot(hotbar.selected);
     this.breakProgress = 0;
+  }
+
+  /** Bone meal: only on blocks it does something to; used up in survival. */
+  private useBoneMeal(mode: GameMode): void {
+    const { hotbar, inventory, audio, hand, renderer, world } = this.d;
+    const hit = this.ray;
+    if (!boneMealTarget(hit.id) || !this.d.boneMeal?.(hit.x, hit.y, hit.z)) return;
+    hand.swingHand();
+    audio.play('place', 'grass');
+    renderer.particles.spawnFace(hit.x, hit.y, hit.z, 0, 1, 0, BLOCK.GRASS, world.getLight(hit.x, hit.y + 1, hit.z), 6, 0x80ff60);
+    if (hasSurvivalRules(mode)) inventory.consumeSlot(hotbar.selected);
   }
 
   /** Hoe, shovel and axe change the block they are used on (see items/ToolUse). */

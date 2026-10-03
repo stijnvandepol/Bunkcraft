@@ -47,6 +47,8 @@ export interface MobType {
   hostile: boolean;
   /** Melee damage (Normal difficulty). */
   attack: number;
+  /** Blocks within which a hostile mob notices the player (attribute follow_range): 16 unless set (zombie 35). */
+  followRange?: number;
   /** Zombie pose: arms held straight forward. */
   armsForward?: boolean;
   /** Burns in direct sunlight (zombie, skeleton). */
@@ -177,7 +179,7 @@ export const MOB_TYPES = {
       },
       ...quadLegs(4, 12, 2, -8, 4, ['#3c291c', '#4a3324']),
     ],
-    drops: () => [...stack(ITEM.BEEF, rnd(1, 3))],
+    drops: () => [...stack(ITEM.BEEF, rnd(1, 3)), ...stack(itemId('leather'), rnd(0, 2))],
   },
   sheep: {
     kind: 'sheep', name: 'Sheep', flees: true, health: 8, width: 0.9, height: 1.3, walkSpeed: 1.2, runSpeed: 2.4, hostile: false, attack: 0,
@@ -220,7 +222,7 @@ export const MOB_TYPES = {
     drops: () => [...stack(ITEM.CHICKEN, 1), ...stack(ITEM.FEATHER, rnd(0, 2))],
   },
   zombie: {
-    kind: 'zombie', name: 'Zombie', health: 20, width: 0.6, height: 1.95, walkSpeed: 1.0, runSpeed: 2.6, hostile: true, attack: 3, armsForward: true, burnsInDaylight: true,
+    kind: 'zombie', name: 'Zombie', health: 20, width: 0.6, height: 1.95, walkSpeed: 1.0, runSpeed: 2.6, hostile: true, attack: 3, followRange: 35, armsForward: true, burnsInDaylight: true,
     parts: [
       {
         anim: 'head', pivot: [0, 24, 0], boxes: [{ from: [-4, 24, -4], to: [4, 32, 4], colors: ZOMBIE_SKIN, face: (px, w) => {
@@ -344,7 +346,7 @@ const zombieFace = (mouth: string) => (px: (x: number, y: number, c: string) => 
 /** Zombie-shaped mobs (husk, drowned) with their own skin, shirt and trousers. */
 function zombieLike(kind: MobKind, name: string, skin: string[], shirt: string[], pants: string[], mouth: string, extra: Partial<MobType>): MobType {
   return {
-    kind, name, health: 20, width: 0.6, height: 1.95, walkSpeed: 1.0, runSpeed: 2.6, hostile: true, attack: 3, armsForward: true,
+    kind, name, health: 20, width: 0.6, height: 1.95, walkSpeed: 1.0, runSpeed: 2.6, hostile: true, attack: 3, followRange: 35, armsForward: true,
     parts: [
       { anim: 'head', pivot: [0, 24, 0], boxes: [{ from: [-4, 24, -4], to: [4, 32, 4], colors: skin, face: zombieFace(mouth) }] },
       { anim: 'none', pivot: [0, 0, 0], boxes: [{ from: [-4, 12, -2], to: [4, 24, 2], colors: shirt }] },

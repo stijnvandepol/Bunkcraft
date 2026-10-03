@@ -6,13 +6,18 @@ import { bindUiSounds } from '../ui/uiSound';
 import { EntityManager } from '../entities/EntityManager';
 import { ItemRenderer } from '../entities/ItemRenderer';
 import { TntRenderer } from '../entities/TntRenderer';
+import { FallingBlockRenderer } from '../entities/FallingBlockRenderer';
+import { NetFalling } from '../net/NetFalling';
+import type { FallingBlock } from '../world/BlockUpdates';
 import { ArrowRenderer } from '../entities/ArrowRenderer';
 import type { Mob, MobEvents } from '../entities/Mob';
+import { explosionDamage, explosionDropChance } from '../entities/Explosion';
 import { MobRenderer } from '../entities/MobRenderer';
 import { type UseResult, canUseOnMob, useOnMob } from '../entities/MobInteraction';
 import { mount as mountHorse, rideStep } from '../entities/Riding';
 import { NetClient, type WelcomeMessage } from '../net/NetClient';
 import { NetEntities } from '../net/NetEntities';
+import { useBoneMeal } from '../world/Growth';
 import { type ClientMessage, type ServerMessage, formatCode, normalizeCode } from '../net/protocol';
 import { TEAM_COLORS, gameTypeDef } from '../modes/GameTypes';
 import { inviteLink, inviteText, rememberGame } from '../net/RoomApi';
@@ -70,6 +75,7 @@ import { AudioEngine } from './Audio';
 import { CameraController } from './Camera';
 import { Input } from './Input';
 import { Interaction } from './Interaction';
+import { ContainerScreens } from './ContainerScreens';
 import { Renderer } from './Renderer';
 import { WeatherSystem } from './WeatherSystem';
 import { DynamicResolution, suggestPreset } from './AdaptiveQuality';
@@ -124,10 +130,17 @@ export class Game {
   private readonly hud: HUD;
   private readonly inventory: Inventory;
   private readonly survivalInventory: SurvivalInventory;
+  /** Chest and furnace screens (singleplayer block entities or the server's containers). */
+  private readonly containers: ContainerScreens;
+  /** Experience handed out by a furnace (the XP system hooks in here; amount in points). */
+  onFurnaceXp: ((amount: number) => void) | null = null;
   private readonly hand: HandRenderer;
   private readonly mobRenderer: MobRenderer;
   private readonly itemRenderer: ItemRenderer;
   private readonly tntRenderer: TntRenderer;
+  private readonly fallingRenderer: FallingBlockRenderer;
+  private netFalling: NetFalling | null = null;
+  private static readonly NO_FALLING: FallingBlock[] = [];
   private readonly arrowRenderer: ArrowRenderer;
   private readonly tmpDir = new THREE.Vector3();
   private readonly debug = new DebugOverlay();
@@ -227,6 +240,26 @@ export class Game {
       drop: (s) => this.throwStack(s),
       close: () => void this.resumeGame(),
     });
+    this.containers = new ContainerScreens({
+      world: () => this.world,
+      net: () => this.net,
+      inventory: this.playerInventory,
+      show: (view) => {
+        if (this.state !== 'playing') return;
+        this.state = 'inventory';
+        this.suppressPause = this.input.locked;
+        this.input.exitLock();
+        this.survivalInventory.open(this.nearbyStations(), view);
+      },
+      current: () => this.survivalInventory.container,
+      cursor: () => this.survivalInventory.cursorStack,
+      setCursor: (s) => this.survivalInventory.setCursor(s),
+      refresh: () => this.survivalInventory.refreshBox(),
+      close: () => { if (this.state === 'inventory') void this.resumeGame(); },
+      message: (text) => this.chat.add(text, true),
+      drop: (s) => this.throwStack(s),
+      awardXp: (amount) => this.onFurnaceXp?.(amount),
+    });
     this.playerInventory.onAdd = (id) => this.advancements.onItemGained(id);
     this.playerInventory.onChange = () => {
       this.hotbar.refresh();
@@ -260,6 +293,9 @@ export class Game {
     this.itemRenderer = new ItemRenderer(this.renderer.uniforms, this.icons);
     this.tntRenderer = new TntRenderer(this.renderer.uniforms);
     this.arrowRenderer = new ArrowRenderer(this.renderer.uniforms);
+    this.fallingRenderer = new FallingBlockRenderer(this.renderer.uniforms);
+    this.renderer.scene.add(this.fallingRenderer.mesh);
+    this.renderer.shadowExcluded.push(this.fallingRenderer.mesh);
     this.renderer.scene.add(this.mobRenderer.group, this.itemRenderer.mesh, this.tntRenderer.mesh, this.arrowRenderer.mesh);
     this.renderer.scene.add(this.remote.weapons);
     this.renderer.shadowExcluded.push(this.mobRenderer.group, this.itemRenderer.mesh, this.tntRenderer.mesh, this.arrowRenderer.mesh, this.remote.weapons);
@@ -572,12 +608,26 @@ export class Game {
     world.onChunkReady = (c) => entities.onChunkReady(c);
     world.onChunkUnloaded = (k) => entities.onChunkUnloaded(k);
     this.entities = entities;
+    // Chests and furnaces: singleplayer owns them; on a server the server does and this store stays empty.
+    world.blockEntities.enabled = !this.net;
+    world.blockEntities.onDrops = (x, y, z, stacks) => {
+      if (!hasSurvivalRules(this.mode)) return;
+      for (const st of stacks) entities.dropItem(st, x + 0.5, y + 0.5, z + 0.5, 10, undefined, true);
+    };
+    world.blockEntities.onXpAwarded = (amount) => this.onFurnaceXp?.(amount);
     // Water and lava flow in singleplayer; on a server the server simulates and sends the changes.
     if (!this.net) {
       const sim = world.enableLiquids();
       sim.onDestroyed = (x, y, z, id) => {
         // Plants and torches washed away drop themselves (survival).
         const drop = hasSurvivalRules(this.mode) ? blockDrop(id, 0) : null;
+        if (drop) entities.dropItem(drop, x + 0.5, y + 0.3, z + 0.5);
+      };
+      // Plants grow, leaves decay and sand falls (random ticks and block updates); what they break drops as items.
+      world.enableGrowth();
+      world.skyDarkness = () => Math.round((1 - this.cycle.dayFactor) * 11 + this.weatherSys.weather.skyDarkness);
+      world.onBlockDrop = (id, meta, x, y, z) => {
+        const drop = hasSurvivalRules(this.mode) ? blockDrop(id, 0, meta) : null;
         if (drop) entities.dropItem(drop, x + 0.5, y + 0.3, z + 0.5);
       };
       sim.onFizz = (x, y, z) => {
@@ -599,10 +649,18 @@ export class Game {
         entities.primeTnt(x, y, z);
         return true;
       },
-      chestsAllowed: () => !this.net,
-      openChest: (x, y, z) => this.openChest(x, y, z),
+      openContainer: (x, y, z) => this.containers.open(x, y, z),
       useBed: (x, y, z) => this.useBed(x, y, z),
       useMob: (mob) => this.useMob(mob),
+      boneMeal: (x, y, z) => {
+        // Multiplayer: the server grows it (and broadcasts the blocks); the item is used up here right away.
+        if (this.net) { this.net.sendBoneMeal(x, y, z); return true; }
+        const ticker = world.randomTicker;
+        if (!ticker) return false;
+        let used = false;
+        world.batch(() => { used = useBoneMeal(ticker, x, y, z); });
+        return used;
+      },
       shootArrow: (power, pickup) => {
         const cam = this.cam.camera;
         const dir = cam.getWorldDirection(this.tmpDir);
@@ -665,7 +723,7 @@ export class Game {
     const world = this.createWorldInstance(meta.seed, edits, worldType, normalizeGenVersion(meta.genVersion));
     this.cycle.time = meta.time;
     this.weatherSys.start(meta, this.net !== null);
-    world.containers.load(meta.containers);
+    world.blockEntities.load(meta.blockEntities);
     const mode = meta.gameMode ?? 'creative';
     // Inventory: saved stacks, else creative gets the default hotbar and survival starts empty.
     if (meta.inventory) this.playerInventory.load(meta.inventory);
@@ -757,7 +815,8 @@ export class Game {
     meta.player = { x: p.x, y: p.y, z: p.z, yaw: p.yaw, pitch: p.pitch, flying: p.flying };
     meta.hotbar = Array.from({ length: 9 }, (_, i) => this.playerInventory.get(i).id);
     meta.inventory = this.playerInventory.serialize();
-    meta.containers = world.containers.serialize();
+    meta.blockEntities = world.blockEntities.serialize();
+    delete meta.containers;
     meta.stats = this.stats.serialize();
     meta.advancements = this.advancements.serialize();
     meta.gameMode = this.mode;
@@ -799,18 +858,6 @@ export class Game {
       downloadBlob(blob, name);
       showToast(`Saved screenshot ${name}`);
     }, 'image/png');
-  }
-
-  /** Opens a chest: the container screen with the chest's 27 slots above the inventory. */
-  private openChest(x: number, y: number, z: number): void {
-    const world = this.world;
-    if (!world || this.net || this.state !== 'playing') return;
-    const slots = world.containers.slotsAt(x, y, z);
-    if (!slots) return;
-    this.state = 'inventory';
-    this.suppressPause = this.input.locked;
-    this.input.exitLock();
-    this.survivalInventory.open(this.nearbyStations(), { title: 'Chest', slots });
   }
 
   /** A bed sets the respawn point; at night it also sleeps until the morning (singleplayer). */
@@ -883,6 +930,7 @@ export class Game {
     this.loadingProgress = progress;
     this.arenaMap = welcome.match?.map ?? DEFAULT_MAP;
     this.lastJoin = { name, address, room };
+    this.containers.serverSupport = welcome.containers === true;
     this.startSession(meta, edits);
     const world = this.world!;
     // The server simulates the mobs, items, arrows and TNT; we only mirror them.
@@ -891,6 +939,7 @@ export class Game {
     entities.hostileSpawning = false;
     const mirror = new NetEntities(entities);
     this.netEntities = mirror;
+    this.netFalling = new NetFalling();
     entities.dropHook = (stack, x, y, z, delay, yaw) => {
       net.sendDrop(stack.id, stack.count, stack.damage, x, y, z, yaw, delay, encodeData(stack.data));
       return true;
@@ -1003,6 +1052,7 @@ export class Game {
     switch (msg.t) {
       case 'snap': this.remote.snapshot(msg.players, this.net?.id ?? -1, performance.now() / 1000); break;
       case 'ent': this.netEntities?.apply(msg, performance.now() / 1000); break;
+      case 'fall': this.netFalling?.apply(msg.f, performance.now() / 1000); break;
       case 'hurt':
         this.hurtByServer(msg.cause, msg.amount, msg.by, msg.yaw);
         if (msg.poison) this.stats.poison = Math.max(this.stats.poison, msg.poison);
@@ -1065,6 +1115,7 @@ export class Game {
         this.chat.add('The server corrected your inventory.', true);
         break;
       case 'gamemode': this.setMode(msg.mode); break;
+      case 'container': this.containers.onMessage(msg); break;
       default: if (!this.weatherSys.onServerMessage(msg)) this.arcade?.handle(msg, performance.now() / 1000); break;
     }
   }
@@ -1074,9 +1125,12 @@ export class Game {
     this.roomCode = null;
     this.netEntities?.clear();
     this.netEntities = null;
+    this.netFalling?.clear();
+    this.netFalling = null;
     if (!this.net) return;
     const net = this.net;
     this.net = null;
+    this.containers.reset();
     net.close();
     this.remote.clear();
     this.chat.close();
@@ -1287,7 +1341,7 @@ export class Game {
     for (let y = -2; y <= 3; y++) for (let z = -4; z <= 4; z++) for (let x = -4; x <= 4; x++) {
       const b = this.getBlock(Math.floor(p.x) + x, Math.floor(p.y) + y, Math.floor(p.z) + z);
       if (b === BLOCK.CRAFTING_TABLE) s.add('table');
-      else if (b === BLOCK.FURNACE) s.add('furnace');
+      else if (b === BLOCK.FURNACE || b === BLOCK.LIT_FURNACE) s.add('furnace');
     }
     return s;
   }
@@ -1425,6 +1479,8 @@ export class Game {
     this.itemRenderer.update(e.items, alpha, this.time, world);
     this.tntRenderer.update(e.tnt, alpha, world);
     this.arrowRenderer.update(e.arrows, alpha, world);
+    this.netFalling?.update(performance.now() / 1000);
+    this.fallingRenderer.update(this.netFalling ? this.netFalling.list : world.updates?.falling ?? Game.NO_FALLING, alpha, world);
   }
 
   private updateMenu(dt: number): void {
@@ -1540,24 +1596,24 @@ export class Game {
     const world = this.world!, entities = this.entities!;
     const positions: number[] = [];
     const destroyed = inWater ? [] : world.explode(x, y, z, power * 1.3, positions);
-    // Drop roughly 1/power of the destroyed blocks, like Minecraft; caught TNT lights with a short fuse.
+    // Blocks drop with chance 1/power (TNT: all of them), like Minecraft; caught TNT lights with a short fuse.
+    const dropChance = explosionDropChance(power, source === null);
     for (let i = 0; i < destroyed.length; i++) {
       const id = destroyed[i];
       if (id === BLOCK.TNT) {
         entities.primeTnt(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2], 10 + Math.floor(Math.random() * 20));
         continue;
       }
-      if (Math.random() < 1 / power && getBlockDef(id)?.inInventory) {
+      if (Math.random() < dropChance && getBlockDef(id)?.inInventory) {
         const drop = blockDrop(id, ITEM.DIAMOND_PICKAXE);
         if (drop) entities.dropItem(drop,
           x + (Math.random() - 0.5) * power, y + Math.random() * power * 0.5, z + (Math.random() - 0.5) * power);
       }
     }
     this.explosionEffects(source ? source.type.name : '', x, y, z, power);
-    const reach = power * 2;
     for (const m of entities.mobs) {
-      const md = Math.hypot(m.x - x, m.y - y, m.z - z);
-      if (m !== source && md < reach) m.hurt(Math.floor((1 - md / reach) * 7 * power), x, z, 1.5);
+      const dmg = explosionDamage(Math.hypot(m.x - x, m.y - y, m.z - z), power);
+      if (m !== source && dmg > 0) m.hurt(dmg, x, z, 1.5);
     }
   }
 
@@ -1575,7 +1631,7 @@ export class Game {
     const reach = power * 2;
     if (d < reach) {
       const impact = 1 - d / reach;
-      const dmg = Math.floor(((impact * impact + impact) / 2) * 7 * reach + 1);
+      const dmg = explosionDamage(d, power);
       this.stats.damage(dmg, 'explosion', this.mode, by, Math.atan2(p.x - x, p.z - z));
       const len = d || 1;
       p.vx += ((p.x - x) / len) * impact * 14;
@@ -1681,6 +1737,9 @@ export class Game {
     p.jumps = 0;
     this.weatherSys.gameTick();
     this.world?.tickLiquids();
+    this.world?.tickGrowth(p.x, p.z);
+    this.world?.blockEntities.tick();
+    this.containers.tick();
     stats.tick(p, this.getBlock, this.mode);
     p.canSprint = !hasSurvivalRules(this.mode) || stats.canSprint;
 
@@ -1781,7 +1840,7 @@ export class Game {
     this.audioProbe.update(dt, this.audio.env, eye.x, eye.y, eye.z, this.cycle.dayFactor, this.underwater);
     this.hud.setUnderwater(this.underwater);
     this.hud.setHurt(limitFlash(this.arcade ? this.arcade.hurt * 0.8 : this.stats.hurtTime / 10, this.settings.values));
-    if (!this.arcade) this.hud.survival.update({ health: this.stats.health, hunger: this.stats.hunger, air: this.stats.air, maxAir: MAX_AIR, armor: this.stats.armorPoints }, this.time);
+    if (!this.arcade) this.hud.survival.update({ health: Math.ceil(this.stats.health), hunger: this.stats.hunger, air: this.stats.air, maxAir: MAX_AIR, armor: this.stats.armorPoints }, this.time);
 
     if (this.net) {
       const flags = (p.sprinting ? 1 : 0) | (p.flying ? 2 : 0) | (p.onGround ? 4 : 0);

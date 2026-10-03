@@ -3,7 +3,11 @@ import {
   BLOCK, LIGHT_EMIT, OPAQUE, SHAPE, SHAPE_CROSS, SHAPE_DOOR, SHAPE_MODEL,
 } from '../src/world/BlockRegistry';
 import { packState, stateId, stateMeta } from '../src/world/BlockStates';
+import { BlockUpdates } from '../src/world/BlockUpdates';
+import { createRandomTicker } from '../src/world/Growth';
+import { BlockEntityStore } from '../src/world/BlockEntities';
 import { LAVA_TICK_DELAY, LiquidSim, WATER_TICK_DELAY, isLiquid } from '../src/world/Liquids';
+import { type RandomTicker, noteRandomTickable } from '../src/world/RandomTicks';
 import { CHUNK_HEIGHT, CHUNK_VOLUME, blockIndex, chunkKey } from '../src/world/constants';
 import { GEN_VERSION_CURRENT } from '../src/world/GenVersion';
 import { type WorldGenerator, type WorldType, createGenerator } from '../src/world/WorldGenerator';
@@ -15,6 +19,8 @@ const UNLOAD_RADIUS = 6;
 const MAX_GEN_PER_UPDATE = 2;
 /** Light emitters affect blocks up to this far away (torch 14 → needs ≤ 14, mobs only care about 0). */
 const EMIT_RADIUS = 14;
+/** Random ticks run in the chunks this close to a player (inside the loaded area, so trees and leaves see their neighbours). */
+export const SIM_RADIUS = LOAD_RADIUS - 1;
 
 interface ServerChunk extends ChunkLike {
   blocks: Uint8Array;
@@ -48,17 +54,52 @@ export class ServerWorld implements EntityWorld {
   private readonly simEdits: number[] = [];
   onChunkReady: ((chunk: ChunkLike) => void) | null = null;
   onChunkUnloaded: ((key: number) => void) | null = null;
+  /** Random ticks (growth, leaf decay) and scheduled block updates (falling sand, uprooted plants). */
+  readonly ticker: RandomTicker;
+  readonly updates: BlockUpdates;
+  /** The simulation removed a block that drops something (decayed leaves, an uprooted plant, sand that could not land). */
+  onBlockDrop: ((id: number, meta: number, x: number, y: number, z: number) => void) | null = null;
+  /** Sky light taken away by night and weather (0..11), for the growth light checks. */
+  skyDarkness: () => number = () => 0;
+  /**
+   * Chests and furnaces: the server owns them in multiplayer (saved in world.json). Block changes they make
+   * themselves (a furnace lighting up, the other half of a broken double chest) go out with the simulation edits.
+   */
+  readonly blockEntities: BlockEntityStore = new BlockEntityStore({
+    getBlock: (x, y, z) => this.getBlock(x, y, z),
+    getMeta: (x, y, z) => this.getMeta(x, y, z),
+    setState: (x, y, z, id, meta) => {
+      if (this.setBlock(x, y, z, id, meta) >= 0) this.simEdits.push(x, y, z, id, meta);
+    },
+  });
 
   constructor(readonly seed: number, edits: Record<string, number>, readonly worldType: WorldType = 'terrain', readonly genVersion: number = GEN_VERSION_CURRENT) {
     this.generator = createGenerator(worldType, seed, genVersion);
     this.liquids = new LiquidSim({
       getBlock: (x, y, z) => this.getBlock(x, y, z),
       getMeta: (x, y, z) => this.getMeta(x, y, z),
-      setState: (x, y, z, id, meta) => {
-        // Only loaded cells change (the simulation treats unloaded ones as solid).
-        if (this.setBlock(x, y, z, id, meta) >= 0) this.simEdits.push(x, y, z, id, meta);
-      },
+      setState: (x, y, z, id, meta) => this.simSet(x, y, z, id, meta),
     });
+    this.ticker = createRandomTicker({
+      chunkBlocks: (cx, cz) => this.chunks.get(chunkKey(cx, cz))?.blocks ?? null,
+      getBlock: (x, y, z) => this.getBlock(x, y, z),
+      getMeta: (x, y, z) => this.getMeta(x, y, z),
+      getLight: (x, y, z) => this.getLight(x, y, z),
+      setState: (x, y, z, id, meta, quiet) => {
+        if (quiet) this.setMetaQuiet(x, y, z, meta);
+        else this.simSet(x, y, z, id, meta);
+      },
+      dropBlock: (id, meta, x, y, z) => this.onBlockDrop?.(id, meta, x, y, z),
+      biomeAt: (x, z) => this.generator.biomeAt(x, z, Math.floor(this.generator.heightAt(x, z))),
+      skyDarkness: () => this.skyDarkness(),
+    }, { radius: SIM_RADIUS, budgetMs: 0.5 });
+    this.updates = new BlockUpdates({
+      getBlock: (x, y, z) => this.getBlock(x, y, z),
+      getMeta: (x, y, z) => this.getMeta(x, y, z),
+      setState: (x, y, z, id, meta) => this.simSet(x, y, z, id, meta),
+    });
+    this.updates.onBroken = (x, y, z, id, meta) => this.onBlockDrop?.(id, meta, x, y, z);
+    this.updates.onDropped = (id, meta, x, y, z) => this.onBlockDrop?.(id, meta, x, y, z);
     // Packed states (id | meta << 8); worlds saved before block states hold plain ids, which read as meta 0.
     for (const [k, state] of Object.entries(edits)) {
       const [x, y, z] = k.split(',').map(Number);
@@ -164,8 +205,10 @@ export class ServerWorld implements EntityWorld {
       return BLOCK.UNLOADED;
     }
     const prev = c.blocks[i];
-    if (prev === id && (c.meta ? c.meta[i] : 0) === meta) return -1;
+    const prevMeta = c.meta ? c.meta[i] : 0;
+    if (prev === id && prevMeta === meta) return -1;
     c.blocks[i] = id;
+    noteRandomTickable(c.blocks, y, id);
     if (meta !== 0 && !c.meta) c.meta = new Uint8Array(CHUNK_VOLUME);
     if (c.meta) c.meta[i] = meta;
     if (LIGHT_EMIT[id] > 0) c.emitters.add(i); else c.emitters.delete(i);
@@ -177,7 +220,38 @@ export class ServerWorld implements EntityWorld {
     }
     this.onEdit?.(x, y, z, id, meta);
     this.liquids.notify(x, y, z);
+    this.updates.notify(x, y, z);
+    this.blockEntities.onBlockChange(x, y, z, prev, prevMeta, id, meta);
     return prev;
+  }
+
+  /** A change made by a simulation (liquids, growth, falling blocks): only loaded cells change, and it is queued for broadcasting. */
+  private simSet(x: number, y: number, z: number, id: number, meta: number): void {
+    if (!this.chunks.has(chunkKey(x >> 4, z >> 4))) return;
+    if (this.setBlock(x, y, z, id, meta) >= 0) this.simEdits.push(x, y, z, id, meta);
+  }
+
+  /** State byte only (growth age, sapling stage): saved, not broadcast (it does not change the look). */
+  setMetaQuiet(x: number, y: number, z: number, meta: number): void {
+    if (y < 0 || y >= CHUNK_HEIGHT) return;
+    const c = this.chunks.get(chunkKey(x >> 4, z >> 4));
+    if (!c) return;
+    const i = blockIndex(x & 15, y, z & 15);
+    if ((c.meta ? c.meta[i] : 0) === meta) return;
+    if (meta !== 0 && !c.meta) c.meta = new Uint8Array(CHUNK_VOLUME);
+    if (c.meta) c.meta[i] = meta;
+    const id = c.blocks[i];
+    this.recordEdit(x, y, z, id, meta);
+    this.onEdit?.(x, y, z, id, meta);
+  }
+
+  /** One game tick of random ticks around the players plus the scheduled block updates; returns the block changes. */
+  tickGrowth(centers: ArrayLike<{ x: number; z: number }>): number {
+    // Each player brings their own 0.5 ms (a few players never cost more than 2 ms per tick).
+    this.ticker.budgetMs = 0.5 * Math.min(4, Math.max(1, centers.length));
+    const n = this.ticker.tick(centers);
+    this.updates.tick();
+    return n;
   }
 
   /** One game tick of liquid flow; returns how many blocks changed. */
