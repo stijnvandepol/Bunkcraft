@@ -238,6 +238,33 @@ Onderzoek, ontwerp en tellingen: [`CONTENT.md`](CONTENT.md). Kort:
 
 Een geïmporteerd Minecraft-resourcepack levert ook textures voor `torch`, `lava_still`, `crafting_table_*` en `furnace_*`.
 
+## Groei en vallende blokken
+
+Random ticks zoals Minecraft (`randomTickSpeed` 3): elke tick krijgen per 16³-sectie binnen 8 chunks van de speler (server: 3 chunks
+rond elke speler) 3 willekeurige blokken een tick. Secties zonder iets dat groeit worden overgeslagen; een tijdbudget (0,5 ms) en
+een maximum aan blokwijzigingen per tick houden het goedkoop, wat niet past gaat de volgende tick verder.
+
+| Wat | Regel |
+|---|---|
+| Sapling | 7 houtsoorten (eik, spar, berk, jungle, acacia, dark oak, kers). Licht ≥ 9 boven de sapling (nacht telt mee), kans 1/7 per random tick op een volgende fase; fase 2 wordt een boom als de stam ruimte heeft. Alleen te planten op aarde, gras, podzol, grof zand-aarde, mycelium, mos, modder of farmland |
+| Bomen | Eik 4–6, berk 5–7, spar 6–9, jungle 6–9 (ronde kruin), acacia 5–6 (geknikte stam, platte kruin), dark oak en kers met een brede kruin. Jungle en dark oak groeien hier uit één sapling (Minecraft: 2×2) |
+| Bladverval | Bladeren die via andere bladeren meer dan 6 stappen van een stam zitten vallen weg bij een random tick (drop: sapling 5 %, jungle 2,5 %, stokken, appel 0,5 % bij eik en dark oak). Zelf geplaatste bladeren blijven altijd |
+| Gras en mycelium | Verspreiden naar aarde binnen (±1, −3..+1, ±1) bij licht ≥ 9, 4 pogingen per tick; onder een ondoorzichtig blok of onder vol water wordt het aarde |
+| Suikerriet, cactus | Leeftijd 0–15, groeit tot 3 hoog. Riet heeft water naast zijn grond nodig, cactus zand en geen blok ernaast (anders breekt hij en valt als item) |
+| Paddenstoelen | 1/25 kans per tick om zich te verspreiden in het donker (licht < 13), hooguit 5 in een gebied van 9×3×9 |
+| IJs | Water aan de oever bevriest in koude biomen (sneeuwbiomen en boven de sneeuwgrens), smelt bij bloklicht > 11 |
+| Bone meal | Sapling: 45 % kans op een groeifase. Gras: strooit gras en bloemen rondom. Wordt in survival verbruikt |
+| Vallend zand en grind | Zand, rood zand en grind zonder steun vallen 2 ticks na een wijziging ernaast (zwaartekracht 0,04/tick², 2 % weerstand). Breekt fakkels en bloemen waar het landt; kan het niet landen dan wordt het een item. Hooguit 128 tegelijk |
+| Planten zonder grond | Saplings, riet en cactus breken (met drop) zodra hun grond verdwijnt; een rietstengel valt helemaal om |
+
+In multiplayer rekent de server alles uit en stuurt de wijzigingen in dezelfde batch als stromend water; leeftijden en groeifases
+gaan niet over het net (ze veranderen niets aan wat je ziet). Vallende blokken komen als apart `fall`-bericht. Zie
+[`docs/screenshots/growth-trees.png`](screenshots/growth-trees.png), `growth-leaf-decay.png`, `growth-falling-sand.png` en `growth-cane-cactus.png`.
+
+**Voor andere systemen (landbouw):** `RandomTicker.register(blockId, (w, x, y, z) => …)` voegt gedrag toe zonder `RandomTicks.ts` aan te
+passen (`w.setBlock`, `w.setMeta` voor een stille leeftijd, `w.brightness`, `w.randomInt`, `w.breakBlock`); `registerBoneMeal` en
+`registerSupportedPlant`/`registerBlockUpdate` (`BlockUpdates.ts`) werken op dezelfde manier.
+
 ## Roadmap
 
 1. **Block states:** **gedaan** voor slabs, trappen, deuren en vloeistoffen ([`BLOCKSTATES.md`](BLOCKSTATES.md)); ladders, muurfakkels, gewassen en een oven met een richting volgen op dezelfde basis.
