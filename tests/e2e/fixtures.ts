@@ -74,3 +74,27 @@ export async function play(page: Page, ms: number): Promise<void> {
     await page.waitForTimeout(Math.min(250, end - Date.now()));
   }
 }
+
+/** Title → Singleplayer → Create New World in creative mode; returns once the world is loaded and playing. */
+export async function createWorld(page: Page, name: string, mode: 'Creative' | 'Survival' = 'Creative'): Promise<void> {
+  await clickButton(page, 'Singleplayer');
+  await page.getByRole('button', { name: 'Create New World' }).first().click();
+  await page.locator('input.mc-input:visible').first().fill(name);
+  for (let i = 0; i < 4; i++) {
+    if (await page.getByRole('button', { name: `Game Mode: ${mode}` }).count()) break;
+    await page.getByRole('button', { name: /^Game Mode:/ }).click();
+  }
+  await page.getByRole('button', { name: 'Create New World' }).last().click();
+  await waitForWorld(page);
+  await forcePlaying(page);
+}
+
+/** Sends a chat line (commands included) the way the chat box does, and returns the chat lines it added. */
+export async function command(page: Page, text: string): Promise<string> {
+  return page.evaluate((t) => {
+    const chat = (window as unknown as { game: { chat: { onSend: (s: string) => void; log: HTMLElement } } }).game.chat;
+    const before = chat.log.children.length;
+    chat.onSend(t);
+    return [...chat.log.children].slice(before).map((e) => e.textContent).join('\n');
+  }, text);
+}

@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { defineConfig, devices } from '@playwright/test';
@@ -13,13 +13,17 @@ const VITE_PORT = Number(process.env.E2E_VITE_PORT ?? 5197);
 const DATA_DIR = process.env.E2E_DATA_DIR ?? mkdtempSync(join(tmpdir(), 'bunk-e2e-'));
 const isMac = process.platform === 'darwin';
 const CI = !!process.env.CI;
+const BASELINES = join(import.meta.dirname, 'baselines');
+/** On CI, a browser/OS pair without committed baselines skips the pixel comparison instead of failing on its first run. */
+const noBaselines = (project: string) => CI && !existsSync(join(BASELINES, `${project}-${process.platform}`));
 
 export default defineConfig({
   testDir: '.',
   testMatch: '**/*.spec.ts',
   outputDir: '../../test-results/e2e',
-  // Screenshot baselines are committed: tests/e2e/baselines/<project>/<name>.png (created by the first run).
-  snapshotPathTemplate: '{testDir}/baselines/{projectName}/{arg}{ext}',
+  // Screenshot baselines are committed per browser and OS (fonts render differently): tests/e2e/baselines/<project>-<platform>/.
+  // A missing baseline is written by the first run on that platform.
+  snapshotPathTemplate: '{testDir}/baselines/{projectName}-{platform}/{arg}{ext}',
   updateSnapshots: 'missing',
   timeout: 120_000,
   expect: { timeout: 15_000, toHaveScreenshot: { maxDiffPixelRatio: 0.03, threshold: 0.25, animations: 'disabled' } },
@@ -37,6 +41,7 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
+      ignoreSnapshots: noBaselines('chromium'),
       use: {
         ...devices['Desktop Chrome'],
         viewport: { width: 1280, height: 720 },
@@ -47,6 +52,7 @@ export default defineConfig({
     {
       // Safari engine: only the smoke and singleplayer flows (multiplayer runs on Chromium).
       name: 'webkit',
+      ignoreSnapshots: noBaselines('webkit'),
       use: { ...devices['Desktop Safari'], viewport: { width: 1280, height: 720 } },
       grep: /@webkit/,
     },

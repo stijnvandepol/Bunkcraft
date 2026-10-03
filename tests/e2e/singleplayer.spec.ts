@@ -1,29 +1,22 @@
-import { type Page } from '@playwright/test';
-import { clickButton, expect, forcePlaying, openTitle, play, test, waitForWorld } from './fixtures';
+import { clickButton, createWorld, expect, openTitle, play, test, waitForWorld } from './fixtures';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-type G = any;
-const game = (page: Page, fn: (g: G) => unknown) => page.evaluate(fn as never);
-
-async function createWorld(page: Page, name: string): Promise<void> {
-  await clickButton(page, 'Singleplayer');
-  await page.getByRole('button', { name: 'Create New World' }).first().click();
-  const nameInput = page.locator('input.mc-input:visible').first();
-  await nameInput.fill(name);
-  // Creative: instant breaking and a hotbar full of blocks.
-  for (let i = 0; i < 4; i++) {
-    if (await page.getByRole('button', { name: 'Game Mode: Creative' }).count()) break;
-    await page.getByRole('button', { name: /^Game Mode:/ }).click();
-  }
-  await page.getByRole('button', { name: 'Create New World' }).last().click();
-  await waitForWorld(page);
-  await forcePlaying(page);
-}
-
 test('singleplayer: create a world, walk, break and place, craft, save and reload @webkit', async ({ page }) => {
   await openTitle(page);
   await createWorld(page, 'E2E World');
-  await play(page, 1500);
+  await play(page, 1000);
+  // A flat two-layer stone floor high up: walking and building do not depend on the random terrain (trees, sand).
+  await page.evaluate(async () => {
+    const g = (window as any).game;
+    const { BLOCK } = await import('/src/world/BlockRegistry.ts' as string);
+    const x0 = Math.floor(g.player.x), z0 = Math.floor(g.player.z);
+    for (let x = -8; x <= 8; x++) for (let z = -8; z <= 8; z++) for (const y of [109, 110]) g.world.setBlock(x0 + x, y, z0 + z, BLOCK.STONE);
+    for (let x = -8; x <= 8; x++) for (let z = -8; z <= 8; z++) for (let y = 111; y < 115; y++) g.world.setBlock(x0 + x, y, z0 + z, 0);
+    g.player.setPosition(x0 + 0.5, 111, z0 + 0.5);
+    g.player.flying = false;
+    g.player.yaw = 0;
+  });
+  await play(page, 800);
 
   // Walk forward for a moment: the player moves.
   const start = await page.evaluate(() => { const p = (window as any).game.player; return { x: p.x, z: p.z }; });
@@ -34,7 +27,7 @@ test('singleplayer: create a world, walk, break and place, craft, save and reloa
   expect(moved).toBeGreaterThan(1);
 
   // Fly up a little (so a hole does not swallow us) and look straight down; break the block underneath with the attack button.
-  await page.evaluate(() => { const g = (window as any).game; const p = g.player; p.setPosition(p.x, p.y + 1.5, p.z); p.flying = true; p.pitch = -Math.PI / 2 + 0.01; });
+  await page.evaluate(() => { const g = (window as any).game; const p = g.player; p.setPosition(Math.floor(p.x) + 0.5, 112.5, Math.floor(p.z) + 0.5); p.flying = true; p.pitch = -Math.PI / 2 + 0.01; });
   await play(page, 400);
   // The block the crosshair is on, as the game's own interaction ray sees it.
   const target = await page.evaluate(() => {
@@ -116,4 +109,3 @@ test('settings survive a reload @webkit', async ({ page }) => {
   await expect(page.getByText(/FOV/i).first()).toBeVisible();
 });
 
-void game;
