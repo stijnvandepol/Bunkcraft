@@ -40,6 +40,8 @@ import { createLogo } from '../ui/Logo';
 import { AdvancementTracker } from '../player/Advancements';
 import { AdvancementToasts } from '../ui/AdvancementToasts';
 import { advancementsScreen } from '../ui/AdvancementsScreen';
+import { statisticsScreen } from '../ui/StatisticsScreen';
+import { installMenuNav } from '../ui/menuNav';
 import { initKeyboardLock, keyboardLockActive } from '../pwa/KeyboardLock';
 import { showToast } from '../pwa/Toast';
 import { parseShareParams } from '../save/share';
@@ -48,8 +50,8 @@ import { downloadBlob } from '../ui/download';
 import { MainMenu, VERSION, deathScreen, inviteScreen, pauseScreen } from '../ui/MainMenu';
 import { resourcePacksScreen } from '../ui/ResourcePacksMenu';
 import { ScreenStack } from '../ui/Screens';
-import { optionsScreen } from '../ui/SettingsMenu';
-import { KB, resolveKeybinds } from './Keybinds';
+import { type OptionsNav, languageScreen, optionsScreen } from '../ui/SettingsMenu';
+import { KB, keyDisplayName, resolveKeybinds } from './Keybinds';
 import { SurvivalInventory } from '../ui/SurvivalInventory';
 import { WorkerPool } from '../workers/WorkerPool';
 import { BLOCK, SOLID, getBlockDef } from '../world/BlockRegistry';
@@ -221,6 +223,7 @@ export class Game {
     };
     this.stats.onArmorHit = (wear) => void this.playerInventory.wearArmor(wear);
     this.stack = new ScreenStack(root.querySelector<HTMLElement>('#screens')!);
+    installMenuNav(this.stack.container);
     root.append(this.toasts.el, this.remote.el, this.chat.el, this.hud.el, this.debug.el, this.inventory.el, this.survivalInventory.el);
     this.weatherSys = new WeatherSystem({
       cycle: this.cycle, renderer: this.renderer, audio: this.audio, player: this.player, stats: this.stats,
@@ -258,7 +261,9 @@ export class Game {
     this.menu = new MainMenu(this.stack, {
       listWorlds: () => this.save.listWorlds(),
       playWorld: (m) => void this.enterWorld(m),
-      createWorld: (name, seed, mode) => void this.createWorld(name, seed, mode),
+      createWorld: (name, seed, mode, opts) => void this.createWorld(name, seed, mode, opts?.cheats),
+      openLanguage: () => this.stack.push(languageScreen(this.settings, { ...this.optionsNav(), languageChanged: () => this.menu.showTitle() })),
+      tipKeys: () => this.tipKeys(),
       deleteWorld: (id) => this.save.deleteWorld(id),
       saveWorld: (meta) => this.save.saveWorld(meta),
       transfer: new WorldTransfer(this.save),
@@ -341,7 +346,11 @@ export class Game {
   // ---------------------------------------------------------------- settings
 
   private openOptions(): void {
-    this.stack.push(optionsScreen(this.settings, {
+    this.stack.push(optionsScreen(this.settings, this.optionsNav()));
+  }
+
+  private optionsNav(): OptionsNav {
+    return {
       push: (el) => this.stack.push(el),
       pop: () => this.stack.pop(),
       openResourcePacks: () => this.openResourcePacks(),
@@ -359,7 +368,7 @@ export class Game {
         else this.showPauseMenu();
         this.openOptions();
       },
-    }));
+    };
   }
 
   private openResourcePacks(): void {
@@ -569,7 +578,13 @@ export class Game {
     this.menu.showTitle();
   }
 
-  private async createWorld(name: string, seedText: string, mode: GameMode): Promise<void> {
+  /** Key names for the loading tips (the player's own bindings). */
+  private tipKeys(): Record<string, string> {
+    const key = (kb: number) => keyDisplayName(this.input.bound(kb));
+    return { inventory: key(KB.INVENTORY), chat: key(KB.CHAT), command: key(KB.COMMAND), sprint: key(KB.SPRINT), drop: key(KB.DROP) };
+  }
+
+  private async createWorld(name: string, seedText: string, mode: GameMode, cheats?: boolean): Promise<void> {
     let seed: number;
     if (!seedText) seed = (Math.random() * 4294967296) >>> 0;
     else if (/^-?\d+$/.test(seedText)) seed = Number(BigInt.asUintN(32, BigInt(seedText)));
@@ -578,6 +593,7 @@ export class Game {
       id: newWorldId(), name, seed, seedText: seedText || String(seed),
       created: Date.now(), lastPlayed: Date.now(), player: null, genVersion: GEN_VERSION_CURRENT,
       hotbar: [...DEFAULT_HOTBAR], selectedSlot: 0, time: 0.08, gameMode: mode,
+      ...(cheats === undefined ? {} : { cheats }),
     };
     await this.save.saveWorld(meta);
     await this.enterWorld(meta);
@@ -1203,6 +1219,7 @@ export class Game {
       options: () => this.openOptions(),
       quit: () => void this.quitToTitle(),
       multiplayer: this.net !== null,
+      statistics: this.net ? undefined : () => this.stack.push(statisticsScreen(this.statTracker, () => this.stack.pop())),
       advancements: this.net ? undefined : () => this.stack.push(advancementsScreen(this.advancements, this.icons, () => this.stack.pop())),
       invite: this.roomCode ? () => this.openInvite(this.roomCode!) : undefined,
       seed: !this.net && this.meta && this.meta.worldType !== 'arena' ? this.meta.seedText || String(this.meta.seed) : undefined,

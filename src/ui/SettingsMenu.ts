@@ -183,7 +183,7 @@ function chatSettingsScreen(store: SettingsStore, nav: OptionsNav): HTMLDivEleme
 }
 
 /** Language screen: one button per language; the choice applies at once and the screens below are rebuilt. */
-function languageScreen(store: SettingsStore, nav: OptionsNav): HTMLDivElement {
+export function languageScreen(store: SettingsStore, nav: OptionsNav): HTMLDivElement {
   const buttons = LANGUAGES.map((lang: Language) => {
     const btn = button(LANGUAGE_NAMES[lang], () => {
       if (getLanguage() === lang) return;

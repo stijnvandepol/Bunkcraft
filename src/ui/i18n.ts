@@ -197,7 +197,7 @@ const EN = {
   // Death screen
   'death.title': 'You died!',
   'death.hardcore': 'Game over!',
-  'death.score': 'Score: {0}',
+  'death.score': 'Score',
   'death.respawn': 'Respawn',
   'death.spectate': 'Spectate World',
   'death.titleScreen': 'Title Screen',
@@ -205,7 +205,6 @@ const EN = {
   // Loading
   'loading.world': 'Loading world',
   'loading.preparing': 'Preparing...',
-  'loading.generating': 'Generating terrain: {0}%',
   'loading.tip': 'Tip: {0}',
   'click.play': 'Click to play',
 
@@ -421,14 +420,13 @@ const NL: Record<I18nKey, string> = {
 
   'death.title': 'Je bent dood!',
   'death.hardcore': 'Game over!',
-  'death.score': 'Score: {0}',
+  'death.score': 'Score',
   'death.respawn': 'Herleven',
   'death.spectate': 'Wereld bekijken',
   'death.titleScreen': 'Titelscherm',
 
   'loading.world': 'Wereld laden',
   'loading.preparing': 'Voorbereiden...',
-  'loading.generating': 'Terrein genereren: {0}%',
   'loading.tip': 'Tip: {0}',
   'click.play': 'Klik om te spelen',
 

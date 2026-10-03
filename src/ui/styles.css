@@ -176,8 +176,24 @@ html, body {
 .mc-btn.icon { width: calc(var(--s) * 20); padding: 0; }
 .grid2 > .mc-btn, .grid2 > .mc-slider { width: 100%; }
 
-/* Modern hover: same stone face, white outline. */
+/* Modern hover: same stone face, white outline. Keyboard focus looks the same, like Minecraft's focused button. */
 .mc-btn:hover:not(:disabled), .mc-btn:focus-visible { border-color: #fff; outline: none; }
+.mc-slider:focus-within { border-color: #fff; }
+.mc-slider input:focus-visible { outline: none; }
+.mc-slider input:focus-visible::-webkit-slider-thumb { border-color: #fff; }
+.mc-slider input:focus-visible::-moz-range-thumb { border-color: #fff; }
+.tab:focus-visible, .inv-tab:focus-visible, .world-item:focus-visible { outline: var(--s) solid #fff; outline-offset: calc(var(--s) * -1); }
+
+/* Language button next to Options on the title screen: a pixel globe. */
+.mc-btn.icon-lang {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' shape-rendering='crispEdges'%3E%3Cpath fill='%23fff' d='M5 2h6v1h2v1h1v2h1v4h-1v2h-1v1h-2v1H5v-1H3v-1H2v-2H1V6h1V4h1V3h2z'/%3E%3Cpath fill='%2335a0e8' d='M5 3h6v1h2v2h1v4h-1v2h-2v1H5v-1H3v-2H2V6h1V4h2z'/%3E%3Cpath fill='%2342b84a' d='M5 4h3v2H6v1h1v2H5V8H4V6h1zM9 9h3v1h-1v2H9z'/%3E%3C/svg%3E");
+  background-size: calc(var(--s) * 16) calc(var(--s) * 16);
+  background-position: center;
+  background-repeat: no-repeat;
+  image-rendering: pixelated;
+}
+.title-buttons .row { position: relative; }
+.title-buttons .row .icon { position: absolute; left: calc(var(--s) * -24); top: 0; }
 .mc-btn.selected { border-color: #fff; color: #ffff55; }
 
 .mc-btn:disabled {
@@ -365,6 +381,27 @@ html, body {
   object-fit: cover;
 }
 
+/* Hovering or focusing a world shows Minecraft's "play" arrow over its icon. */
+.world-icon-wrap { position: relative; flex: 0 0 auto; width: calc(var(--s) * 32); height: calc(var(--s) * 32); }
+.world-icon-wrap .world-icon { width: 100%; height: 100%; display: block; }
+.world-item:hover .world-icon-wrap::before, .world-item:focus-visible .world-icon-wrap::before { content: ''; position: absolute; inset: 0; background: rgba(0, 0, 0, 0.45); }
+.world-item:hover .world-icon-wrap::after, .world-item:focus-visible .world-icon-wrap::after {
+  content: '';
+  position: absolute;
+  left: calc(var(--s) * 11);
+  top: calc(var(--s) * 8);
+  width: calc(var(--s) * 14);
+  height: calc(var(--s) * 16);
+  background: #fff;
+  clip-path: polygon(0 0, 100% 50%, 0 100%);
+}
+
+/* Statistics: a dark list of "label ... value" rows. */
+.stat-list { width: calc(var(--s) * 270); display: flex; flex-direction: column; }
+.stat-row { display: flex; justify-content: space-between; padding: calc(var(--s) * 3) calc(var(--s) * 4); background: rgba(255, 255, 255, 0.05); }
+.stat-row.alt { background: rgba(0, 0, 0, 0.25); }
+.stat-value { color: #fff; }
+
 .world-text { display: flex; flex-direction: column; gap: calc(var(--s) * 1); min-width: 0; padding-top: calc(var(--s) * 1); }
 .world-name { color: #fff; }
 .world-meta { color: #808080; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: none; }
@@ -374,9 +411,16 @@ html, body {
 
 /* ---------------------------------------------------------------- loading */
 
-.loading { background: #1b1b1b; justify-content: center; gap: calc(var(--s) * 8); }
-.progress { width: calc(var(--s) * 120); height: calc(var(--s) * 3); background: #3a3a3a; }
-.progress-fill { height: 100%; width: 0; background: #fff; transition: width 0.2s; }
+.loading {
+  background: linear-gradient(rgba(0, 0, 0, 0.35), rgba(0, 0, 0, 0.35)), var(--dirt, none) #1b1b1b;
+  background-size: auto, calc(var(--s) * 32) calc(var(--s) * 32);
+  image-rendering: pixelated;
+  justify-content: center;
+  gap: calc(var(--s) * 8);
+}
+.progress { width: calc(var(--s) * 182); height: calc(var(--s) * 5); background: #000; border: var(--s) solid #a0a0a0; padding: var(--s); }
+.progress-fill { height: 100%; width: 0; background: #fff; transition: width 0.2s; will-change: width; }
+.loading-tip { position: absolute; bottom: calc(var(--s) * 28); left: 10%; right: 10%; text-align: center; color: #a0a0a0; line-height: 1.4; }
 
 .click-to-play { justify-content: center; background: rgba(0, 0, 0, 0.35); cursor: pointer; }
 
