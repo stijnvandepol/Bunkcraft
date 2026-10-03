@@ -1,5 +1,6 @@
 import type { RosterEntry } from '../net/protocol';
 import type { Team } from './GameTypes';
+import { PHYSICS } from '../player/Physics';
 import type { WeaponDef } from './Weapons';
 
 /**
@@ -13,6 +14,28 @@ export const ARCADE_SPEED_MULT = 1.3;
 export const ARCADE_AIR_ACCEL = 8;
 /** Seconds of spawn protection shown after (re)spawning. */
 export const SPAWN_PROTECTION = 2;
+
+/**
+ * Shared client/server numbers: the server validates movement against the same constants the
+ * client's `Player` physics uses (see server/anticheat/Movement.ts), so change them together.
+ */
+/** Highest ground speed (blocks/s) with a weapon of speed modifier `moveSpeed`: always-sprint pace. */
+export function arcadeMaxSpeed(moveSpeed: number): number {
+  return PHYSICS.SPRINT_SPEED * ARCADE_SPEED_MULT * moveSpeed;
+}
+
+/** Server tick rate of arcade rooms (Hz), overridable per server with ARCADE_TICK_HZ. */
+export const ARCADE_TICK_HZ = 30;
+/** Arcade clients send their position this often (Hz), at most. */
+export const ARCADE_POS_HZ = 30;
+/** Clamp for the configurable tick rate. */
+export const ARCADE_TICK_MIN = 10;
+export const ARCADE_TICK_MAX = 60;
+
+/** Other players are drawn this many seconds in the past: two snapshot intervals, so there are always two to blend. */
+export function arcadeInterpDelay(tickHz: number): number {
+  return 2 / Math.max(ARCADE_TICK_MIN, Math.min(ARCADE_TICK_MAX, tickHz));
+}
 
 // ---------------------------------------------------------------- crosshair
 
