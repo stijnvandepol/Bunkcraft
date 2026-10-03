@@ -54,7 +54,6 @@ export class PlayerStats implements DamageTarget, EffectHost {
   private regenTimer = 0;
   private peacefulTimer = 0;
   private currentMode: GameMode = 'survival';
-  private starveTimer = 0;
   private hazardTimer = 0;
   /** Fired on every successful hit (sound). */
   onHurt: ((cause: DamageCause) => void) | null = null;
@@ -200,28 +199,37 @@ export class PlayerStats implements DamageTarget, EffectHost {
     // Peaceful: hunger refills and health comes back by itself, about 1 per second.
     if (!hostilesAllowed(this.difficulty)) {
       if (this.hunger < MAX_HUNGER) this.hunger = Math.min(MAX_HUNGER, this.hunger + 1);
-      this.starveTimer = 0;
       if (this.health < MAX_HEALTH && ++this.peacefulTimer >= 20) {
         this.peacefulTimer = 0;
         this.heal(1);
       }
     }
-    // Natural regeneration (fast with full hunger and saturation) and starvation.
-    this.regenTimer++;
-    const fast = this.hunger >= MAX_HUNGER && this.saturation > 0;
+    // Natural regeneration and starvation share one timer, like Minecraft's FoodData: it only runs while one of
+    // them applies, so a hit at full health does not heal at once. The naturalRegeneration rule switches healing off.
     const natural = this.rules ? this.rules.get('naturalRegeneration') : true;
-    if (natural && this.health < MAX_HEALTH && (fast ? this.regenTimer >= 10 : this.hunger >= 18 && this.regenTimer >= 80)) {
-      this.heal(1);
-      this.addExhaustion(6);
-      this.regenTimer = 0;
-    }
-    if (this.hunger === 0) {
-      this.starveTimer++;
-      // Easy stops at 10 health, Normal at half a heart; Hard and Hardcore can starve to death.
-      if (this.starveTimer >= 80 && this.health > starvationFloor(this.difficulty, mode === 'hardcore')) {
-        this.damage(1, 'starve', mode);
-        this.starveTimer = 0;
+    const hurt = natural && this.health < MAX_HEALTH;
+    if (hurt && this.hunger >= MAX_HUNGER && this.saturation > 0) {
+      // Saturation boost: every 10 ticks heal min(saturation, 6) / 6 for min(saturation, 6) exhaustion.
+      if (++this.regenTimer >= 10) {
+        const f = Math.min(this.saturation, 6);
+        this.heal(f / 6);
+        this.addExhaustion(f);
+        this.regenTimer = 0;
       }
+    } else if (hurt && this.hunger >= 18) {
+      if (++this.regenTimer >= 80) {
+        this.heal(1);
+        this.addExhaustion(6);
+        this.regenTimer = 0;
+      }
+    } else if (this.hunger <= 0) {
+      // Easy stops at 10 health, Normal at half a heart; Hard and Hardcore can starve to death.
+      if (++this.regenTimer >= 80) {
+        if (this.health > starvationFloor(this.difficulty, mode === 'hardcore')) this.damage(1, 'starve', mode);
+        this.regenTimer = 0;
+      }
+    } else {
+      this.regenTimer = 0;
     }
   }
 

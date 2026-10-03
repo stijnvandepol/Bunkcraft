@@ -23,6 +23,8 @@ import { ServerEntities, dayFactorAt } from './ServerEntities';
 import { ServerSurvival, type SurvivalData } from './SurvivalRules';
 import { EffectSet } from '../src/player/Effects';
 import { ServerWorld } from './ServerWorld';
+import { ContainerService } from './Containers';
+import type { SavedEntity } from '../src/world/BlockEntities';
 import { type Actor, type BanEntry, type CommandHost, type Moderation, type Target, lc, runCommand } from './Commands';
 import { InventoryGuard, parseInventory } from './InventoryGuard';
 import { type ChildLogger, log } from './Log';
@@ -32,7 +34,7 @@ import { type RateLimiter, hashIp, newToken, safeEqual, tokenMatches, verifyPass
 const TICK_MS = 50; // 20 ticks per second, like Minecraft
 const DAY_SECONDS = 1200;
 const SAVE_INTERVAL_MS = 30_000;
-const REACH = 8; // lenient server-side reach check (client uses 5)
+const REACH = 8; // lenient server-side reach check (client uses 4.5, creative 5)
 const MAX_SPEED = 26; // blocks/second (fast flying + slack)
 const ARENA_MAX_SPEED = 40; // arcade: sprint + jump + slack
 const PING_INTERVAL_TICKS = 60; // arcade: measure the round trip every 3 s
@@ -95,6 +97,8 @@ interface WorldData extends SurvivalData {
   claims?: Record<string, string>;
   /** Salt for the IP hashes in `bans`. */
   ipSalt?: string;
+  /** Chests and furnaces: "x,y,z" → saved block entity (see src/world/BlockEntities). Absent in older files. */
+  blockEntities?: Record<string, SavedEntity>;
 }
 
 /** Block change message; the meta field is left out for the default state to keep the common case small. */
@@ -140,6 +144,8 @@ interface Session {
   chat: Bucket;
   moves: Bucket;
   states: Bucket;
+  /** Container open and click requests. */
+  containers: Bucket;
   ip: string;
   /** Operator of this game (owner token, or listed in `ops` with a verified identity). */
   op: boolean;
@@ -224,6 +230,8 @@ export class GameServer {
   /** Arcade games: the match and the arena as bullets see it. */
   private readonly match: Match | null = null;
   private arena: ServerWorld | null = null;
+  /** Chests and furnaces: who has which open, click validation, updates (null in arcade games). */
+  private readonly containers: ContainerService | null = null;
   /** Arcade: the map setting of this game ("rotate" moves on to the next map after every match). */
   private mapSetting: MapSetting = DEFAULT_MAP;
   private readonly logger: ChildLogger;
@@ -295,6 +303,18 @@ export class GameServer {
       ents.rules = this.survival.rules;
       ents.setDifficulty(this.survival.difficulty);
       ents.applyRules();
+      const store = this.entities.world.blockEntities;
+      store.load(this.world.blockEntities);
+      this.containers = new ContainerService({
+        store: () => store,
+        send: (id, msg) => { const s = this.sessions.get(id); if (s) this.send(s, msg); },
+        guarded: () => this.guarded(),
+        reject: (name, reason) => {
+          metrics.inventoryRejects++;
+          this.logger.warn('container click rejected', { name, reason, mode: this.guardMode });
+        },
+        session: (id) => this.sessions.get(id),
+      });
     }
     this.timers.push(setInterval(() => this.tick(), TICK_MS));
     this.timers.push(setInterval(() => {
@@ -390,6 +410,12 @@ export class GameServer {
     this.world.day = this.world.day ?? 0;
     if (!this.match) this.world.weather = this.weather.serialize();
     this.survival?.save(this.world);
+    const store = this.entities?.world.blockEntities;
+    if (store?.dirty) {
+      this.world.blockEntities = store.serialize();
+      store.dirty = false;
+      this.dirty = true;
+    }
     if (!this.dirty) return;
     const tmp = `${this.file}.tmp`;
     // Write-then-rename so a crash never leaves a half-written world file.
@@ -656,7 +682,7 @@ export class GameServer {
       hasPos: false, lastPosTime: Date.now(),
       edits: new Bucket(20, 40, 'edits'), attacks: new Bucket(8, 12, 'attacks'), shots: new Bucket(3, 5, 'shots'),
       drops: new Bucket(30, 60, 'drops'), takes: new Bucket(20, 30, 'takes'),
-      chat: new Bucket(1, 5, 'chat'), moves: new Bucket(40, 80, 'moves'), states: new Bucket(0.5, 10, 'states'),
+      chat: new Bucket(1, 5, 'chat'), moves: new Bucket(40, 80, 'moves'), states: new Bucket(0.5, 10, 'states'), containers: new Bucket(20, 40, 'containers'),
       fires: new Bucket(25, 30, 'fires'), actions: new Bucket(15, 30, 'actions'), violations: 0,
       pingMs: 0, pingSentAt: 0, awaiting: null,
     };
@@ -676,6 +702,7 @@ export class GameServer {
       ...(op ? { op: true } : {}),
       ...(session.bin ? { binary: true } : {}),
       ...(this.survival ? this.survival.welcome() : {}),
+      ...(this.containers ? { containers: true } : {}),
     });
     if (!this.match) this.send(session, this.weatherMessage(true));
     this.sessions.set(session.id, session);
@@ -697,6 +724,7 @@ export class GameServer {
     this.sessions.delete(s.id);
     this.entities?.forget(s.id);
     this.survival?.forget(s.id);
+    this.containers?.onLeave(s.id);
     this.match?.leave(s.id);
     this.broadcast({ t: 'leave', id: s.id, name: s.name });
     this.broadcast({ t: 'chat', from: '', text: `${s.name} left the game`, system: true });
@@ -764,6 +792,7 @@ export class GameServer {
         if (!s.actions.take() || !this.survival) return;
         return this.survival.bed(s, Number(msg.x), Number(msg.y), Number(msg.z), this.sessions.size);
       case 'wake': return this.survival?.wake(s.id);
+      case 'container': return this.containers?.handle(s, msg);
     }
   }
 
@@ -884,7 +913,8 @@ export class GameServer {
     // Breaking a block lets this player's client spawn its drop (see InventoryGuard.creditBreak).
     if (id === 0 && this.entities && this.guarded()) {
       const old = this.entities.world.getBlock(x, y, z);
-      if (old > 0) s.guard.creditBreak(old);
+      // The state byte matters: red wool drops red wool, a double slab two slabs.
+      if (old > 0) s.guard.creditBreak(old, this.entities.world.getMeta(x, y, z));
     }
     this.entities?.setBlock(x, y, z, id, meta); // records the edit and updates what the mobs see
     this.broadcast(blockMessage(x, y, z, id, meta), s.id);
@@ -1070,6 +1100,7 @@ export class GameServer {
     this.entitiesActive = true;
     this.entities?.tick([...this.sessions.values()]);
     this.survival?.tick([...this.sessions.values()]);
+    this.containers?.tick();
     if (this.match) {
       this.match.tick();
       if (this.tickCount % PING_INTERVAL_TICKS === 0) {

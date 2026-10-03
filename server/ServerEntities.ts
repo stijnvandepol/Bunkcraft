@@ -1,4 +1,5 @@
 import { EntityManager } from '../src/entities/EntityManager';
+import { explosionDamage, explosionDropChance } from '../src/entities/Explosion';
 import type { Mob, MobEvents, MobTarget } from '../src/entities/Mob';
 import { type ItemStack, ITEM, blockDrop, encodeData, getItemDef } from '../src/items/ItemRegistry';
 import {
@@ -14,7 +15,7 @@ import { ServerWorld } from './ServerWorld';
 /** Entities are sent to a player when they are this close (blocks). */
 const SEND_RADIUS = 64;
 const SEND_ITEM_RADIUS = 48;
-/** Lenient reach checks (the client uses 5 for blocks and 3 for mobs). */
+/** Lenient reach checks (the client uses 4.5 for blocks, 5 in creative, and 3 for mobs). */
 const ATTACK_REACH = 6.5;
 const IGNITE_REACH = 8;
 const TAKE_REACH = 2.6;
@@ -97,6 +98,11 @@ export class ServerEntities {
       if (drop) this.manager.dropItem(drop, x + 0.5, y + 0.3, z + 0.5);
     };
     this.manager = new EntityManager(this.world, seed);
+    // A broken chest or furnace spills its contents (survival rules; creative empties it, like Minecraft).
+    this.world.blockEntities.onDrops = (x, y, z, stacks) => {
+      if (!hasSurvivalRules(this.mode)) return;
+      for (const st of stacks) this.manager.dropItem(st, x + 0.5, y + 0.5, z + 0.5, 10, undefined, true);
+    };
     this.world.onChunkReady = (c) => this.manager.onChunkReady(c);
     this.world.onChunkUnloaded = (k) => this.manager.onChunkUnloaded(k);
   }
@@ -142,6 +148,8 @@ export class ServerEntities {
     this.world.update(targets);
     // Water and lava flow (budgeted per tick); what changed goes out as one batch.
     this.world.tickLiquids();
+    // Furnaces burn while their chunk is loaded; lighting up or going out is a block change like flowing water.
+    this.world.blockEntities.tick();
     const flowed = this.world.drainSimEdits();
     if (flowed.length > 0) this.host.broadcastBlocks(flowed);
     this.manager.targets = targets;
@@ -247,8 +255,8 @@ export class ServerEntities {
       if (target.id === undefined) return;
       this.host.send(target.id, { t: 'hurt', amount: damage, cause: 'mob', by: mob.type.name, yaw: Math.atan2(target.x - mob.x, target.z - mob.z) });
     },
-    explode: (mob) => this.explode(mob.type.name, mob.x, mob.y + 0.5, mob.z, 3, false),
-    tntExplode: (t) => this.explode('', t.x, t.y + 0.49, t.z, 4, t.inWater),
+    explode: (mob) => this.explode(mob.type.name, mob.x, mob.y + 0.5, mob.z, 3, false, false),
+    tntExplode: (t) => this.explode('', t.x, t.y + 0.49, t.z, 4, t.inWater, true),
     shoot: (mob, target) => {
       this.manager.skeletonShoot(mob, target.x, target.y, target.z);
       this.soundNear('', 'shoot', mob.x, mob.y, mob.z);
@@ -281,10 +289,11 @@ export class ServerEntities {
    * blocks and plays the effects and takes its own damage by distance. Under water the
    * blocks stay (like Minecraft) but mobs are still hurt.
    */
-  private explode(by: string, x: number, y: number, z: number, power: number, inWater: boolean): void {
+  private explode(by: string, x: number, y: number, z: number, power: number, inWater: boolean, tnt: boolean): void {
     const positions: number[] = [];
-    // Creepers (they have a name) only break blocks while mobGriefing is on; TNT always does.
-    const grief = !by || !this.rules || this.rules.get('mobGriefing');
+    const dropChance = explosionDropChance(power, tnt);
+    // Creepers only break blocks while mobGriefing is on; TNT always does.
+    const grief = tnt || !this.rules || this.rules.get('mobGriefing');
     const destroyed = inWater || !grief ? [] : this.world.explode(x, y, z, power * 1.3, positions);
     for (let i = 0; i < destroyed.length; i++) {
       const id = destroyed[i];
@@ -293,17 +302,16 @@ export class ServerEntities {
         this.manager.primeTnt(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2], 10 + Math.floor(Math.random() * 20));
         continue;
       }
-      if (Math.random() < 1 / power && getBlockDef(id)?.inInventory) {
+      if (Math.random() < dropChance && getBlockDef(id)?.inInventory) {
         const drop = blockDrop(id, ITEM.DIAMOND_PICKAXE);
         if (drop) {
           this.manager.dropItem(drop, x + (Math.random() - 0.5) * power, y + Math.random() * power * 0.5, z + (Math.random() - 0.5) * power);
         }
       }
     }
-    const reach = power * 2;
     for (const m of this.manager.mobs) {
-      const md = Math.hypot(m.x - x, m.y - y, m.z - z);
-      if (!m.removed && md < reach) m.hurt(Math.floor((1 - md / reach) * 7 * power), x, z, 1.5);
+      const dmg = explosionDamage(Math.hypot(m.x - x, m.y - y, m.z - z), power);
+      if (!m.removed && dmg > 0) m.hurt(dmg, x, z, 1.5);
     }
     this.host.broadcast({ t: 'boom', x: r2(x), y: r2(y), z: r2(z), power, by, water: inWater, blocks: positions });
   }

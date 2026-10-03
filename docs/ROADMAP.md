@@ -76,7 +76,7 @@ wat al is doorgevoerd.
    - bed (wol + planken: spawnpunt en nacht overslaan): kan nu, block states zijn er (een bed is 2 blokken met een richting, net als een deur: `meta` met richting + helft);
    - pijl en boog: **Gedaan** (boog: 3 stokken + 3 draad, 384 gebruik, kracht (f²+2f)/3, kritiek bij volle spanning, FOV-zoom; pijl: vuursteen + stok + veer → 4, zwaartekracht 0,05/tick, blijft steken en is op te rapen).
 2. **Advancements (S–M):** **Gedaan** (`src/player/Advancements.ts`, 10 stuks met de officiële 1.21-teksten: Minecraft, Stone Age, Getting an Upgrade, Acquire Hardware, Isn't It Iron Pick, Diamonds!, Ice Bucket Challenge, Adventure, Monster Hunter, Take Aim). Toast rechtsboven met geluid, Advancements-scherm via het pauzemenu (tabs, boom, tooltips, x/y), opgeslagen per wereld in `WorldMeta.advancements`. Alleen in survival/hardcore en niet in multiplayer (daar blijft het uit, tot de server ze in het spelersrecord bewaart). Bewust weggelaten: advancements die niet in 1.21 bestaan (Getting Wood, Benchmarking, Time to Mine!) en alles wat emmers, bed, harnas, enchanting, fokken of een crossbow nodig heeft. Sniper Duel (skelet op 50 m) en de Husbandry-tab volgen met die inhoud.
-3. **Kisten met loot (M):** nodig voor alle structuren.
+3. **Kisten met loot (M): Gedaan als basis.** Block entities (`src/world/BlockEntities.ts`), dubbele kisten, loot-tabellen met seed (`src/items/Loot.ts`: `dungeon_chest`, `mineshaft_chest`, `village_chest`, `spawn_bonus_chest`) en `BlockEntityStore.setLoot()` / `lootAt` voor structuurkisten die bij de eerste keer openen rollen. Open: structuren die ze plaatsen, mob-drops omzetten naar `rollLoot`.
 4. **Block states (L):** **Gedaan** (ontwerp in [`BLOCKSTATES.md`](BLOCKSTATES.md)).
    - Een `meta`-byte per blok in een lazy `Chunk.meta`, door de generatie-workers, de mesher, botsing, raycast, save (record v2 + migratie) en netwerk (protocol 4) heen.
    - **Slabs en trappen** (9 materialen, Minecraft-plaatsingsregels, hoekvormen afgeleid uit de buren, loopt omhoog met stap 0,6) en de **eikenhouten deur** (2 blokken, scharnier, open/dicht, breekt samen).
@@ -132,10 +132,10 @@ Nog open: gebakken buffers voor veelgebruikte geluiden (minder CPU), geluiden va
 
 - **Werkende keybind-remapping:** **Gedaan.** Key Binds-scherm zoals Minecraft 1.21 (categorieën, `> key <`, Esc = Not Bound, conflicten rood, Reset Keys); toetsen en muisknoppen, opgeslagen in `bunkcraft.settings`. Centrale tabel in `src/core/Keybinds.ts`.
 - **Contexthints en ontdekken van recepten (S):** voor nieuwe spelers.
-- **Toegankelijkheid (S–M):** ondertitels voor geluiden, reduced motion (hurt cam, bobbing en FOV-kick uit) en kleurenblind-veilige balken.
+- **Toegankelijkheid (S–M):** **Gedaan** (zie `docs/CONTROLS.md`): ondertitels met richtingspijlen, reduced motion (default uit `prefers-reduced-motion`), reduce flashes (`limitFlash`/`FlashLimiter` in `src/core/Accessibility.ts` voor de weer-ontwikkelaar), kleurenblind-veilig palet, hoog contrast (ook `prefers-contrast`/`forced-colors`), tekstgrootte, hold/toggle voor sneak, sprint, attack en use, FOV-effecten, stick-curve, menu-herhaalvertraging, `role=dialog`, aria-live en echte `<button>`s. **Nog open:** patronen/iconen op teamkleuren (nu alleen palet), ondertitels voor blokgeluiden, volledige screenreader-tekst voor de inventaris.
 - **`navigator.storage.persist()`:** **Gedaan.** Safari wist anders werelden na 7 dagen zonder bezoek.
-- **Gamepad (M)** via de Gamepad API.
-- **Touchbediening (L):** joystick, slepen om te kijken en knoppen. Vereist voor mobiele portals.
+- **Gamepad (M):** **Gedaan.** Standard mapping, dode zone en curve, menunavigatie met focusring, hot-plug, rumble, Controller Settings, southpaw. **Nog open:** knoppen herbinden in de UI en een muiscursor voor de inventaris.
+- **Touchbediening (L):** **Gedaan.** Zwevende joystick, kijken door slepen, tikken om te gebruiken en vasthouden om te breken, knoppen, hotbar tikken en vegen, auto-jump, arcade-knoppen, safe-area, fullscreen en oriëntatiehint. **Nog open:** test op echte toestellen, aim-assist voor arcade (staat bewust uit) en haptics op telefoons.
 
 ## 7. Multiplayer (vervolg op v1)
 
@@ -151,7 +151,8 @@ Volgende stappen:
 1. **Mobs op de server simuleren: Gedaan** (zie `docs/SERVER.md`). Mob-AI, items, pijlen en TNT draaien op de server met een eigen `ServerWorld`. Spawnen en despawnen delen `MobSpawner` met singleplayer; de server-sky-light is open-lucht of niet, genoeg voor de spawnregels.
 2. **Gedeelde item-drops: Gedaan.** PvP in de Minecraft-sandbox staat nog open; PvP bestaat wel in de arcade-game types (zie 7b).
 3. **Server-authoritative inventory: Gedaan (gedeeltelijk).** Survival-inventories worden door de server gecontroleerd
-   (pickups, recepten, drops die een blokbreuk of voorraad nodig hebben); stationcontrole, kisten en health/honger staan
+   (pickups, recepten, drops die een blokbreuk of voorraad nodig hebben). Kisten en ovens staan nu op de server; overdrachten
+   tussen inventory en container lopen via de guard (`creditTransfer`/`spendTransfer`). Stationcontrole en health/honger staan
    nog open. Precies wat wel en niet: `docs/SERVER.md`.
 4. **Wachtwoord, whitelist, ops en tokens: Gedaan.** Wachtwoord per game (scrypt), eigenaarstoken, namen gebonden aan een
    browsersleutel, `/kick /ban /unban /op /deop /whitelist /say /tp /gamemode /time /weather /give`, opt-in serverlijst
@@ -161,7 +162,7 @@ Volgende stappen:
    (`pos`) en de overige berichten zijn nog JSON; delta-compressie van `snap` (alleen wat bewoog) is de volgende stap.
 6. **Observability en beheer: Gedaan.** JSON-logs, `/metrics`, `/health`, back-ups, verbindingslimieten, `ALLOWED_ORIGINS`,
    gracieus afsluiten met reconnect-hint. Open: Grafana-dashboard als voorbeeld, rate limits per game in `/admin`, alerting.
-7. **Weer in multiplayer** (`/weather` is een stub tot het weersysteem op de server draait) en inventory-controle voor kisten.
+7. **Weer in multiplayer** (`/weather` is een stub tot het weersysteem op de server draait) (kisten en ovens zijn klaar, zie `docs/MULTIPLAYER.md`).
 
 ## 7b. Arcade-game types (Krunker-stijl)
 
@@ -217,7 +218,7 @@ ertsaders, `genVersion` voor bestaande werelden).
 
 **Fundamenten die bijna alles blokkeren (eerst):**
 1. Random-tick systeem (planten, bladverval, farmland, vuur, ijs).
-2. Block entities (kisten, ovens, spawners) met opslag per wereld en server-sync.
+2. Block entities (kisten, ovens, spawners) met opslag per wereld en server-sync. **Gedaan voor kist, dubbele kist en oven** (singleplayer save v4, `world.json` op de server, `container`-protocol); spawner, bord, bed en banner kunnen zich registreren met `registerBlockEntityKind`.
 3. Eén centrale schade-pijplijn (moeilijkheidsgraad, harnas, effecten, enchantments). **Gedaan** (zie `GAMEPLAY.md`):
    `Damage.ts` met difficulty, i-frames, schild, harnas, Resistance, enchant-hooks en absorption; game rules en
    difficulty per wereld (UI, `/difficulty`, `/gamerule`); 1.9+-gevecht (cooldown, crits, sweep, server-check);

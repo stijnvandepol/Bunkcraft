@@ -1,6 +1,6 @@
 import {
   type GraphicsQuality, MAX_RENDER_DISTANCE, type ParticleLevel, QUALITY_PRESETS,
-  type SettingsStore, type ShadowQuality, detectPreset,
+  type Settings, type SettingsStore, type ShadowQuality, detectPreset,
 } from '../core/Settings';
 import {
   KEYBINDS, KEYBIND_CATEGORIES, type KeybindMap, conflictingActions, defaultKeybinds, isValidCode, keyDisplayName,
@@ -14,7 +14,19 @@ export interface OptionsNav {
   pop(): void;
   openResourcePacks(): void;
   credits(): string[];
+  /** Name of the connected controller, if any. */
+  padName?(): string;
 }
+
+type BooleanKey = { [K in keyof Settings]: Settings[K] extends boolean ? K : never }[keyof Settings];
+
+/** ON/OFF cycle button for a boolean setting. */
+function toggle(store: SettingsStore, label: string, key: BooleanKey, on = 'ON', off = 'OFF'): HTMLButtonElement {
+  return cycleButton<'on' | 'off'>(label, ['off', 'on'], { on, off }, store.values[key] ? 'on' : 'off', (v) => store.set(key, (v === 'on') as Settings[typeof key]));
+}
+
+const percent = (name: string) => (v: number) => `${name}: ${v}%`;
+const holdOrToggle = (store: SettingsStore, label: string, key: BooleanKey) => toggle(store, label, key, 'Toggle', 'Hold');
 
 function fullscreenButton(): HTMLButtonElement {
   const label = () => `Fullscreen: ${document.fullscreenElement ? 'ON' : 'OFF'}`;
@@ -57,8 +69,11 @@ export function optionsScreen(store: SettingsStore, nav: OptionsNav): HTMLDivEle
       button('Music & Sounds...', () => nav.push(soundScreen(store, nav))),
       button('Controls...', () => nav.push(controlsScreen(store, nav))),
       button('Resource Packs...', () => nav.openResourcePacks()),
+      button('Touch Settings...', () => nav.push(touchScreen(store, nav))),
+      button('Controller Settings...', () => nav.push(controllerScreen(store, nav, nav.padName?.() ?? ''))),
+      button('Accessibility Settings...', () => nav.push(accessibilityScreen(store, nav))),
       button('Credits & Attribution...', () => nav.push(creditsScreen(nav))),
-      fullscreenButton(),
+      h('div', { class: 'wide' }, fullscreenButton()),
       keyboardLockSupported() ? lockEscButton() : null,
       installButton(),
     ),
@@ -133,6 +148,78 @@ function controlsScreen(store: SettingsStore, nav: OptionsNav): HTMLDivElement {
       slider(10, 200, 1, s.sensitivity, (v) => `Sensitivity: ${v}%`, (v) => store.set('sensitivity', v)),
       cycleButton<'on' | 'off'>('Invert Mouse', ['off', 'on'], { on: 'ON', off: 'OFF' }, s.invertMouse ? 'on' : 'off', (v) => store.set('invertMouse', v === 'on')),
       button('Key Binds...', () => nav.push(keyBindsScreen(store, nav))),
+    ),
+  ], [button('Done', () => nav.pop())], { list: true });
+}
+
+/** Accessibility & comfort: captions, motion, flashes, colours, contrast, text size, toggle/hold. */
+export function accessibilityScreen(store: SettingsStore, nav: OptionsNav): HTMLDivElement {
+  const s = store.values;
+  return menuScreen('Accessibility Settings', [
+    h('div', { class: 'grid2' },
+      h('div', { class: 'section-label', text: 'Hearing and Seeing' }),
+      toggle(store, 'Subtitles', 'subtitles'),
+      toggle(store, 'Reduce Flashes', 'reduceFlashes'),
+      toggle(store, 'High Contrast', 'highContrast'),
+      toggle(store, 'Colour-Blind Colours', 'colorBlindSafe', 'Safe', 'Default'),
+      slider(100, 200, 25, s.textScale, percent('Text Size'), (v) => store.set('textScale', v)),
+      cycleButton<string>('GUI Scale', ['0', '1', '2', '3', '4'], { 0: 'Auto', 1: '1', 2: '2', 3: '3', 4: '4' }, String(s.guiScale), (v) => store.set('guiScale', Number(v))),
+      h('div', { class: 'section-label', text: 'Motion' }),
+      toggle(store, 'Reduced Motion', 'reducedMotion'),
+      toggle(store, 'View Bobbing', 'viewBobbing'),
+      slider(0, 100, 5, s.fovEffects, percent('FOV Effects'), (v) => store.set('fovEffects', v)),
+      h('div', { class: 'section-label', text: 'Toggle or Hold' }),
+      holdOrToggle(store, 'Sneak', 'toggleSneak'),
+      holdOrToggle(store, 'Sprint', 'toggleSprint'),
+      holdOrToggle(store, 'Attack/Destroy', 'toggleAttack'),
+      holdOrToggle(store, 'Use Item/Place', 'toggleUse'),
+      h('div', { class: 'section-label', text: 'Input' }),
+      slider(0, 100, 5, s.stickCurve, (v) => `Stick Curve: ${v === 0 ? 'Linear' : `${v}%`}`, (v) => store.set('stickCurve', v)),
+      slider(150, 800, 50, s.menuRepeatDelay, (v) => `Menu Key Repeat: ${v} ms`, (v) => store.set('menuRepeatDelay', v)),
+    ),
+  ], [button('Done', () => nav.pop())], { list: true });
+}
+
+/** Touch screens: joystick, look, buttons, gestures. */
+export function touchScreen(store: SettingsStore, nav: OptionsNav): HTMLDivElement {
+  const s = store.values;
+  return menuScreen('Touch Settings', [
+    h('div', { class: 'grid2' },
+      cycleButton<Settings['touchControls']>('Touch Controls', ['auto', 'on', 'off'], { auto: 'Auto', on: 'ON', off: 'OFF' }, s.touchControls, (v) => store.set('touchControls', v)),
+      slider(10, 300, 5, s.touchSensitivity, percent('Look Sensitivity'), (v) => store.set('touchSensitivity', v)),
+      slider(60, 160, 10, s.touchButtonScale, percent('Button Size'), (v) => store.set('touchButtonScale', v)),
+      slider(20, 100, 5, s.touchOpacity, percent('Opacity'), (v) => store.set('touchOpacity', v)),
+      toggle(store, 'Left-Handed', 'touchLeftHanded'),
+      toggle(store, 'Auto-Jump', 'touchAutoJump'),
+      toggle(store, 'Tap to Use, Hold to Break', 'touchGestures'),
+      toggle(store, 'Sprint by Pushing Stick', 'touchSprintPush'),
+      toggle(store, 'Invert Look', 'invertMouse', 'Inverted', 'Normal'),
+      h('div', { class: 'section-label hint', text: 'Left: joystick. Right: drag to look, tap to use, hold to break.' }),
+    ),
+  ], [button('Done', () => nav.pop())], { list: true });
+}
+
+/** Gamepad: sensitivity, dead zone, curve, invert, layout, vibration and the button map. */
+export function controllerScreen(store: SettingsStore, nav: OptionsNav, padName: string): HTMLDivElement {
+  const s = store.values;
+  const map = [
+    'Left stick: move (push in: sprint)  Right stick: look',
+    'RT: attack/break  LT: use/place  A: jump  B: sneak',
+    'X: inventory (reload)  Y: pick block (quick switch)',
+    'LB/RB or D-pad: hotbar  Start: pause  Back: chat (scoreboard)',
+  ];
+  return menuScreen('Controller Settings', [
+    h('div', { class: 'grid2' },
+      h('div', { class: 'section-label hint', text: padName ? `Connected: ${padName}` : 'No controller detected. Press any button.' }),
+      toggle(store, 'Controller', 'padEnabled'),
+      cycleButton<Settings['padLayout']>('Layout', ['default', 'southpaw'], { default: 'Default', southpaw: 'Southpaw' }, s.padLayout, (v) => store.set('padLayout', v)),
+      slider(10, 300, 5, s.padSensitivity, percent('Look Sensitivity'), (v) => store.set('padSensitivity', v)),
+      slider(0, 50, 1, s.padDeadZone, percent('Dead Zone'), (v) => store.set('padDeadZone', v)),
+      slider(0, 100, 5, s.stickCurve, (v) => `Stick Curve: ${v === 0 ? 'Linear' : `${v}%`}`, (v) => store.set('stickCurve', v)),
+      toggle(store, 'Invert Y', 'padInvertY', 'Inverted', 'Normal'),
+      toggle(store, 'Vibration', 'padRumble'),
+      holdOrToggle(store, 'Sprint (L3)', 'toggleSprint'),
+      ...map.map((line) => h('div', { class: 'section-label hint', text: line })),
     ),
   ], [button('Done', () => nav.pop())], { list: true });
 }

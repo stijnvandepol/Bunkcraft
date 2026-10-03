@@ -31,6 +31,8 @@ export class Player {
   headInWater = false;
   flying = false;
   sprinting = false;
+  /** Sneaking on the ground or in the air (slow walk, no sprint); not while flying or swimming. */
+  sneaking = false;
   horizontalCollision = false;
   /** Distance walked on the ground, drives head bob and footsteps. */
   walkDistance = 0;
@@ -115,11 +117,12 @@ export class Player {
     let f = input.forward, s = input.strafe;
     const len = Math.hypot(f, s);
     if (len > 1) { f /= len; s /= len; }
-    this.sprinting = input.sprint && f > 0 && !this.inWater && this.canSprint;
+    this.sneaking = input.descend && !this.flying && !this.inWater && !this.noclip;
+    this.sprinting = input.sprint && f > 0 && !this.inWater && this.canSprint && !this.sneaking;
     let speed: number;
     if (this.flying) speed = this.sprinting ? PHYSICS.FLY_SPRINT_SPEED : PHYSICS.FLY_SPEED;
     else if (this.inWater) speed = this.inLava ? PHYSICS.SWIM_SPEED * 0.5 : PHYSICS.SWIM_SPEED;
-    else speed = (this.sprinting ? PHYSICS.SPRINT_SPEED : PHYSICS.WALK_SPEED) * this.speedMultiplier;
+    else speed = (this.sprinting ? PHYSICS.SPRINT_SPEED : PHYSICS.WALK_SPEED) * this.speedMultiplier * (this.sneaking ? PHYSICS.SNEAK_FACTOR : 1);
     const sin = Math.sin(this.yaw), cos = Math.cos(this.yaw);
     const tx = (-sin * f + cos * s) * speed;
     const tz = (-cos * f - sin * s) * speed;
