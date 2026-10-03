@@ -3,6 +3,7 @@ import { PHYSICS, blockReach } from '../src/player/Physics';
 import { type MoveInput, Player } from '../src/player/Player';
 import { ITEM, getItemDef, itemFromState, itemId } from '../src/items/ItemRegistry';
 import { BLOCK } from '../src/world/BlockRegistry';
+import { MOB_TYPES } from '../src/entities/MobTypes';
 import { TestWorld } from './helpers';
 
 /** Regression tests for the gameplay numbers checked against Minecraft Java 1.21 (docs/qa/BALANCE.md). */
@@ -34,6 +35,23 @@ describe('balance: stack sizes', () => {
       expect(getItemDef(itemId(name))?.maxStack, name).toBe(1);
     }
     for (const name of ['stone', 'oak_planks', 'cooked_porkchop', 'arrow', 'torch']) expect(getItemDef(itemId(name))?.maxStack, name).toBe(64);
+  });
+});
+
+describe('balance: mob drops', () => {
+  it('cows drop 1-3 beef and 0-2 leather', () => {
+    const leather = itemId('leather');
+    const seen = new Set<number>();
+    for (let i = 0; i < 400; i++) {
+      const drops = MOB_TYPES.cow.drops(true);
+      const beef = drops.find((s) => s.id === ITEM.BEEF)!;
+      expect(beef.count).toBeGreaterThanOrEqual(1);
+      expect(beef.count).toBeLessThanOrEqual(3);
+      const l = drops.find((s) => s.id === leather)?.count ?? 0;
+      expect(l).toBeLessThanOrEqual(2);
+      seen.add(l);
+    }
+    expect([...seen].sort()).toEqual([0, 1, 2]);
   });
 });
 
