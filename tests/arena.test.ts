@@ -11,10 +11,10 @@ const swapTeam = (id: number) => (id === BLOCK.RED_WOOL ? BLOCK.BLUE_WOOL : id =
 
 describe('arena maps', () => {
   it('has at least three maps with unique ids and a default', () => {
-    expect(MAPS.length).toBe(5);
+    expect(MAPS.length).toBe(6);
     expect(new Set(MAP_IDS).size).toBe(MAP_IDS.length);
     expect(MAP_IDS).toContain(DEFAULT_MAP);
-    expect(MAP_IDS).toEqual(['classic', 'suburb', 'quarter', 'dockyard', 'desert']);
+    expect(MAP_IDS).toEqual(['classic', 'suburb', 'quarter', 'dockyard', 'desert', 'bunker']);
   });
 
   for (const map of MAPS) {

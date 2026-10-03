@@ -12,9 +12,13 @@ export const TEAM = 250;
 export interface Spawn { x: number; y: number; z: number; yaw: number }
 
 /** A capture zone (hardpoint hill / domination point) in world coordinates (the arena is centred on 0, 0). */
-export interface ZoneDef { name: string; x: number; z: number; r: number }
+export interface ZoneDef {
+  name: string; x: number; z: number; r: number;
+  /** Standing level in blocks above the floor when it is not the surface of the column (inside a building: 0 = the floor). */
+  level?: number;
+}
 /** A team's flag base in world coordinates: red on the left (x < 0), blue on the right. */
-export interface FlagDef { team: 'red' | 'blue'; x: number; z: number }
+export interface FlagDef { team: 'red' | 'blue'; x: number; z: number; level?: number }
 /** Objective data of a map; a map without `zones` cannot host hardpoint/domination, without `flags` no capture the flag. */
 export interface ObjectiveDef {
   /** Hardpoint plays them in this order; domination uses every zone with `domination` set (default: all). */
@@ -121,7 +125,7 @@ export class ArenaMap {
 
   /** Capture zones with their standing level (the same in every variant: objectives stay off the variable cover). */
   get zones(): Zone[] {
-    return this.zoneCache ??= (this.def.objectives?.zones ?? []).map((z) => ({ ...z, y: this.heightAt(0, z.x, z.z) + 1 }));
+    return this.zoneCache ??= (this.def.objectives?.zones ?? []).map((z) => ({ ...z, y: z.level !== undefined ? ARENA_FLOOR_Y + 1 + z.level : this.heightAt(0, z.x, z.z) + 1 }));
   }
 
   /** Indices of the domination points among `zones`. */
@@ -130,7 +134,7 @@ export class ArenaMap {
   }
 
   get flags(): Flag[] {
-    return this.flagCache ??= (this.def.objectives?.flags ?? []).map((f) => ({ ...f, y: this.heightAt(0, f.x, f.z) + 1 }));
+    return this.flagCache ??= (this.def.objectives?.flags ?? []).map((f) => ({ ...f, y: f.level !== undefined ? ARENA_FLOOR_Y + 1 + f.level : this.heightAt(0, f.x, f.z) + 1 }));
   }
 
   /** Whether the map has the data a game type asks for. */

@@ -1,4 +1,5 @@
 import { ArenaMap } from './ArenaMap';
+import { BUNKER } from './bunker';
 import { CLASSIC } from './classic';
 import { DESERT } from './desert';
 import { DOCKYARD } from './dockyard';
@@ -7,13 +8,13 @@ import { SUBURB } from './suburb';
 
 export { ARENA_FLOOR_Y, ArenaMap, type Flag, type Spawn, type Zone } from './ArenaMap';
 
-export type MapId = 'classic' | 'suburb' | 'quarter' | 'dockyard' | 'desert';
+export type MapId = 'classic' | 'suburb' | 'quarter' | 'dockyard' | 'desert' | 'bunker';
 export const DEFAULT_MAP: MapId = 'classic';
 
 /** Room setting: a fixed map, or "rotate" = the next match uses the next map. */
 export type MapSetting = MapId | 'rotate';
 
-export const MAPS: ArenaMap[] = [CLASSIC, SUBURB, QUARTER, DOCKYARD, DESERT].map((d) => new ArenaMap(d));
+export const MAPS: ArenaMap[] = [CLASSIC, SUBURB, QUARTER, DOCKYARD, DESERT, BUNKER].map((d) => new ArenaMap(d));
 export const MAP_IDS: MapId[] = MAPS.map((m) => m.id as MapId);
 export const MAP_SETTINGS: MapSetting[] = [...MAP_IDS, 'rotate'];
 
