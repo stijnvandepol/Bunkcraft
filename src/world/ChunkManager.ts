@@ -27,6 +27,11 @@ function resultBytes(r: MeshResult): number {
   return geometryBytes(r.opaque) + geometryBytes(r.cutout) + geometryBytes(r.water);
 }
 
+/** Per-frame upload budget at full speed. */
+const UPLOAD_BYTES = 1.5 * 1024 * 1024;
+const UPLOAD_MS = 2;
+const MIN_BUDGET = 0.15;
+
 interface PendingMesh {
   chunk: Chunk;
   version: number;
@@ -121,7 +126,25 @@ export class ChunkManager {
     this.scanWake = true;
   }
 
-  update(px: number, pz: number, uploadBudgetBytes = 1.5 * 1024 * 1024): void {
+  /** Horizontal look direction (unit vector): chunks in front of the player are generated, meshed and uploaded first. */
+  viewX = 0;
+  viewZ = 0;
+  /** 1 = full per-frame upload budget; falls towards MIN_BUDGET when frames get long (see `adapt`). */
+  budgetScale = 1;
+  private cpuAvg = 0;
+
+  /**
+   * Feed the main-thread time of the last frame (ms): above ~12 ms the mesh upload budget shrinks,
+   * below ~8 ms it recovers. Streaming then spreads over more frames instead of causing hitches.
+   */
+  adapt(cpuMs: number): void {
+    this.cpuAvg += (cpuMs - this.cpuAvg) * 0.1;
+    if (this.cpuAvg > 12) this.budgetScale = Math.max(MIN_BUDGET, this.budgetScale * 0.93);
+    else if (this.cpuAvg < 8) this.budgetScale = Math.min(1, this.budgetScale * 1.04);
+  }
+
+  /** `uploadBudgetBytes` < 0 = the adaptive per-frame budget (bytes and ~2 ms of main-thread time); explicit values (loading screen) are not time-capped. */
+  update(px: number, pz: number, uploadBudgetBytes = -1): void {
     const pcx = Math.floor(px / CHUNK_SIZE);
     const pcz = Math.floor(pz / CHUNK_SIZE);
     const genRadius = this.renderDistance + 1;
@@ -135,7 +158,8 @@ export class ChunkManager {
       this.unloadFar(pcx, pcz);
       this.scanWake = true;
     }
-    this.applyResults(uploadBudgetBytes);
+    if (uploadBudgetBytes < 0) this.applyResults(UPLOAD_BYTES * this.budgetScale, UPLOAD_MS * this.budgetScale);
+    else this.applyResults(uploadBudgetBytes, Infinity);
     if (this.scanWake) {
       this.scanWake = false;
       this.schedule(pcx, pcz);
@@ -148,25 +172,32 @@ export class ChunkManager {
     const off = this.offsets;
     const meshR2 = (this.renderDistance + 0.5) ** 2;
     let blocked = false;
-    for (let i = 0; i < off.length; i += 2) {
-      const dx = off[i], dz = off[i + 1];
-      const cx = pcx + dx, cz = pcz + dz;
-      const key = chunkKey(cx, cz);
-      let chunk = this.chunks.get(key);
-      if (!chunk) {
-        chunk = new Chunk(cx, cz, key);
-        this.chunks.set(key, chunk);
-        this.epoch++;
+    const vx = this.viewX, vz = this.viewZ;
+    // Pass 0 serves the chunks in front of the player (and the ring around them), pass 1 the rest.
+    for (let pass = 0; pass < 2; pass++) {
+      for (let i = 0; i < off.length; i += 2) {
+        const dx = off[i], dz = off[i + 1];
+        const d2 = dx * dx + dz * dz;
+        const front = d2 <= 4 || dx * vx + dz * vz > -0.3 * Math.sqrt(d2);
+        if (front !== (pass === 0)) continue;
+        const cx = pcx + dx, cz = pcz + dz;
+        const key = chunkKey(cx, cz);
+        let chunk = this.chunks.get(key);
+        if (!chunk) {
+          chunk = new Chunk(cx, cz, key);
+          this.chunks.set(key, chunk);
+          this.epoch++;
+        }
+        if (chunk.state === CHUNK_EMPTY) {
+          if (this.genInFlight < maxInFlight) this.requestGenerate(chunk);
+          else blocked = true;
+        } else if (chunk.needsMesh && !chunk.meshing && d2 <= meshR2) {
+          if (!this.neighboursReady(chunk)) continue;
+          if (this.meshInFlight < maxInFlight || chunk.urgent) this.requestMesh(chunk);
+          else blocked = true;
+        }
+        if (blocked && this.genInFlight >= maxInFlight && this.meshInFlight >= maxInFlight) return;
       }
-      if (chunk.state === CHUNK_EMPTY) {
-        if (this.genInFlight < maxInFlight) this.requestGenerate(chunk);
-        else blocked = true;
-      } else if (chunk.needsMesh && !chunk.meshing && dx * dx + dz * dz <= meshR2) {
-        if (!this.neighboursReady(chunk)) continue;
-        if (this.meshInFlight < maxInFlight || chunk.urgent) this.requestMesh(chunk);
-        else blocked = true;
-      }
-      if (blocked && this.genInFlight >= maxInFlight && this.meshInFlight >= maxInFlight) return;
     }
   }
 
@@ -270,10 +301,13 @@ export class ChunkManager {
     }
   }
 
-  private applyResults(budgetBytes: number): void {
+  private applyResults(budgetBytes: number, budgetMs: number): void {
     let bytes = 0;
-    while (this.results.length > 0 && bytes < budgetBytes) {
-      const r = this.results.shift()!;
+    const t0 = budgetMs === Infinity ? 0 : performance.now();
+    const results = this.results;
+    // Always upload at least one mesh per frame so streaming never stalls completely.
+    while (results.length > 0 && (bytes === 0 || (bytes < budgetBytes && (budgetMs === Infinity || performance.now() - t0 < budgetMs)))) {
+      const r = this.takeBest();
       if (this.chunks.get(r.chunk.key) !== r.chunk) {
         this.recycleResult(r.result);
         continue;
@@ -281,6 +315,22 @@ export class ChunkManager {
       this.uploadMesh(r.chunk, r.version, r.result);
       bytes += resultBytes(r.result);
     }
+  }
+
+  /** The pending upload nearest to the player, counting chunks behind the player as 2.5x further away. */
+  private takeBest(): PendingMesh {
+    const results = this.results;
+    let best = 0, bestScore = Infinity;
+    for (let i = 0; i < results.length; i++) {
+      const c = results[i].chunk;
+      const dx = c.cx - this.centerX, dz = c.cz - this.centerZ;
+      const score = (dx * dx + dz * dz) * (dx * this.viewX + dz * this.viewZ >= 0 ? 1 : 2.5);
+      if (score < bestScore) { bestScore = score; best = i; }
+    }
+    const r = results[best];
+    results[best] = results[results.length - 1];
+    results.pop();
+    return r;
   }
 
   /** Call after rendering: re-enable frustum culling for meshes force-drawn this frame. */

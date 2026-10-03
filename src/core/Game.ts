@@ -59,7 +59,7 @@ import { CameraController } from './Camera';
 import { Input } from './Input';
 import { Interaction } from './Interaction';
 import { Renderer } from './Renderer';
-import { DynamicResolution, suggestPreset } from './AdaptiveQuality';
+import { DynamicResolution, MIN_ADAPTIVE_DISTANCE, suggestPreset } from './AdaptiveQuality';
 import { SettingsStore } from './Settings';
 
 type GameState = 'menu' | 'loading' | 'playing' | 'paused' | 'inventory' | 'dead' | 'chat';
@@ -358,6 +358,7 @@ export class Game {
     const s = this.settings.values;
     this.renderer.applySettings(s);
     this.dynamicResolution.enabled = s.dynamicResolution;
+    this.dynamicResolution.maxDistanceDrop = Math.max(0, s.renderDistance - MIN_ADAPTIVE_DISTANCE);
     if (!s.dynamicResolution) this.renderer.setDynamicScale(1);
     this.updateMenuBlur();
     this.cam.baseFov = s.fov;
@@ -369,13 +370,23 @@ export class Game {
     this.audio.setVolumes((s.soundVolume * s.masterVolume) / 100, (s.musicVolume * s.masterVolume) / 100);
     applyGuiScale(s.guiScale);
     if (this.world) {
-      this.world.chunks.renderDistance = this.state === 'menu' ? Math.min(s.renderDistance, 6) : s.renderDistance;
-      this.world.chunks.markDirty();
+      this.applyRenderDistance();
       const fancy = s.graphics === 'fancy';
       if (key === 'graphics' && this.world.chunks.fancyLeaves !== fancy) {
         this.world.chunks.fancyLeaves = fancy;
         this.world.chunks.remeshAll();
       }
+    }
+  }
+
+  /** The user's render distance minus what the adaptive governor took away; fog and streaming follow it. */
+  private applyRenderDistance(): void {
+    const user = this.settings.values.renderDistance;
+    const rd = this.state === 'menu' ? Math.min(user, 6) : Math.max(1, user - this.dynamicResolution.distanceDrop);
+    if (this.state !== 'menu') this.renderer.setRenderDistance(rd);
+    if (this.world) {
+      this.world.chunks.renderDistance = rd;
+      this.world.chunks.markDirty();
     }
   }
 
@@ -1118,12 +1129,15 @@ export class Game {
     this.renderer.render(this.cam.camera, this.cycle, this.time, this.underwater);
     if (this.state === 'playing' && !document.hidden && this.dynamicResolution.update(rawDt, this.renderer.basePixelRatio)) {
       this.renderer.setDynamicScale(this.dynamicResolution.scale);
+      this.applyRenderDistance();
       this.updateMenuBlur();
     }
     if (this.wantThumbnail) this.captureThumbnail();
     this.world?.chunks.afterRender();
     this.audio.update(dt);
-    if (this.debug.tick(dt, performance.now() - cpuStart)) this.updateDebug();
+    const cpuMs = performance.now() - cpuStart;
+    if (this.state === 'playing') this.world?.chunks.adapt(cpuMs);
+    if (this.debug.tick(dt, cpuMs)) this.updateDebug();
     this.input.endFrame();
   };
 
@@ -1395,6 +1409,8 @@ export class Game {
     }
     this.cycle.compute();
 
+    world.chunks.viewX = -Math.sin(p.yaw);
+    world.chunks.viewZ = -Math.cos(p.yaw);
     world.chunks.update(p.x, p.z);
     if (this.arcade) {
       this.cam.hurt = this.arcade.hurt;
@@ -1480,7 +1496,7 @@ export class Game {
       `Facing: ${facing} (${yawDeg.toFixed(1)} / ${((-p.pitch * 180) / Math.PI).toFixed(1)})`,
       `Biome: ${BIOME_NAMES[world.biomeName(bx, bz)]}`,
       `Light: ${light >> 4} sky, ${light & 15} block`,
-      `Time: ${this.cycle.clock()} · Render distance: ${world.chunks.renderDistance} chunks`,
+      `Time: ${this.cycle.clock()} · Render distance: ${world.chunks.renderDistance} chunks${this.dynamicResolution.distanceDrop > 0 ? ` (adaptive -${this.dynamicResolution.distanceDrop})` : ''}`,
       `${GAME_MODE_NAMES[this.mode]} · ${p.flying ? 'Flying' : p.onGround ? 'On ground' : 'Airborne'}${p.sprinting ? ' · Sprinting' : ''}${p.inWater ? ' · In water' : ''}`,
       `Health ${this.stats.health} · Food ${this.stats.hunger} (sat ${this.stats.saturation.toFixed(1)}) · Air ${this.stats.air}`,
     ], [

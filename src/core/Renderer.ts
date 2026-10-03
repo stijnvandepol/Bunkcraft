@@ -136,6 +136,11 @@ export class Renderer {
     this.resize();
   }
 
+  /** The distance the adaptive governor currently allows (fog follows it). */
+  setRenderDistance(chunks: number): void {
+    this.renderDistance = chunks;
+  }
+
   /** Device pixel ratio (capped at 2) times the user render scale, before dynamic resolution. */
   get basePixelRatio(): number {
     return Math.min(window.devicePixelRatio || 1, 2) * this.renderScale;

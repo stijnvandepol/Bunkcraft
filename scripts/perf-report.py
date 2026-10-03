@@ -77,6 +77,7 @@ def main():
     ap.add_argument('--url', default=None, help='use a running server instead of starting Vite')
     ap.add_argument('--json', default=None)
     ap.add_argument('--profile-out', default=None, help='save the raw .cpuprofile here')
+    ap.add_argument('--eval', default=None, help='JavaScript to run in the page before the flight (experiments)')
     ap.add_argument('--alloc', action='store_true', help='also print the top JS allocation sites (CDP sampling heap profiler)')
     ap.add_argument('--profile', action='store_true', help='also print the top self-time functions (CDP CPU profiler)')
     args = ap.parse_args()
@@ -103,13 +104,15 @@ def main():
             page.wait_for_function('window.game && window.game.state === "menu"', timeout=60000)
             cdp = page.context.new_cdp_session(page) if args.browser != 'webkit' else None
             t_enter = time.time()
-            page.evaluate("""(d) => { const g = window.game; g.settings.values.renderDistance = d;
+            page.evaluate("""(d) => { const g = window.game; g.settings.set('renderDistance', d);
                 g.createWorld('perf', '1234', 'creative'); }""", args.distance)
             page.wait_for_function('window.game.state !== "loading" && window.game.state !== "menu"', timeout=120000)
             enter_s = time.time() - t_enter
             page.evaluate("""(sprint) => { const g = window.game; g.input.locked = true; g.state = 'playing';
                 g.player.flying = true; g.player.y = Math.max(g.player.y, 110);
                 g.input.down.add('KeyW'); if (sprint) g.input.down.add('ShiftLeft'); }""", args.speed == 'fast')
+            if args.eval:
+                page.evaluate(args.eval)
             page.wait_for_timeout(3000)
             if cdp:
                 if args.cpu != 1:
@@ -153,6 +156,7 @@ def main():
                             and (main_tid is None or (e['pid'], e['tid']) == main_tid):
                         gc.append(e['dur'] / 1000)
                         gc_major += e['name'] == 'MajorGC'
+                        if os.environ.get('GC_DEBUG'): print(e['name'], round(e['dur']/1000,1), e.get('args'))
                 if args.cpu != 1:
                     cdp.send('Emulation.setCPUThrottlingRate', {'rate': 1})
             gaps = res['gaps'][5:]
