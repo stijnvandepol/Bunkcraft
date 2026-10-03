@@ -6,6 +6,8 @@ export const PHYSICS = {
   JUMP_VELOCITY: 8.9,
   WALK_SPEED: 4.32,
   SPRINT_SPEED: 5.61,
+  /** Sneaking moves at 0.3 × walking speed (attribute sneaking_speed): 1.3 blocks/s. */
+  SNEAK_FACTOR: 0.3,
   FLY_SPEED: 10.9,
   FLY_SPRINT_SPEED: 21.6,
   FLY_VERTICAL: 7.5,
