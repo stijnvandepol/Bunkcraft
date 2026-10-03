@@ -1,5 +1,5 @@
 import { ARMOR_SLOTS, INVENTORY_SLOTS } from '../src/items/Inventory';
-import { ITEM, blockDrop, getItemDef, maxDurability } from '../src/items/ItemRegistry';
+import { ITEM, blockDrop, getItemDef, maxDurability, normalizeItem } from '../src/items/ItemRegistry';
 import { RECIPES } from '../src/items/Recipes';
 import { BLOCK, SLAB_FIRST, STAIRS_FIRST } from '../src/world/BlockRegistry';
 
@@ -55,7 +55,9 @@ export function parseInventory(raw: unknown): { stacks: Stack[]; slots: Stack[];
   const slots: Stack[] = [];
   for (const row of raw) {
     if (!Array.isArray(row) || row.length < 2 || row.length > MAX_ROW_LENGTH) return fail('bad slot');
-    const [id, count, damage] = row as unknown[];
+    const [rawId, count, damage] = row as unknown[];
+    // Saves from before the colour families hold the old wool ids; the client loads them as variants (stackFromArray).
+    const id = Number.isInteger(rawId) ? normalizeItem(rawId as number) : rawId;
     const extra = row.length > 3 ? (row.slice(3) as unknown[]) : undefined;
     if (extra && !extra.every((n) => Number.isInteger(n))) return fail('bad item data');
     if (!Number.isInteger(id) || !Number.isInteger(count)) return fail('bad slot numbers');
