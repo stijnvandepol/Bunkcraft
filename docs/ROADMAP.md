@@ -256,6 +256,8 @@ regenereert, respawns en een scoreboard. Beschrijving, besturing en wapentabel: 
   rubber band, strafpunten, kick/ban), schotcontrole (eenheidsvector, oorsprong ≤ 0,6 blok, lag-compensatie max 250 ms,
   peeker-limiet 150 ms), verdenkingsscore in `/admin`, anti-wallhack-culling met `stale`-vlag, 30 Hz-tick en gekwantiseerde
   binaire snapshots (v2). Tests: client-physics-replay over alle kaarten, `scripts/cheat-bots.ts`.
+- **Vier nieuwe vrije kaarten in BO2-stijl: Gedaan.** Skyline Villa (villa met zwembad), Riptide (jacht), Sundown (dorp) en
+  Terminus (station), puntsymmetrisch met per helft een eigen palet; alle met zones en vlaggen (zie `docs/GAMEMODES.md`).
 - **Wapenherziening: Gedaan.** Shotgun 10 × 13 (one-shot dichtbij), SMG 15, nieuwe DMR, burst rifle en revolver, klassen in het
   loadoutmenu.
 

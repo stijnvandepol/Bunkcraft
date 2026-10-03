@@ -334,7 +334,7 @@ Een game aanmaken (`POST /api/rooms`) accepteert `{ name, gameMode, seed, gameTy
 | `gameType` | `minecraft` | een id uit `GAME_TYPES` (onbekend = `minecraft`) |
 | `scoreLimit` | van het type (30 / 20 / 4 / 250 / 100 / 3) | 5 tot 100, verruimd met de keuzes van het type (1 capture, 250 punten); gun game negeert het (de ladder) |
 | `timeLimitSec` | van het type (600; elimination 90 = rondetijd) | 120 tot 1800 seconden, verruimd met de keuzes van het type (rondetijd 60 s) |
-| `mapId` | `classic` | `classic`, `suburb`, `quarter`, `dockyard`, `desert` of `rotate` (onbekend = `classic`) |
+| `mapId` | `classic` | een id uit `MAP_IDS` (`classic`, `suburb`, `quarter`, `dockyard`, `desert`, `atomic`, `bunker`, `villa`, `yacht`, `town`, `station`) of `rotate` (onbekend = `classic`) |
 
 `GET /api/rooms/<CODE>` geeft ook `gameType`, `scoreLimit` en `timeLimitSec` terug (0 bij Minecraft) en bij arcade-games
 `map` (de instelling: een kaart of `rotate`). De instellingen staan in `world.json` van de game (`mapId`). De spelmodus
@@ -353,6 +353,12 @@ rode en blauwe wol markeert de teamzones. Elke kaart heeft eigen spawns die ver 
 | `quarter` | Old Quarter | 80 × 64 | Stedelijk: binnenplaats, balkons, dakstairs en steegjes |
 | `dockyard` | Harbor Yard | 88 × 64 | Industrieel: containerstapels, centrale loods, kraandek en een schip |
 | `desert` | Dust Bazaar | 96 × 64 | Lange zichtlijnen: markt, daken en sluipschuttertorens aan beide uiteinden |
+| `atomic` | Atomic Lane | 80 × 52 | Vrije kaart: twee huizen, een bus en een rotonde |
+| `bunker` | Bunker Flag | 64 × 40 | Capture the flag: rivierbedding, bruggen, een duiker en een bunker per team |
+| `villa` | Skyline Villa | 88 × 64 | Vrije kaart: witte villa met atrium en dakterras, leeg zwembad, basketbalveld, garage |
+| `yacht` | Riptide | 88 × 56 | Vrije kaart: superjacht in een jachthaven met benedendek, salon, brug en helikopterdek |
+| `town` | Sundown | 80 × 68 | Vrije kaart: stoffig dorp met tankstation, cantina, markt, klokkentoren en steegjes |
+| `station` | Terminus | 84 × 68 | Vrije kaart: station met twee treinen, perrons, loopbruggen, tunnels en twee hallen |
 
 De instelling `rotate` speelt elke volgende match op de volgende kaart (in de volgorde hierboven). Bij een nieuwe
 kaart vervangt de server zijn kogelwereld en stuurt hij `match` met `info.map`; de client ziet dat dit niet zijn kaart
