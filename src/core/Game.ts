@@ -490,6 +490,13 @@ export class Game {
         const drop = hasSurvivalRules(this.mode) ? blockDrop(id, 0) : null;
         if (drop) entities.dropItem(drop, x + 0.5, y + 0.3, z + 0.5);
       };
+      // Plants grow, leaves decay and sand falls (random ticks and block updates); what they break drops as items.
+      world.enableGrowth();
+      world.skyDarkness = () => Math.round((1 - this.cycle.dayFactor) * 11 + this.weatherSys.weather.skyDarkness);
+      world.onBlockDrop = (id, meta, x, y, z) => {
+        const drop = hasSurvivalRules(this.mode) ? blockDrop(id, 0, meta) : null;
+        if (drop) entities.dropItem(drop, x + 0.5, y + 0.3, z + 0.5);
+      };
       sim.onFizz = (x, y, z) => {
         const p = this.player;
         this.audio.playFizz(Math.max(0, 1 - Math.hypot(x - p.x, y - p.y, z - p.z) / 20));
@@ -1484,6 +1491,7 @@ export class Game {
     p.jumps = 0;
     this.weatherSys.gameTick();
     this.world?.tickLiquids();
+    this.world?.tickGrowth(p.x, p.z);
     stats.tick(p, this.getBlock, this.mode);
     p.canSprint = !hasSurvivalRules(this.mode) || stats.canSprint;
 
