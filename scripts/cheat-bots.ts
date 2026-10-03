@@ -232,7 +232,8 @@ async function movementCheats(): Promise<void> {
   c.auto = true;
   // Replay: two seconds of honest walking, then the same reports again at once.
   await fresh('replayer');
-  c.route = arenaPath(c.map, c.variant, [c.x, c.z], far) ?? [];
+  const away2 = c.map.spawns.ffa.map((p) => [p.x, p.z] as [number, number]).sort((p, q) => Math.hypot(q[0] - c.x, q[1] - c.z) - Math.hypot(p[0] - c.x, p[1] - c.z))[0];
+  c.route = arenaPath(c.map, c.variant, [c.x, c.z], away2) ?? [];
   const from = c.sentPos.length;
   await sleep(2000);
   c.auto = false;
