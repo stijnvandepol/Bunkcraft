@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { ITEM } from '../src/items/ItemRegistry';
 import type { ServerMessage } from '../src/net/protocol';
 import {
-  AttackCooldown, FULL_CHARGE, attackCharge, attackScale, attackSpeedOf, blocksFromDirection, meleeDamage, planAttack, sweepVictims,
+  AttackCooldown, FULL_CHARGE, entityReach, attackCharge, attackScale, attackSpeedOf, blocksFromDirection, meleeDamage, planAttack, sweepVictims,
 } from '../src/player/Melee';
 import { type EntityPlayer, ServerEntities } from '../server/ServerEntities';
 
@@ -152,5 +152,12 @@ describe('server cooldown', () => {
     const before = mob.health;
     ents.attack(player, mob.netId);
     expect(before - mob.health).toBeLessThan(6 * 0.4);
+  });
+});
+
+describe('entity reach', () => {
+  it('is 3 in survival and 5 in creative', () => {
+    expect(entityReach(false)).toBe(3);
+    expect(entityReach(true)).toBe(5);
   });
 });

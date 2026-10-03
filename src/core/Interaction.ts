@@ -8,7 +8,7 @@ import { type GameMode, hasSurvivalRules } from '../player/GameMode';
 import { blockReach } from '../player/Physics';
 import type { Player } from '../player/Player';
 import { FOOD_EFFECTS } from '../player/Effects';
-import { AttackCooldown, attackSpeedOf, isSword, meleeDamage, planAttack, sweepDamage, sweepVictims } from '../player/Melee';
+import { AttackCooldown, attackSpeedOf, entityReach, isSword, meleeDamage, planAttack, sweepDamage, sweepVictims } from '../player/Melee';
 import type { PlayerStats } from '../player/PlayerStats';
 import type { HandRenderer } from '../rendering/HandRenderer';
 import type { Hotbar } from '../ui/Hotbar';
@@ -129,7 +129,7 @@ export class Interaction {
     this.reach = blockReach(!hasSurvivalRules(mode));
     const hit = raycast(this.getBlock, pos.x, pos.y, pos.z, this.dir.x, this.dir.y, this.dir.z, this.reach, this.ray, this.getMeta);
     const mobHit = active && mode !== 'spectator'
-      ? this.d.entities.raycastMob(pos.x, pos.y, pos.z, this.dir.x, this.dir.y, this.dir.z, Math.min(3, hit.hit ? hit.distance + 0.01 : 3))
+      ? this.d.entities.raycastMob(pos.x, pos.y, pos.z, this.dir.x, this.dir.y, this.dir.z, Math.min(entityReach(mode === 'creative'), hit.hit ? hit.distance + 0.01 : entityReach(mode === 'creative')))
       : null;
 
     if (!active || mode === 'spectator' || player.noclip) {

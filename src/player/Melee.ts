@@ -6,6 +6,11 @@
  *   - a sprinting hit with a charged swing knocks back further (and is never a critical)
  */
 export const BARE_HAND_SPEED = 4;
+/** Entity interaction range (attribute entity_interaction_range): 3 in survival, 5 in creative. */
+export function entityReach(creative: boolean): number {
+  return creative ? 5 : 3;
+}
+
 /** Cooldown share from which crits, sweeps and sprint knockback are allowed. */
 export const FULL_CHARGE = 0.848;
 export const CRIT_MULTIPLIER = 1.5;

@@ -50,6 +50,9 @@ export interface MobEvents {
  * their distance and shoot, spiders climb walls, leap and are neutral in bright light.
  * Steering is greedy (head for the target, jump over 1-block steps).
  */
+/** Natural armor points of mobs (Minecraft: zombies 2). */
+const NATURAL_ARMOR: Partial<Record<string, number>> = { zombie: 2 };
+
 export class Mob extends Entity implements DamageTarget {
   health: number;
   hurtTime = 0;
@@ -94,6 +97,7 @@ export class Mob extends Entity implements DamageTarget {
   constructor(readonly type: MobType) {
     super(type.width, type.height);
     this.health = type.health;
+    this.armorPoints = NATURAL_ARMOR[type.kind] ?? 0;
     this.yaw = Math.random() * Math.PI * 2;
   }
 

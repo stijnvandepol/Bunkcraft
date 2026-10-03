@@ -51,7 +51,7 @@ export const DAMAGE_PROPS: Record<DamageKind, KindProps> = {
   fall: P(false, false, false),
   drown: P(false, false, false),
   lava: P(true, false, false),
-  fire: P(true, false, false),
+  fire: P(false, false, false), // burning (on_fire) bypasses armor
   cactus: P(true, false, false),
   void: P(false, false, false, false, true),
   suffocate: P(false, false, false),
@@ -63,7 +63,7 @@ export const DAMAGE_PROPS: Record<DamageKind, KindProps> = {
   poison: P(false, false, false),
   wither: P(false, false, false),
   magic: P(false, false, false),
-  lightning: P(false, false, false),
+  lightning: P(true, false, false),
   anvil: P(true, false, false),
   generic: P(false, false, false),
 };

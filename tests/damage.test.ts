@@ -235,3 +235,17 @@ describe('death messages', () => {
     expect(deathMessage('Steve', { kind: 'poison' })).toBe('Steve was killed by magic');
   });
 });
+
+describe('balance audit fixes', () => {
+  it('burning ignores armor, lightning and lava are reduced by it', () => {
+    expect(dealDamage(target({ armorPoints: 20 }), { kind: 'fire' }, 1).final).toBe(1);
+    expect(dealDamage(target({ armorPoints: 20 }), { kind: 'lightning' }, 5).final).toBeLessThan(5);
+    expect(dealDamage(target({ armorPoints: 20 }), { kind: 'lava' }, 4).final).toBeLessThan(4);
+  });
+
+  it('zombies have 2 natural armor', () => {
+    const z = new Mob(MOB_TYPES.zombie);
+    expect(z.armorPoints).toBe(2);
+    expect(new Mob(MOB_TYPES.pig).armorPoints).toBe(0);
+  });
+});
