@@ -55,6 +55,17 @@ describe('room passwords', () => {
     expect(k.reason).toMatch(/Too many wrong passwords/);
   });
 
+  it('counts wrong passwords per game: typos in one game do not lock another', async () => {
+    const t = await start({ PASSWORD_FAIL_LIMIT: '2' });
+    const first = await createRoom(t.base, { password: 'secret' });
+    const second = await createRoom(t.base, { password: 'other' });
+    for (let i = 0; i < 2; i++) await kickOf(joinRoom(t, first.code, 'mallory', { password: `guess${i}` }));
+    expect((await kickOf(joinRoom(t, first.code, 'mallory', { password: 'secret' }))).reason).toMatch(/Too many wrong passwords/);
+    const ok = await joinRoom(t, second.code, 'alice', { key: KEY_A, password: 'other' });
+    expect(ok.welcome.t).toBe('welcome');
+    ok.client.close();
+  });
+
   it('lets the owner in without the password', async () => {
     const t = await start();
     const { code, ownerToken } = await createRoom(t.base, { password: 'secret' });

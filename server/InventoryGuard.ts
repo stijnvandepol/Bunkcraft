@@ -1,6 +1,10 @@
 import { ARMOR_SLOTS, INVENTORY_SLOTS } from '../src/items/Inventory';
-import { ALL_ITEMS, ITEM, getItemDef, itemId, maxDurability, normalizeItem, possibleBlockDrops } from '../src/items/ItemRegistry';
+import { ALL_ITEMS, ITEM, type ToolKind, getItemDef, itemFromState, itemId, maxDurability, normalizeItem, possibleBlockDrops } from '../src/items/ItemRegistry';
 import { RECIPES } from '../src/items/Recipes';
+import { toolUse } from '../src/items/ToolUse';
+import { BLOCK, BOX_KIND, SHAPE, SHAPE_DOOR, SHAPE_SLAB, VARIANT_MASK } from '../src/world/BlockRegistry';
+import { SLAB_DOUBLE, SLAB_HALF_MASK } from '../src/world/BlockStates';
+import { BOX_BED } from '../src/world/BoxShapes';
 
 /**
  * Server-side plausibility check of a player's survival inventory.
@@ -15,9 +19,11 @@ import { RECIPES } from '../src/items/Recipes';
  *
  * What it prevents: invented items, impossible counts and stack sizes, unknown ids, tool damage
  * out of range, duplicating by repeating `drop`, crafting without the ingredients.
+ * Placing a block is paid from the same pool (`authorizeEdit`): a block nobody holds (or can craft from what they
+ * hold) is refused, so a modified client cannot place diamond ore and mine it for diamonds.
+ *
  * What it cannot see: which crafting station was used and whether it was near (the client's
- * recipe book decides), items placed as blocks (consumption is trusted: it only lowers the pool),
- * tool damage resets, and moving items between slots (a pure rearrangement is always valid).
+ * recipe book decides), tool damage resets, and moving items between slots (a pure rearrangement is always valid).
  */
 export interface Stack {
   id: number;
@@ -58,6 +64,68 @@ const MAX_LEDGER = 256;
 const MAX_CRAFT_DEPTH = 3;
 
 interface BreakCredit { id: number; count: number; until: number }
+
+/** The second half of a door or bed that was just paid for: free once, at this spot, for a moment. */
+interface Companion { x: number; y: number; z: number; id: number; until: number }
+const COMPANION_TTL_MS = 3_000;
+
+const REDSTONE_ITEM = itemId('redstone');
+const TOOL_KINDS: readonly ToolKind[] = ['axe', 'shears', 'hoe', 'shovel'];
+
+/** What a block edit costs the player who made it (see `classifyEdit`). */
+export type EditCost =
+  /** Breaking, toggling, a tool turning grass into farmland: nothing from the inventory. */
+  | { kind: 'free' }
+  /** A block placed from an item (one of `item`). */
+  | { kind: 'place'; item: number }
+  /** A full bucket poured out (the empty bucket comes back). */
+  | { kind: 'pour'; bucket: number }
+  /** A liquid source scooped up with an empty bucket. */
+  | { kind: 'scoop'; bucket: number }
+  /** A tool used on a block (`tool` of this kind needed), possibly dropping something (shears on a pumpkin). */
+  | { kind: 'tool'; tool: ToolKind; drops?: { id: number; count: number } }
+  /** A block no item places (fire, portals, the upper half of a door on its own...). */
+  | { kind: 'refuse' };
+
+/** The item that places this block state (variant bits kept, facing and other state bits dropped); 0 = none. */
+export function placingItem(id: number, meta: number): number {
+  if (id === BLOCK.REDSTONE_WIRE) return REDSTONE_ITEM;
+  const item = normalizeItem(itemFromState(id, meta));
+  return validItem(item) ? item : 0;
+}
+
+/**
+ * What changing block `prev` into `id` costs, as the client's Interaction makes such changes in multiplayer (the
+ * server itself grows plants, flows liquids, runs redstone and ignites TNT; those never arrive as a `block`).
+ */
+export function classifyEdit(prev: number, prevMeta: number, id: number, meta: number, above: number): EditCost {
+  if (id === BLOCK.AIR) {
+    // Scooping a source block with an empty bucket; anything else is breaking (credited separately).
+    if ((prev === BLOCK.WATER || prev === BLOCK.LAVA) && prevMeta === 0) return { kind: 'scoop', bucket: prev === BLOCK.LAVA ? ITEM.LAVA_BUCKET : ITEM.WATER_BUCKET };
+    return { kind: 'free' };
+  }
+  if (id === prev) {
+    // A slab on a slab of the same kind makes a double slab: that is one more slab.
+    if (SHAPE[id] === SHAPE_SLAB && (meta & SLAB_HALF_MASK) === SLAB_DOUBLE && (prevMeta & SLAB_HALF_MASK) !== SLAB_DOUBLE) {
+      const item = placingItem(id, meta);
+      return item ? { kind: 'place', item } : { kind: 'refuse' };
+    }
+    // Same block, other material or colour: no tool or click does that, so it is a new block.
+    if ((meta & VARIANT_MASK[id]) !== (prevMeta & VARIANT_MASK[id])) {
+      const item = placingItem(id, meta);
+      return item ? { kind: 'place', item } : { kind: 'refuse' };
+    }
+    // Levers, doors, trapdoors, repeaters, a second chest joining, a bucket poured into flowing water of its kind.
+    return { kind: 'free' };
+  }
+  if (id === BLOCK.WATER || id === BLOCK.LAVA) return { kind: 'pour', bucket: id === BLOCK.LAVA ? ITEM.LAVA_BUCKET : ITEM.WATER_BUCKET };
+  for (const tool of TOOL_KINDS) {
+    const use = toolUse(tool, prev, above);
+    if (use && use.to === id) return { kind: 'tool', tool, drops: use.drops ? { id: itemId(use.drops.name), count: use.drops.count } : undefined };
+  }
+  const item = placingItem(id, meta);
+  return item ? { kind: 'place', item } : { kind: 'refuse' };
+}
 
 /** True for item ids that exist as a block item or in the item registry. */
 export function validItem(id: number): boolean {
@@ -121,6 +189,7 @@ export class InventoryGuard {
   /** id → items the player may still hold: last accepted totals + pickups − drops. */
   private pool: Map<number, number>;
   private credits: BreakCredit[] = [];
+  private companions: Companion[] = [];
   /** The next valid-looking state becomes the new baseline (new game mode, first login). */
   private trustNext: boolean;
 
@@ -191,6 +260,91 @@ export class InventoryGuard {
     this.creditPickup(id, count, damage);
   }
 
+  /**
+   * A block edit by this player (survival). Pays for a placed block from the pool, crafting it on the spot when the
+   * client crafted it after its last `state` (planks from a log, then placed at once). Returns false, changing nothing,
+   * when the player could not have held the block. `at` and `above` are the position and the block above it (tools).
+   */
+  authorizeEdit(at: { x: number; y: number; z: number }, prev: number, prevMeta: number, id: number, meta: number, above: number): boolean {
+    // Right after creative the pool is not known yet: the next state becomes the baseline anyway.
+    if (this.trustNext) return true;
+    const cost = classifyEdit(prev, prevMeta, id, meta, above);
+    switch (cost.kind) {
+      case 'free': return true;
+      case 'refuse': return this.takeCompanion(at, id);
+      case 'scoop':
+        // Never refused (the liquid simply goes); the bucket fills when the pool has an empty one.
+        if (this.take(ITEM.BUCKET)) this.give(cost.bucket, 1);
+        return true;
+      case 'pour':
+        if (!this.take(cost.bucket)) return false;
+        this.give(ITEM.BUCKET, 1);
+        return true;
+      case 'tool':
+        // Tilling or stripping makes nothing out of nothing, so it is never refused (the tool may be freshly crafted);
+        // what it drops (shears on a pumpkin) is only backed when the player has such a tool.
+        if (cost.drops && this.holdsTool(cost.tool)) this.addBreakCredit(cost.drops.id, cost.drops.count);
+        return true;
+      case 'place': {
+        // The other half of a door or bed placed a moment ago is part of the same item.
+        if (this.takeCompanion(at, id)) return true;
+        if (!this.take(cost.item)) return false;
+        const now = this.now();
+        this.companions = this.companions.filter((c) => c.until > now);
+        if (SHAPE[id] === SHAPE_DOOR) this.companions.push({ x: at.x, y: at.y + 1, z: at.z, id, until: now + COMPANION_TTL_MS });
+        else if (BOX_KIND[id] === BOX_BED) {
+          for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) this.companions.push({ x: at.x + dx, y: at.y, z: at.z + dz, id, until: now + COMPANION_TTL_MS });
+        }
+        return true;
+      }
+    }
+  }
+
+  /** Is there a tool of this kind in the pool? */
+  private holdsTool(kind: ToolKind): boolean {
+    for (const [id, n] of this.pool) if (n > 0 && getItemDef(id)?.tool?.kind === kind) return true;
+    return false;
+  }
+
+  private takeCompanion(at: { x: number; y: number; z: number }, id: number): boolean {
+    const now = this.now();
+    const i = this.companions.findIndex((c) => c.until > now && c.id === id && c.x === at.x && c.y === at.y && c.z === at.z);
+    if (i < 0) return false;
+    // A door or bed has one other half: the rest of its spots are void now.
+    this.companions = [];
+    return true;
+  }
+
+  private addBreakCredit(id: number, count: number): void {
+    const now = this.now();
+    this.credits = this.credits.filter((c) => c.until > now);
+    if (this.credits.length < MAX_BREAK_CREDITS) this.credits.push({ id, count, until: now + CREDIT_TTL_MS });
+  }
+
+  /** Takes one `id` from the pool, crafting it from the pool when the client crafted it since its last state. */
+  private take(id: number): boolean {
+    const have = this.pool.get(id) ?? 0;
+    if (have > 0) {
+      this.pool.set(id, have - 1);
+      if (this.ledger.length < MAX_LEDGER) this.ledger.push({ id, count: -1 });
+      return true;
+    }
+    const work = new Map(this.pool);
+    if (!this.craft(id, 1, work, 0, new Map(), false)) return false;
+    // `craft` banks the surplus and leaves out the one item made for this placement: that one is used up now.
+    for (const [k, v] of work) {
+      const diff = v - (this.pool.get(k) ?? 0);
+      if (diff !== 0 && this.ledger.length < MAX_LEDGER) this.ledger.push({ id: k, count: diff });
+    }
+    this.pool = work;
+    return true;
+  }
+
+  private give(id: number, count: number): void {
+    this.pool.set(id, (this.pool.get(id) ?? 0) + count);
+    if (this.ledger.length < MAX_LEDGER) this.ledger.push({ id, count });
+  }
+
   /** Items the player put into a container: they must be in the pool (they were part of the checked state/cursor). */
   spendTransfer(id: number, count: number, damage?: number): boolean {
     const have = this.pool.get(id) ?? 0;
@@ -239,9 +393,10 @@ export class InventoryGuard {
   }
 
   /** Makes `count` of `id` from the pool `work`, crafting up to a few levels deep. */
-  private craft(id: number, count: number, work: Map<number, number>, depth: number, keep: Map<number, number>): boolean {
+  private craft(id: number, count: number, work: Map<number, number>, depth: number, keep: Map<number, number>, conversions = true): boolean {
     if (depth > MAX_CRAFT_DEPTH) return false;
-    for (const c of CONVERSIONS) {
+    // Conversions happen in the world (a bucket filled at a source): a placement pays with what the pool holds instead.
+    for (const c of conversions ? CONVERSIONS : []) {
       if (c.result !== id) continue;
       const have = work.get(c.from) ?? 0;
       if (have >= count) {
@@ -273,7 +428,7 @@ export class InventoryGuard {
         if (left > 0 && depth < MAX_CRAFT_DEPTH) {
           for (const alt of ing.ids) {
             if (alt === id) continue;
-            if (this.craft(alt, left, trial, depth + 1, keep)) { left = 0; break; }
+            if (this.craft(alt, left, trial, depth + 1, keep, conversions)) { left = 0; break; }
           }
         }
         if (left > 0) take(false);
