@@ -254,8 +254,10 @@ export class MobSpawner {
     // Half the attempts look at the surface (scan down from above the player), half anywhere
     // underground within reach (caves), so dark places spawn in daylight as well.
     const surface = r() < 0.5;
+    // Ocean surface attempts: a quarter of them look for drowned in the water (the first measurement, all of
+    // them, made drowned two thirds of the monsters near a coast).
     if (surface && this.biome(x, z) === BIOME.OCEAN) {
-      this.tryDrowned(x, z, t, all, darkness, cap);
+      if (this.roll(x, z) < 0.25) this.tryDrowned(x, z, t, all, darkness, cap);
       return;
     }
     const y = surface

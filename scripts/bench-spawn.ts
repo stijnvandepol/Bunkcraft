@@ -77,3 +77,40 @@ for (let seed = 1; seed <= SEEDS; seed++) {
   console.log(`${seed} | ${fmt(night.out[0])} | ${fmt(night.out[1])} | ${fmt(day.out[0])} | ${night.avgMs.toFixed(2)} (${night.worst.toFixed(1)})`);
 }
 console.log(`mean hostile 60 s: ${(totals.h60 / SEEDS).toFixed(1)}, 300 s: ${(totals.h300 / SEEDS).toFixed(1)}, passive in daylight: ${(totals.p / SEEDS).toFixed(1)}`);
+
+// ---------------------------------------------------------------- AI cost: 60 mobs around 8 players
+// Eight players 12 blocks apart, 60 mobs of every kind among them (spawning off), 30 s at midnight: the cost of the
+// goal AI, the navigator and the A* (path searches and expanded nodes per tick) on the real server world.
+{
+  const { pathStats } = await import('../src/entities/ai/Pathfinder');
+  const spawn = findSpawn(1);
+  const e = new ServerEntities(1, {}, 'survival', host, () => 0.75);
+  e.manager.hostileSpawning = false;
+  e.manager.passiveSpawning = false;
+  const players = Array.from({ length: 8 }, (_, i) => ({
+    id: i + 1, x: spawn.x + (i % 4) * 12, y: spawn.y, z: spawn.z + Math.floor(i / 4) * 12, flags: 0, held: 0, hasPos: true,
+  }));
+  for (let t = 0; t < 100; t++) e.tick(players); // load the chunks
+  const kinds = ['zombie', 'skeleton', 'creeper', 'spider', 'pig', 'cow', 'sheep', 'chicken', 'wolf', 'enderman', 'slime',
+    'husk', 'stray', 'cave_spider', 'witch', 'horse'] as const;
+  for (let i = 0; i < 60; i++) {
+    const p = players[i % 8];
+    const a = (i / 60) * Math.PI * 2;
+    const x = p.x + Math.cos(a) * 10, z = p.z + Math.sin(a) * 10;
+    let y = Math.floor(p.y) + 10;
+    while (y > 1 && e.world.getBlock(Math.floor(x), y - 1, Math.floor(z)) === 0) y--;
+    e.manager.spawnMob(kinds[i % kinds.length], x, y, z);
+  }
+  const s0 = pathStats.searches, n0 = pathStats.nodes;
+  let ms = 0, worst = 0;
+  const ticks = 600;
+  for (let t = 0; t < ticks; t++) {
+    const t0 = performance.now();
+    e.tick(players);
+    const d = performance.now() - t0;
+    ms += d;
+    worst = Math.max(worst, d);
+  }
+  console.log(`\nAI: ${e.manager.mobs.length} mobs, 8 players, ${ticks} ticks: ${(ms / ticks).toFixed(2)} ms/tick (worst ${worst.toFixed(1)}),`
+    + ` ${((pathStats.searches - s0) / ticks).toFixed(2)} path searches/tick, ${((pathStats.nodes - n0) / ticks).toFixed(0)} nodes/tick`);
+}
