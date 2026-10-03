@@ -11,10 +11,10 @@ const swapTeam = (id: number) => (id === BLOCK.RED_WOOL ? BLOCK.BLUE_WOOL : id =
 
 describe('arena maps', () => {
   it('has at least three maps with unique ids and a default', () => {
-    expect(MAPS.length).toBe(5);
+    expect(MAPS.length).toBe(6);
     expect(new Set(MAP_IDS).size).toBe(MAP_IDS.length);
     expect(MAP_IDS).toContain(DEFAULT_MAP);
-    expect(MAP_IDS).toEqual(['classic', 'suburb', 'quarter', 'dockyard', 'desert']);
+    expect(MAP_IDS).toEqual(['classic', 'suburb', 'quarter', 'dockyard', 'desert', 'atomic']);
   });
 
   for (const map of MAPS) {
@@ -24,7 +24,15 @@ describe('arena maps', () => {
       const solid = (x: number, y: number, z: number) => SOLID[at(Math.floor(x), y, Math.floor(z))] === 1;
       const b = map.bounds;
 
-      it(`${label} is mirror symmetric (colours swap left/right)`, () => {
+      if (!map.mirrored) {
+        it(`${label} is fair: the teams get equally many spawns at the same distance from the centre`, () => {
+          expect(map.spawns.blue.length).toBe(map.spawns.red.length);
+          const mean = (s: { x: number; z: number }[]) => s.reduce((a, p) => a + Math.hypot(p.x, p.z), 0) / s.length;
+          expect(Math.abs(mean(map.spawns.red) - mean(map.spawns.blue))).toBeLessThan(1);
+        });
+      }
+
+      if (map.mirrored) it(`${label} is mirror symmetric (colours swap left/right)`, () => {
         let mismatches = 0;
         for (let y = ARENA_FLOOR_Y - 1; y <= ARENA_FLOOR_Y + map.wallHeight + 1; y++) {
           for (let x = b.minX; x < b.maxX; x++) {

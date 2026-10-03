@@ -48,10 +48,16 @@ VIEWS = {
         ('lane', *look((-40, E, 14), (40, F + 3, 14))), ('tower', *look((-42, F + 8.6, 23), (0, F + 3, 14))),
         ('market', *look((0.5, E, 10), (-14, F + 3, 4))), ('roof', *look((-23, F + 6.6, 5), (-45, F + 3, 14))),
     ],
+    'atomic': [
+        ('top', *top(50)), ('red', *look((-36.5, E, 0.5), (0, F + 3, 0))), ('blue', *look((35.5, E, -1.5), (0, F + 3, 0))),
+        ('street', *look((0.5, E, 20), (-20, F + 4, -4))), ('green', *look((-10, E, -3), (25, F + 4, 3))),
+        ('window', *look((-21.5, F + 6.6, -6.5), (20, F + 3, 0))), ('bus', *look((-8, E, -8), (-8, F + 2, -16))),
+        ('inside', *look((-28.5, E, -4), (-20, F + 2, -4))),
+    ],
 }
 
 with sync_playwright() as p:
-    browser = p.chromium.launch(args=['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'])
+    browser = p.chromium.launch(args=['--use-angle=metal'])
     page = browser.new_page(viewport={'width': 1280, 'height': 720})
     logs = []
     page.on('console', lambda m: logs.append(m.text) if m.type == 'error' else None)
