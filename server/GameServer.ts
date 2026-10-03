@@ -30,7 +30,7 @@ import { type RateLimiter, hashIp, newToken, safeEqual, tokenMatches, verifyPass
 const TICK_MS = 50; // 20 ticks per second, like Minecraft
 const DAY_SECONDS = 1200;
 const SAVE_INTERVAL_MS = 30_000;
-const REACH = 8; // lenient server-side reach check (client uses 5)
+const REACH = 8; // lenient server-side reach check (client uses 4.5, creative 5)
 const MAX_SPEED = 26; // blocks/second (fast flying + slack)
 const ARENA_MAX_SPEED = 40; // arcade: sprint + jump + slack
 const PING_INTERVAL_TICKS = 60; // arcade: measure the round trip every 3 s

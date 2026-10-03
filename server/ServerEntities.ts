@@ -11,7 +11,7 @@ import { ServerWorld } from './ServerWorld';
 /** Entities are sent to a player when they are this close (blocks). */
 const SEND_RADIUS = 64;
 const SEND_ITEM_RADIUS = 48;
-/** Lenient reach checks (the client uses 5 for blocks and 3 for mobs). */
+/** Lenient reach checks (the client uses 4.5 for blocks, 5 in creative, and 3 for mobs). */
 const ATTACK_REACH = 6.5;
 const IGNITE_REACH = 8;
 const TAKE_REACH = 2.6;

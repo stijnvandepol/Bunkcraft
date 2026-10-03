@@ -19,8 +19,15 @@ export const PHYSICS = {
   WIDTH: 0.6,
   HEIGHT: 1.8,
   EYE_HEIGHT: 1.62,
-  REACH: 5,
+  /** Block reach (attribute block_interaction_range): 4.5 in survival, 5 in creative (Java 1.21). */
+  REACH: 4.5,
+  CREATIVE_REACH: 5,
 } as const;
+
+/** Block interaction range for a game mode (survival and hardcore 4.5, creative and spectator 5). */
+export function blockReach(creative: boolean): number {
+  return creative ? PHYSICS.CREATIVE_REACH : PHYSICS.REACH;
+}
 
 /** Frame-rate independent exponential approach towards `target`. */
 export function approach(current: number, target: number, rate: number, dt: number): number {
