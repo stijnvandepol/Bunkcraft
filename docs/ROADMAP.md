@@ -218,7 +218,17 @@ ertsaders, `genVersion` voor bestaande werelden).
 **Fundamenten die bijna alles blokkeren (eerst):**
 1. Random-tick systeem (planten, bladverval, farmland, vuur, ijs).
 2. Block entities (kisten, ovens, spawners) met opslag per wereld en server-sync.
-3. Eén centrale schade-pijplijn (moeilijkheidsgraad, harnas, effecten, enchantments).
+3. Eén centrale schade-pijplijn (moeilijkheidsgraad, harnas, effecten, enchantments). **Gedaan** (zie `GAMEPLAY.md`):
+   `Damage.ts` met difficulty, i-frames, schild, harnas, Resistance, enchant-hooks en absorption; game rules en
+   difficulty per wereld (UI, `/difficulty`, `/gamerule`); 1.9+-gevecht (cooldown, crits, sweep, server-check);
+   bedden met spawnpunt en slapen (multiplayer-regel); statuseffecten met HUD en `/effect`; schild.
+   **Nog open:** enchantments vullen `registerDamageModifier` (Protection, Feather Falling, Sharpness via
+   `meleeDamage.enchantBonus`, Sweeping Edge via `sweepDamage(…, edge)`); Night Vision/Invisibility renderen;
+   blok-pose en model van het schild in de hand; bijl-mobs/PvP voor het uitschakelen van schilden; doodsberichten in
+   multiplayer-chat (de server ziet de dood niet: health is client-autoritatief); zombies die deuren breken op Hard;
+   Easy-specifieke mobregels (cave spiders); `difficulty`/`rules`/`bed`/`effects` in `.bunkworld`-export;
+   `randomTickSpeed` aansluiten zodra het random-tick-systeem er is; slapen versnelt nu direct naar de ochtend
+   (geen tijd-animatie) en de server kent geen fase "iedereen in bed maar nog geen 100 ticks" in de HUD.
 
 **Fase 1, early game loop:** saplings en bladverval, landbouw (schoffel, farmland, tarwe, brood, bone meal), bed met
 spawnpunt en nacht overslaan, difficulty en game rules, harnas, attack cooldown met crits en sweep, kist met loot-tabellen,

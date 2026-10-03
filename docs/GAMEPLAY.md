@@ -22,12 +22,105 @@ in BunkCraft zit. Getallen komen uit de Minecraft Wiki, tenzij anders vermeld.
 | Cactus | 1 bij contact |
 | Void | 4 per 0,5 s onder y = −64 (ook in Creative) |
 | Stikken | 1 per 0,5 s met je hoofd in een vast blok |
-| Verhongeren | 1 per 4 s bij honger 0 (in Survival niet onder ½ hartje) |
+| Verhongeren | 1 per 4 s bij honger 0 (Easy tot 10 HP, Normal tot ½ hartje, Hard en Hardcore dodelijk) |
 
 - **Onkwetsbaarheid:** 10 ticks na een treffer. Een zwaardere klap telt alleen voor het verschil.
 - **Uitputting:** sprinten 0,1/m, springen 0,05 (sprint-sprong 0,2), blok breken 0,005, zwemmen 0,01/m, schade 0,1. Elke 4 punten uitputting kost eerst saturatie, daarna honger.
 - **Regeneratie:** 1 HP per 80 ticks bij honger ≥ 18, of per 10 ticks bij volle honger met saturatie.
 - **Sprinten:** niet mogelijk bij honger ≤ 6.
+
+## Schade, moeilijkheid en game rules (Foundation 3)
+
+**Eén schade-pijplijn** (`src/player/Damage.ts`, DOM-vrij, gedeeld door client, server en tests). Alle schade aan speler
+én mobs gaat door `dealDamage` met een getypte `DamageSource` (`mob`, `player`, `arrow`, `explosion`, `fall`, `fire`,
+`lava`, `drown`, `cactus`, `void`, `suffocate`, `starve`, `poison`, `wither`, `magic`, `lightning`, `anvil`, `generic`),
+in de volgorde van Minecraft:
+
+1. game rules (`fallDamage`, `fireDamage`, `drowningDamage`) en Fire Resistance;
+2. moeilijkheid (alleen mob-schade aan de speler): Peaceful ×0, Easy `min(D/2+1, D)`, Normal ×1, Hard ×1,5;
+3. onkwetsbaarheid (10 ticks; een zwaardere klap telt alleen voor het verschil);
+4. schild (`blocked`-hook);
+5. enchantment-hooks fase `pre` (`registerDamageModifier`);
+6. harnas: `schade × (1 − min(20, max(armor/5, armor − 4·schade/(toughness+8)))/25)`, slijtage `max(1, floor(schade/4))` per stuk;
+7. Resistance (−20 % per level; niet tegen void en verhongeren);
+8. enchantment-hooks fase `post` (Protection-types, Feather Falling: `protectionFactor(epf)` helpt);
+9. absorption, dan health.
+
+Doodsberichten volgen Minecraft ("Stijn was slain by Zombie", "was shot by Skeleton", "blew up", "fell from a high
+place", "tried to swim in lava", "withered away", ...). In singleplayer verschijnen ze in de chat (`showDeathMessages`).
+
+**Moeilijkheid** per wereld (Create World, pauzemenu, `/difficulty` voor ops; opgeslagen in `WorldMeta` en `world.json`,
+naar clients via `welcome` en het `rules`-bericht). Hardcore staat altijd op Hard.
+
+| | Peaceful | Easy | Normal | Hard |
+|---|---|---|---|---|
+| Vijandige mobs | verdwijnen, spawnen niet | ja | ja | ja |
+| Mob-schade | 0 | `min(D/2+1, D)` | D | 1,5·D |
+| Honger | vult zich, ~1 HP/s herstel | | | |
+| Verhongeren tot | n.v.t. | 10 HP | ½ hartje | dood |
+
+**Game rules** (`src/world/GameRules.ts`, getypte tabel; alleen afwijkingen worden opgeslagen): `keepInventory`,
+`doMobSpawning`, `doDaylightCycle`, `doWeatherCycle`, `randomTickSpeed`, `naturalRegeneration`, `fallDamage`,
+`fireDamage`, `drowningDamage`, `mobGriefing` (creeper-blokschade; TNT breekt altijd), `showDeathMessages`,
+`playersSleepingPercentage`. `/gamerule <naam> [waarde]` in singleplayer en voor ops op de server; scherm "Game Rules"
+in Create World (tab World) en in het pauzemenu (singleplayer). `randomTickSpeed` is alleen gedefinieerd
+(`rules.get('randomTickSpeed')`) voor het random-tick-systeem.
+
+## Gevecht (1.9+)
+
+- **Attack cooldown** (`src/player/Melee.ts`): `T = 20/snelheid` ticks; schade × `0,2 + ((t+0,5)/T)² × 0,8`.
+  Snelheden: zwaard 1,6; bijl hout/steen 0,8, ijzer 0,9, diamant/goud 1,0; houweel 1,2; schop 1,0; schoffel 1–4; hand 4.
+  Wisselen van item of in de lucht slaan reset de cooldown. Een balkje onder het richtkruis toont de lading.
+- **Crit:** vallend, niet sprintend, niet in water en ≥ 84,8 % geladen: ×1,5 met een vonkenregen.
+- **Sprint-knockback:** sprintend met volle lading (nooit samen met een crit of sweep).
+- **Sweep:** zwaard, op de grond, geladen: 1 schade aan mobs binnen 1 blok van het doelwit.
+- **Server:** de server telt de cooldown zelf per speler (laatste klap, laatste itemwissel uit `held`) en schaalt de schade
+  net zo; spam-klikken levert alleen de zwakke klappen op. Crits op de server: niet op de grond, niet sprintend en dalend.
+- **Schild** (id 339, 336 duurzaamheid, 6 planken + 1 ijzer): Use ingedrukt houden (5 ticks opwarmen) blokkeert mob-,
+  pijl- en explosieschade uit een boog van 100° vóór je; je loopt dan op sluipsnelheid. Vanaf 3 schade slijt het
+  schild `1 + floor(schade)`. Een bijl zet het 5 s uit (`onShieldBlock(…, true)`; wacht op PvP of bijl-mobs).
+- **Strength/Weakness** tellen mee (+3 / −4 per level).
+
+## Bedden, spawnpunt en slapen
+
+- Rechtsklik op een bed zet altijd je spawnpunt ("Respawn point set"), per speler opgeslagen (`WorldMeta.bed`,
+  server-record `bed`). Slapen kan alleen 's nachts of bij onweer ("You can only sleep at night") en niet met vijandige
+  mobs binnen 8 blokken horizontaal en 5 verticaal ("You may not rest now, there are monsters nearby").
+- Slapen: het scherm wordt zwart; na 100 ticks wordt het ochtend en klaart het weer op. Sluipen of springen = uit bed.
+- Multiplayer: de server telt slapers; de nacht gaat voorbij zodra `playersSleepingPercentage` (standaard 100 %) van de
+  spelers 100 ticks slaapt. Weglopen van het bed maakt je wakker.
+- Respawn: naast het bed (eerst naast het hoofdeinde), anders bovenop. Is het bed weg of geblokkeerd, dan
+  "Your home bed was missing or obstructed" en terug naar het wereldspawnpunt. `/spawnpoint [naam]` (ops; in
+  singleplayer altijd) zet het spawnpunt op je huidige plek.
+
+## Statuseffecten
+
+`src/player/Effects.ts`: Speed, Slowness, Haste, Mining Fatigue, Strength, Weakness, Instant Health/Damage, Jump Boost,
+Regeneration, Resistance, Fire Resistance, Water Breathing, Invisibility, Night Vision, Hunger, Poison, Wither,
+Absorption, Saturation, Levitation. Amplifier + duur in ticks; een sterker effect vervangt een zwakker, een gelijk
+effect alleen als het langer duurt.
+
+| Effect | Regel |
+|---|---|
+| Regeneration | 1 HP per `50 >> amp` ticks |
+| Poison | 1 schade per `25 >> amp` ticks, nooit onder ½ hartje |
+| Wither | 1 schade per `40 >> amp` ticks, kan doden |
+| Hunger | +0,005 × level uitputting per tick |
+| Saturation | +level honger en saturatie per tick |
+| Instant Health / Damage | `4 << amp` herstel / `6 << amp` schade |
+| Absorption | `4 × level` extra HP (gouden hartjes) zolang het effect duurt |
+| Speed / Slowness | +20 % / −15 % loopsnelheid per level |
+| Haste / Mining Fatigue | +20 % per level / ×0,3, 0,09, 0,0027, 0,00081 mijnsnelheid |
+| Jump Boost | sneller springen, level blokken minder valschade |
+| Levitation | stijgen met 0,9 blok/s per level |
+| Resistance, Fire Resistance, Water Breathing | in de schade-pijplijn en het lucht-systeem |
+| Night Vision, Invisibility | alleen icoon (cosmetisch, nog geen render-effect) |
+
+Iconen met timer rechtsboven (procedureel getekend, laatste 10 s knipperend). Spinnenoog geeft Poison via dit systeem;
+een gouden appel Regeneration II (5 s) en Absorption (2 min). `/effect give|clear` in singleplayer, op de server voor ops
+en in creative. Effecten zijn client-autoritatief (net als health en honger) en gaan mee in `state` en het spelerrecord.
+
+Schermafdrukken: `docs/screenshots/survival-*.png` (`scripts/survival-shots.py`).
 
 ## Mobs
 
