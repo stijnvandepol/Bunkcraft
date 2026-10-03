@@ -1,11 +1,12 @@
 import { EntityManager } from '../src/entities/EntityManager';
 import { explosionDamage, explosionDropChance } from '../src/entities/Explosion';
-import type { Mob, MobEvents, MobTarget } from '../src/entities/Mob';
+import type { Mob, MobEvents, MobSound, MobTarget } from '../src/entities/Mob';
 import { type ItemStack, ITEM, blockDrop, encodeData, getItemDef, itemId } from '../src/items/ItemRegistry';
+import { touchesPlate } from '../src/world/Redstone';
 import { fireAspectTicks, levelOf, meleeBonus, powerBonus, punchKnockback } from '../src/items/EnchantRules';
 import { canCarry } from '../src/items/Enchanting';
 import {
-  type ArrowEntry, type FallEntry, type ItemEntry, type MobEntry, NET_MOB_KINDS, type OrbEntry, type ServerMessage, type TntEntry,
+  type ArrowEntry, type FallEntry, type ItemEntry, MOB_FLAG, type MobEntry, NET_MOB_KINDS, type OrbEntry, type ServerMessage, type TntEntry,
 } from '../src/net/protocol';
 import { type GameMode, hasSurvivalRules } from '../src/player/GameMode';
 import { attackCharge, attackScale, attackSpeedOf, isSword, meleeDamage, planAttack, sweepDamage, sweepVictims } from '../src/player/Melee';
@@ -14,6 +15,8 @@ import type { RuleReader } from '../src/world/GameRules';
 import { BLOCK, getBlockDef } from '../src/world/BlockRegistry';
 import { boneMealTarget, useBoneMeal } from '../src/world/Growth';
 import { ServerWorld } from './ServerWorld';
+import { useOnMob } from '../src/entities/MobInteraction';
+import { arrowEffect, meleeEffect, witchPotion } from '../src/entities/MobEffects';
 
 /** Entities are sent to a player when they are this close (blocks). */
 const SEND_RADIUS = 64;
@@ -34,6 +37,9 @@ export interface EntityPlayer {
   flags: number;
   held: number;
   hasPos: boolean;
+  /** View direction (endermen notice stares). */
+  yaw?: number;
+  pitch?: number;
 }
 
 export interface EntityHost {
@@ -110,6 +116,24 @@ export class ServerEntities {
     };
     this.world.skyDarkness = () => Math.round((1 - dayFactorAt(this.getTime())) * 11 + (this.host.skyDarkness?.() ?? 0));
     this.manager = new EntityManager(this.world, seed);
+    // Redstone: pressure plates see players and mobs (oak plates also items); popped-off parts drop; powered TNT is lit.
+    this.world.entitiesOn = (x, y, z, oak) => {
+      let n = 0;
+      for (const p of this.players) if (p.hasPos && touchesPlate(p.x, p.y, p.z, 0.3, 1.8, x, y, z)) n++;
+      for (const m of this.manager.mobs) if (!m.dead && touchesPlate(m.x, m.y, m.z, m.width / 2, m.height, x, y, z)) n++;
+      if (oak) for (const it of this.manager.items) if (!it.removed && touchesPlate(it.x, it.y, it.z, 0.125, 0.25, x, y, z)) n++;
+      return n;
+    };
+    this.world.redstone.onBreak = (x, y, z, id, meta) => {
+      const drop = hasSurvivalRules(this.mode) ? (id === BLOCK.REDSTONE_WIRE ? { id: itemId('redstone'), count: 1 } : blockDrop(id, 0, meta)) : null;
+      if (drop) this.manager.dropItem(drop, x + 0.5, y + 0.3, z + 0.5);
+    };
+    this.world.redstone.onIgnite = (x, y, z) => {
+      if (this.world.setBlock(x, y, z, BLOCK.AIR) < 0) return false;
+      this.host.broadcastBlock(x, y, z, BLOCK.AIR);
+      this.manager.primeTnt(x, y, z);
+      return true;
+    };
     // A broken chest or furnace spills its contents (survival rules; creative empties it, like Minecraft).
     this.world.blockEntities.onDrops = (x, y, z, stacks) => {
       if (!hasSurvivalRules(this.mode)) return;
@@ -117,6 +141,8 @@ export class ServerEntities {
     };
     this.world.onChunkReady = (c) => this.manager.onChunkReady(c);
     this.world.onChunkUnloaded = (k) => this.manager.onChunkUnloaded(k);
+    // Sheep grazing changes blocks: every client must see it.
+    this.manager.blockHook = (x, y, z, id) => host.broadcastBlock(x, y, z, id);
   }
 
   /** Drops everything that lives only while players are around (mobs respawn from the seed). */
@@ -125,6 +151,7 @@ export class ServerEntities {
     this.world.update([]);
     // Flowing liquid resumes from the saved edits when its chunks load again.
     this.world.liquids.clear();
+    this.world.redstone.clear();
     this.world.updates.clear();
     this.world.drainSimEdits();
     this.sentAnything.clear();
@@ -168,10 +195,11 @@ export class ServerEntities {
     const active = players.filter((p) => p.hasPos);
     if (active.length === 0) return;
     const attackable = hasSurvivalRules(this.mode);
-    const targets: MobTarget[] = active.map((p) => ({ x: p.x, y: p.y, z: p.z, attackable, id: p.id }));
+    const targets: MobTarget[] = active.map((p) => ({ x: p.x, y: p.y, z: p.z, attackable, id: p.id, held: p.held, yaw: p.yaw, pitch: p.pitch }));
     this.world.update(targets);
     // Water and lava flow (budgeted per tick); what changed goes out as one batch.
     this.world.tickLiquids();
+    this.world.tickRedstone();
     // Random ticks and block updates; their changes join the liquid batch (one message, capped per tick).
     this.world.tickGrowth(targets);
     // Furnaces burn while their chunk is loaded; lighting up or going out is a block change like flowing water.
@@ -233,7 +261,7 @@ export class ServerEntities {
     m.looting = levelOf(e, 'looting');
     const edge = levelOf(e, 'sweeping_edge');
     // Sprint hits knock back further, like Minecraft; Knockback adds to it.
-    if (m.hurt(damage, p.x, p.z, (plan.sprintKnock ? 1.6 : 1) + levelOf(e, 'knockback') * 0.6, true, { kind: 'player', byPlayer: true })) {
+    if (m.hurt(damage, p.x, p.z, (plan.sprintKnock ? 1.6 : 1) + levelOf(e, 'knockback') * 0.6, true, { kind: 'player', byPlayer: true }, { x: p.x, y: p.y, z: p.z, attackable: true, id: p.id })) {
       this.mobSound(m, 'hurt');
       const fire = levelOf(e, 'fire_aspect');
       if (fire) m.igniteTicks = Math.max(m.igniteTicks, fireAspectTicks(fire));
@@ -243,6 +271,19 @@ export class ServerEntities {
         }
       }
     }
+  }
+
+  /** Right click on a mob with the held item; the client pays for it when told (`mobused`). Riding is singleplayer only. */
+  useMob(p: EntityPlayer, mobId: number): void {
+    const m = this.manager.mobs.find((e) => e.netId === mobId);
+    if (!m || m.dead || m.removed || !p.hasPos) return;
+    if (Math.hypot(m.x - p.x, m.y + m.height / 2 - (p.y + 1.62), m.z - p.z) > ATTACK_REACH) return;
+    // The mob's events (hearts, sounds) go through this server's handlers.
+    m.events = this.events;
+    m.world = this.manager;
+    const r = useOnMob(m, p.held, p.id);
+    if (r.action === 'none' || r.action === 'mount') return;
+    this.host.send(p.id, { t: 'mobused', action: r.action, consume: r.consume, give: r.give, damageTool: r.damageTool });
   }
 
   shoot(p: EntityPlayer, x: number, y: number, z: number, dx: number, dy: number, dz: number, power: number, ench?: Record<string, number>): void {
@@ -309,7 +350,20 @@ export class ServerEntities {
   private readonly events: MobEvents = {
     attack: (mob, damage, target) => {
       if (target.id === undefined) return;
-      this.host.send(target.id, { t: 'hurt', amount: damage, cause: 'mob', by: mob.type.name, yaw: Math.atan2(target.x - mob.x, target.z - mob.z) });
+      this.host.send(target.id, {
+        t: 'hurt', amount: damage, cause: 'mob', by: mob.type.name, yaw: Math.atan2(target.x - mob.x, target.z - mob.z),
+        effect: meleeEffect(mob) ?? undefined,
+      });
+    },
+    potion: (mob, target) => {
+      // The client picks nothing: the server does not know the player's health, so it assumes full health (onzeker).
+      if (target.id === undefined) return;
+      const effect = witchPotion(Math.hypot(target.x - mob.x, target.z - mob.z), 20, () => false, Math.random());
+      this.host.send(target.id, { t: 'hurt', amount: 0, cause: 'mob', by: mob.type.name, yaw: Math.atan2(target.x - mob.x, target.z - mob.z), effect });
+    },
+    fx: (mob, fx) => {
+      const msg: ServerMessage = { t: 'mobfx', id: mob.netId, fx };
+      for (const p of this.players) if (p.hasPos && Math.hypot(p.x - mob.x, p.z - mob.z) < 48) this.host.send(p.id, msg);
     },
     explode: (mob) => this.explode(mob.type.name, mob.x, mob.y + 0.5, mob.z, 3, false, false),
     tntExplode: (t) => this.explode('', t.x, t.y + 0.49, t.z, 4, t.inWater, true),
@@ -321,6 +375,7 @@ export class ServerEntities {
       if (targetId === undefined) return;
       this.host.send(targetId, {
         t: 'hurt', amount: damage, cause: 'arrow', by: arrow.shooter ? arrow.shooter.type.name : '', yaw: Math.atan2(-arrow.vx, -arrow.vz),
+        effect: arrowEffect(arrow.shooter) ?? undefined,
       });
     },
     arrowImpact: (arrow) => this.soundNear('', 'arrow', arrow.x, arrow.y, arrow.z),
@@ -329,11 +384,11 @@ export class ServerEntities {
     playerArrowHit: () => undefined,
   };
 
-  private mobSound(m: Mob, event: 'idle' | 'hurt' | 'death' | 'fuse'): void {
+  private mobSound(m: Mob, event: MobSound): void {
     this.soundNear(m.type.kind, event, m.x, m.y, m.z);
   }
 
-  private soundNear(kind: string, event: 'idle' | 'hurt' | 'death' | 'fuse' | 'arrow' | 'shoot', x: number, y: number, z: number): void {
+  private soundNear(kind: string, event: MobSound | 'arrow' | 'shoot', x: number, y: number, z: number): void {
     const msg: ServerMessage = { t: 'msound', kind, event, x: r2(x), y: r2(y), z: r2(z) };
     for (const p of this.players) {
       if (p.hasPos && Math.hypot(p.x - x, p.y - y, p.z - z) < SOUND_RADIUS) this.host.send(p.id, msg);
@@ -393,8 +448,8 @@ export class ServerEntities {
         if (e.removed || Math.hypot(e.x - p.x, e.y - p.y, e.z - p.z) > SEND_RADIUS) continue;
         const kind = NET_MOB_KINDS.indexOf(e.type.kind as typeof NET_MOB_KINDS[number]);
         if (kind < 0) continue;
-        m.push([e.netId, kind, r2(e.x), r2(e.y), r2(e.z), r2(e.yaw), r2(e.headYaw), r2(e.headPitch),
-          (e.onGround ? 1 : 0) | (e.burning > 0 ? 2 : 0) | (e.dead ? 4 : 0), e.hurtTime, e.fuse, e.deathTime]);
+        m.push([e.netId, kind, r2(e.x), r2(e.y), r2(e.z), r2(e.yaw), r2(e.headYaw), r2(e.headPitch), mobFlags(e), e.hurtTime,
+          e.type.kind === 'creeper' ? e.fuse : mobVariant(e), e.deathTime]);
       }
       for (const e of items) {
         if (e.removed || Math.hypot(e.x - p.x, e.y - p.y, e.z - p.z) > SEND_ITEM_RADIUS) continue;
@@ -448,6 +503,20 @@ export class ServerEntities {
     this.combat.delete(playerId);
     this.sentFalling.delete(playerId);
   }
+}
+
+/** Snapshot flag bits of a mob (MOB_FLAG). */
+export function mobFlags(e: Mob): number {
+  return (e.onGround ? MOB_FLAG.GROUND : 0) | (e.burning > 0 ? MOB_FLAG.BURNING : 0) | (e.dead ? MOB_FLAG.DEAD : 0)
+    | (e.baby ? MOB_FLAG.BABY : 0) | (e.sitting ? MOB_FLAG.SITTING : 0) | (e.tamed ? MOB_FLAG.TAMED : 0)
+    | (e.angryTicks > 0 ? MOB_FLAG.ANGRY : 0) | (e.busy > 0 ? MOB_FLAG.BUSY : 0);
+}
+
+/** The kind-specific byte sent in the fuse slot (see MobEntry). */
+export function mobVariant(e: Mob): number {
+  if (e.type.kind === 'slime') return e.size;
+  if (e.type.kind === 'horse') return (e.variant & 15) | (e.saddled ? 16 : 0);
+  return e.variant & 255;
 }
 
 /** The enchantments a player claims for the held item, limited to what that item can carry. */

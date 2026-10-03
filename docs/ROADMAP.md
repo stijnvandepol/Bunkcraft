@@ -129,6 +129,32 @@ Screenshots: `docs/screenshots/xp-bar-orbs.png`, `enchanting-table.png`, `sword-
   Swift Sneak en alles van kruisboog, trietand en hengel; een zwevend boek op de enchanting table en glyph-deeltjes van de boekenkasten; de
   server bewaakt XP niet (de client stuurt zijn punten mee, zoals health); dood-XP en erts-XP zijn in multiplayer lokale orbs; creative-tab met kant-en-klare enchanted books.
 
+## 4d. Redstone (minimaal, klaar)
+
+Screenshots: `docs/screenshots/redstone_lever_lamp.png`, `redstone_clock_a.png`, `redstone_plate_door.png`, `redstone_piston_closed.png`
+(`scripts/redstone-shots.py`, controleert ook de werking).
+
+- **Kern:** `src/world/Redstone.ts` (`RedstoneSim`, puur, getest met een nep-grid in `tests/redstone.test.ts`). Signaal 0–15 in de meta van stof,
+  sterke en zwakke voeding zoals Java, een volledig stofnetwerk wordt in één keer opgelost (afname 1 per blok, ook trapjes op en af).
+  Vertragingen als geplande ticks: repeater 2–8, fakkel 2, lamp uit 4, knop 20/30, zuiger 2 game ticks; fakkels branden door (8 keer in 60 ticks, 160 ticks uit).
+  Budgetten per tick: 4000 updates, 800 blokwijzigingen, 2500 updates per chunk, 50 000 geplande ticks; netwerken tot 2048 stof per pass.
+- **Componenten:** stof, hendel, knop (steen/eik), drukplaat (steen/eik), redstonefakkel (vloer + muur), redstoneblok, repeater (1–4),
+  lamp, nootblok (25 tonen, instrument naar het blok eronder), TNT, deuren/luiken/hekpoorten, (sticky) zuigers (12 blokken, niet obsidiaan/bedrock/
+  kisten/ovens/deuren/bedden; planten en stof breken).
+- **Weergave:** stofkleur via de per-vertex tint (geen extra textures), vorm uit de buren zoals hekken; kleurwijzigingen worden max. 5×/s per
+  chunk opnieuw gemesht. 14 textuurlagen.
+- **Multiplayer:** `ServerWorld` simuleert, wijzigingen gaan mee in de bestaande `blocks`-batch; clients simuleren niet. Protocol ongewijzigd.
+  Arcade-rooms hebben geen redstone. Geluiden (klik, zuiger, noot, deur) leidt de client af uit binnenkomende wijzigingen.
+- **Metingen:** 510 stof (34 netwerken) aan/uit: server ~0,5 ms per tick (mediaan), singleplayer 720 stof ~0,6–1 ms per tick (mediaan, uitschieters
+  door GC/drukke machine).
+- **Bewust vereenvoudigd:** geen quasi-connectivity/BUD, geen repeater-lock, comparator, observer, dropper/dispenser, hopper, slime; zuigers
+  verschuiven direct (geen animatie, geen entities meeduwen); zuigerkop breken laat de basis gewoon intrekken; sticky piston heeft geen recept
+  (geen slijmbal); lamp/deur-updates hebben geen Minecraft-updatevolgorde; netwerken > 2048 stof worden in delen opgelost; een uitgedoofde
+  redstonefakkel geeft nog steeds licht 7 (licht per blok-id).
+- **Nog te doen:** comparator, observer, hopper, dispenser/dropper, rails, slijmbal + slime block, zuigeranimatie, quasi-connectivity.
+  `BlockUpdates` (2 ticks, 400 checks) is bewust niet hergebruikt: redstone heeft directe stofpropagatie, vertragingen tot 160 ticks en de
+  tweede ring via sterk gevoede blokken nodig.
+
 ## 5. Sfeer
 
 | Item | Effort |
@@ -283,7 +309,7 @@ spawnpunt en nacht overslaan, difficulty en game rules, harnas, attack cooldown 
 **Fase 2, mid game:** fokken en baby's, weer, dungeons met spawner, meer mobs (enderman, witch, slime, wolf, paard),
 status-effecten, schild, vuur, enchanting, anvil en grindstone, mijnschachten en kleine structuren, vissen, meer planten.
 
-**Fase 3, late game:** minimale redstone, dorpen met handel, brewing, Nether-lite, extra biomes (jungle, savanne, moeras,
+**Fase 3, late game:** minimale redstone (**gedaan**, zie 4d), dorpen met handel, brewing, Nether-lite, extra biomes (jungle, savanne, moeras,
 badlands), rivieren.
 
 Onzeker en eerst te verifiëren: verdrinkings- en lava-intervallen in de code tegen de wiki, de void-grens (y < −64 terwijl
@@ -309,3 +335,22 @@ de wereld 0–127 loopt), sapling-groeilicht en de XP-tabel (zie "onzeker" in ME
    - nieuwe biomes en dorpen;
    - touch en gamepad;
    - portals.
+
+## Mobs 2 (oktober 2026)
+
+**Gedaan:** goal-AI met A* (`src/entities/ai/`), fokken en baby's, schapen scheren/verven/grazen, melk, eieren,
+wolven (temmen, zitten, volgen, meevechten, halsband), enderman, slime (splitsen, slime chunks), drowned, husk, stray,
+cave spider, witch (drankje = vergif als placeholder), paard (minimaal rijden in singleplayer), hartjes/rook boven
+mobs, blob-schaduwen, nieuwe geluiden en ondertitels, server-sync (`NET_MOB_KINDS` uitgebreid, vlaggen en variant-byte).
+
+**Open, op volgorde:**
+1. Effecten zijn gekoppeld (`MobEffects.ts`: cave-spider-vergif, husk-honger, stray-slowness, witch-drankjes) en
+   fokken geeft XP-bollen. Open: melk drinken die effecten wist, witch die zelf drankjes drinkt, de server kent de
+   gezondheid van de speler niet (witch kiest dan als bij volle gezondheid).
+2. Mob-drops naar `rollLoot` (`src/items/Loot.ts`).
+3. Getemde wolven en paarden opslaan in de wereld (nu verdwijnen ze bij afsluiten; ze blijven wel geladen zolang je
+   speelt) en rijden in multiplayer (de server moet de paardsnelheid toestaan).
+4. Deuren in het pad zoeken (openen door zombies op Hard), enderman die blokken oppakt, wolf-bedel-goal, paard-
+   uitrusting en ezels/muildieren.
+5. Ambient en water: vleermuizen, inktvissen en vissen (eigen spawn-caps per categorie).
+

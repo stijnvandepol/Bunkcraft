@@ -1,3 +1,4 @@
+import { enableRedstone, redstoneSound } from './RedstoneHooks';
 import * as THREE from 'three';
 import { MobSteps } from './audio/mobSteps';
 import { PlayerSounds, surfaceLookup } from './audio/playerSounds';
@@ -13,6 +14,10 @@ import { ArrowRenderer } from '../entities/ArrowRenderer';
 import type { Mob, MobEvents } from '../entities/Mob';
 import { explosionDamage, explosionDropChance } from '../entities/Explosion';
 import { MobRenderer } from '../entities/MobRenderer';
+import { type UseResult, canUseOnMob, useOnMob } from '../entities/MobInteraction';
+import { mount as mountHorse, rideStep } from '../entities/Riding';
+import { type MobEffect, arrowEffect, meleeEffect, witchPotion } from '../entities/MobEffects';
+import { EFFECT_DEFS, isEffectId } from '../player/Effects';
 import { NetClient, type WelcomeMessage } from '../net/NetClient';
 import { NetEntities } from '../net/NetEntities';
 import { useBoneMeal } from '../world/Growth';
@@ -711,6 +716,11 @@ export class Game {
         this.audio.playFizz(Math.max(0, 1 - Math.hypot(x - p.x, y - p.y, z - p.z) / 20));
       };
     }
+    // Redstone: simulated here in singleplayer (not in arenas); in multiplayer the server's changes arrive as edits.
+    if (!this.net && worldType === 'terrain') {
+      enableRedstone(world, { entities, player: this.player, survival: () => hasSurvivalRules(this.mode) });
+    }
+    world.onRedstoneChange = (x, y, z, prevId, prevMeta, id, meta) => redstoneSound(this.audio, world, x, y, z, prevId, prevMeta, id, meta);
     this.interaction = new Interaction({
       world, player: this.player, stats: this.stats, inventory: this.playerInventory, hotbar: this.hotbar,
       entities, renderer: this.renderer, hand: this.hand, audio: this.audio, camera: this.cam.camera,
@@ -729,6 +739,7 @@ export class Game {
       openStation: (kind, x, y, z) => this.openStation(kind, x, y, z),
       openContainer: (x, y, z) => this.containers.open(x, y, z),
       useBed: (x, y, z) => this.useBed(x, y, z),
+      useMob: (mob) => this.useMob(mob),
       boneMeal: (x, y, z) => {
         // Multiplayer: the server grows it (and broadcasts the blocks); the item is used up here right away.
         if (this.net) { this.net.sendBoneMeal(x, y, z); return true; }
@@ -1190,7 +1201,16 @@ export class Game {
       case 'snap': this.remote.snapshot(msg.players, this.net?.id ?? -1, performance.now() / 1000); break;
       case 'ent': this.netEntities?.apply(msg, performance.now() / 1000); break;
       case 'fall': this.netFalling?.apply(msg.f, performance.now() / 1000); break;
-      case 'hurt': this.hurtByServer(msg.cause, msg.amount, msg.by, msg.yaw); break;
+      case 'hurt':
+        this.hurtByServer(msg.cause, msg.amount, msg.by, msg.yaw);
+        if (msg.effect) this.applyMobEffect(msg.effect as MobEffect);
+        break;
+      case 'mobused': this.applyMobUse(msg); break;
+      case 'mobfx': {
+        const m = this.entities?.mobs.find((e) => e.netId === msg.id);
+        if (m) this.mobRenderer.emote(msg.fx, m.x, m.y + m.height, m.z, m.width);
+        break;
+      }
       case 'boom':
         world?.applyRemoteRemovals(msg.blocks);
         this.explosionEffects(msg.by, msg.x, msg.y, msg.z, msg.power);
@@ -1682,7 +1702,9 @@ export class Game {
   }
 
   /** Reused every game tick (no per-tick allocations). */
-  private readonly mobTarget = { x: 0, y: 0, z: 0, attackable: false, collects: true };
+  private readonly mobTarget = { x: 0, y: 0, z: 0, attackable: false, collects: true, held: 0, yaw: 0, pitch: 0 };
+  /** The horse the player rides (singleplayer), null on foot. */
+  private mount: Mob | null = null;
 
   private readonly pickupItem = (s: ItemStack): number => {
     const left = this.playerInventory.add(s);
@@ -1696,6 +1718,8 @@ export class Game {
       const yaw = Math.atan2(p.x - mob.x, p.z - mob.z);
       if (this.stats.hurt(damage, { kind: 'mob', attacker: mob.type.name, yaw }, this.mode).hurt) {
         this.progression.thorns(mob);
+        // Cave spiders poison, husks make hungry.
+        this.applyMobEffect(meleeEffect(mob));
         // Knockback away from the attacker.
         const d = Math.hypot(p.x - mob.x, p.z - mob.z) || 1;
         p.vx += ((p.x - mob.x) / d) * 8;
@@ -1727,6 +1751,8 @@ export class Game {
         p.vz += (arrow.vz / h) * 3;
         p.vy = Math.max(p.vy, 3);
         this.cam.hurtSide = Math.sin(yaw - p.yaw) >= 0 ? 1 : -1;
+        // Strays shoot arrows of Slowness.
+        this.applyMobEffect(arrowEffect(arrow.shooter));
       }
     },
     arrowImpact: (arrow) => {
@@ -1742,6 +1768,9 @@ export class Game {
       this.audio.playMob(mob.type.kind, kind, vol, mob);
       if (vol > 0.05) this.caption(mobSoundLabel(mob.type.kind, kind), mob.x, mob.z);
     },
+    fx: (mob, kind) => this.mobRenderer.emote(kind, mob.x, mob.y + mob.height, mob.z, mob.width),
+    potion: (mob) => this.witchPotion(mob.x, mob.z),
+
   };
 
   /**
@@ -1799,6 +1828,63 @@ export class Game {
   }
 
   /** Damage from a server mob or arrow: same hurt camera, knockback and rules as a local hit. */
+  /** A witch's splash potion hits the player (the witch picks it like Minecraft's: see MobEffects.witchPotion). */
+  private witchPotion(x: number, z: number): void {
+    const p = this.player, stats = this.stats;
+    if (!hasSurvivalRules(this.mode) || stats.dead) return;
+    const effect = witchPotion(Math.hypot(p.x - x, p.z - z), stats.health, (id) => stats.effects.has(id), Math.random());
+    this.applyMobEffect(effect);
+    const color = EFFECT_DEFS[effect[0]].color;
+    for (let i = 0; i < 4; i++) this.renderer.particles.spawnBreak(Math.floor(p.x), Math.floor(p.y + 1), Math.floor(p.z), BLOCK.GLASS, 0xf0, color);
+    this.audio.playMob('witch', 'hurt', 0.6);
+  }
+
+  /** A status effect from a mob (bite, husk hit, stray arrow, witch potion); survival only. */
+  private applyMobEffect(e: MobEffect | null): void {
+    if (!e || !hasSurvivalRules(this.mode) || this.stats.dead || !isEffectId(e[0])) return;
+    this.stats.effects.add(e[0], e[1], e[2], this.stats);
+  }
+
+  /** Right click on a mob: feed, tame, shear, milk, dye, saddle or mount. True when something happened. */
+  private useMob(mob: Mob): boolean {
+    const held = this.hotbar.selectedStack.id;
+    if (mob.remote) {
+      if (!this.net || !canUseOnMob(mob, held, this.net.id)) return false;
+      this.net.sendUseMob(mob.netId);
+      return true;
+    }
+    const r = useOnMob(mob, held, 0);
+    if (r.action === 'none') return false;
+    if (r.action === 'mount') {
+      if (this.mount) return false;
+      this.mount = mob;
+      mountHorse(this.player, mob, this.mobTarget);
+      return true;
+    }
+    this.applyMobUse(r);
+    return true;
+  }
+
+  /** What using an item on a mob costs: the item is eaten, swapped (bucket → milk) or worn (shears). */
+  private applyMobUse(r: UseResult): void {
+    const inv = this.playerInventory, slot = this.hotbar.selected;
+    if (r.action === 'shear') this.audio.playMob('sheep', 'hurt', 0.4);
+    if (!hasSurvivalRules(this.mode)) {
+      if (r.give) inv.add({ id: r.give, count: 1 });
+      this.hotbar.refresh();
+      return;
+    }
+    if (r.damageTool) inv.damageTool(slot);
+    if (r.give) {
+      if (inv.get(slot).count <= r.consume) inv.set(slot, { id: r.give, count: 1 });
+      else {
+        inv.consumeSlot(slot, r.consume);
+        if (inv.add({ id: r.give, count: 1 }) > 0) this.entities?.dropItem({ id: r.give, count: 1 }, this.player.x, this.player.y + 1, this.player.z, 40);
+      }
+    } else if (r.consume > 0) inv.consumeSlot(slot, r.consume);
+    this.hotbar.refresh();
+  }
+
   private hurtByServer(cause: 'mob' | 'arrow', amount: number, by: string, yaw: number): void {
     const p = this.player;
     if (!this.stats.hurt(amount, { kind: cause, attacker: by || undefined, yaw }, this.mode).hurt) return;
@@ -1843,6 +1929,7 @@ export class Game {
     this.weatherSys.gameTick();
     this.worldRules.gameTick();
     this.world?.tickLiquids();
+    this.world?.tickRedstone();
     this.world?.tickGrowth(p.x, p.z);
     this.world?.blockEntities.tick();
     this.containers.tick();
@@ -1853,6 +1940,8 @@ export class Game {
     const target = this.mobTarget;
     target.x = p.x; target.y = p.y; target.z = p.z;
     target.attackable = alive && hasSurvivalRules(this.mode);
+    target.held = this.hotbar.selectedStack.id;
+    target.yaw = p.yaw; target.pitch = p.pitch;
     target.collects = alive && this.mode !== 'spectator';
     if (this.entities) this.entities.xpPickup = target.collects ? this.progression.pickupXp : null;
     this.entities?.tick(
@@ -1943,7 +2032,9 @@ export class Game {
       }
       const asleep = this.worldRules.sleeping;
       while (this.accumulator >= PHYSICS.STEP) {
-        if (!asleep) p.step(move, this.getBlock, this.getMeta);
+        // Riding: the horse moves, the player sits on it (sneak gets off).
+        if (this.mount && !rideStep(p, this.mount, move, ((this.stepCount % STEPS_PER_TICK) + 1) / STEPS_PER_TICK)) this.mount = null;
+        if (!asleep && !this.mount) p.step(move, this.getBlock, this.getMeta);
         move.jumpPressed = false;
         this.accumulator -= PHYSICS.STEP;
         if (++this.stepCount % STEPS_PER_TICK === 0) this.gameTick();

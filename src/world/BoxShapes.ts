@@ -1,4 +1,5 @@
 import { FACING_DX, FACING_DZ, NORTH, SOUTH, WEST, EAST } from './BlockStates';
+import { redstoneBoxes } from './RedstoneShapes';
 
 /**
  * Thin and connecting blocks built from a few boxes: carpets, trapdoors, fence gates, fences, walls, glass panes,
@@ -95,7 +96,7 @@ export function visualBoxes(kind: number, meta: number, connect: number, out: Fl
     case BOX_GRINDSTONE:
       return stationBoxes(kind, meta, out);
     default:
-      return 0;
+      return redstoneBoxes(kind, meta, connect, out, true);
   }
 }
 
@@ -145,7 +146,7 @@ export function boxCollision(kind: number, meta: number, connect: number, out: F
     case BOX_GRINDSTONE:
       return stationBoxes(kind, meta, out);
     default:
-      return 0;
+      return redstoneBoxes(kind, meta, connect, out, false);
   }
 }
 
