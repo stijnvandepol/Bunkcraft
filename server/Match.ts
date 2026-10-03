@@ -28,7 +28,7 @@ export const DEFAULT_REWIND = 0.1;
 const FIRE_SLACK = 0.04;
 const HISTORY_SIZE = 24;
 /** The mode state (zones, flags) is re-sent at least this often. */
-const MODE_INTERVAL = 0.5;
+const MODE_INTERVAL = 0.25;
 
 export interface MatchHost {
   /** Monotonic clock in seconds. */

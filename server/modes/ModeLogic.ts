@@ -57,7 +57,7 @@ export interface ModeLogic {
 
 /** Defaults shared by the modes: team or free-for-all deathmatch semantics. */
 export abstract class BaseLogic implements ModeLogic {
-  onStart(m: Match): void {
+  onStart(m: Match, _now: number): void {
     m.startLive();
   }
 
@@ -65,7 +65,7 @@ export abstract class BaseLogic implements ModeLogic {
     if (phase === 'live') m.endMatch(now);
   }
 
-  onKill(m: Match, killer: MatchPlayer | null): void {
+  onKill(m: Match, killer: MatchPlayer | null, _victim: MatchPlayer, _weapon: WeaponDef, _head: boolean, _now: number): void {
     if (killer && m.teams && killer.team) m.scores[killer.team] += m.def.scoring?.kill ?? 1;
   }
 
