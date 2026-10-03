@@ -48,9 +48,9 @@ describe('TerrainGenerator version 1 (worlds created before generator versioning
   });
 });
 
-describe('TerrainGenerator version 2', () => {
+describe('TerrainGenerator version 2 (worlds created before generator version 3)', () => {
   it.each(GOLDEN_V2)('chunk (%i, %i) matches its golden hash', (cx, cz, blocksHash, biomesHash) => {
-    const { blocks, biomes } = generate(SEED, cx, cz);
+    const { blocks, biomes } = generate(SEED, cx, cz, 2);
     expect(fnv1a(blocks)).toBe(blocksHash);
     expect(fnv1a(biomes)).toBe(biomesHash);
   });
@@ -66,7 +66,8 @@ describe('TerrainGenerator version 2', () => {
     expect(fnv1a(generate(SEED, 0, 0, 2).blocks)).not.toBe(fnv1a(generate(SEED, 0, 0, 1).blocks));
   });
 
-  it('is the default, and unknown versions are normalised', () => {
+  it('is not the default any more (version 3 is), and unknown versions are normalised', () => {
+    expect(GEN_VERSION_CURRENT).toBe(3);
     expect(new TerrainGenerator(SEED).genVersion).toBe(GEN_VERSION_CURRENT);
     expect(normalizeGenVersion(undefined)).toBe(1);
     expect(normalizeGenVersion('x')).toBe(1);
@@ -75,7 +76,7 @@ describe('TerrainGenerator version 2', () => {
   });
 });
 
-describe.each([GEN_VERSION_LEGACY, GEN_VERSION_CURRENT])('TerrainGenerator determinism (version %i)', (version) => {
+describe.each([GEN_VERSION_LEGACY, 2, 3])('TerrainGenerator determinism (version %i)', (version) => {
   it('is deterministic: same seed gives identical bytes, also from a fresh generator', () => {
     const a = generate(SEED, 1, 2, version);
     const b = generate(SEED, 1, 2, version);

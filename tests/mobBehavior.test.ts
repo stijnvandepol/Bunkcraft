@@ -1,8 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { EntityManager, type EntityWorld } from '../src/entities/EntityManager';
 import { Mob, type MobEvents, type MobTarget } from '../src/entities/Mob';
 import { MOB_TYPES } from '../src/entities/MobTypes';
 import { BLOCK } from '../src/world/BlockRegistry';
+import { useSeededRandom } from './helpers/seededRandom';
 
 /** Flat stone floor up to y = 0 (mobs stand on y = 1); `extra` blocks override. */
 class FlatWorld implements EntityWorld {
@@ -55,12 +56,8 @@ function run(m: Mob, w: FlatWorld, target: MobTarget, ev: MobEvents, ticks: numb
   }
 }
 
-beforeEach(() => {
-  // Deterministic wandering and spider leaps: Math.random is a fixed low-discrepancy sequence.
-  let s = 0.123;
-  vi.spyOn(Math, 'random').mockImplementation(() => (s = (s * 9301 + 0.49297) % 1));
-});
-afterEach(() => { vi.restoreAllMocks(); });
+// Deterministic wandering, panics and spider leaps.
+useSeededRandom();
 
 describe('zombie', () => {
   it('chases the player and attacks in melee with a cooldown', () => {
@@ -109,7 +106,8 @@ describe('zombie', () => {
     const { ev } = events();
     const z = spawn('zombie', 3);
     expect(z.hurt(5, 0, 0, 1, true)).toBe(true);
-    expect(z.health).toBe(MOB_TYPES.zombie.health - 5);
+    // Natural armor may soak a little of the hit.
+    expect(z.health).toBeLessThan(MOB_TYPES.zombie.health - 4);
     expect(z.vx).toBeGreaterThan(0); // pushed away from the attacker at x = 0
     expect(z.hurt(5, 0, 0)).toBe(false); // still invulnerable
     expect(z.hurtByPlayer).toBeGreaterThan(0);
@@ -326,6 +324,7 @@ describe('EntityManager', () => {
     const { ev } = events();
     em.dropItem({ id: BLOCK.DIRT, count: 3 }, 10.5, 1.2, 10.5, 0);
     em.dropItem({ id: BLOCK.DIRT, count: 4 }, 10.6, 1.2, 10.5, 0);
+    for (const it of em.items) { it.vx = 0; it.vz = 0; } // drops get a random toss: make them land together
     for (let i = 0; i < 30; i++) em.tick(player(40), 0, ev, null, false);
     expect(em.items).toHaveLength(1);
     expect(em.items[0].stack.count).toBe(7);

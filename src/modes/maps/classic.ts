@@ -14,6 +14,18 @@ export const CLASSIC: ArenaMapDef = {
   variants: 3,
   teamSpawns: [[36, 2], [40, 1], [36, 9], [41, 6]],
   ffaSpawns: [[28, 10], [30, 28], [12, 40]],
+  objectives: {
+    // Hardpoint order: the middle lane, then the two lanes beside the platform, then the two far flanks.
+    zones: [
+      { name: 'Centre Platform', x: 0, z: 6.5, r: 5 },
+      { name: 'West Lane', x: -22, z: 4, r: 5 },
+      { name: 'East Lane', x: 22, z: 4, r: 5 },
+      { name: 'South West', x: -27, z: -27, r: 5 },
+      { name: 'South East', x: 27, z: -27, r: 5 },
+    ],
+    dominationZones: [0, 1, 2],
+    flags: [{ team: 'red', x: -44, z: 18 }, { team: 'blue', x: 44, z: 18 }],
+  },
   build(variant, b) {
     const { box, paint } = b;
     // Floor markings: white centre lines and the team bases.

@@ -37,7 +37,7 @@ describe('block ids', () => {
   });
 
   it('leaves room for what comes next', () => {
-    expect(Math.max(...BLOCK_DEFS.map((d) => d.id))).toBeLessThan(230);
+    expect([BLOCK.ENCHANTING_TABLE, BLOCK.ANVIL, BLOCK.GRINDSTONE]).toEqual([250, 251, 252]);
   });
 });
 

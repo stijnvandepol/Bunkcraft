@@ -89,6 +89,7 @@ describe('ServerEntities', () => {
     ents.attack(player, mob.netId);
     expect(mob.health).toBe(hp);
     player.x = mob.x + 1; player.y = mob.y; player.z = mob.z;
+    player.flags = 4; // on the ground: no critical
     ents.attack(player, mob.netId);
     expect(mob.health).toBe(hp - 1); // bare hand
   });

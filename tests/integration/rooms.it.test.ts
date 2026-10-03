@@ -2,7 +2,10 @@ import { existsSync, readFileSync, statSync, utimesSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { PROTOCOL_VERSION, type ServerMessage } from '../../src/net/protocol';
-import { BLOCK } from '../../src/world/BlockRegistry';
+import { BLOCK, getBlockDef } from '../../src/world/BlockRegistry';
+
+/** A block id the registry does not know (the registry grows, so look one up instead of hard-coding it). */
+const UNKNOWN_ID = (() => { for (let id = 254; id > 0; id--) if (!getBlockDef(id) && id !== BLOCK.UNLOADED) return id; return 256; })();
 import { Client, type TestServer, api, createRoom, sleep, startServer } from './harness';
 
 /** Real server process, real HTTP and WebSocket clients: a Minecraft-type room end to end. */
@@ -123,7 +126,9 @@ describe('two players in a Minecraft room', () => {
     const rejects: Array<[string, Record<string, unknown>]> = [
       ['too far', { x: x + 100, y, z, id: BLOCK.STONE }],
       ['bedrock', { x, y, z, id: BLOCK.BEDROCK }],
-      ['unknown id', { x, y, z, id: 250 }],
+      ['unknown id', { x, y, z, id: UNKNOWN_ID }],
+      ['unloaded marker', { x, y, z, id: BLOCK.UNLOADED }],
+      ['negative id', { x, y, z, id: -1 }],
       ['y out of range', { x, y: 200, z, id: BLOCK.STONE }],
       ['non-integer', { x: 1.5, y, z, id: BLOCK.STONE }],
       ['bad meta', { x, y, z, id: BLOCK.STONE, meta: 99 }],

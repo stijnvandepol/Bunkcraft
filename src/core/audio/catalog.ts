@@ -66,12 +66,17 @@ export function buildCatalog(): CatalogEntry[] {
   add('block.door.open', 0.5, (e) => e.playDoor(true));
   add('block.door.close', 0.5, (e) => e.playDoor(false));
   add('block.fizz', 0.8, (e) => e.playFizz(1));
+  add('block.click.on', 0.3, (e) => e.playClick(true));
+  add('block.click.off', 0.3, (e) => e.playClick(false));
+  add('block.piston.extend', 0.5, (e) => e.playPiston(true));
+  add('block.piston.contract', 0.5, (e) => e.playPiston(false));
+  for (const n of ['harp', 'basedrum', 'snare', 'hat', 'bass', 'chime']) add(`block.note.${n}`, 1, (e) => e.playNote(n, 1));
   add('item.bucket.water', 0.6, (e) => e.playBucket(false));
   add('item.bucket.lava', 0.6, (e) => e.playBucket(true));
   add('item.pickup', 0.3, (e) => e.playPop());
   add('player.eat', 0.3, (e) => e.playEat());
   add('player.burp', 0.5, (e) => e.playBurp());
-  for (const w of ['rifle', 'smg', 'shotgun', 'sniper', 'pistol', 'knife']) add(`weapon.${w}`, w === 'shotgun' ? 1.2 : 0.9, (e) => e.playGun(w, 1));
+  for (const w of ['rifle', 'smg', 'shotgun', 'sniper', 'dmr', 'burst', 'pistol', 'revolver', 'knife']) add(`weapon.${w}`, w === 'shotgun' || w === 'revolver' ? 1.2 : 0.9, (e) => e.playGun(w, 1));
   add('weapon.reload', 1.6, (e) => e.playReload(1.5));
   add('weapon.empty', 0.3, (e) => e.playEmpty());
   add('weapon.hitmarker', 0.4, (e) => e.playHitMarker(false));

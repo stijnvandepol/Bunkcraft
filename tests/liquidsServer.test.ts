@@ -106,12 +106,13 @@ describe('server liquid broadcasting', () => {
     expect(blocks.length).toBeGreaterThan(5);
     // The placed source reached Bobby as a plain block message, the flow as batches of water.
     expect(b.of('block')[0]).toMatchObject({ x, y, z, id: BLOCK.WATER });
-    const first = blocks[0].edits;
-    expect(first[3]).toBe(BLOCK.WATER);
+    // (Random ticks share the batch: grass spreading can come first, so look for the water.)
+    const water = blocks.flatMap((m) => m.edits.filter((v, k) => k % 5 === 3 && v === BLOCK.WATER));
+    expect(water.length).toBeGreaterThan(0);
     expect(maxTuples).toBeGreaterThan(0);
     expect(maxTuples).toBeLessThanOrEqual(MAX_CHANGES_PER_TICK + 8);
     // Alice (who placed it) gets the flow too, not an echo of her own placement.
     expect(a.of('blocks').length).toBeGreaterThan(5);
-    expect(a.of('block').filter((m) => m.y === y)).toHaveLength(0);
+    expect(a.of('block').filter((m) => m.x === x && m.y === y && m.z === z)).toHaveLength(0); // other single-block changes (random ticks) may happen anywhere
   });
 });

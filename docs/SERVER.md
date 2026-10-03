@@ -303,7 +303,7 @@ sturen de verwijderde blokken mee. Een lege game geeft zijn geheugen vrij.
 Kosten: ongeveer 0,03 ms CPU per tick in rust en ~0,3 ms terwijl chunks genereren, plus een paar MB per
 geladen game.
 
-## Speltypes: Minecraft, Team Deathmatch en Free For All
+## Speltypes: Minecraft en de arcade-modes
 
 Een game heeft een speltype. **Minecraft** (standaard) is de sandbox hierboven. De twee arcade-types zijn
 rondes op één vaste arena, in de geest van Krunker: snelle beweging, hitscan-wapens, health die terugkomt
@@ -314,14 +314,19 @@ en een scorebord.
 | Minecraft | `minecraft` | Bouwen, mijnen, mobs, spelmodus naar keuze |
 | Team Deathmatch | `tdm` | Rood tegen blauw; het team met de meeste kills wint |
 | Free For All | `ffa` | Ieder voor zich; wie de scorelimiet haalt (of aan het eind de meeste kills heeft) wint |
+| Gun Game | `gungame` | Wapenladder van 16 niveaus (eindigt met het mes); kill = niveau omhoog, meskill = slachtoffer omlaag |
+| Team Elimination | `elimination` | Rondes met één leven; het team dat de ander uitschakelt wint de ronde |
+| Hardpoint | `hardpoint` | Wisselende heuvel, 1 punt/s voor het team dat er alleen staat, tot 250 |
+| Domination | `domination` | Drie punten innemen en vasthouden, 1 punt per 2 s per punt, tot 100 |
+| Capture the Flag | `ctf` | Vijandelijke vlag naar de eigen (thuis staande) vlag brengen, tot 3 captures |
 
 Een game aanmaken (`POST /api/rooms`) accepteert `{ name, gameMode, seed, gameType?, scoreLimit?, timeLimitSec?, mapId? }`:
 
 | Veld | Standaard (tdm / ffa) | Grenzen |
 |---|---|---|
-| `gameType` | `minecraft` | `minecraft`, `tdm`, `ffa` (onbekend = `minecraft`) |
-| `scoreLimit` | 30 / 20 | 5 tot 100 (kills van het team in tdm, kills van de speler in ffa) |
-| `timeLimitSec` | 600 / 600 | 120 tot 1800 seconden |
+| `gameType` | `minecraft` | een id uit `GAME_TYPES` (onbekend = `minecraft`) |
+| `scoreLimit` | van het type (30 / 20 / 4 / 250 / 100 / 3) | 5 tot 100, verruimd met de keuzes van het type (1 capture, 250 punten); gun game negeert het (de ladder) |
+| `timeLimitSec` | van het type (600; elimination 90 = rondetijd) | 120 tot 1800 seconden, verruimd met de keuzes van het type (rondetijd 60 s) |
 | `mapId` | `classic` | `classic`, `suburb`, `quarter`, `dockyard`, `desert` of `rotate` (onbekend = `classic`) |
 
 `GET /api/rooms/<CODE>` geeft ook `gameType`, `scoreLimit` en `timeLimitSec` terug (0 bij Minecraft) en bij arcade-games
@@ -349,6 +354,39 @@ is en **voegt zich opnieuw bij de game** (nieuw `welcome`, nieuwe wereld). De ka
 `MatchInfo.map` (zonder protocolversie te verhogen: oude clients negeren het veld).
 
 Alleen bestaande blokken, op een vlakke vloer. De server houdt spelers binnen de muur van de gekozen kaart.
+
+**Het modeframework** (`server/Match.ts` + `server/modes/*`): `Match` is eigenaar van spelers, teams, hitscan, health,
+munitie, respawntimers, lag compensation en de berichten. Wat een mode anders maakt staat als data in de `GameTypeDef`
+(respawnregel, spawnbescherming, rondefases, loadout, benodigde kaartdata, params, scoring, HUD) en in een kleine klasse die
+`ModeLogic` implementeert (`server/modes/ModeLogic.ts`, standaardgedrag in `BaseLogic`):
+
+| Hook | Wanneer |
+|---|---|
+| `onStart` | de warm-up is voorbij (scores op nul); standaard `match.startLive()` |
+| `onTick(dt)` | elke servertick buiten warm-up en uitslag (zones tellen, vlaggen aanraken) |
+| `onPhaseEnd(phase)` | de timer van een fase loopt af (`countdown`, `live`, `roundend`, `intermission`); standaard eindigt `live` de match |
+| `onKill`, `onSpawn`, `onJoin`, `onLeave`, `onReset` | levensloop van spelers en matches |
+| `respawnDelay`, `loadoutFor`, `pickSpawn`, `canStart` | regels per leven (negatief = pas volgende ronde; ladderwapen; ...) |
+| `checkEnd`, `winner`, `scoreText`, `modeState` | einde, winnaar, de regel onder de timer en de HUD-toestand (`mode`-bericht) |
+
+`Match` biedt de modes `setPhase(phase, sec)`, `startLive()`, `respawnAll()`, `endMatch(result?)`, `giveGear()`, `event()`,
+`markModeDirty()`, `scores`, `teamSize`/`aliveCount`. De klassen:
+
+- `deathmatch.ts` (tdm, ffa): ongewijzigd gedrag; `tests/match.test.ts` en `scripts/arena-bots.ts` zijn het vangnet.
+- `gungame.ts`: `pts` = niveau; elke kill `giveGear` met het volgende ladderwapen (plus mes); meskill zet het slachtoffer een
+  niveau terug; een kill op het laatste niveau wint, op tijd wint het hoogste niveau. FFA-spawns, respawn 1,5 s.
+- `rounds.ts` (elimination): `intermission` (5 s, iedereen respawnt) → `countdown` (3 s) → `live` (rondetijd) → `roundend` (4 s).
+  Uitschakelen van het hele andere team wint de ronde, op tijd wint het team met meer levenden (gelijk = geen punt). Late
+  joiners kijken mee tot de volgende ronde; is een team leeg, dan terug naar warm-up.
+- `zones.ts` (hardpoint, domination): aanwezigheid = levende spelers binnen de straal en -1,2..+3,5 blokken hoogte. Hardpoint:
+  één heuvel in kaartvolgorde, 60 s plus 5 s pauze, 1 punt/s bij alleenbezit, betwist = niets. Domination: inname in 6 s
+  (eigen punt eerst neutraliseren), 1 punt per 2 s per eigen punt.
+- `ctf.ts`: vlag aanraken (1,6 blokken, 2,6 hoog) pakt hem op; eigen vlag aanraken terwijl die thuis staat en je de andere
+  draagt = capture (+1 team, +1 `pts`); dood/vertrek laat de vlag vallen, eigen team brengt hem terug of na 12 s vanzelf.
+
+De HUD-toestand gaat 4× per seconde (en direct bij een verandering) als `mode` naar iedereen, gebeurtenissen als `event`, een
+puntwijziging direct als `match`. Kaarten zonder de benodigde `objectives` worden voor dat type overgeslagen (`mapFor`,
+`nextMap(id, requires)`). Botrun tegen een echte server: `npx tsx scripts/modes-bots.ts [mode...] --url=http://localhost:3000`.
 
 **Het matchverloop:**
 

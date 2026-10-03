@@ -4,8 +4,11 @@
  * camera poses { x, y, z, yaw, pitch }, for scripts/shots-caves.py.
  *
  *   npx tsx scripts/gen-spots.ts [seed=12345] [--gen=2] [--grid=20]
+ *   npx tsx scripts/gen-spots.ts [seed=12345] --biomes [--radius=2500]   (generator 3: one ground and one aerial
+ *       view per biome, keys `<Biome>` and `<Biome>_above`, for scripts/shots-biomes.py)
  */
-import { BLOCK } from '../src/world/BlockRegistry';
+import { BLOCK, CUBE_ID } from '../src/world/BlockRegistry';
+import { BIOME, BIOME_NAMES } from '../src/world/Biomes';
 import { TerrainGenerator } from '../src/world/TerrainGenerator';
 import { CHUNK_HEIGHT, CHUNK_VOLUME, SEA_LEVEL, blockIndex } from '../src/world/constants';
 
@@ -14,6 +17,42 @@ const seed = Number(process.argv.find((a) => /^\d+$/.test(a)) ?? 12345);
 const GEN = Number(arg('gen', '2'));
 const GRID = Number(arg('grid', '20'));
 const gen = new TerrainGenerator(seed, GEN);
+
+if (process.argv.includes('--biomes')) {
+  // Biome finder: the sample point closest to the origin whose surroundings (±24 blocks) are all that biome.
+  const g3 = new TerrainGenerator(seed, Math.max(3, GEN));
+  const radius = Number(arg('radius', '2500'));
+  const biomeOf = (x: number, z: number) => g3.biomeAt(x, z, Math.floor(g3.heightAt(x, z)));
+  const found = new Map<number, [number, number]>();
+  for (let r = 0; r < radius; r += 32) {
+    for (let a = 0; a < Math.max(1, Math.floor(r / 32) * 6); a++) {
+      const ang = a / Math.max(1, Math.floor(r / 32) * 6) * Math.PI * 2;
+      const x = Math.round(Math.cos(ang) * r), z = Math.round(Math.sin(ang) * r);
+      const b = biomeOf(x, z);
+      if (found.has(b)) continue;
+      const small = b === BIOME.RIVER || b === BIOME.FROZEN_RIVER || b === BIOME.BEACH || b === BIOME.SNOWY_BEACH || b === BIOME.STONY_SHORE;
+      const d = small ? 0 : 24;
+      if (d && ![[d, 0], [-d, 0], [0, d], [0, -d]].every(([dx, dz]) => biomeOf(x + dx, z + dz) === b)) continue;
+      found.set(b, [x, z]);
+    }
+  }
+  const poses: Record<string, unknown> = { seed, gen: 3 };
+  for (const [b, [x, z]] of found) {
+    const name = BIOME_NAMES[b].replace(/ /g, '');
+    const h = Math.max(SEA_LEVEL, Math.floor(g3.heightAt(x, z)));
+    // Keep the camera above the ground along its line of sight (a hill between camera and target).
+    const clear = (dx: number, dz: number) => {
+      let m = h;
+      for (let t = 0; t <= 1; t += 0.1) m = Math.max(m, Math.floor(g3.heightAt(x + dx * t, z + dz * t)));
+      return m;
+    };
+    const ground = clear(-14, 14);
+    poses[name] = look([x + 0.5 - 14, ground + 4, z + 0.5 + 14], [x + 0.5 + 10, Math.max(h, ground - 4) + 2, z + 0.5 - 10]);
+    poses[`${name}_above`] = look([x + 0.5 - 40, clear(-40, 40) + 40, z + 0.5 + 40], [x + 0.5, h, z + 0.5]);
+  }
+  console.log(JSON.stringify(poses, null, 1));
+  process.exit(0);
+}
 
 const chunks = new Map<string, Uint8Array>();
 for (let cz = -GRID / 2; cz < GRID / 2; cz++) {
@@ -140,6 +179,9 @@ function clearLine(a: number[], b: number[]): boolean {
 let bestLava = { score: 0, pose: null as unknown };
 let bestLake = { score: 0, pose: null as unknown };
 let bestOre = { score: 0, pose: null as unknown };
+let bestDeep = { score: 0, pose: null as unknown };
+// Generator 3: ores in the deepslate layer (y 6..17), including redstone and lapis.
+const DEEP_ORES = new Set<number>([BLOCK.DIAMOND_ORE, BLOCK.GOLD_ORE, BLOCK.IRON_ORE, CUBE_ID.redstone_ore, CUBE_ID.lapis_ore]);
 for (const [cx, cz] of all) {
   const b = chunks.get(`${cx},${cz}`)!;
   for (let z = 2; z < 14; z += 2) {
@@ -169,6 +211,22 @@ for (const [cx, cz] of all) {
           break;
         }
       }
+      for (let y = 6; y < 18 && GEN >= 3; y++) {
+        if (!DEEP_ORES.has(b[blockIndex(x, y, z)])) continue;
+        for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          let len = 0;
+          while (len < 6 && air(wx + dx * (len + 1), y, wz + dz * (len + 1)) && air(wx + dx * (len + 1), y + 1, wz + dz * (len + 1))) len++;
+          if (len < 4) continue;
+          let near = 0, slate = 0;
+          for (let oy = -3; oy <= 3; oy++) for (let oz = -3; oz <= 3; oz++) for (let ox = -3; ox <= 3; ox++) {
+            const n = get(wx + ox, y + oy, wz + oz);
+            if (DEEP_ORES.has(n)) near++;
+            if (n === CUBE_ID.deepslate) slate++;
+          }
+          const score = near * 3 + slate;
+          if (score > bestDeep.score) bestDeep = { score, pose: look([wx + 0.5 + dx * len, y + 1.6, wz + 0.5 + dz * len], [wx + 0.5, y + 0.5, wz + 0.5]) };
+        }
+      }
       // Exposed ore in a cave wall: an ore block with air next to it and open space to look from.
       for (let y = 8; y < 60; y++) {
         const o = b[blockIndex(x, y, z)];
@@ -192,4 +250,5 @@ for (const [cx, cz] of all) {
 out.cavernLava = bestLava.pose;
 out.lake = bestLake.pose;
 out.ore = bestOre.pose;
+if (GEN >= 3) out.deepOre = bestDeep.pose;
 console.log(JSON.stringify(out, null, 1));

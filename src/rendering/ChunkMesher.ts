@@ -5,13 +5,15 @@ import {
 import { liquidHeight } from '../world/Liquids';
 import { BED_HEAD_BIT, BOX_BED, SIDE_BIT, visualBoxes } from '../world/BoxShapes';
 import { connectsTo } from '../world/BlockShapes';
+import { DUST_COLORS, dustConnectMask } from '../world/Redstone';
+import { BOX_DUST, redstoneFaceSlot } from '../world/RedstoneShapes';
 import { doorBox } from '../world/BlockShapes';
 import {
   DOOR_UPPER_BIT, FACE_OCTANTS, OCT_ALL, STAIR_META_MASK, slabOctants, stairOctants, stairShape,
 } from '../world/BlockStates';
 import { CHUNK_HEIGHT, CHUNK_SIZE, CHUNK_VOLUME } from '../world/constants';
 import { BLOCK } from '../world/BlockRegistry';
-import { TINT_BIRCH, TINT_FOLIAGE, TINT_GRASS, TINT_SPRUCE, tintColor } from '../world/BiomeColors';
+import { TINT_BIRCH, TINT_FOLIAGE, TINT_GRASS, TINT_SPRUCE, TINT_WATER, tintColor } from '../world/BiomeColors';
 import { LightEngine, REGION, REGION_AREA, REGION_HEIGHT, REGION_VOLUME } from './Lighting';
 
 /**
@@ -176,6 +178,7 @@ export class ChunkMesher {
   /** Blurred biome colours per centre column (x + z*16), packed 0xRRGGBB. */
   private readonly grassTint = new Int32Array(256);
   private readonly foliageTint = new Int32Array(256);
+  private readonly waterTint = new Int32Array(256);
 
   /**
    * neighbours[(dz + 1) * 3 + (dx + 1)] = chunk block arrays; `metas` the matching block state
@@ -248,7 +251,7 @@ export class ChunkMesher {
       const n = (Math.floor(z / 16) + 1) * 3 + Math.floor(x / 16) + 1;
       return biomes[n][(x & 15) + (z & 15) * 16];
     };
-    for (const [type, out] of [[TINT_GRASS, this.grassTint], [TINT_FOLIAGE, this.foliageTint]] as const) {
+    for (const [type, out] of [[TINT_GRASS, this.grassTint], [TINT_FOLIAGE, this.foliageTint], [TINT_WATER, this.waterTint]] as const) {
       for (let z = 0; z < 16; z++) {
         for (let x = 0; x < 16; x++) {
           let r = 0, g = 0, b = 0;
@@ -482,7 +485,7 @@ export class ChunkMesher {
    */
   private emitLiquid(kind: number, x: number, y: number, z: number, i: number): void {
     const geo = kind === BLOCK.WATER ? this.water : this.opaque;
-    geo.currentTint = 0xffffff;
+    geo.currentTint = kind === BLOCK.WATER ? this.waterTint[(x & 15) + (z & 15) * 16] : 0xffffff;
     const hc = this.liquidCorners;
     hc[0] = this.cornerHeight(i, kind, 0, 0);
     hc[1] = this.cornerHeight(i, kind, 1, 0);
@@ -684,6 +687,10 @@ export class ChunkMesher {
   }
 
   private readonly boxScratch = new Float64Array(64);
+  /** Region index of the dust being meshed; the getters read its neighbours by offset (no allocation per block). */
+  private dustCenter = 0;
+  private readonly dustGet = (dx: number, dy: number, dz: number): number => this.region[this.dustCenter + dx * SX + dy * SY + dz * SZ];
+  private readonly dustMeta = (dx: number, dy: number, dz: number): number => this.metaRegion[this.dustCenter + dx * SX + dy * SY + dz * SZ];
 
   /**
    * Carpets, trapdoors, gates, fences, walls, panes, ladders and beds: a few boxes (BoxShapes), each face textured with
@@ -694,14 +701,20 @@ export class ChunkMesher {
     const meta = this.metaRegion[i];
     const region = this.region;
     let connect = 0;
-    for (let s = 0; s < 4; s++) {
-      const j = i + (s === 0 ? -SZ : s === 1 ? SZ : s === 2 ? -SX : SX);
-      if (connectsTo(kind, region[j], this.metaRegion[j], s)) connect |= SIDE_BIT[s];
+    if (kind === BOX_DUST) {
+      this.dustCenter = i;
+      connect = dustConnectMask(this.dustGet, this.dustMeta, 0, 0, 0);
+    } else {
+      for (let s = 0; s < 4; s++) {
+        const j = i + (s === 0 ? -SZ : s === 1 ? SZ : s === 2 ? -SX : SX);
+        if (connectsTo(kind, region[j], this.metaRegion[j], s)) connect |= SIDE_BIT[s];
+      }
     }
     const boxes = this.boxScratch;
     const n = visualBoxes(kind, meta, connect, boxes);
     const geo = this.cutout;
-    geo.currentTint = DYE[id] ? DYE_RGB[meta & 15] : 0xffffff;
+    geo.currentTint = DYE[id] ? DYE_RGB[meta & 15] : kind === BOX_DUST ? DUST_COLORS[meta & 15] : 0xffffff;
+    const redstone = kind >= BOX_DUST;
     const slot = VARIANT_SLOT[id];
     const variant = slot ? slot * 32 + ((meta >> VARIANT_SHIFT[id]) & 31) : 0;
     for (let k = 0; k < n; k++) {
@@ -714,7 +727,7 @@ export class ChunkMesher {
         const nOff = face.nSign * STRIDE[a];
         if (boundary && OPAQUE[region[i + nOff]]) continue;
         // The head half of a bed shows the pillow on top (its texture is in the bottom slot).
-        const layerFace = kind === BOX_BED && f === 2 && (meta & BED_HEAD_BIT) ? 3 : f;
+        const layerFace = redstone ? redstoneFaceSlot(kind, meta, k, f) : kind === BOX_BED && f === 2 && (meta & BED_HEAD_BIT) ? 3 : f;
         const layer = variant ? VARIANT_LAYER[variant * 6 + f] : FACE_LAYER[id * 6 + layerFace];
         this.cornerSample(f, boundary ? i + nOff : i);
         const ua = Math.round(boxes[o + face.uAxis] * 16), ub = Math.round(boxes[o + 3 + face.uAxis] * 16);

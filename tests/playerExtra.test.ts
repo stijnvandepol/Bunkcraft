@@ -230,7 +230,7 @@ describe('PlayerStats hazards', () => {
     expect(stats.health).toBe(MAX_HEALTH - 1);
 
     const poisoned = setup();
-    poisoned.stats.poison = 5000;
+    poisoned.stats.effects.add('poison', 0, 5000);
     run(poisoned.stats, poisoned.p, 5000);
     expect(poisoned.stats.health).toBe(1);
 

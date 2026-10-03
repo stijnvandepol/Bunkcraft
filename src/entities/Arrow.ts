@@ -40,6 +40,10 @@ export class Arrow {
   remote = false;
   netId = 0;
   age = 0;
+  /** From an enchanted bow: Power adds damage, Punch knockback, Flame sets the target on fire. */
+  powerBonus = 0;
+  punch = 0;
+  flame = false;
   private stuckTicks = 0;
   private stuckX = 0; private stuckY = 0; private stuckZ = 0;
 
@@ -121,7 +125,7 @@ export class Arrow {
     }
 
     if (best || hitPlayer) {
-      let damage = Math.ceil(speed * 2);
+      let damage = Math.ceil(speed * 2 * (1 + this.powerBonus / 2));
       if (this.crit) damage += Math.floor(Math.random() * (damage / 2 + 2));
       if (best) onHitMob(this, best, damage);
       else onHitPlayer(this, damage);
