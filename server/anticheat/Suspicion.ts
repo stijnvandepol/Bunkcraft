@@ -20,7 +20,7 @@ export const SUSPICION = {
   SNAP_RATE: 600,
   MISMATCH_DEG: 25,
   /** Log a warning at this score. */
-  WARN_AT: 50,
+  WARN_AT: 40,
 } as const;
 
 export interface ShotSample {

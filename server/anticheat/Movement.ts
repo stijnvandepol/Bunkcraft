@@ -278,8 +278,10 @@ export class MovementValidator {
 
     // Horizontal budget.
     if (dist > this.bucketH + 1e-6) {
-      if (dist > MOVE.TELEPORT_DISTANCE && !lagging) return fail('teleport', 3);
-      return fail('speed', 1, lagging);
+      // A lag spike only excuses what the run speed covers in the real time since the last valid report.
+      const excusable = lagging && dist <= this.limit(t) * (t - this.t + MOVE.JITTER) + MOVE.BURST_BLOCKS;
+      if (dist > MOVE.TELEPORT_DISTANCE && !excusable) return fail('teleport', 3);
+      return fail('speed', 1, excusable);
     }
     // Vertical budget (flight trusts the vertical axis, the walls still apply).
     if (!this.opts.canFly) {

@@ -14,6 +14,8 @@ export const STRIKES = {
   /** A player kicked this often within BAN_WINDOW is banned from the room. */
   BAN_AFTER_KICKS: 3,
   BAN_WINDOW_SECONDS: 30 * 60,
+  /** Corrections forgiven as lag (decaying like strikes) before they count as strikes of weight 1. */
+  LAG_EXCUSES: 4,
   /** Ignoring a rubber band (the client keeps reporting far away) costs this per resent teleport. */
   IGNORED_TELEPORT: 1,
 } as const;
@@ -46,6 +48,7 @@ interface Tracked {
   name: string;
   validator: MovementValidator;
   strikes: Strikes;
+  lagPoints: Strikes;
   violations: number;
 }
 
@@ -58,7 +61,7 @@ export class ArcadeGuard {
 
   join(id: number, name: string): void {
     this.players.set(id, {
-      name, strikes: new Strikes(), violations: 0,
+      name, strikes: new Strikes(), lagPoints: new Strikes(), violations: 0,
       validator: new MovementValidator(this.world, { maxSpeed: arcadeMaxSpeed(1), inBounds: this.inBounds }),
     });
   }
@@ -115,6 +118,8 @@ export class ArcadeGuard {
 
   private strike(p: Tracked, rule: GuardRule, weight: number, lag: boolean, now: number): MoveResult {
     p.violations++;
+    // Lag excuses a few corrections, not a steady stream of them.
+    if (lag && p.lagPoints.add(1, now) > STRIKES.LAG_EXCUSES) { lag = false; weight = 1; }
     const strikes = p.strikes.add(weight, now);
     let action: 'correct' | 'kick' | 'ban' = 'correct';
     if (strikes >= STRIKES.KICK_AT) {
