@@ -105,6 +105,10 @@ export const MAX_UPDATES_PER_CHUNK = 2500;
 export const MAX_PENDING = 50_000;
 /** Dust blocks solved in one go (a bigger network is finished by the next pass). */
 export const MAX_NETWORK = 2048;
+/** Hash table for a network solve: a power of two, at least twice MAX_NETWORK plus seeds. */
+const NET_BITS = 13;
+const NET_TABLE = 1 << NET_BITS;
+const NET_SHIFT = 32 - NET_BITS;
 
 const RING = 256;
 
@@ -570,11 +574,53 @@ export class RedstoneSim {
 
   // ---------------------------------------------------------------- dust networks
 
-  private readonly netIndex = new Map<number, number>();
-  private readonly buckets: number[][] = Array.from({ length: 16 }, () => []);
+  // Reused for every network solve: a busy circuit solves thousands of cells per tick, and fresh
+  // arrays, maps and typed arrays per solve made several MB of garbage per second (GC spikes).
+  /** Gathered cells (x, y, z triples) and their solved power. */
+  private cells = new Int32Array(MAX_NETWORK * 3 + 64);
+  private power = new Uint8Array(MAX_NETWORK + 32);
+  /** Open-addressing netKey -> cell index table; a slot is live when its stamp equals `netStamp`. */
+  private readonly netKeys = new Int32Array(NET_TABLE);
+  private readonly netVals = new Int32Array(NET_TABLE);
+  private readonly netStamps = new Uint32Array(NET_TABLE);
+  private netStamp = 0;
+  /** Power buckets as linked lists: head per power level, next per cell. */
+  private readonly bucketHead = new Int32Array(16);
+  private bucketNext = new Int32Array(MAX_NETWORK + 32);
+  /** Neighbour scratch: at most 12 cells (36 numbers) per query. */
+  private readonly cand = new Int32Array(36);
+  private readonly cand2 = new Int32Array(36);
 
-  private readonly cand = [] as number[];
-  private readonly cand2 = [] as number[];
+  private netGet(key: number): number {
+    let i = Math.imul(key, 0x9e3779b1) >>> NET_SHIFT;
+    while (this.netStamps[i] === this.netStamp) {
+      if (this.netKeys[i] === key) return this.netVals[i];
+      i = (i + 1) & (NET_TABLE - 1);
+    }
+    return -1;
+  }
+
+  /** Adds the key unless present; returns false when it was already there. */
+  private netAdd(key: number, value: number): boolean {
+    let i = Math.imul(key, 0x9e3779b1) >>> NET_SHIFT;
+    while (this.netStamps[i] === this.netStamp) {
+      if (this.netKeys[i] === key) return false;
+      i = (i + 1) & (NET_TABLE - 1);
+    }
+    this.netStamps[i] = this.netStamp;
+    this.netKeys[i] = key;
+    this.netVals[i] = value;
+    return true;
+  }
+
+  private pushCell(n: number, x: number, y: number, z: number): void {
+    if (n * 3 + 3 > this.cells.length) {
+      const grown = new Int32Array(this.cells.length * 2);
+      grown.set(this.cells);
+      this.cells = grown;
+    }
+    this.cells[n * 3] = x; this.cells[n * 3 + 1] = y; this.cells[n * 3 + 2] = z;
+  }
 
   /**
    * Solves the dust networks around the seed cells: gathers every connected dust block, takes each one's power from
@@ -583,9 +629,9 @@ export class RedstoneSim {
    */
   private solveWires(seeds: number[], maxChanges: number): void {
     const g = this.grid;
-    const cells: number[] = [];
-    const index = this.netIndex;
-    index.clear();
+    // A new stamp empties the table; on wrap-around clear the stamps for real.
+    if (++this.netStamp === 0xffffffff) { this.netStamps.fill(0); this.netStamp = 1; }
+    let n = 0;
     // 1. Gather the connected network (both directions of every read relation).
     for (let i = 0; i < seeds.length; i += 3) {
       const x = seeds[i], y = seeds[i + 1], z = seeds[i + 2];
@@ -594,47 +640,45 @@ export class RedstoneSim {
         this.breakAway(x, y, z, WIRE, g.getMeta(x, y, z));
         continue;
       }
-      const key = netKey(x, y, z);
-      if (index.has(key)) continue;
-      index.set(key, cells.length / 3);
-      cells.push(x, y, z);
+      // Over the size limit: the rest waits for the next pass (keeps the hash table below half full).
+      if (n >= MAX_NETWORK) { this.requeueWire(x, y, z); continue; }
+      if (!this.netAdd(netKey(x, y, z), n)) continue;
+      this.pushCell(n++, x, y, z);
     }
     const cand = this.cand;
-    for (let i = 0; i < cells.length && cells.length < MAX_NETWORK * 3; i += 3) {
-      const x = cells[i], y = cells[i + 1], z = cells[i + 2];
-      this.neighbours(x, y, z, cand);
-      for (let k = 0; k < cand.length; k += 3) {
-        const key = netKey(cand[k], cand[k + 1], cand[k + 2]);
-        if (index.has(key)) continue;
-        index.set(key, cells.length / 3);
-        cells.push(cand[k], cand[k + 1], cand[k + 2]);
-        if (cells.length >= MAX_NETWORK * 3) break;
+    for (let i = 0; i < n && n < MAX_NETWORK; i++) {
+      const cells = this.cells;
+      const count = this.neighbours(cells[i * 3], cells[i * 3 + 1], cells[i * 3 + 2], cand);
+      for (let k = 0; k < count; k += 3) {
+        if (!this.netAdd(netKey(cand[k], cand[k + 1], cand[k + 2]), n)) continue;
+        this.pushCell(n++, cand[k], cand[k + 1], cand[k + 2]);
+        if (n >= MAX_NETWORK) break;
       }
     }
-    const n = cells.length / 3;
     if (n === 0) return;
+    const cells = this.cells;
     this.updatesThisTick += n;
     // 2. Power from outside; 3. spread it, strongest first.
-    const power = new Uint8Array(n);
-    const buckets = this.buckets;
-    for (const b of buckets) b.length = 0;
+    if (this.power.length < n) { this.power = new Uint8Array(n * 2); this.bucketNext = new Int32Array(n * 2); }
+    const power = this.power, head = this.bucketHead, next = this.bucketNext;
+    head.fill(-1);
     for (let i = 0; i < n; i++) {
       const p = this.externalPower(cells[i * 3], cells[i * 3 + 1], cells[i * 3 + 2]);
       power[i] = p;
-      if (p > 0) buckets[p].push(i);
+      if (p > 0) { next[i] = head[p]; head[p] = i; }
     }
     const readers = this.cand2;
     for (let p = 15; p >= 2; p--) {
-      const list = buckets[p];
-      for (let k = 0; k < list.length; k++) {
-        const u = list[k];
+      // Cells only ever move to the bucket below, so each list is complete when its turn comes.
+      for (let u = head[p]; u !== -1; u = next[u]) {
         if (power[u] !== p) continue;
-        this.readersOf(cells[u * 3], cells[u * 3 + 1], cells[u * 3 + 2], readers);
-        for (let r = 0; r < readers.length; r += 3) {
-          const j = index.get(netKey(readers[r], readers[r + 1], readers[r + 2]));
-          if (j === undefined || power[j] >= p - 1) continue;
+        const count = this.readersOf(cells[u * 3], cells[u * 3 + 1], cells[u * 3 + 2], readers);
+        for (let r = 0; r < count; r += 3) {
+          const j = this.netGet(netKey(readers[r], readers[r + 1], readers[r + 2]));
+          if (j < 0 || power[j] >= p - 1) continue;
           power[j] = p - 1;
-          buckets[p - 1].push(j);
+          next[j] = head[p - 1];
+          head[p - 1] = j;
         }
       }
     }
@@ -649,11 +693,11 @@ export class RedstoneSim {
     }
     this.solving = false;
     // Dust beyond the size limit that was not part of this pass.
-    if (cells.length >= MAX_NETWORK * 3) {
-      for (let i = 0; i < cells.length; i += 3) {
-        this.neighbours(cells[i], cells[i + 1], cells[i + 2], cand);
-        for (let k = 0; k < cand.length; k += 3) {
-          if (!index.has(netKey(cand[k], cand[k + 1], cand[k + 2]))) this.requeueWire(cand[k], cand[k + 1], cand[k + 2]);
+    if (n >= MAX_NETWORK) {
+      for (let i = 0; i < n; i++) {
+        const count = this.neighbours(cells[i * 3], cells[i * 3 + 1], cells[i * 3 + 2], cand);
+        for (let k = 0; k < count; k += 3) {
+          if (this.netGet(netKey(cand[k], cand[k + 1], cand[k + 2])) < 0) this.requeueWire(cand[k], cand[k + 1], cand[k + 2]);
         }
       }
     }
@@ -666,34 +710,38 @@ export class RedstoneSim {
     this.wireSeeds.push(x, y, z);
   }
 
-  /** Every dust cell related to (x, y, z) by a read in either direction (a superset is fine). */
-  private neighbours(x: number, y: number, z: number, out: number[]): void {
-    out.length = 0;
+  /** Every dust cell related to (x, y, z) by a read in either direction (a superset is fine); returns the count of numbers written. */
+  private neighbours(x: number, y: number, z: number, out: Int32Array): number {
+    let n = 0;
     const g = this.grid;
     for (let s = 0; s < 4; s++) {
       const dx = s === 2 ? -1 : s === 3 ? 1 : 0, dz = s === 0 ? -1 : s === 1 ? 1 : 0;
       const nx = x + dx, nz = z + dz;
-      if (g.getBlock(nx, y, nz) === WIRE) out.push(nx, y, nz);
-      if (g.getBlock(nx, y + 1, nz) === WIRE) out.push(nx, y + 1, nz);
-      if (g.getBlock(nx, y - 1, nz) === WIRE) out.push(nx, y - 1, nz);
+      if (g.getBlock(nx, y, nz) === WIRE) { out[n++] = nx; out[n++] = y; out[n++] = nz; }
+      if (g.getBlock(nx, y + 1, nz) === WIRE) { out[n++] = nx; out[n++] = y + 1; out[n++] = nz; }
+      if (g.getBlock(nx, y - 1, nz) === WIRE) { out[n++] = nx; out[n++] = y - 1; out[n++] = nz; }
     }
+    return n;
   }
 
-  /** The dust cells that read the dust at (x, y, z): the inverse of the read rules. */
-  private readersOf(x: number, y: number, z: number, out: number[]): void {
-    out.length = 0;
+  /** The dust cells that read the dust at (x, y, z): the inverse of the read rules. Returns the count of numbers written. */
+  private readersOf(x: number, y: number, z: number, out: Int32Array): number {
+    let n = 0;
     const g = this.grid;
     const below = isConductor(g.getBlock(x, y - 1, z));
     const aboveOpen = !isConductor(g.getBlock(x, y + 1, z));
     for (let s = 0; s < 4; s++) {
       const dx = s === 2 ? -1 : s === 3 ? 1 : 0, dz = s === 0 ? -1 : s === 1 ? 1 : 0;
       // Same level.
-      if (g.getBlock(x + dx, y, z + dz) === WIRE) out.push(x + dx, y, z + dz);
+      if (g.getBlock(x + dx, y, z + dz) === WIRE) { out[n++] = x + dx; out[n++] = y; out[n++] = z + dz; }
       // A reader one step lower reads us over the solid block we stand on, when nothing solid is above it.
-      if (below && g.getBlock(x - dx, y - 1, z - dz) === WIRE && !isConductor(g.getBlock(x - dx, y, z - dz))) out.push(x - dx, y - 1, z - dz);
+      if (below && g.getBlock(x - dx, y - 1, z - dz) === WIRE && !isConductor(g.getBlock(x - dx, y, z - dz))) {
+        out[n++] = x - dx; out[n++] = y - 1; out[n++] = z - dz;
+      }
       // A reader one step higher reads us through the open air above us.
-      if (aboveOpen && g.getBlock(x - dx, y + 1, z - dz) === WIRE) out.push(x - dx, y + 1, z - dz);
+      if (aboveOpen && g.getBlock(x - dx, y + 1, z - dz) === WIRE) { out[n++] = x - dx; out[n++] = y + 1; out[n++] = z - dz; }
     }
+    return n;
   }
 
   // ---------------------------------------------------------------- components

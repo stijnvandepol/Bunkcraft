@@ -8,7 +8,10 @@ data-test
 
 # Claude Code agent worktrees
 .claude/worktrees/
+coverage
 tests/audio-previews/*.wav
+test-results
+playwright-report
 
 # UI screenshot suite: the full matrix and check runs are regenerated, not committed
 docs/screenshots/ui/matrix/

@@ -312,12 +312,19 @@ export async function startServer(config: Config): Promise<RunningServer> {
       return;
     }
     const hashed = path.startsWith('assets/');
+    // `vite build` writes brotli and gzip copies of hashed text assets next to them (vite.config.ts).
+    const accept = String(req.headers['accept-encoding'] ?? '');
+    const encoding = !hashed ? null
+      : /\bbr\b/.test(accept) && existsSync(`${file}.br`) ? 'br'
+        : /\bgzip\b/.test(accept) && existsSync(`${file}.gz`) ? 'gzip' : null;
     res.writeHead(200, {
       'content-type': MIME[extname(file)] ?? 'application/octet-stream',
       'cache-control': hashed ? 'public, max-age=31536000, immutable' : 'no-cache',
+      ...(encoding ? { 'content-encoding': encoding, vary: 'Accept-Encoding' } : {}),
     });
     if (req.method === 'HEAD') { res.end(); return; }
-    createReadStream(file).on('error', () => res.destroy()).pipe(res);
+    const body = encoding === 'br' ? `${file}.br` : encoding === 'gzip' ? `${file}.gz` : file;
+    createReadStream(body).on('error', () => res.destroy()).pipe(res);
   });
 
   // Slowloris and header floods: a request must arrive quickly and small; idle keep-alive sockets go early.

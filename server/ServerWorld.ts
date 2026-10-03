@@ -379,9 +379,8 @@ export class ServerWorld implements EntityWorld {
 
   private generate(cx: number, cz: number, key: number): void {
     const blocks = new Uint8Array(CHUNK_VOLUME);
-    this.generator.generate(cx, cz, blocks);
+    let meta: Uint8Array | null = this.generator.generate(cx, cz, blocks) ?? null;
     const edits = this.editsByChunk.get(key);
-    let meta: Uint8Array | null = null;
     if (edits) {
       for (const [i, state] of edits) {
         blocks[i] = stateId(state);

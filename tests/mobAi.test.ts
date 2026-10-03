@@ -6,6 +6,11 @@ import { BABY_AGE, BREED_COOLDOWN, type MobEvents, type MobTarget } from '../src
 import { isBreedFood, tagItems } from '../src/entities/Breeding';
 import { ITEM, itemId } from '../src/items/ItemRegistry';
 import { BLOCK } from '../src/world/BlockRegistry';
+import { useSeededRandom } from './helpers/seededRandom';
+import { TIME_SLACK } from './helpers/timing';
+
+// Goals roll dice (panic directions, strolls, look-arounds): seed them so every run is the same.
+useSeededRandom();
 
 /** Flat grass world at y = 63 (stone below) with editable blocks, full daylight, no unloaded chunks. */
 class TestWorld implements EntityWorld {
@@ -252,6 +257,6 @@ describe('path budget', () => {
       best = Math.min(best, (performance.now() - t0) / 40);
     }
     expect((pathStats.searches - searches0) / 240).toBeLessThanOrEqual(EntityManager.PATHS_PER_TICK);
-    expect(best).toBeLessThan(1);
+    expect(best).toBeLessThan(1 * TIME_SLACK);
   });
 });

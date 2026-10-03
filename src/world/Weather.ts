@@ -1,5 +1,5 @@
 import { BLOCK, SHAPE, SHAPE_CROSS, SHAPE_MODEL } from './BlockRegistry';
-import { BIOME } from './Biomes';
+import { BIOME, DRY_BIOMES, SNOWY_BIOMES } from './Biomes';
 import { CHUNK_HEIGHT } from './constants';
 
 /**
@@ -253,12 +253,14 @@ const BIOME_PRECIP: Record<number, Precip> = {
   [BIOME.DESERT]: Precip.NONE,
   [BIOME.SNOWY]: Precip.SNOW,
 };
+for (const b of DRY_BIOMES) BIOME_PRECIP[b] = Precip.NONE;
+for (const b of SNOWY_BIOMES) BIOME_PRECIP[b] = Precip.SNOW;
 
 export function precipitationFor(biome: number, y: number): Precip {
   const base = BIOME_PRECIP[biome] ?? Precip.RAIN;
   if (base === Precip.NONE) return Precip.NONE;
   if (base === Precip.SNOW) return Precip.SNOW;
-  if (y >= (biome === BIOME.MOUNTAINS ? SNOW_LINE_MOUNTAINS : SNOW_LINE)) return Precip.SNOW;
+  if (y >= (biome === BIOME.MOUNTAINS || biome === BIOME.WINDSWEPT_HILLS ? SNOW_LINE_MOUNTAINS : SNOW_LINE)) return Precip.SNOW;
   return Precip.RAIN;
 }
 

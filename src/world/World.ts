@@ -4,16 +4,17 @@ import { BlockEntityStore } from './BlockEntities';
 import { BLOCK, BOX_KIND, DYE, DYE_RGB, SHAPE, SHAPE_CROSS, SHAPE_DOOR, SHAPE_MODEL, SOLID, TINT } from './BlockRegistry';
 import { CHUNK_READY, type Chunk } from './Chunk';
 import { ChunkManager, type ChunkMaterials } from './ChunkManager';
-import { CHUNK_HEIGHT, CHUNK_VOLUME, SEA_LEVEL, blockIndex, chunkKey } from './constants';
+import { CHUNK_HEIGHT, CHUNK_VOLUME, blockIndex, chunkKey } from './constants';
 import { GEN_VERSION_CURRENT } from './GenVersion';
 import { DOOR_OPEN_BIT, isDoorUpper, packState, stateId, stateMeta } from './BlockStates';
 import { BOX_BED, BOX_GATE, BOX_TRAPDOOR, GATE_OPEN_BIT, TRAPDOOR_OPEN_BIT, bedPartner } from './BoxShapes';
-import { BIOME } from './TerrainGenerator';
 import { BlockUpdates } from './BlockUpdates';
 import { createRandomTicker } from './Growth';
 import { LAVA_TICK_DELAY, LiquidSim, WATER_TICK_DELAY, isLiquid } from './Liquids';
 import { RedstoneSim, isRedstoneBlock } from './Redstone';
 import { type RandomTicker, type RandomTickHost, noteRandomTickable } from './RandomTicks';
+import { findSpawnColumn } from './Spawn';
+import { BIOME } from './TerrainGenerator';
 import { type WorldGenerator, type WorldType, arenaMapOf, createGenerator, isArenaWorld } from './WorldGenerator';
 
 /** Sparse player edits per chunk: block index → packed state (id | meta << 8, see BlockStates). */
@@ -465,18 +466,8 @@ export class World {
   /** Spiral search for dry land near the origin using the 2D height function. */
   findSpawn(): { x: number; z: number } {
     if (isArenaWorld(this.worldType)) return arenaMapOf(this.worldType).spawns.ffa[0];
-    for (let r = 0; r < 2000; r += 8) {
-      const steps = Math.max(1, Math.floor((r * Math.PI * 2) / 16));
-      for (let s = 0; s < steps; s++) {
-        const a = (s / steps) * Math.PI * 2;
-        const x = Math.round(Math.cos(a) * r), z = Math.round(Math.sin(a) * r);
-        const h = this.generator.heightAt(x, z);
-        const biome = this.generator.biomeAt(x, z, Math.floor(h));
-        if (h > SEA_LEVEL + 2 && h < 85 && (biome === BIOME.PLAINS || biome === BIOME.FOREST || biome === BIOME.TAIGA) && !this.generator.surfaceOpen?.(x, z)) {
-          return { x: x + 0.5, z: z + 0.5 };
-        }
-      }
-    }
+    const at = findSpawnColumn(this.generator, this.genVersion);
+    if (at) return { x: at.x + 0.5, z: at.z + 0.5 };
     return { x: 0.5, z: 0.5 };
   }
 

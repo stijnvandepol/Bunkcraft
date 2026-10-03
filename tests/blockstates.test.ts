@@ -8,7 +8,7 @@ import { GameServer } from '../server/GameServer';
 import { ServerWorld } from '../server/ServerWorld';
 import { PROTOCOL_VERSION, type ClientMessage, type ServerMessage } from '../src/net/protocol';
 import { ChunkMesher } from '../src/rendering/ChunkMesher';
-import type { WorkerRequest } from '../src/workers/protocol';
+import { PACK_BASE_BYTES, type WorkerRequest } from '../src/workers/protocol';
 import { BLOCK } from '../src/world/BlockRegistry';
 import { packState, stateId, stateMeta } from '../src/world/BlockStates';
 import { CHUNK_AREA, CHUNK_VOLUME, blockIndex, chunkKey } from '../src/world/constants';
@@ -47,10 +47,11 @@ describe('World block states', () => {
     world.setBlock(3, 70, 4, BLOCK.STONE, 5);
     const mesh = requests.find((r) => r.type === 'mesh');
     expect(mesh).toBeDefined();
-    const metas = (mesh as Extract<WorkerRequest, { type: 'mesh' }>).metas;
-    expect(metas).toHaveLength(9);
-    expect(metas[4]).toBe(world.chunks.get(0, 0)!.meta);
-    expect(metas.filter((m) => m !== null)).toHaveLength(1);
+    const { pack, metaMask } = mesh as Extract<WorkerRequest, { type: 'mesh' }>;
+    expect(metaMask).toBe(1 << 4); // only the centre chunk has state
+    const meta = world.chunks.get(0, 0)!.meta!;
+    // The state array follows the 9 block and 9 biome arrays in the pack.
+    expect(Array.from(new Uint8Array(pack, PACK_BASE_BYTES, meta.length))).toEqual(Array.from(meta));
   });
 
   it('resets meta when the block is replaced by air', () => {

@@ -113,6 +113,6 @@ describe('server liquid broadcasting', () => {
     expect(maxTuples).toBeLessThanOrEqual(MAX_CHANGES_PER_TICK + 8);
     // Alice (who placed it) gets the flow too, not an echo of her own placement.
     expect(a.of('blocks').length).toBeGreaterThan(5);
-    expect(a.of('block').filter((m) => m.y === y)).toHaveLength(0);
+    expect(a.of('block').filter((m) => m.x === x && m.y === y && m.z === z)).toHaveLength(0); // other single-block changes (random ticks) may happen anywhere
   });
 });
