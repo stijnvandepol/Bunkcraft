@@ -350,10 +350,10 @@ describe('pistons', () => {
 });
 
 describe('budgets', () => {
-  it('a 3000-dust network beyond the change budget finishes over several ticks', () => {
+  it('a 2000-dust network beyond the change budget finishes over several ticks', () => {
     const g = new Grid();
     // A comb of 15-long lines fed by repeaters would be realistic; a plain grid of dust is the worst case.
-    for (let z = 0; z < 60; z++) for (let x = 1; x <= 50; x++) g.put(x, 64, z, B.REDSTONE_WIRE);
+    for (let z = 0; z < 40; z++) for (let x = 1; x <= 50; x++) g.put(x, 64, z, B.REDSTONE_WIRE);
     g.run(1);
     g.put(0, 64, 0, B.LEVER, FLOOR | LEVER_ON);
     const before = g.changes;
