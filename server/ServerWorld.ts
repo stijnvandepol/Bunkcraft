@@ -215,6 +215,11 @@ export class ServerWorld implements EntityWorld {
     return 0;
   }
 
+  /** Biome id of a column (spawn rules: husks in deserts, strays in snow, drowned in oceans). */
+  biomeName(x: number, z: number): number {
+    return this.generator.biomeAt(x, z, Math.floor(this.generator.heightAt(x, z)));
+  }
+
   /**
    * Changes one block (a player edit or an explosion). Unloaded chunks only remember it,
    * so it is applied when they generate. Returns the previous block, or −1 if unchanged.
@@ -374,9 +379,8 @@ export class ServerWorld implements EntityWorld {
 
   private generate(cx: number, cz: number, key: number): void {
     const blocks = new Uint8Array(CHUNK_VOLUME);
-    this.generator.generate(cx, cz, blocks);
+    let meta: Uint8Array | null = this.generator.generate(cx, cz, blocks) ?? null;
     const edits = this.editsByChunk.get(key);
-    let meta: Uint8Array | null = null;
     if (edits) {
       for (const [i, state] of edits) {
         blocks[i] = stateId(state);

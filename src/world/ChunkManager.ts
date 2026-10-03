@@ -232,6 +232,7 @@ export class ChunkManager {
       if (this.disposed || this.chunks.get(chunk.key) !== chunk) return;
       chunk.blocks = (res as GenerateResponse).blocks;
       chunk.biomes = (res as GenerateResponse).biomes;
+      chunk.meta = (res as GenerateResponse).meta ?? null;
       chunk.state = CHUNK_READY;
       chunk.version++;
       this.onGenerated?.(chunk);

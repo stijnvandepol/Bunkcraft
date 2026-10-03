@@ -37,6 +37,9 @@ const PROBES_PER_FRAME = 6;
  * Every public play method also reports its sound to the listeners ({@link addSoundListener}) so subtitles
  * can show it, even when the sound itself is muted.
  */
+/** Mob sound events (see entities/Mob.ts MobSound). */
+export type MobSoundEvent = 'idle' | 'hurt' | 'death' | 'fuse' | 'angry' | 'teleport';
+
 export class AudioEngine {
   private ctx: BaseAudioContext | null = null;
   private offline = false;
@@ -439,16 +442,73 @@ export class AudioEngine {
    * Mob sounds, synthesised per kind. Pass `at` (the mob or message position) for positional sound; without
    * it `volume` already includes the distance falloff.
    */
-  playMob(kind: string, event: 'idle' | 'hurt' | 'death' | 'fuse', volume: number, at?: Vec3): void {
+  playMob(kind: string, event: MobSoundEvent, volume: number, at?: Vec3): void {
     this.emitAt(`mob.${kind}.${event}`, at, volume);
     if (!at && volume <= 0.02) return;
-    this.placed(at, 28, Priority.Normal, () => this.mobRecipe(kind, event, at ? 1 : volume));
+    // Babies (a mob passed as `at` with baby set) speak half an octave higher, like Minecraft's 1.5x pitch.
+    const pitch = (at as { baby?: boolean } | undefined)?.baby ? 1.5 : 1;
+    this.placed(at, 28, Priority.Normal, () => this.mobRecipe(kind, event, at ? 1 : volume, pitch));
   }
 
-  private mobRecipe(kind: string, event: 'idle' | 'hurt' | 'death' | 'fuse', volume: number): void {
+  private mobRecipe(kind: string, event: MobSoundEvent, volume: number, pitch = 1): void {
     const v = volume * (event === 'idle' ? 0.5 : 0.7);
-    const p = 0.9 + Math.random() * 0.2;
+    const p = (0.9 + Math.random() * 0.2) * pitch;
     switch (kind) {
+      case 'wolf':
+        if (event === 'angry') {
+          // Growl: low rumbling saw with noise.
+          this.voice('sawtooth', 110 * p, 90 * p, 0.7, v * 0.5);
+          this.noiseBurst(350 * p, 1.2, 0.6, v * 0.3);
+        } else if (event === 'hurt' || event === 'death') {
+          // Whine: a falling squeal.
+          this.voice('triangle', 900 * p, event === 'death' ? 300 * p : 600 * p, event === 'death' ? 0.7 : 0.25, v * 0.5);
+        } else {
+          // Bark: two short punchy notes.
+          this.voice('square', 420 * p, 260 * p, 0.09, v * 0.35);
+          this.noiseBurst(900 * p, 1, 0.08, v * 0.25);
+          this.voice('square', 400 * p, 240 * p, 0.09, v * 0.3, 0.22);
+        }
+        break;
+      case 'enderman':
+        if (event === 'teleport') {
+          this.voice('sine', 300 * p, 1200 * p, 0.35, v * 0.4);
+          this.noiseBurst(2500, 0.5, 0.3, v * 0.2, 'bandpass');
+        } else if (event === 'angry') {
+          // Scream: detuned high saws.
+          this.voice('sawtooth', 820 * p, 700 * p, 0.9, v * 0.3);
+          this.voice('sawtooth', 860 * p, 650 * p, 0.9, v * 0.25);
+        } else {
+          // "Vwoop" murmurs: a pitch-bent sine pair.
+          this.voice('sine', 160 * p, 320 * p, 0.3, v * 0.4);
+          this.voice('sine', 330 * p, 150 * p, 0.3, v * 0.3, 0.25);
+        }
+        break;
+      case 'slime':
+        // Squish: low filtered noise and a wet blip.
+        this.noiseBurst(500 * p, 1.5, 0.15, v * 0.45);
+        this.voice('sine', 180 * p, 90 * p, 0.12, v * 0.35);
+        break;
+      case 'witch':
+        // Cackle: rising-falling triangle chirps.
+        for (let i = 0; i < (event === 'idle' ? 3 : 2); i++) this.voice('triangle', 520 * p, 380 * p, 0.09, v * 0.35, i * 0.12);
+        break;
+      case 'horse':
+        if (event === 'hurt' || event === 'death') this.voice('sawtooth', 480 * p, 260 * p, 0.4, v * 0.4);
+        else {
+          // Whinny: a fast wobbling falling tone.
+          for (let i = 0; i < 4; i++) this.voice('sawtooth', (620 - i * 60) * p, (560 - i * 60) * p, 0.1, v * 0.3, i * 0.08);
+        }
+        break;
+      case 'husk':
+      case 'drowned':
+        this.mobRecipe('zombie', event, volume, (kind === 'drowned' ? 0.85 : 0.9) * pitch);
+        return;
+      case 'stray':
+        this.mobRecipe('skeleton', event, volume, 0.9 * pitch);
+        return;
+      case 'cave_spider':
+        this.mobRecipe('spider', event, volume, 1.3 * pitch);
+        return;
       case 'pig':
         this.voice('sawtooth', 210 * p, 150 * p, 0.18, v * 0.5);
         this.voice('sawtooth', 190 * p, 130 * p, 0.16, v * 0.4, 0.2);

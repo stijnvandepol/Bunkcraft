@@ -46,6 +46,8 @@ export interface GenerateResponse {
   id: number;
   blocks: Uint8Array;
   biomes: Uint8Array;
+  /** Block state bytes of the generated chunk (generator version 3: terracotta colours); absent when all are 0. */
+  meta?: Uint8Array;
   ms: number;
 }
 

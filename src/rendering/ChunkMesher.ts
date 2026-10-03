@@ -13,7 +13,7 @@ import {
 } from '../world/BlockStates';
 import { CHUNK_HEIGHT, CHUNK_SIZE, CHUNK_VOLUME } from '../world/constants';
 import { BLOCK } from '../world/BlockRegistry';
-import { TINT_BIRCH, TINT_FOLIAGE, TINT_GRASS, TINT_SPRUCE, tintColor } from '../world/BiomeColors';
+import { TINT_BIRCH, TINT_FOLIAGE, TINT_GRASS, TINT_SPRUCE, TINT_WATER, tintColor } from '../world/BiomeColors';
 import { LightEngine, REGION, REGION_AREA, REGION_HEIGHT, REGION_VOLUME } from './Lighting';
 
 /**
@@ -187,6 +187,7 @@ export class ChunkMesher {
   /** Blurred biome colours per centre column (x + z*16), packed 0xRRGGBB. */
   private readonly grassTint = new Int32Array(256);
   private readonly foliageTint = new Int32Array(256);
+  private readonly waterTint = new Int32Array(256);
 
   /**
    * neighbours[(dz + 1) * 3 + (dx + 1)] = chunk block arrays; `metas` the matching block state
@@ -259,7 +260,7 @@ export class ChunkMesher {
       const n = (Math.floor(z / 16) + 1) * 3 + Math.floor(x / 16) + 1;
       return biomes[n][(x & 15) + (z & 15) * 16];
     };
-    for (const [type, out] of [[TINT_GRASS, this.grassTint], [TINT_FOLIAGE, this.foliageTint]] as const) {
+    for (const [type, out] of [[TINT_GRASS, this.grassTint], [TINT_FOLIAGE, this.foliageTint], [TINT_WATER, this.waterTint]] as const) {
       for (let z = 0; z < 16; z++) {
         for (let x = 0; x < 16; x++) {
           let r = 0, g = 0, b = 0;
@@ -493,7 +494,7 @@ export class ChunkMesher {
    */
   private emitLiquid(kind: number, x: number, y: number, z: number, i: number): void {
     const geo = kind === BLOCK.WATER ? this.water : this.opaque;
-    geo.currentTint = 0xffffff;
+    geo.currentTint = kind === BLOCK.WATER ? this.waterTint[(x & 15) + (z & 15) * 16] : 0xffffff;
     const hc = this.liquidCorners;
     hc[0] = this.cornerHeight(i, kind, 0, 0);
     hc[1] = this.cornerHeight(i, kind, 1, 0);

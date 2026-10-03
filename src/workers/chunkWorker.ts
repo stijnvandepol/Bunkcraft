@@ -40,9 +40,11 @@ self.onmessage = (e: MessageEvent<WorkerRequest>) => {
     }
     const blocks = new Uint8Array(pool.acquire(CHUNK_VOLUME), 0, CHUNK_VOLUME).fill(0);
     const biomes = new Uint8Array(CHUNK_AREA);
-    generator.generate(msg.cx, msg.cz, blocks, biomes);
+    const meta = generator.generate(msg.cx, msg.cz, blocks, biomes);
     const res: WorkerResponse = { type: 'generate', id: msg.id, blocks, biomes, ms: performance.now() - t0 };
-    self.postMessage(res, [blocks.buffer, biomes.buffer]);
+    const transfer: Transferable[] = [blocks.buffer, biomes.buffer];
+    if (meta) { res.meta = meta; transfer.push(meta.buffer); }
+    self.postMessage(res, transfer);
   } else {
     const pack = msg.pack;
     const biomeBase = PACK_CHUNKS * CHUNK_VOLUME;

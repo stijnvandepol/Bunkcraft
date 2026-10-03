@@ -73,6 +73,7 @@ describe('mobSoundLabel', () => {
     expect(mobSoundLabel('pig', 'death')).toBe('Pig dies');
   });
   it('has a fallback for unknown mobs', () => {
-    expect(mobSoundLabel('slime', 'idle')).toBe('Slime makes a sound');
+    expect(mobSoundLabel('glare', 'idle')).toBe('Glare makes a sound');
+    expect(mobSoundLabel('slime', 'idle')).toBe('Slime squishes');
   });
 });
