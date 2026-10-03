@@ -1,0 +1,13 @@
+{
+  "maxGrowth": 0.1,
+  "files": {
+    "main": {
+      "bytes": 1380555,
+      "gzip": 409412
+    },
+    "chunkWorker": {
+      "bytes": 117582,
+      "gzip": 37403
+    }
+  }
+}

@@ -1,0 +1,5 @@
+{
+  "ciFactor": 3,
+  "mesh": { "meanMs": 9, "p95Ms": 16 },
+  "arena": { "tickMeanMs": 0.5, "tickP95Ms": 1.5, "handleMeanMs": 0.6, "outKiBps": 30 }
+}

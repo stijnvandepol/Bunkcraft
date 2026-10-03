@@ -8,6 +8,8 @@ export default defineConfig({
     include: ['tests/**/*.test.ts'],
     exclude: ['tests/e2e/**', 'node_modules/**'],
     environment: 'node',
+    // Instrumented code is slower: wall-clock assertions read this (tests/helpers/timing.ts).
+    env: { BUNK_COVERAGE: process.argv.some((a) => a.startsWith('--coverage')) ? '1' : '0' },
     // Generous: world generation, zip and real-server integration tests take a few seconds alone and longer on a busy box.
     testTimeout: 30_000,
     // beforeAll hooks start real server processes (tsx compile + world setup).

@@ -4,6 +4,7 @@ import { itemId } from '../src/items/ItemRegistry';
 import { BLOCK, SAPLING_STAGE_BIT } from '../src/world/BlockRegistry';
 import { isLog } from '../src/world/PlantRules';
 import { KEY_A, KEY_B, type TestServer, cleanup, createRoom, joinGame, startTestServer } from './helpers/serverHarness';
+import { TIME_SLACK } from './helpers/timing';
 
 describe('ServerWorld random ticks', () => {
   it('grows a sapling into a tree and reports the blocks for broadcasting; age changes stay quiet', () => {
@@ -37,7 +38,7 @@ describe('ServerWorld random ticks', () => {
     for (let i = 0; i < N; i++) w.tickGrowth([{ x: 0, z: 0 }]);
     const per = (performance.now() - t0) / N;
     // Generous for a busy test machine; scripts/bench-randomticks.ts measures it properly.
-    expect(per).toBeLessThan(1.5);
+    expect(per).toBeLessThan(1.5 * TIME_SLACK);
   });
 
   it('a falling block leaves its cell and lands, both as simulation changes', () => {
