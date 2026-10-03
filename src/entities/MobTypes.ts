@@ -1,4 +1,4 @@
-import { ITEM, type ItemStack } from '../items/ItemRegistry';
+import { ITEM, type ItemStack, itemId } from '../items/ItemRegistry';
 import { BLOCK } from '../world/BlockRegistry';
 
 export type MobKind = 'pig' | 'cow' | 'sheep' | 'chicken' | 'zombie' | 'creeper' | 'skeleton' | 'spider' | 'player' | 'player_red' | 'player_blue';
@@ -39,6 +39,8 @@ export interface MobType {
   hostile: boolean;
   /** Melee damage (Normal difficulty). */
   attack: number;
+  /** Blocks within which a hostile mob notices the player (attribute follow_range): 16 unless set (zombie 35). */
+  followRange?: number;
   /** Zombie pose: arms held straight forward. */
   armsForward?: boolean;
   /** Burns in direct sunlight (zombie, skeleton). */
@@ -162,7 +164,7 @@ export const MOB_TYPES = {
       },
       ...quadLegs(4, 12, 2, -8, 4, ['#3c291c', '#4a3324']),
     ],
-    drops: () => [...stack(ITEM.BEEF, rnd(1, 3))],
+    drops: () => [...stack(ITEM.BEEF, rnd(1, 3)), ...stack(itemId('leather'), rnd(0, 2))],
   },
   sheep: {
     kind: 'sheep', name: 'Sheep', health: 8, width: 0.9, height: 1.3, walkSpeed: 1.2, runSpeed: 2.4, hostile: false, attack: 0,
@@ -199,7 +201,7 @@ export const MOB_TYPES = {
     drops: () => [...stack(ITEM.CHICKEN, 1), ...stack(ITEM.FEATHER, rnd(0, 2))],
   },
   zombie: {
-    kind: 'zombie', name: 'Zombie', health: 20, width: 0.6, height: 1.95, walkSpeed: 1.0, runSpeed: 2.6, hostile: true, attack: 3, armsForward: true, burnsInDaylight: true,
+    kind: 'zombie', name: 'Zombie', health: 20, width: 0.6, height: 1.95, walkSpeed: 1.0, runSpeed: 2.6, hostile: true, attack: 3, followRange: 35, armsForward: true, burnsInDaylight: true,
     parts: [
       {
         anim: 'head', pivot: [0, 24, 0], boxes: [{ from: [-4, 24, -4], to: [4, 32, 4], colors: ZOMBIE_SKIN, face: (px, w) => {

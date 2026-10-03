@@ -188,6 +188,8 @@ export const BLOCK = {
   LANTERN: 83,
   SAPLING: 84,
   IRON_BARS: 85,
+  /** A furnace that is burning (same state bits as FURNACE; emits light 13, drops a plain furnace). */
+  LIT_FURNACE: 86,
   /** Sentinel returned for blocks in chunks that are not loaded (treated as solid). */
   UNLOADED: 255,
 } as const;
@@ -433,7 +435,9 @@ BLOCK_DEFS.push(
     sound: 'stone', hardness: 2, tool: 'pickaxe', minTier: 0,
   }),
   box(B.LADDER, 'ladder', 'Ladder', BOX_LADDER, { all: 'ladder' }, { solid: false, hardness: 0.4, metaMask: 3, sound: 'ladder' }),
-  cube(B.CHEST, 'chest', 'Chest', { top: 'chest_top', bottom: 'chest_top', side: 'chest_side', front: 'chest_front' }, 2.5, 'wood', { facing: true, tool: 'axe' }),
+  cube(B.CHEST, 'chest', 'Chest', { top: 'chest_top', bottom: 'chest_top', side: 'chest_side', front: 'chest_front' }, 2.5, 'wood', { facing: true, tool: 'axe', metaMask: 0x0f }),
+  // Burning furnace: its own id because block light is looked up per id (state 0-1 is the facing, like FURNACE).
+  cube(B.LIT_FURNACE, 'lit_furnace', 'Furnace', { top: 'furnace_top', bottom: 'furnace_top', side: 'furnace_side', front: 'furnace_front_on' }, 1.2, 'stone', { facing: true, light: 13, inInventory: false }),
   {
     id: B.LANTERN, name: 'lantern', displayName: 'Lantern', shape: 'model', solid: false, transparent: true, hardness: 3.5, sound: 'metal',
     light: 15, inInventory: true, textures: { all: 'lantern' }, model: [[5, 0, 5, 11, 7, 11], [6, 7, 6, 10, 9, 10]], tool: 'pickaxe', minTier: 0,

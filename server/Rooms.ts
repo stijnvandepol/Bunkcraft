@@ -321,6 +321,7 @@ export class Rooms {
       if (!existsSync(file)) continue;
       if (cutoff && !this.loaded.has(entry) && statSync(file).mtimeMs < cutoff) {
         rmSync(join(this.opts.dataDir, entry), { recursive: true, force: true });
+        if (this.listedMeta.delete(entry)) this.listCache = null;
         log.info('room expired', { code: entry });
         continue;
       }
