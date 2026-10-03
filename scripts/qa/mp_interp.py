@@ -30,13 +30,19 @@ with sync_playwright() as pw:
     page.wait_for_function("() => ['playing', 'paused'].includes(game.state)", timeout=60000)
     page.evaluate("() => { game.input.locked = true; game.state = 'playing'; }")
     bot = subprocess.Popen(['npx', 'tsx', 'scripts/qa/walker-bot.ts', SERVER, code, '14'], cwd=REPO)
-    page.wait_for_function("() => game.remote.list.some(r => r.name === 'Walker')", timeout=15000)
+    page.wait_for_function("() => game.remote.list.some(r => r.name === 'Walker')", timeout=45000)
     time.sleep(2)
     samples = page.evaluate('''() => new Promise((res) => { const out = []; const t0 = performance.now();
       const r = game.remote.list.find(r => r.name === 'Walker');
-      const tick = () => { out.push([performance.now(), r.mob.x]); if (performance.now() - t0 < 8000) requestAnimationFrame(tick); else res(out); };
+      // Time = the clock the game drew this frame with (RemotePlayers.lastUpdate), not when this callback ran: on a busy
+      // machine the two differ by milliseconds and that would show up as fake speed jitter. Frames the game skipped
+      // (no new update) are left out.
+      let last = -1;
+      const tick = () => { const t = game.remote.lastUpdate * 1000; if (t !== last) { out.push([t, r.mob.x]); last = t; }
+        if (performance.now() - t0 < 8000) requestAnimationFrame(tick); else res(out); };
       requestAnimationFrame(tick); })''')
     fps = len(samples) / 8
+    load = os.getloadavg()[0]
     speeds = [abs(x2 - x1) / ((t2 - t1) / 1000) for (t1, x1), (t2, x2) in zip(samples, samples[1:]) if t2 > t1]
     # Ignore the frames around the turn-arounds (speed passes through 0 there).
     walking = [s for s in speeds if s > 1.0]
@@ -44,7 +50,7 @@ with sync_playwright() as pw:
     mean = sum(walking) / max(1, len(walking))
     sd = (sum((s - mean) ** 2 for s in walking) / max(1, len(walking))) ** 0.5
     big = sum(1 for s in walking if abs(s - 4.317) > 1.5)
-    print(f'browser {fps:.0f} fps; drawn speed mean {mean:.2f} b/s (true 4.317), stdev {sd:.2f} ({sd / max(mean, 1e-9) * 100:.0f} %), '
+    print(f'browser {fps:.0f} fps (load {load:.1f}); drawn speed mean {mean:.2f} b/s (true 4.317), stdev {sd:.2f} ({sd / max(mean, 1e-9) * 100:.0f} %), '
           f'{stalls} frames standing still, {big} frames off by > 1.5 b/s, of {len(speeds)}')
     # Where does it come from? The snapshot buffer: arrival-time gaps and steps between consecutive snapshots.
     buf = page.evaluate("() => game.remote.list.find(r => r.name === 'Walker').buffer.map(s => [s.t, s.x])")

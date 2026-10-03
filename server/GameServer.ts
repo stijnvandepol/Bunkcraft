@@ -30,6 +30,7 @@ import { ContainerService } from './Containers';
 import type { SavedEntity } from '../src/world/BlockEntities';
 import { type Actor, type BanEntry, type CommandHost, type Moderation, type Target, lc, runCommand } from './Commands';
 import { InventoryGuard, parseInventory } from './InventoryGuard';
+import { POSE_SAMPLE_DELAY_MS, type Pose, PoseTrail } from './PoseTrail';
 import { type ChildLogger, log } from './Log';
 import { metrics } from './Metrics';
 import { ArcadeGuard } from './anticheat/ArcadeGuard';
@@ -178,6 +179,8 @@ interface Session {
   /** Arcade: aim statistics (suspicion score) and the time of the last shot (ms). */
   aim: AimStats;
   lastFireAt: number;
+  /** Recent position reports on the receive timeline: snapshots sample them at one fixed moment (see PoseTrail). */
+  trail: PoseTrail;
 }
 
 export interface ServerOptions {
@@ -257,6 +260,10 @@ export class GameServer {
   /** Arcade: per-recipient snapshot culling (anti-wallhack); null when switched off. */
   private readonly visibility: Visibility | null = null;
   private readonly viewers: Viewer[] = [];
+  /** Steady snapshot clock (ms): the moment each Minecraft snapshot shows, one tick apart (see tick()). */
+  private snapClock = 0;
+  /** Scratch pose for the snapshot (no allocation per tick). */
+  private readonly pose: Pose = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0 };
   private readonly staleAt = { x: 0, y: 0, z: 0 };
   /** Chests and furnaces: who has which open, click validation, updates (null in arcade games). */
   private readonly containers: ContainerService | null = null;
@@ -538,6 +545,7 @@ export class GameServer {
         const s = this.sessions.get(id);
         if (!s) return;
         s.x = x; s.y = y; s.z = z;
+        s.trail.reset();
         s.hasPos = true;
         s.lastPosTime = Date.now();
         s.awaiting = { x, y, z, until: Date.now() + 1500 };
@@ -728,7 +736,7 @@ export class GameServer {
       drops: new Bucket(30, 60, 'drops'), takes: new Bucket(20, 30, 'takes'),
       chat: new Bucket(1, 5, 'chat'), moves: new Bucket(40, 80, 'moves'), states: new Bucket(0.5, 10, 'states'), containers: new Bucket(20, 40, 'containers'),
       fires: new Bucket(25, 30, 'fires'), actions: new Bucket(15, 30, 'actions'), violations: 0,
-      pingMs: 0, pingSentAt: 0, awaiting: null, velX: 0, velY: 0, velZ: 0, aim: new AimStats(), lastFireAt: 0,
+      pingMs: 0, pingSentAt: 0, awaiting: null, velX: 0, velY: 0, velZ: 0, aim: new AimStats(), lastFireAt: 0, trail: new PoseTrail(),
     };
     const joined = this.match?.join(session.id, name) ?? null;
     if (joined) {
@@ -964,6 +972,7 @@ export class GameServer {
     s.flags = m.flags | 0; s.held = m.held | 0;
     s.hasPos = true;
     s.lastPosTime = now;
+    s.trail.push(now, s.x, s.y, s.z, s.yaw, s.pitch);
     this.match?.setPosition(s.id, s.x, s.y, s.z, s.yaw, s.pitch);
   }
 
@@ -1030,6 +1039,7 @@ export class GameServer {
     if (!r.lag) this.logger.warn('cheat', { name: s.name, kind: 'movement', rule: r.rule, strikes: Math.round(r.strikes * 10) / 10, action: r.action });
     if (r.action === 'correct' || s.owner) {
       s.x = at.x; s.y = at.y; s.z = at.z;
+      s.trail.reset();
       s.awaiting = { x: at.x, y: at.y, z: at.z, until: Date.now() + 1500 };
       this.match?.setPosition(s.id, s.x, s.y, s.z, s.yaw, s.pitch);
       this.send(s, { t: 'teleport', x: at.x, y: at.y, z: at.z });
@@ -1173,6 +1183,7 @@ export class GameServer {
         const p = self.findSession(name);
         if (!p) return;
         p.x = x; p.y = y; p.z = z;
+        p.trail.reset();
         p.hasPos = true;
         p.awaiting = { x, y, z, until: Date.now() + 1500 };
         self.guard?.reset(p.id, x, y, z, Date.now() / 1000);
@@ -1291,9 +1302,19 @@ export class GameServer {
     if (this.visibility && this.match && this.match.phase !== 'warmup' && this.match.phase !== 'ended') this.sendCulledSnapshots();
     else {
       const players: SnapshotEntry[] = [];
+      // Minecraft games: everybody's pose at one moment slightly in the past (even steps, see PoseTrail). Arcade keeps
+      // the newest report: its lag compensation and tick rate are built around that.
+      // The sample times advance by one tick (setInterval fires a few ms early or late; sampling at "now" would turn
+      // that into uneven steps) and drift slowly towards the real clock. A real stall resyncs it.
+      const now = Date.now();
+      const expected = this.snapClock + TICK_MS;
+      this.snapClock = Math.abs(now - expected) > 2 * TICK_MS ? now : expected + (now - expected) * 0.1;
+      const at = this.snapClock - POSE_SAMPLE_DELAY_MS;
+      const pose = this.pose;
       for (const s of this.sessions.values()) {
         if (!s.hasPos) continue;
-        players.push([s.id, round(s.x), round(s.y), round(s.z), round(s.yaw), round(s.pitch), s.flags, s.held]);
+        if (this.match || !s.trail.sample(at, pose)) { pose.x = s.x; pose.y = s.y; pose.z = s.z; pose.yaw = s.yaw; pose.pitch = s.pitch; }
+        players.push([s.id, round(pose.x), round(pose.y), round(pose.z), round(pose.yaw), round(pose.pitch), s.flags, s.held]);
       }
       if (players.length > 0) this.broadcast({ t: 'snap', players });
     }
