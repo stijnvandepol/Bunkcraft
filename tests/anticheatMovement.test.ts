@@ -292,6 +292,8 @@ describe('movement validator: the real client physics never trips it', () => {
       const map = getMap(id);
       const variant = map.variantFor(7);
       const getBlock = (x: number, y: number, z: number) => map.blockAt(variant, x, y, z);
+      // Arena maps have no block states: meta 0, shapes from the neighbours (as Game passes getMeta to Player.step).
+      const getMeta = () => 0;
       const spawns = map.spawns.ffa;
       let total = 0, forgiven = 0, worst = 0;
       const bad: string[] = [];
@@ -301,11 +303,11 @@ describe('movement validator: the real client physics never trips it', () => {
         const sp = spawns[Math.floor(r() * spawns.length)];
         const net = NETS[seed % NETS.length];
         const hz30 = seed % 2 === 0;
-        const reports = recordClient(getBlock, undefined, seed, {
+        const reports = recordClient(getBlock, getMeta, seed, {
           speedMultiplier: ARCADE_SPEED_MULT * w.moveSpeed, airAccel: ARCADE_AIR_ACCEL, canFly: false, seconds: 40,
           interval: hz30 ? [0.033, 0.05] : [0.05, 0.067], bunnyHop: seed % 3 !== 0, start: { x: sp.x, y: sp.y, z: sp.z },
         });
-        const tot = replay(getBlock, undefined, throughNetwork(reports, seed, net), arcadeMaxSpeed(w.moveSpeed), false, (x, z) => map.inBounds(x, z));
+        const tot = replay(getBlock, getMeta, throughNetwork(reports, seed, net), arcadeMaxSpeed(w.moveSpeed), false, (x, z) => map.inBounds(x, z));
         total += tot.reports; forgiven += tot.lagForgiven; worst = Math.max(worst, tot.maxSpeedRatio);
         for (const v of tot.violations.slice(0, 2)) bad.push(`${w.id} seed ${seed} ${net.name}: ${(v as { rule: string }).rule} (${tot.violations.length})`);
       }

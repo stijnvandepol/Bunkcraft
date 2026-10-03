@@ -11,5 +11,5 @@ describe('arcade ffa over real WebSockets', () => {
     const { shooter, victim } = await playArcadeMatch(srv, 'ffa');
     shooter.close();
     victim.close();
-  }, 90_000);
+  }, 150_000); // honest walking (validated by the server) at running pace takes a while
 });

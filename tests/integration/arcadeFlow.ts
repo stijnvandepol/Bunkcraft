@@ -3,7 +3,12 @@ import { HITBOX } from '../../src/modes/Weapons';
 import { traceBlocks } from '../../server/Combat';
 import { ServerWorld } from '../../server/ServerWorld';
 import { arenaWorldType } from '../../src/world/WorldGenerator';
-import type { MapId } from '../../src/modes/maps';
+import { type MapId, getMap } from '../../src/modes/maps';
+import { arenaPath, follow } from '../../scripts/lib/arenaPath';
+import { arcadeMaxSpeed } from '../../src/modes/ArcadeLogic';
+
+/** Running pace of the victim: just under the rifle's run speed (the server allows 3 % on top). */
+const PACE = arcadeMaxSpeed(1) * 0.97;
 import type { ServerMessage } from '../../src/net/protocol';
 import { Client, type TestServer, createRoom, sleep } from './harness';
 
@@ -17,15 +22,34 @@ async function arrive(c: Client, after: number): Promise<Spawn> {
   return sp;
 }
 
-/** Walks a player (in 5-block steps, within the server's speed limit) from `from` to `to`. */
-async function walk(c: Client, from: { x: number; y: number; z: number }, to: { x: number; y: number; z: number }): Promise<void> {
-  const dist = Math.hypot(to.x - from.x, to.z - from.z);
-  const steps = Math.max(1, Math.ceil(dist / 4));
-  for (let i = 1; i <= steps; i++) {
-    const f = i / steps;
-    c.send({ t: 'pos', x: from.x + (to.x - from.x) * f, y: to.y, z: from.z + (to.z - from.z) * f, yaw: 0, pitch: 0, flags: 4, held: 0 });
-    await sleep(60);
+/** Can a bullet from `eye` reach the feet, the chest and the head of a player standing at `p`? */
+function inSight(world: ServerWorld, eye: { x: number; y: number; z: number }, p: { x: number; y: number; z: number }): boolean {
+  for (const h of [0.2, 1.0, HITBOX.height - HITBOX.head / 2]) {
+    const t = { x: p.x, y: p.y + h, z: p.z };
+    const len = Math.hypot(t.x - eye.x, t.y - eye.y, t.z - eye.z);
+    if (traceBlocks(world, eye.x, eye.y, eye.z, (t.x - eye.x) / len, (t.y - eye.y) / len, (t.z - eye.z) / len, len + 0.5) < len + 0.5) return false;
   }
+  return true;
+}
+
+/**
+ * Walks a player like an honest client (the server validates movement against the map): along a floor
+ * path towards `to`, at running pace with 30 Hz position reports, and stops as soon as `stop` says so.
+ */
+async function walk(
+  c: Client, from: { x: number; y: number; z: number }, to: { x: number; z: number }, mapId: MapId, seed: number,
+  stop: (p: { x: number; y: number; z: number }) => boolean,
+): Promise<{ x: number; y: number; z: number }> {
+  const map = getMap(mapId);
+  const route = arenaPath(map, map.variantFor(seed), [from.x, from.z], [to.x, to.z]);
+  expect(route, 'a walking path to the shooter').not.toBeNull();
+  const me = { x: from.x, y: from.y, z: from.z };
+  while (route!.length && !stop(me)) {
+    follow(me, route!, PACE / 30);
+    c.send({ t: 'pos', x: me.x, y: me.y, z: me.z, yaw: 0, pitch: 0, flags: 4, held: 0 });
+    await sleep(33);
+  }
+  return me;
 }
 
 /**
@@ -65,31 +89,18 @@ export async function playArcadeMatch(srv: TestServer, type: 'tdm' | 'ffa', mapI
     expect(shooterSpawn.health).toBe(100);
     const sp = shooterSpawn;
 
-    // Find an open spot three blocks from the shooter where a bullet reaches head and feet.
     const eye = { x: sp.x, y: sp.y + EYE, z: sp.z };
-    const candidates: Array<{ x: number; y: number; z: number }> = [];
-    for (const r of [3, 4, 5, 6, 2]) {
-      for (let k = 0; k < 16; k++) {
-        const a = (k / 16) * Math.PI * 2;
-        candidates.push({ x: Math.floor(sp.x + Math.cos(a) * r) + 0.5, y: sp.y, z: Math.floor(sp.z + Math.sin(a) * r) + 0.5 });
-      }
-    }
-    const spot = candidates.find((p) => {
-      if (world.getBlock(Math.floor(p.x), Math.floor(p.y) - 1, Math.floor(p.z)) === 0) return false; // needs a floor
-      for (const h of [0.2, 1.0, HITBOX.height - HITBOX.head / 2]) {
-        const t = { x: p.x, y: p.y + h, z: p.z };
-        const len = Math.hypot(t.x - eye.x, t.y - eye.y, t.z - eye.z);
-        if (traceBlocks(world, eye.x, eye.y, eye.z, (t.x - eye.x) / len, (t.y - eye.y) / len, (t.z - eye.z) / len, len + 0.5) < len + 0.5) return false;
-      }
-      return true;
-    });
-    const head = { x: spot!.x, y: spot!.y + HITBOX.height - HITBOX.head / 2, z: spot!.z };
-    const len = Math.hypot(head.x - eye.x, head.y - eye.y, head.z - eye.z);
-    const dir = { dx: (head.x - eye.x) / len, dy: (head.y - eye.y) / len, dz: (head.z - eye.z) / len };
+    const seed = shooter.welcome.seed;
 
     let at = victimSpawn;
     for (let kills = 1; kills <= 5; kills++) {
-      await walk(victim, at, spot!);
+      // The victim walks towards the shooter until it stands in plain sight (or close by).
+      const spot = await walk(victim, at, eye, mapId, seed, (p) => Math.hypot(p.x - eye.x, p.z - eye.z) < 25 && inSight(world, eye, p));
+      if (process.env.FLOW_DEBUG) console.log(`kill ${kills} at ${Date.now()}: victim at ${spot.x.toFixed(1)},${spot.z.toFixed(1)} teleports ${victim.of('teleport').length}`);
+      expect(inSight(world, eye, spot), 'victim in sight of the shooter').toBe(true);
+      const head = { x: spot.x, y: spot.y + HITBOX.height - HITBOX.head / 2, z: spot.z };
+      const len = Math.hypot(head.x - eye.x, head.y - eye.y, head.z - eye.z);
+      const dir = { dx: (head.x - eye.x) / len, dy: (head.y - eye.y) / len, dz: (head.z - eye.z) / len };
       // Spawn protection lasts 2 s; the first life started a while ago, later ones just now.
       await sleep(kills === 1 ? 600 : 2300);
       const mark = shooter.mark();
