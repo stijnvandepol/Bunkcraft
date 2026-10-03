@@ -44,16 +44,17 @@ describe('NetClient against the real server', () => {
     await expect(new NetClient().connect(srv.ws, 'x', code)).rejects.toThrow(/Invalid name/);
   });
 
-  it('is told when the server kicks it for logging in twice', async () => {
+  it('refuses a second player who takes a name that is already online, and keeps the first connected', async () => {
     const code = await createRoom(srv);
     const first = new NetClient();
     open.push(first);
     await first.connect(srv.ws, 'twin', code);
     const reasons: string[] = [];
     first.onClose = (r) => reasons.push(r);
-    const second = new NetClient();
-    open.push(second);
-    await second.connect(srv.ws, 'TWIN', code);
-    await vi.waitFor(() => expect(reasons[0]).toMatch(/another location/), { timeout: 3000 });
+    // Another browser (other identity key) cannot steal the name.
+    await expect(new NetClient().connect(srv.ws, 'TWIN', code)).rejects.toThrow(/already used/);
+    await sleep(200);
+    expect(reasons).toEqual([]);
+    expect(first.connected).toBe(true);
   });
 });

@@ -10,7 +10,7 @@ export interface RayHit {
   distance: number;
 }
 
-const boxes = new Float64Array(24);
+const boxes = new Float64Array(64);
 const enter = [0, 0, 0];
 
 /**

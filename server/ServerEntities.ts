@@ -1,6 +1,6 @@
 import { EntityManager } from '../src/entities/EntityManager';
 import type { Mob, MobEvents, MobTarget } from '../src/entities/Mob';
-import { type ItemStack, ITEM, blockDrop, getItemDef } from '../src/items/ItemRegistry';
+import { type ItemStack, ITEM, blockDrop, encodeData, getItemDef } from '../src/items/ItemRegistry';
 import {
   type ArrowEntry, type ItemEntry, type MobEntry, NET_MOB_KINDS, type ServerMessage, type TntEntry,
 } from '../src/net/protocol';
@@ -16,6 +16,8 @@ const ATTACK_REACH = 6.5;
 const IGNITE_REACH = 8;
 const TAKE_REACH = 2.6;
 const SOUND_RADIUS = 24;
+/** Player drops bypass the manager's item cap (death drops must not vanish), so the server caps them itself. */
+const MAX_DROPPED_ITEMS = 400;
 
 /** What the server needs to know about a connected player. */
 export interface EntityPlayer {
@@ -35,6 +37,8 @@ export interface EntityHost {
   broadcastBlocks(edits: number[]): void;
   /** Persist a block change. */
   recordEdit(x: number, y: number, z: number, id: number, meta: number): void;
+  /** Sky light levels the weather takes away (rain and thunder count as darkness for spawning). */
+  skyDarkness?(): number;
 }
 
 const r2 = (v: number) => Math.round(v * 100) / 100;
@@ -62,11 +66,12 @@ export class ServerEntities {
   constructor(
     seed: number,
     edits: Record<string, number>,
-    private readonly mode: GameMode,
+    private mode: GameMode,
     private readonly host: EntityHost,
     private readonly getTime: () => number,
+    genVersion?: number,
   ) {
-    this.world = new ServerWorld(seed, edits);
+    this.world = new ServerWorld(seed, edits, 'terrain', genVersion);
     this.world.onEdit = (x, y, z, id, meta) => host.recordEdit(x, y, z, id, meta);
     this.world.liquids.onDestroyed = (x, y, z, id) => {
       // Plants and torches washed away drop themselves, like in survival Minecraft.
@@ -89,6 +94,11 @@ export class ServerEntities {
     this.tickCount = 0;
   }
 
+  /** The game mode changed (/gamemode): mobs and block drops follow the new rules. */
+  setMode(mode: GameMode): void {
+    this.mode = mode;
+  }
+
   get mobCount(): number {
     return this.manager.mobs.length;
   }
@@ -107,7 +117,7 @@ export class ServerEntities {
     if (flowed.length > 0) this.host.broadcastBlocks(flowed);
     this.manager.targets = targets;
     const day = dayFactorAt(this.getTime());
-    this.manager.tick(targets[0], Math.round((1 - day) * 11), this.events, null, day > 0.6);
+    this.manager.tick(targets[0], Math.round((1 - day) * 11 + (this.host.skyDarkness?.() ?? 0)), this.events, null, day > 0.6);
     if (++this.tickCount % 2 === 0) this.sendSnapshots(active);
   }
 
@@ -151,16 +161,18 @@ export class ServerEntities {
     if (Math.hypot(it.x - p.x, it.y - (p.y + 0.8), it.z - p.z) > TAKE_REACH) return;
     it.removed = true;
     // The entity drops out of the snapshots at once and is compacted on the next tick.
-    this.host.send(p.id, { t: 'taken', id: it.netId, itemId: it.stack.id, count: it.stack.count, damage: it.stack.damage });
+    this.host.send(p.id, { t: 'taken', id: it.netId, itemId: it.stack.id, count: it.stack.count, damage: it.stack.damage, data: encodeData(it.stack.data) });
   }
 
   /** A client dropped something (block drop, Q, death). Validated like every other request. */
   drop(p: EntityPlayer, stack: ItemStack, x: number, y: number, z: number, yaw: number | undefined, delay: number | undefined): void {
     if (!p.hasPos || !Number.isInteger(stack.id) || !Number.isInteger(stack.count)) return;
     if (stack.count < 1 || stack.count > 64 || !getItemDef(stack.id)) return;
+    if (this.manager.items.length >= MAX_DROPPED_ITEMS) return;
+    const damage = typeof stack.damage === 'number' && Number.isInteger(stack.damage) && stack.damage >= 0 && stack.damage <= 100_000 ? stack.damage : undefined;
     if (![x, y, z].every(Number.isFinite) || Math.hypot(x - p.x, y - (p.y + 1), z - p.z) > 10) return;
     const pickupDelay = Number.isFinite(delay) ? Math.min(100, Math.max(0, delay as number)) : 10;
-    this.manager.dropItem({ id: stack.id, count: stack.count, damage: stack.damage }, x, y, z, pickupDelay,
+    this.manager.dropItem({ id: stack.id, count: stack.count, damage, data: stack.data }, x, y, z, pickupDelay,
       Number.isFinite(yaw) ? yaw : undefined, true);
   }
 
@@ -173,7 +185,10 @@ export class ServerEntities {
     },
     explode: (mob) => this.explode(mob.type.name, mob.x, mob.y + 0.5, mob.z, 3, false),
     tntExplode: (t) => this.explode('', t.x, t.y + 0.49, t.z, 4, t.inWater),
-    shoot: (mob, target) => this.manager.skeletonShoot(mob, target.x, target.y, target.z),
+    shoot: (mob, target) => {
+      this.manager.skeletonShoot(mob, target.x, target.y, target.z);
+      this.soundNear('', 'shoot', mob.x, mob.y, mob.z);
+    },
     arrowHit: (arrow, damage, targetId) => {
       if (targetId === undefined) return;
       this.host.send(targetId, {
@@ -190,7 +205,7 @@ export class ServerEntities {
     this.soundNear(m.type.kind, event, m.x, m.y, m.z);
   }
 
-  private soundNear(kind: string, event: 'idle' | 'hurt' | 'death' | 'fuse' | 'arrow', x: number, y: number, z: number): void {
+  private soundNear(kind: string, event: 'idle' | 'hurt' | 'death' | 'fuse' | 'arrow' | 'shoot', x: number, y: number, z: number): void {
     const msg: ServerMessage = { t: 'msound', kind, event, x: r2(x), y: r2(y), z: r2(z) };
     for (const p of this.players) {
       if (p.hasPos && Math.hypot(p.x - x, p.y - y, p.z - z) < SOUND_RADIUS) this.host.send(p.id, msg);
@@ -225,6 +240,17 @@ export class ServerEntities {
       if (!m.removed && md < reach) m.hurt(Math.floor((1 - md / reach) * 7 * power), x, z, 1.5);
     }
     this.host.broadcast({ t: 'boom', x: r2(x), y: r2(y), z: r2(z), power, by, water: inWater, blocks: positions });
+  }
+
+  /** A lightning strike: mobs within 3 blocks take 5 damage and burn (players handle their own damage on receipt). */
+  lightning(x: number, y: number, z: number): void {
+    for (const m of this.manager.mobs) {
+      if (m.removed || m.dead) continue;
+      if (Math.hypot(m.x - x, m.z - z) <= 3 && Math.abs(m.y - y) < 4) {
+        m.hurt(5, x, z, 0.3);
+        m.burning = Math.max(m.burning, 160);
+      }
+    }
   }
 
   // ---------------------------------------------------------------- snapshots

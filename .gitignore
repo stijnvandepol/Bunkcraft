@@ -1,5 +1,7 @@
 node_modules
 dist
+dist-static
+bunkcraft-static.zip
 .playwright-mcp
 data
 data-test
@@ -7,3 +9,4 @@ data-test
 # Claude Code agent worktrees
 .claude/worktrees/
 coverage
+tests/audio-previews/*.wav

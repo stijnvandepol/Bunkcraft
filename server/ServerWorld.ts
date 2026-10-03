@@ -5,6 +5,7 @@ import {
 import { packState, stateId, stateMeta } from '../src/world/BlockStates';
 import { LAVA_TICK_DELAY, LiquidSim, WATER_TICK_DELAY, isLiquid } from '../src/world/Liquids';
 import { CHUNK_HEIGHT, CHUNK_VOLUME, blockIndex, chunkKey } from '../src/world/constants';
+import { GEN_VERSION_CURRENT } from '../src/world/GenVersion';
 import { type WorldGenerator, type WorldType, createGenerator } from '../src/world/WorldGenerator';
 
 /** Chunks kept loaded around each player (mobs only live where terrain exists). */
@@ -48,8 +49,8 @@ export class ServerWorld implements EntityWorld {
   onChunkReady: ((chunk: ChunkLike) => void) | null = null;
   onChunkUnloaded: ((key: number) => void) | null = null;
 
-  constructor(readonly seed: number, edits: Record<string, number>, readonly worldType: WorldType = 'terrain') {
-    this.generator = createGenerator(worldType, seed);
+  constructor(readonly seed: number, edits: Record<string, number>, readonly worldType: WorldType = 'terrain', readonly genVersion: number = GEN_VERSION_CURRENT) {
+    this.generator = createGenerator(worldType, seed, genVersion);
     this.liquids = new LiquidSim({
       getBlock: (x, y, z) => this.getBlock(x, y, z),
       getMeta: (x, y, z) => this.getMeta(x, y, z),

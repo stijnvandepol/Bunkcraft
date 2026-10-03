@@ -59,9 +59,8 @@ describe('real server under garbage', () => {
     expect(await healthy()).toBe(true);
   });
 
-  // BUG (server/GameServer.ts accept()): a frame with the JSON literal `null` makes `msg.t` throw inside the socket
-  // handler. The exception is not caught anywhere, so one anonymous client can kill the whole server process.
-  it.fails('stays up when a client sends the JSON literal null', async () => {
+  // Regression: a frame with the JSON literal `null` used to throw inside the socket handler and kill the process.
+  it('stays up when a client sends the JSON literal null', async () => {
     const own = await startServer();
     try {
       const code = await createRoom(own);

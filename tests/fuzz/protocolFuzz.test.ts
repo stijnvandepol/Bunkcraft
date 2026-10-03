@@ -115,15 +115,13 @@ describe.each(KINDS)('fuzzing a %s game server', (kind) => {
 
   it('survives raw frames: random bytes, binary frames, truncated and non-object JSON', () => {
     const server = makeServer(kind);
-    // The JSON literal `null` is covered separately below (known bug, see it.fails).
-    const isNullFrame = (d: Buffer) => { try { return JSON.parse(d.toString()) === null; } catch { return false; } };
     const frames = fc.oneof(
       fc.uint8Array({ maxLength: 200 }).map((u) => [Buffer.from(u), false] as const),
       fc.uint8Array({ maxLength: 200 }).map((u) => [Buffer.from(u), true] as const),
       fc.string({ maxLength: 100 }).map((s) => [Buffer.from(s), false] as const),
       fc.jsonValue().map((v) => [Buffer.from(JSON.stringify(v)), false] as const),
       anyMessage.map((m) => [Buffer.from(JSON.stringify(m).slice(0, 25)), false] as const),
-    ).filter(([d, binary]) => binary || !isNullFrame(d));
+    );
     fc.assert(fc.property(frames, ([data, binary]) => {
       // A fresh socket per frame: the server may legitimately close the connection on garbage.
       const ws = new FakeSocket();
@@ -138,10 +136,8 @@ describe.each(KINDS)('fuzzing a %s game server', (kind) => {
     expect(connect(server, 'raw_after').of('welcome')).toHaveLength(1);
   }, 60_000);
 
-  // BUG (server/GameServer.ts accept(): `msg.t` on a parsed `null`): one frame containing the JSON literal
-  // `null` throws inside the socket's message handler, which crashes the whole Node process on a real server.
-  // Fix: `if (typeof msg !== 'object' || msg === null) { ws.close(1003, 'Bad message'); return; }` after JSON.parse.
-  it.fails('does not throw on a JSON null frame (before and after login)', () => {
+  // Regression: a JSON `null` frame used to throw inside the message handler and crash the whole process.
+  it('does not throw on a JSON null frame (before and after login)', () => {
     const server = makeServer(kind);
     const early = new FakeSocket();
     server.accept(early as unknown as import('ws').WebSocket);
@@ -150,10 +146,9 @@ describe.each(KINDS)('fuzzing a %s game server', (kind) => {
     ws.raw('null');
   });
 
-  // BUG (server/GameServer.ts onPos): the first position of a session skips the speed check (`s.hasPos` is false) and
-  // has no world bounds, so x = 1e308 is accepted; round(v * 1000) then overflows to Infinity and the 'snap' broadcast
-  // carries `null` coordinates to every other player.
-  (kind === 'minecraft' ? it.fails : it)('rejects absurd coordinates in the first position message', () => {
+  // Regression: the first position of a session used to skip every check, so x = 1e308 overflowed to Infinity and the
+  // 'snap' broadcast carried `null` coordinates to every other player.
+  it('rejects absurd coordinates in the first position message', () => {
     const server = makeServer(kind);
     const ws = connect(server, 'far_away');
     ws.say({ t: 'pos', x: 1e308, y: 1e308, z: -1e308, yaw: 0, pitch: 0, flags: 0, held: 0 });
@@ -164,7 +159,7 @@ describe.each(KINDS)('fuzzing a %s game server', (kind) => {
   it('never sends a malformed server message back (everything is valid JSON with a type)', () => {
     const server = makeServer(kind);
     const ws = connect(server, 'echo_user');
-    // The very first position is not speed-checked (see the it.fails below), so give the player a sane one.
+    // Start from a sane position so the speed check (not the first-position check) is what gets fuzzed.
     const w = ws.of('welcome')[0];
     ws.say({ t: 'pos', x: w.spawn.x, y: w.spawn.y, z: w.spawn.z, yaw: 0, pitch: 0, flags: 4, held: 0 });
     fc.assert(fc.property(anyMessage, (m) => { ws.say(m); }), { numRuns: 1500 });

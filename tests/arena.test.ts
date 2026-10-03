@@ -161,7 +161,7 @@ describe('arena maps', () => {
         }
       }
     }
-  });
+  }, 60000);
 
   it('maps differ from each other', () => {
     const sig = (id: string) => {

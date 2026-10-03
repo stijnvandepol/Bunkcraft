@@ -4,3 +4,10 @@ data
 data-test
 .playwright-mcp
 .git
+.github
+.claude
+.env
+.env.*
+*.log
+.DS_Store
+docs/screenshots

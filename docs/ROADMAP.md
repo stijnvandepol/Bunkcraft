@@ -18,6 +18,8 @@ wat al is doorgevoerd.
 | 8 | Death-drops verdwenen bij de entity-limiet | **Gedaan** |
 | 9 | In het water springen terwijl je brandt gaf 1 schade | **Gedaan** |
 | 10 | Brandende zombies huppelden elke seconde | **Gedaan** |
+| 11 | Mobs met één oog (schaap: pupillen samengesmolten, kip: één oog overschreven) en koppen die zijwaarts bleven staan | **Gedaan:** ogen per gezichtsbreedte, kop-blikken blijven binnen 20° en zakken terug |
+| 12 | Te weinig dieren en monsters: één spawnpoging per seconde, plafond 16, planten telden als geblokkeerd | **Gedaan:** `MobSpawner` met pakken, plafond 40 en groepjes dieren; zie `docs/GAMEPLAY.md` |
 | 11 | Zombies sloegen en creepers ontploften door muren heen | **Gedaan:** line-of-sight-check |
 | 12 | Gedropte items voegden samen voorbij hun stackgrootte | **Gedaan** |
 | 13 | Explosies lieten erts- en glasblokken als zichzelf vallen | **Gedaan:** normale drop-regels |
@@ -39,6 +41,10 @@ wat al is doorgevoerd.
 | Lege mob-meshes nog steeds in de render-loop; `getLight` per mob per frame | **Gedaan:** mobtypes zonder instances worden niet getekend, mobs voorbij de mist-afstand worden overgeslagen, licht wordt per entity maar elke 6 frames opnieuw opgevraagd |
 | Gedeelde GLSL voor licht en mist (5 kopieën lopen nu uiteen; entities missen de onderwater-mist) | **Gedaan:** `LIGHT_GLSL`, `FOG_GLSL` en `ATLAS_GLSL` in `Materials.ts`; mobs, items, deeltjes en pijlen gebruiken nu dezelfde lichtcurve en mist (incl. zonsondergang-gloed en onderwater-mist), de hand dezelfde lichtcurve. Items zijn in schemerige gebieden iets donkerer (ze volgen nu de curve van de blokken) |
 | Worker-crash: jobs blijven "in flight" en het streamen stopt | **Gedaan:** worker vervangen, job opnieuw ingepland (max. 3 pogingen, daarna laat `ChunkManager` de chunk opnieuw proberen); Vitest met nep-worker |
+| Grotten, ravijnen en ertsen (feedback: "geen grotten en grotingangen te zien") | **Gedaan:** generator versie 2 (`CaveCarver.ts`, `OreTable.ts`): cheese, spaghetti, noodle, ingangen in heuvels, ravijnen met lava/water, aquifer-meren met barrières, lavameren onder y 10, ertsblobs uit één tabel. Grotopeningen per 100 landchunks 13 → 56, lucht onder zeeniveau 7,4 → 11,7 %, `generate` 1,4–1,6× (zie RESEARCH.md §4). Zee, kust en bedrock blijven heel; geen bomen boven gaten |
+| Generatorversies (`genVersion`) zodat een nieuwe generator bestaande werelden niet stuk maakt | **Gedaan:** `WorldMeta.genVersion` (save-versie 3, zonder = 1), `world.json`, optioneel veld in `welcome`, `generate`-verzoek. Versie 1 blijft bitgelijk (golden hashes). Nieuwe wereld = versie 2 |
+| Ertsen voor nieuwe blokken (lapis, redstone, koper, smaragd) | S: de rijen staan al in `ORE_TABLE` met `minGen: 3`; zodra de blokken bestaan `GEN_VERSION_CURRENT` op 3 zetten en golden hashes bijwerken |
+| Dripstone, mos en andere grotbiomes; deepslate-laag onder y ~8 | M (wacht op blokken) |
 | `Game.ts` (~1000 regels) opsplitsen: GameStateMachine, WorldSession, SimulationLoop, Combat, DebugInfo | M |
 | Save-formaatversie en migraties, nodig vóór block states | **Gedaan:** `version` op `WorldMeta` en op de chunk-edit-records, lijst `MIGRATIONS` + `migrateMeta`, nieuwere records worden overgeslagen i.p.v. verkeerd gelezen; Vitest met `fake-indexeddb`. **Versie 2 (block states):** edit-record `index << 16 \| meta << 8 \| id`, v1-records worden met meta 0 gelezen (`decodeEdit`); `world.json` op de server bewaart `id \| meta << 8`, oude bestanden blijven geldig |
 | Meshtijd na block states (`scripts/bench-mesh.ts`, seed 12345, 25 chunks) | **Gedaan:** 3,55 ms gemiddeld per chunk tegen 3,96 ms ervoor (gemeten afwisselend op dezelfde machine): de nieuwe vormen zijn betaald met een snellere skylight-kolom (`LIGHT_COLUMN`, 1 opzoeking) en een allocatievrije regio-kopie. Meta kost niets zolang een chunk er geen heeft (lazy; altijd alloceren: 10 MB bij render distance 8 en +0,1 ms per mesh) |
@@ -78,20 +84,49 @@ wat al is doorgevoerd.
    - Nog te doen op deze basis: **ladders, muurfakkels, gewassen** (groeifase in `meta`), **oven met een richting** (en een brandende staat), **bed** (2 blokken), vallend zand en grind, waterlogged slabs, stroming die entities meeduwt, lava-fakkels/vuur, trapdoors en hekken (zelfde `partial`-machinerie).
    - Bewust anders dan Minecraft: de trapvorm wordt afgeleid uit de buren (niet opgeslagen) en lava vertraagt niet willekeurig (`random.nextInt(4)`).
 5. **Landbouw (M):** saplings, tarwe, brood en een schoffel. Hernieuwbaar hout en voedsel.
-6. **Meer survival-inhoud (M):** harnas met een armor-bar, XP-orbs met een XP-balk. Skeleton (schiet elke 2 s, verbrandt in daglicht; drops botten en pijlen) en spin (klimt, springt, neutraal in fel licht; drops draad en spinnenoog met Poison) zijn **Gedaan**.
+6. **Meer survival-inhoud (M):** harnas met een armor-bar: **Gedaan** (zie §4b). XP-orbs met een XP-balk. Skeleton (schiet elke 2 s, verbrandt in daglicht; drops botten en pijlen) en spin (klimt, springt, neutraal in fel licht; drops draad en spinnenoog met Poison) zijn **Gedaan**.
 7. **Structuren (M per stuk):** dungeon met spawner en kisten, mijnschachten, later dorpen.
 8. **Eindspel (L):** een "Underworld"-dimensie of een stronghold met een eindbaas en credits.
+
+## 4b. Inhoud van Minecraft 1.21 (creative inventory en wat je ermee kunt)
+
+Ontwerp, tellingen en tier-lijst: [`CONTENT.md`](CONTENT.md). **Gedaan:**
+
+- **Item-identiteit voor varianten:** item-id's ≥ 1024 zijn `blok + variantbits`, kleuren en materialen zitten in de `meta`-byte (geen nieuwe
+  blok-id's per kleur). Dyed blokken gebruiken één grijze textuur met een tint per hoekpunt in de mesher (0 extra lagen, meshtijd gelijk:
+  3,5-3,8 ms per chunk tegen 3,5-3,7 ms ervoor). Slabs, trappen, deuren, hekken, luiken, poorten en muren hebben het materiaal in de state.
+- **`ItemStack.data`** (enchants en dergelijke) is er, wordt opgeslagen en over het netwerk meegestuurd; stapels met verschillende data voegen nooit samen.
+- Harnas (armor-balk, schadeformule, slijtage), schoffel, schaar, tooluse (akkergrond, paden, strippen, pompoen snijden), kist (27 slots), bed, ladder.
+- Creative inventory met tabs, scrollen, zoeken en tooltips; receptenboek met tabs en zoeken; ~420 recepten.
+- **Nog te doen (tier 2):** landbouw (tarwe, wortels en aardappels, hoofdreden dat brood, koekjes en modderstenen nog niet te maken zijn), enchanting, brouwen, smithing en
+  netherite, anvil, grindstone, blast furnace, smoker, schild, hengel, kaarsen, banners, koraal, ruitjes met doorzichtigheid (gekleurd glas is alpha-getest),
+  kisten in multiplayer, een echte kist-animatie, kisten met richting-afhankelijke dubbele variant, vallend zand en grind, en dat de worldgen de nieuwe blokken
+  (graniet, diorite, andesiet, tuff, calciet, deepslate, nieuwe ertsen, bloemen, junglebomen) nog moet plaatsen.
 
 ## 5. Sfeer
 
 | Item | Effort |
 |---|---|
-| Grotgeluiden en muziek die per biome wisselt | S |
+| ~~Grotgeluiden en muziek die per biome wisselt~~ (klaar, zie hieronder) | S |
 | Vuurvliegjes en vallende bladeren | S |
 | Suikerriet, pompoenen, meloenen, paddenstoelen, waterlelies | S–M |
-| Regen en sneeuw, daarna onweer | M |
+| Weer: regen, sneeuw, onweer, bliksem, maanfasen, sterren met twinkel | **Gedaan** (`Weather.ts`, `Precipitation.ts`, `Lightning.ts`; zie [`GAMEPLAY.md`](GAMEPLAY.md#weer-en-lucht)). Open: regengeluid en donder via `AudioEngine.setWeather`, sneeuwlagen en bevriezend water (block states + random ticks), farmland-hydratatie en vuur-blussen via `Weather.isRainingAt`, geladen creepers, onweer-slapen |
 | Rivieren | M |
 | Nieuwe biomes: moeras, savanne, jungle, badlands | M per stuk |
+
+### Audio-herziening (klaar, `src/core/audio/*`)
+
+Alle audio blijft procedureel (geen assets). `AudioEngine` in `Audio.ts` houdt zijn publieke methodes; het geluidsontwerp zit in losse bestanden.
+
+- **Blokgeluiden:** `SOUND_PROFILES` in `audio/profiles.ts` is het register. Een nieuw blok declareert alleen `sound: '<type>'`; een nieuw type is één regel in dat register (het `BlockSound`-type volgt vanzelf). Er zijn nu 14 types: stone, wood, grass, gravel, sand, glass, wool, snow, metal, ladder, bamboo, dirt, wetgrass, water. Elk geluid is gelaagd (korrelige ruis, resonante body, sinus-thump, korte tonen), met pitch-variatie en nooit twee dezelfde varianten achter elkaar.
+- **Beweging:** `PlayerSounds` (stappen per ondergrond op afstand, lopen/sprinten/sluipen, sprong, landing naar valhoogte, plons, zwemslag, pantser-clink als haak) en `MobSteps` (zachte mobvoetstappen per soort).
+- **Sfeer:** grotten (druppels, drones, gerommel, extra galm; op basis van skylight, een goedkope enclosure-schatting met 18 stralen en diepte), onderwater (low-pass plus bubbels), wind op bergen/hoogte, krekels 's nachts en vogels overdag per biome, lava- en vuurgeknetter, stromend water, regen- en onweerslagen. Het weer roept `audio.setWeather(rain, thunder)` en `audio.playThunder(afstand)` aan.
+- **Muziek:** `setMusicMode('menu'|'game'|'arcade'|'off')`. Pianofrasen per biome en tijdstip (modi/pentatoniek), lange stiltes, donkere galm, dempen in grotten en onder water. In arcade-modus een subtiele puls zolang de match `live` is (`setMusicIntensity`).
+- **Mix:** master met compressor en soft-clipper (piek blijft onder 0,92), volumes voor geluid/ambient/interface/muziek, globale stemlimiet (64) met prioriteit, positionele geluiden met afstandsdemping, stereo-pan of HRTF (instelling "3D Sound"), occlusie door blokken (gedrosselde raycast).
+- **Haken:** `audio.addSoundListener(fn)` / `audio.onSound` geven elke klank door met naam en positie (ondertitels); `audio.playUi(name)` voor interfacegeluid (`src/ui/uiSound.ts` koppelt dat via event delegation aan knoppen en slots).
+- **Verificatie:** `tests/audio.test.ts` (Vitest, pure logica) en `python3 scripts/audio-report.py` (OfflineAudioContext in Playwright: niveau per geluid, clipping, WAV-previews in `tests/audio-previews/`, worst-case scene).
+
+Nog open: gebakken buffers voor veelgebruikte geluiden (minder CPU), geluiden van andere spelers hun blokedits, echte regen/onweer-visuals en lightning-flash koppelen aan `setLightningHandler`, een rustig "nether"-achtig thema, mix en timbre door een mens laten beoordelen (alles is alleen met meters gecontroleerd).
 
 ## 6. Gebruiksgemak en toegankelijkheid
 
@@ -113,11 +148,20 @@ spelers, chat, tijd en per speler opgeslagen data. Zie `docs/SERVER.md`.
 
 Volgende stappen:
 
-1. **Mobs op de server simuleren: Gedaan** (zie `docs/SERVER.md`). Mob-AI, items, pijlen en TNT draaien op de server met een eigen `ServerWorld`.
+1. **Mobs op de server simuleren: Gedaan** (zie `docs/SERVER.md`). Mob-AI, items, pijlen en TNT draaien op de server met een eigen `ServerWorld`. Spawnen en despawnen delen `MobSpawner` met singleplayer; de server-sky-light is open-lucht of niet, genoeg voor de spawnregels.
 2. **Gedeelde item-drops: Gedaan.** PvP in de Minecraft-sandbox staat nog open; PvP bestaat wel in de arcade-game types (zie 7b).
-3. **Server-authoritative inventory** (anti-cheat): breken en craften door de server laten bevestigen.
-4. **Wachtwoord, whitelist en ops**, en accounts of tokens per naam.
-5. **Binair protocol** voor snapshots, als er veel spelers zijn.
+3. **Server-authoritative inventory: Gedaan (gedeeltelijk).** Survival-inventories worden door de server gecontroleerd
+   (pickups, recepten, drops die een blokbreuk of voorraad nodig hebben); stationcontrole, kisten en health/honger staan
+   nog open. Precies wat wel en niet: `docs/SERVER.md`.
+4. **Wachtwoord, whitelist, ops en tokens: Gedaan.** Wachtwoord per game (scrypt), eigenaarstoken, namen gebonden aan een
+   browsersleutel, `/kick /ban /unban /op /deop /whitelist /say /tp /gamemode /time /weather /give`, opt-in serverlijst
+   (*Browse Games*), `/admin` met `ADMIN_TOKEN`. Open: echte accounts (e-mail of passkey) en een herstelroute voor een
+   verloren naam of eigenaarstoken.
+5. **Binair protocol: Gedaan voor `snap` en `ent`** (-54 % en -44 %, minder CPU), onderhandeld in `hello`. Client-naar-server
+   (`pos`) en de overige berichten zijn nog JSON; delta-compressie van `snap` (alleen wat bewoog) is de volgende stap.
+6. **Observability en beheer: Gedaan.** JSON-logs, `/metrics`, `/health`, back-ups, verbindingslimieten, `ALLOWED_ORIGINS`,
+   gracieus afsluiten met reconnect-hint. Open: Grafana-dashboard als voorbeeld, rate limits per game in `/admin`, alerting.
+7. **Weer in multiplayer** (`/weather` is een stub tot het weersysteem op de server draait) en inventory-controle voor kisten.
 
 ## 7b. Arcade-game types (Krunker-stijl)
 
@@ -156,10 +200,11 @@ regenereert, respawns en een scoreboard. Beschrijving, besturing en wapentabel: 
 ## 8. Distributie
 
 - **Eigen server:** Docker of Node; zie `docs/SERVER.md`.
-- **PWA (S):** installeerbaar en offline speelbaar in singleplayer.
-- **itch.io (S):** een zip met `index.html`, alleen singleplayer.
+- **PWA (S): klaar.** Manifest, handgeschreven service worker (versioned precache, runtime-cache voor texturepacks, `index.html` network-first, update-toast), installknoppen, iOS-meta, offline singleplayer getest met Playwright. Zie `docs/DISTRIBUTION.md`.
+- **itch.io (S): klaar.** `npm run build:static` geeft `dist-static/` + `bunkcraft-static.zip` (relatieve base, werkt onder een submap, multiplayer vraagt om serveradres).
 - **CrazyGames en Poki (M–L):** pas na touchbediening. Verberg daarvoor de Minecraft-jar-import en zwak de 1-op-1 Minecraft-styling af (risico op IP-problemen).
-- **Delen:** seed in de URL, F2-screenshots, en export/import van werelden als zip (fflate is al aanwezig).
+- **Delen: klaar.** `?seed=&mode=` opent Create World ingevuld, F2-screenshot, Copy Seed in het pauzemenu, `.bunkworld` export/import met zipbom-bescherming, Backup All, Edit en Re-Create in Select World.
+- **Nog open:** `og:image` met absolute URL per deployment (scrapers negeren relatieve URL's), Lighthouse-PWA-categorie bestaat niet meer (v13: alleen installability via Chrome), Esc-vergrendeling in fullscreen is alleen op code getest (headless Chrome ondersteunt geen Keyboard Lock), HUD in screenshots (nu alleen canvas), export van multiplayer-werelden (server-kant), menu-orbit en andere gameplay-animaties bij `prefers-reduced-motion` (hoort bij toegankelijkheid), CrazyGames/Poki.
 
 ## Plan vanaf oktober 2026 (op basis van het onderzoek)
 

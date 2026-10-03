@@ -8,7 +8,10 @@ export default defineConfig({
     include: ['tests/**/*.test.ts'],
     exclude: ['tests/e2e/**', 'node_modules/**'],
     environment: 'node',
+    // Generous: world generation, zip and real-server integration tests take a few seconds alone and longer on a busy box.
     testTimeout: 30_000,
+    // beforeAll hooks start real server processes (tsx compile + world setup).
+    hookTimeout: 60_000,
     coverage: {
       provider: 'v8',
       reporter: ['text-summary', 'json-summary', 'lcov'],

@@ -67,7 +67,12 @@ export type TntEntry = [number, number, number, number, number];
 // ---------------------------------------------------------------- client → server
 
 export type ClientMessage =
-  | { t: 'hello'; v: number; name: string }
+  /**
+   * Optional fields (older clients leave them out): `key` is a random per-browser secret that binds the
+   * name to this player, `owner` the token POST /api/rooms returned to the creator (grants op),
+   * `password` the room password, `bin` asks for binary snap/ent frames (see binary.ts).
+   */
+  | { t: 'hello'; v: number; name: string; key?: string; owner?: string; password?: string; bin?: boolean }
   | { t: 'pos'; x: number; y: number; z: number; yaw: number; pitch: number; flags: number; held: number }
   /** `meta` is the block state byte (see BlockStates); absent = 0. */
   | { t: 'block'; seq: number; x: number; y: number; z: number; id: number; meta?: number }
@@ -90,13 +95,17 @@ export type ClientMessage =
   /** Arcade: switch weapon slot (so everyone sees what you hold). */
   | { t: 'weapon'; slot: 0 | 1 | 2 }
   /** Drop an item into the world (block drops, Q, death); yaw = throw direction. */
-  | { t: 'drop'; id: number; count: number; damage?: number; x: number; y: number; z: number; yaw?: number; delay?: number };
+  | { t: 'drop'; id: number; count: number; damage?: number; data?: number[]; x: number; y: number; z: number; yaw?: number; delay?: number };
 
 // ---------------------------------------------------------------- server → client
 
 export type ServerMessage =
   | {
     t: 'welcome'; id: number; worldName: string; seed: number; gameMode: GameMode; time: number;
+    /** Terrain generator version of the world (see src/world/GenVersion.ts). Absent (old servers) = 1. */
+    genVersion?: number;
+    /** Whole days played (moon phase); absent on servers from before the moon phases. */
+    day?: number;
     /** Game type of this game; "minecraft" unless it is an arcade game. */
     gameType: GameType;
     /** "terrain" = generated landscape, "arena" = the fixed arcade map. */
@@ -109,6 +118,10 @@ export type ServerMessage =
     player: PlayerRecord | null;
     players: RemotePlayerInfo[];
     motd: string;
+    /** You are an operator of this game (can use /kick, /ban, ...). Absent = no. */
+    op?: boolean;
+    /** The server will send snap and ent as binary frames (negotiated by `bin` in hello). */
+    binary?: boolean;
   }
   | { t: 'join'; id: number; name: string }
   | { t: 'leave'; id: number; name: string }
@@ -119,16 +132,29 @@ export type ServerMessage =
   /** The edit was refused (echoes the request; the client restores the block it remembers). */
   | { t: 'reject'; seq: number; x: number; y: number; z: number; id: number; meta?: number }
   | { t: 'chat'; from: string; text: string; system?: boolean }
-  | { t: 'time'; time: number }
+  /** `day` = whole days played; optional so older servers and clients keep working. */
+  | { t: 'time'; time: number; day?: number }
+  /**
+   * Weather targets: rain and thunder 0 or 1 (the client fades over 5 s); `snap` jumps straight there
+   * (sent on join). `ticksToChange` is informational. Optional message: old clients ignore it.
+   */
+  | { t: 'weather'; rain: number; thunder: number; ticksToChange?: number; snap?: boolean }
+  /** A lightning strike on the ground at this position (everyone renders the same bolt and hears the thunder). */
+  | { t: 'bolt'; x: number; y: number; z: number }
   | { t: 'teleport'; x: number; y: number; z: number }
-  | { t: 'kick'; reason: string }
+  /** `reconnect`: the server is restarting; try again after this many milliseconds. `code` tells why for login failures. */
+  | { t: 'kick'; reason: string; reconnect?: number; code?: 'password' | 'banned' | 'whitelist' | 'identity' | 'full' }
+  /** The server corrected your inventory (it did not accept your last update); replace it. */
+  | { t: 'state'; inventory: number[][]; reason?: string }
+  /** The game mode of this game changed (/gamemode). */
+  | { t: 'gamemode'; mode: GameMode }
   /** Entities around the player (10 Hz). Lists replace what the client knows. */
   | { t: 'ent'; m: MobEntry[]; i: ItemEntry[]; a: ArrowEntry[]; b: TntEntry[] }
   /** A mob or arrow hurt this player. */
   | { t: 'hurt'; amount: number; cause: 'mob' | 'arrow'; by: string; yaw: number }
   /** An explosion: destroyed blocks as x, y, z triples; the client plays effects and takes its own damage. */
   | { t: 'boom'; x: number; y: number; z: number; power: number; by: string; water: boolean; blocks: number[] }
-  | { t: 'msound'; kind: string; event: 'idle' | 'hurt' | 'death' | 'fuse' | 'arrow'; x: number; y: number; z: number }
+  | { t: 'msound'; kind: string; event: 'idle' | 'hurt' | 'death' | 'fuse' | 'arrow' | 'shoot'; x: number; y: number; z: number }
   // ---- arcade game types ----
   /** Match state, about once a second and on every change. `scores` is team kills (tdm) or empty (ffa). */
   | { t: 'match'; phase: MatchPhase; timeLeft: number; scores: { red: number; blue: number }; info: MatchInfo }
@@ -153,7 +179,7 @@ export type ServerMessage =
   /** A weapon slot a remote player holds (third-person model). */
   | { t: 'holds'; id: number; weapon: string }
   /** The requested item entity is yours. */
-  | { t: 'taken'; id: number; itemId: number; count: number; damage?: number };
+  | { t: 'taken'; id: number; itemId: number; count: number; damage?: number; data?: number[] };
 
 /** No 0/O/1/I/L: game codes are read aloud and typed on phones. */
 export const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';

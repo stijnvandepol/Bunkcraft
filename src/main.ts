@@ -1,10 +1,14 @@
 import * as THREE from 'three';
 import { Game } from './core/Game';
+import { initPwa } from './pwa/Pwa';
 import './ui/styles.css';
 
 // All colours in this project are authored and output in display (sRGB) space, like
 // Minecraft's own lighting; disable three.js' automatic linear conversion.
 THREE.ColorManagement.enabled = false;
+
+// Early, so the browser's install prompt event is not missed.
+initPwa();
 
 const root = document.getElementById('app')!;
 

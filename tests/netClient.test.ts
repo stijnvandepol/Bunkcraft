@@ -60,7 +60,7 @@ describe('NetClient.connect', () => {
     const ws = last();
     expect(ws.url).toBe('ws://localhost:5173/ws/K7QM2X');
     ws.open();
-    expect(ws.sent[0]).toEqual({ t: 'hello', v: PROTOCOL_VERSION, name: 'alice' });
+    expect(ws.sent[0]).toMatchObject({ t: 'hello', v: PROTOCOL_VERSION, name: 'alice' });
     ws.receive(welcome(9));
     const w = await p;
     expect(w.id).toBe(9);

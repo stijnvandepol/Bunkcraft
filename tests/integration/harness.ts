@@ -48,7 +48,7 @@ export async function startServer(env: Record<string, string> = {}, existingDir?
     const c = spawn(join(ROOT, 'node_modules/.bin/tsx'), ['server/index.ts'], {
       cwd: ROOT,
       env: {
-        ...process.env, PORT: String(port), DATA_DIR: dataDir, ROOM_CREATE_LIMIT: '1000', MAIN_WORLD: 'off', TRUST_PROXY: '1',
+        ...process.env, PORT: String(port), DATA_DIR: dataDir, ROOM_CREATE_LIMIT: '1000', MAIN_WORLD: 'off', TRUST_PROXY: '1', MAX_CONN_PER_IP: '1000', MAX_CONNECTIONS: '5000', BACKUP_KEEP: '0', LOG_FORMAT: 'text', LOG_LEVEL: 'info',
         STATIC_DIR: join(ROOT, 'tests/integration'), ...currentEnv,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -56,10 +56,10 @@ export async function startServer(env: Record<string, string> = {}, existingDir?
     child = c;
     const onData = (d: Buffer) => {
       output += d.toString();
-      if (!ready && /BunkCraft server on/.test(d.toString())) { ready = true; res(); }
+      if (!ready && /server started/.test(d.toString())) { ready = true; res(); }
     };
     c.stdout!.on('data', onData);
-    c.stderr!.on('data', (d: Buffer) => { output += d.toString(); });
+    c.stderr!.on('data', onData); // the structured logger may write to either stream
     c.once('exit', (code) => { if (!ready) rej(new Error(`server exited (${code}):\n${output}`)); });
     setTimeout(() => rej(new Error(`server start timeout:\n${output}`)), 40_000).unref();
   });

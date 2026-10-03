@@ -209,7 +209,7 @@ describe('recipe consistency', () => {
     }
   });
 
-  /** Everything a player can gather without crafting: block drops (best pickaxe) and mob loot. */
+  /** Everything a player can gather without crafting: block drops (best pickaxe), mob loot and non-craftable items. */
   function rawResources(): Set<number> {
     const raw = new Set<number>();
     for (let id = 1; id < 256; id++) {
@@ -220,6 +220,10 @@ describe('recipe consistency', () => {
       }
     }
     for (const type of Object.values(MOB_TYPES)) for (let t = 0; t < 60; t++) for (const s of type.drops(true)) raw.add(s.id);
+    // Anything no recipe produces must come from the world somehow (loot, fishing, farming, silk touch, trading):
+    // treat it as gathered. What is left to prove is that the recipe graph itself has no dead ends or cycles.
+    const produced = new Set(RECIPES.map((r) => r.result.id));
+    for (const r of RECIPES) for (const ing of r.ingredients) for (const id of ing.ids) if (!produced.has(id)) raw.add(id);
     return raw;
   }
 

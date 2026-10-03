@@ -1,10 +1,13 @@
 import type { WorkerPool } from '../workers/WorkerPool';
 import { tintColor } from './BiomeColors';
-import { BLOCK, SHAPE, SHAPE_CROSS, SHAPE_DOOR, SHAPE_MODEL, SOLID, TINT } from './BlockRegistry';
+import { ContainerStore } from './Containers';
+import { BLOCK, BOX_KIND, DYE, DYE_RGB, SHAPE, SHAPE_CROSS, SHAPE_DOOR, SHAPE_MODEL, SOLID, TINT } from './BlockRegistry';
 import { CHUNK_READY, type Chunk } from './Chunk';
 import { ChunkManager, type ChunkMaterials } from './ChunkManager';
 import { CHUNK_HEIGHT, CHUNK_VOLUME, SEA_LEVEL, blockIndex, chunkKey } from './constants';
+import { GEN_VERSION_CURRENT } from './GenVersion';
 import { DOOR_OPEN_BIT, isDoorUpper, packState, stateId, stateMeta } from './BlockStates';
+import { BOX_BED, BOX_GATE, BOX_TRAPDOOR, GATE_OPEN_BIT, TRAPDOOR_OPEN_BIT, bedPartner } from './BoxShapes';
 import { BIOME } from './TerrainGenerator';
 import { LAVA_TICK_DELAY, LiquidSim, WATER_TICK_DELAY, isLiquid } from './Liquids';
 import { type WorldGenerator, type WorldType, arenaMapOf, createGenerator, isArenaWorld } from './WorldGenerator';
@@ -18,6 +21,8 @@ export class World {
   readonly generator: WorldGenerator;
   readonly edits: EditMap;
   readonly dirtyEditChunks = new Set<number>();
+  /** Chest contents (singleplayer; saved with the world). */
+  readonly containers = new ContainerStore();
   /**
    * Water and lava flow (singleplayer only: on a multiplayer server the server simulates and the client mirrors
    * its block changes). Null until enableLiquids().
@@ -29,10 +34,10 @@ export class World {
   /** Local (player) edits, for multiplayer sync: position, new id and meta, previous id and meta. */
   onEdit: ((x: number, y: number, z: number, id: number, meta: number, prev: number, prevMeta: number) => void) | null = null;
 
-  constructor(readonly seed: number, pool: WorkerPool, materials: ChunkMaterials, edits: EditMap = new Map(), readonly worldType: WorldType = 'terrain') {
-    this.generator = createGenerator(worldType, seed);
+  constructor(readonly seed: number, pool: WorkerPool, materials: ChunkMaterials, edits: EditMap = new Map(), readonly worldType: WorldType = 'terrain', readonly genVersion: number = GEN_VERSION_CURRENT) {
+    this.generator = createGenerator(worldType, seed, genVersion);
     this.edits = edits;
-    this.chunks = new ChunkManager(seed, pool, materials, worldType);
+    this.chunks = new ChunkManager(seed, pool, materials, worldType, genVersion);
     this.chunks.onGenerated = (chunk) => {
       const e = this.edits.get(chunk.key);
       if (e && chunk.blocks) {
@@ -109,7 +114,8 @@ export class World {
   }
 
   /** Biome tint (packed 0xRRGGBB) for a block at a column; white if untinted. */
-  tintAt(x: number, z: number, id: number): number {
+  tintAt(x: number, z: number, id: number, meta = 0): number {
+    if (DYE[id]) return DYE_RGB[meta & 15];
     if (!TINT[id]) return 0xffffff;
     const c = this.chunkAt(x >> 4, z >> 4);
     const biome = c?.biomes ? c.biomes[(x & 15) + (z & 15) * 16] : 2;
@@ -294,7 +300,7 @@ export class World {
         const x = Math.round(Math.cos(a) * r), z = Math.round(Math.sin(a) * r);
         const h = this.generator.heightAt(x, z);
         const biome = this.generator.biomeAt(x, z, Math.floor(h));
-        if (h > SEA_LEVEL + 2 && h < 85 && (biome === BIOME.PLAINS || biome === BIOME.FOREST || biome === BIOME.TAIGA)) {
+        if (h > SEA_LEVEL + 2 && h < 85 && (biome === BIOME.PLAINS || biome === BIOME.FOREST || biome === BIOME.TAIGA) && !this.generator.surfaceOpen?.(x, z)) {
           return { x: x + 0.5, z: z + 0.5 };
         }
       }
@@ -315,6 +321,11 @@ export class World {
       // Both halves go at once.
       const oy = isDoorUpper(meta) ? y - 1 : y + 1;
       if (this.getBlock(x, oy, z) === id) this.setBlock(x, oy, z, BLOCK.AIR);
+    }
+    if (BOX_KIND[id] === BOX_BED) {
+      // Both halves of a bed go at once.
+      const other = bedPartner(x, z, meta);
+      if (this.getBlock(other.x, y, other.z) === id) this.setBlock(other.x, y, other.z, BLOCK.AIR);
     }
     const above = this.getBlock(x, y + 1, z);
     if (SHAPE[above] === SHAPE_CROSS || SHAPE[above] === SHAPE_MODEL) this.setBlock(x, y + 1, z, BLOCK.AIR);
@@ -340,6 +351,17 @@ export class World {
     const oy = isDoorUpper(meta) ? y - 1 : y + 1;
     if (this.getBlock(x, oy, z) === id) this.setBlock(x, oy, z, id, withOpen(this.getMeta(x, oy, z)));
     return open;
+  }
+
+  /** Opens or closes the trapdoor or fence gate at (x, y, z); the new state (true = open), or null for any other block. */
+  toggleBox(x: number, y: number, z: number): boolean | null {
+    const id = this.getBlock(x, y, z);
+    const kind = BOX_KIND[id];
+    const bit = kind === BOX_TRAPDOOR ? TRAPDOOR_OPEN_BIT : kind === BOX_GATE ? GATE_OPEN_BIT : 0;
+    if (!bit) return null;
+    const meta = this.getMeta(x, y, z) ^ bit;
+    this.setBlock(x, y, z, id, meta);
+    return (meta & bit) !== 0;
   }
 
   dispose(): void {

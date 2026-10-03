@@ -1,5 +1,6 @@
 /// <reference lib="webworker" />
 import { ChunkMesher, type GeometryData } from '../rendering/ChunkMesher';
+import { normalizeGenVersion } from '../world/GenVersion';
 import { type WorldGenerator, type WorldType, createGenerator } from '../world/WorldGenerator';
 import { CHUNK_AREA, CHUNK_VOLUME } from '../world/constants';
 import type { WorkerRequest, WorkerResponse } from './protocol';
@@ -8,6 +9,7 @@ declare const self: DedicatedWorkerGlobalScope;
 
 let generator: WorldGenerator | null = null;
 let generatorType: WorldType = 'terrain';
+let generatorVersion = 1;
 const mesher = new ChunkMesher();
 
 function buffersOf(g: GeometryData | null, out: Transferable[]): void {
@@ -20,9 +22,11 @@ self.onmessage = (e: MessageEvent<WorkerRequest>) => {
   const t0 = performance.now();
   if (msg.type === 'generate') {
     const type = msg.worldType ?? 'terrain';
-    if (!generator || generator.seed !== msg.seed || generatorType !== type) {
-      generator = createGenerator(type, msg.seed);
+    const version = normalizeGenVersion(msg.genVersion);
+    if (!generator || generator.seed !== msg.seed || generatorType !== type || generatorVersion !== version) {
+      generator = createGenerator(type, msg.seed, version);
       generatorType = type;
+      generatorVersion = version;
     }
     const blocks = new Uint8Array(CHUNK_VOLUME);
     const biomes = new Uint8Array(CHUNK_AREA);

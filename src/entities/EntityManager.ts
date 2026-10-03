@@ -1,16 +1,13 @@
-import { ITEM, type ItemStack, getItemDef } from '../items/ItemRegistry';
-import { BLOCK, OPAQUE, SOLID } from '../world/BlockRegistry';
-import { CHUNK_HEIGHT, blockIndex } from '../world/constants';
-import { hash2, mulberry32 } from '../world/Noise';
+import { ITEM, type ItemStack, cloneStack, getItemDef, sameItem } from '../items/ItemRegistry';
+import { BLOCK } from '../world/BlockRegistry';
 import { Arrow, type ArrowTarget } from './Arrow';
 import { Entity } from './Entity';
 import { ItemEntity } from './ItemEntity';
 import { Mob, type MobEvents, type MobTarget } from './Mob';
-import { HOSTILE_KINDS, MOB_TYPES, type MobKind, PASSIVE_KINDS } from './MobTypes';
+import { MOB_TYPES, type MobKind } from './MobTypes';
+import { MobSpawner, SPAWN, hostileDespawns } from './MobSpawner';
 import { PrimedTnt, TNT_FUSE } from './PrimedTnt';
 
-const MAX_PASSIVE = 24;
-const MAX_HOSTILE = 16;
 const MAX_ITEMS = 160;
 const MAX_ARROWS = 128;
 
@@ -67,7 +64,11 @@ export class EntityManager {
   /** Multiplayer v1 is peaceful: mobs are not yet simulated by the server. */
   passiveSpawning = true;
 
-  constructor(private readonly world: EntityWorld, private readonly seed: number) {}
+  private readonly spawner: MobSpawner;
+
+  constructor(readonly world: EntityWorld, seed: number) {
+    this.spawner = new MobSpawner(this, seed);
+  }
 
   private readonly getBlock = (x: number, y: number, z: number) => this.world.getBlock(x, y, z);
   private readonly getMeta = (x: number, y: number, z: number) => this.world.getMeta!(x, y, z);
@@ -94,7 +95,7 @@ export class EntityManager {
   dropItem(stack: ItemStack, x: number, y: number, z: number, pickupDelay = 10, throwYaw?: number, force = false): void {
     if (stack.count <= 0 || (!force && this.items.length >= MAX_ITEMS)) return;
     if (this.dropHook?.(stack, x, y, z, pickupDelay, throwYaw)) return;
-    const e = new ItemEntity({ ...stack }, pickupDelay);
+    const e = new ItemEntity(cloneStack(stack), pickupDelay);
     e.setPosition(x, y, z);
     e.netId = this.nextNetId++;
     if (throwYaw !== undefined) {
@@ -150,64 +151,18 @@ export class EntityManager {
     this.shootArrow(mob.x, sy, mob.z, dx, dy + Math.hypot(dx, dz) * 0.2, dz, 1.6, 6, mob, false, false, false);
   }
 
-  /** Seeded passive group for a freshly loaded chunk (grass surface, daylight). */
+  /** Seeded animal herd for a freshly loaded chunk (grass surface). */
   onChunkReady(chunk: ChunkLike): void {
     if (!this.passiveSpawning || this.spawnedChunks.has(chunk.key) || !chunk.blocks) return;
     this.spawnedChunks.add(chunk.key);
-    const rand = mulberry32((hash2(this.seed ^ 0x51ed, chunk.cx, chunk.cz) * 4294967296) >>> 0);
-    if (rand() > 0.12 || this.passiveCount() >= MAX_PASSIVE) return;
-    const kind = PASSIVE_KINDS[Math.floor(rand() * PASSIVE_KINDS.length)];
-    const group = 2 + Math.floor(rand() * 3);
-    for (let i = 0; i < group; i++) {
-      const lx = Math.floor(rand() * 16), lz = Math.floor(rand() * 16);
-      for (let y = CHUNK_HEIGHT - 2; y > 0; y--) {
-        const b = chunk.blocks[blockIndex(lx, y, lz)];
-        if (b === 0) continue;
-        if (b === BLOCK.GRASS && chunk.blocks[blockIndex(lx, y + 1, lz)] === 0) {
-          const m = this.spawnMob(kind, chunk.cx * 16 + lx + 0.5, y + 1, chunk.cz * 16 + lz + 0.5);
-          m.homeChunk = chunk.key;
-        }
-        break;
-      }
-    }
+    this.spawner.recount();
+    this.spawner.onChunkReady(chunk);
   }
 
   /** Despawn passive mobs whose chunk unloaded (they respawn from the seed next time). */
   onChunkUnloaded(key: number): void {
     this.spawnedChunks.delete(key);
     for (const m of this.mobs) if (m.homeChunk === key && !m.persistent) m.removed = true;
-  }
-
-  private passiveCount(): number {
-    let n = 0;
-    for (const m of this.mobs) if (!m.type.hostile) n++;
-    return n;
-  }
-
-  /**
-   * Minecraft-style hostile spawning: a random spot 24–48 blocks away with two blocks of
-   * air above a solid block, block light 0 and (darkened) sky light ≤ random 0..7.
-   */
-  private trySpawnHostile(px: number, py: number, pz: number, darkness: number, cap: number): void {
-    let hostile = 0;
-    for (const m of this.mobs) if (m.type.hostile) hostile++;
-    if (hostile >= cap) return;
-    const a = Math.random() * Math.PI * 2;
-    const r = 24 + Math.random() * 24;
-    const x = Math.floor(px + Math.cos(a) * r), z = Math.floor(pz + Math.sin(a) * r);
-    const y = Math.floor(py + (Math.random() - 0.5) * 40);
-    for (let dy = 0; dy < 16; dy++) {
-      const yy = y - dy;
-      if (yy < 2 || yy >= CHUNK_HEIGHT - 2) continue;
-      const below = this.world.getBlock(x, yy - 1, z);
-      if (!SOLID[below] || !OPAQUE[below] || below === BLOCK.UNLOADED) continue;
-      if (this.world.getBlock(x, yy, z) !== 0 || this.world.getBlock(x, yy + 1, z) !== 0) continue;
-      const light = this.world.getLight(x, yy, z);
-      const sky = (light >> 4) - darkness;
-      if ((light & 15) > 0 || sky > Math.floor(Math.random() * 8)) return;
-      this.spawnMob(HOSTILE_KINDS[Math.floor(Math.random() * HOSTILE_KINDS.length)], x + 0.5, yy, z + 0.5);
-      return;
-    }
   }
 
   // ---------------------------------------------------------------- per tick
@@ -227,10 +182,10 @@ export class EntityManager {
       targets = this.single;
     }
 
-    if (this.hostileSpawning && this.tickCount % 20 === 0) {
-      // One spawn attempt per second, rotating through the players; the cap grows with their number.
-      const t = targets[(this.tickCount / 20) % targets.length];
-      this.trySpawnHostile(t.x, t.y, t.z, darkness, Math.min(48, MAX_HOSTILE + 12 * (targets.length - 1)));
+    if (this.hostileSpawning || this.passiveSpawning) {
+      this.spawner.recount();
+      if (this.hostileSpawning) this.spawner.tickHostile(targets, darkness);
+      if (this.passiveSpawning) this.spawner.tickPassive(targets, darkness, this.tickCount);
     }
 
     for (const m of this.mobs) {
@@ -241,8 +196,9 @@ export class EntityManager {
         const dt = Math.hypot(m.x - t.x, m.z - t.z);
         if (dt < d) { d = dt; nearest = t; }
       }
-      // Hostiles despawn far away (instantly > 128, randomly > 32 blocks).
-      if (m.type.hostile && (d > 128 || (d > 32 && Math.random() < 1 / 800))) { m.removed = true; continue; }
+      // Hostiles despawn far away (instantly > 128, randomly > 32 blocks), and out-of-reach ones in the open fade away in daylight.
+      if (m.type.hostile && !m.persistent && !m.dead && (hostileDespawns(d, Math.random()) || (dayBright && d > SPAWN.randomDespawn && Math.random() < SPAWN.daylightDespawnChance
+        && this.skyAt(m) > 11))) { m.removed = true; continue; }
       if (getBlock(Math.floor(m.x), Math.floor(m.y), Math.floor(m.z)) === BLOCK.UNLOADED) continue; // frozen until loaded
       if (m.type.neutralInLight) {
         // Spiders turn neutral above light level 11 (Minecraft: brightness > 0.5).
@@ -252,9 +208,7 @@ export class EntityManager {
       m.tick(getBlock, nearest, events);
       // Zombies and skeletons burn in daylight when they can see the sky.
       if (m.type.burnsInDaylight && dayBright && !m.inWater && !m.dead) {
-        const bx = Math.floor(m.x), by = Math.floor(m.y + 1.6), bz = Math.floor(m.z);
-        const sky = this.world.getSkyLight ? this.world.getSkyLight(bx, by, bz) : this.world.getLight(bx, by, bz) >> 4;
-        if (sky > 11) {
+        if (this.skyAt(m) > 11) {
           m.burning = 20;
           if (this.tickCount % 20 === 0) m.hurt(1, m.x, m.z, 0);
         }
@@ -317,6 +271,12 @@ export class EntityManager {
     this.compact();
   }
 
+  /** Sky light at a mob's head. */
+  private skyAt(m: Mob): number {
+    const bx = Math.floor(m.x), by = Math.floor(m.y + 1.6), bz = Math.floor(m.z);
+    return this.world.getSkyLight ? this.world.getSkyLight(bx, by, bz) : this.world.getLight(bx, by, bz) >> 4;
+  }
+
   private readonly onArrowHitMob = (a: Arrow, m: Mob, damage: number): void => {
     // Knockback along the arrow's flight direction.
     if (m.hurt(damage, a.x - a.vx * 4, a.z - a.vz * 4, 0.5, a.fromPlayer)) this.events?.sound(m, 'hurt');
@@ -339,7 +299,7 @@ export class EntityManager {
       if (a.removed) continue;
       for (let j = i + 1; j < items.length; j++) {
         const b = items[j];
-        if (b.removed || a.remote || b.remote || b.stack.id !== a.stack.id || a.stack.damage || b.stack.damage) continue;
+        if (b.removed || a.remote || b.remote || !sameItem(a.stack, b.stack) || a.stack.damage || b.stack.damage) continue;
         if (Math.abs(a.x - b.x) < 0.5 && Math.abs(a.y - b.y) < 0.5 && Math.abs(a.z - b.z) < 0.5 && a.stack.count + b.stack.count <= (getItemDef(a.stack.id)?.maxStack ?? 64)) {
           a.stack.count += b.stack.count;
           b.removed = true;

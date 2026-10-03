@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   EDIT_RECORD_VERSION, SAVE_VERSION, SaveSystem, type WorldMeta, decodeEdit, encodeEdit, migrateMeta, newWorldId,
 } from '../src/save/SaveSystem';
+import { GEN_VERSION_CURRENT, GEN_VERSION_LEGACY } from '../src/world/GenVersion';
 import type { EditMap } from '../src/world/World';
 
 function meta(over: Partial<WorldMeta> = {}): WorldMeta {
@@ -70,6 +71,25 @@ describe('SaveSystem', () => {
     const list = await s.listWorlds();
     expect(list[0].name).toBe('Legacy');
     expect(list[0].version).toBe(SAVE_VERSION);
+  });
+
+  it('puts worlds saved before generator versioning on generator version 1', async () => {
+    const s = await openSystem();
+    const legacy = meta({ name: 'Old', version: 2 });
+    delete legacy.genVersion;
+    await putRaw('worlds', legacy);
+    const list = await s.listWorlds();
+    expect(list[0].genVersion).toBe(GEN_VERSION_LEGACY);
+    expect(list[0].version).toBe(SAVE_VERSION);
+    // The migrated meta is what gets saved back, so the version sticks.
+    await s.saveWorld(list[0]);
+    expect((await (await openSystem()).listWorlds())[0].genVersion).toBe(GEN_VERSION_LEGACY);
+  });
+
+  it('keeps the generator version of a new world through save and reload', async () => {
+    const s = await openSystem();
+    await s.saveWorld(meta({ name: 'Fresh', genVersion: GEN_VERSION_CURRENT }));
+    expect((await s.listWorlds())[0].genVersion).toBe(GEN_VERSION_CURRENT);
   });
 
   it('round-trips sparse chunk edits and only writes dirty chunks', async () => {
@@ -162,6 +182,17 @@ describe('migrateMeta', () => {
     expect(m.version).toBe(SAVE_VERSION);
     migrateMeta(m);
     expect(m.version).toBe(SAVE_VERSION);
+  });
+
+  it('stamps genVersion 1 on unversioned worlds but never overwrites an existing one', () => {
+    const old = meta();
+    delete old.version;
+    migrateMeta(old);
+    expect(old.genVersion).toBe(1);
+    const fresh = meta({ genVersion: GEN_VERSION_CURRENT });
+    delete fresh.version;
+    migrateMeta(fresh);
+    expect(fresh.genVersion).toBe(GEN_VERSION_CURRENT);
   });
 
   it('leaves worlds from a newer game untouched', () => {

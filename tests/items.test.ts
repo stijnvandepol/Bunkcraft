@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { INVENTORY_SLOTS, PlayerInventory } from '../src/items/Inventory';
-import { ITEM, blockDrop, breakSeconds, canHarvest } from '../src/items/ItemRegistry';
+import { ITEM, blockDrop, breakSeconds, canHarvest, itemId } from '../src/items/ItemRegistry';
 import { RECIPES, type Recipe, type Station, canCraft, craft } from '../src/items/Recipes';
 import { BLOCK } from '../src/world/BlockRegistry';
 
@@ -111,7 +111,8 @@ describe('Recipes', () => {
   });
 
   it('a single log cannot be both the ingredient and the fuel', () => {
-    const coal = recipeFor(ITEM.COAL, 'furnace');
+    // Smelting a log gives charcoal (vanilla); coal comes from coal ore.
+    const coal = recipeFor(itemId('charcoal'), 'furnace');
     const inv = new PlayerInventory();
     inv.add({ id: BLOCK.OAK_LOG, count: 1 });
     expect(canCraft(inv, coal, FURNACE)).toBe(false);
@@ -119,7 +120,7 @@ describe('Recipes', () => {
     expect(canCraft(inv, coal, FURNACE)).toBe(true);
     expect(craft(inv, coal, FURNACE)).toBe(0);
     expect(inv.count(BLOCK.OAK_LOG)).toBe(0);
-    expect(inv.count(ITEM.COAL)).toBe(1);
+    expect(inv.count(itemId('charcoal'))).toBe(1);
   });
 
   it('crafts tools with vanilla ingredient counts', () => {
@@ -144,7 +145,7 @@ describe('Mining rules', () => {
   it('iron ore needs at least a stone pickaxe', () => {
     expect(canHarvest(BLOCK.IRON_ORE, ITEM.WOODEN_PICKAXE)).toBe(false);
     expect(canHarvest(BLOCK.IRON_ORE, ITEM.STONE_PICKAXE)).toBe(true);
-    expect(blockDrop(BLOCK.IRON_ORE, ITEM.STONE_PICKAXE)).toEqual({ id: BLOCK.IRON_ORE, count: 1 });
+    expect(blockDrop(BLOCK.IRON_ORE, ITEM.STONE_PICKAXE)).toEqual({ id: itemId('raw_iron'), count: 1 });
   });
 
   it('diamond ore needs at least an iron pickaxe', () => {
