@@ -4,6 +4,7 @@ import {
 } from '../src/world/BlockRegistry';
 import { packState, stateId, stateMeta } from '../src/world/BlockStates';
 import { LAVA_TICK_DELAY, LiquidSim, WATER_TICK_DELAY, isLiquid } from '../src/world/Liquids';
+import { RedstoneSim, isRedstoneBlock } from '../src/world/Redstone';
 import { CHUNK_HEIGHT, CHUNK_VOLUME, blockIndex, chunkKey } from '../src/world/constants';
 import { GEN_VERSION_CURRENT } from '../src/world/GenVersion';
 import { type WorldGenerator, type WorldType, createGenerator } from '../src/world/WorldGenerator';
@@ -44,6 +45,12 @@ export class ServerWorld implements EntityWorld {
    * unloads simply carries on when it loads again (see generate()).
    */
   readonly liquids: LiquidSim;
+  /**
+   * Redstone, simulated only here in multiplayer (clients mirror the changes). `entitiesOn` (pressure plates) is set by the
+   * owner of the players and mobs (ServerEntities).
+   */
+  readonly redstone: RedstoneSim;
+  entitiesOn: ((x: number, y: number, z: number, oak: boolean) => number) | null = null;
   /** Block changes made by the liquid simulation since the last drain, as x, y, z, id, meta tuples (to broadcast). */
   private readonly simEdits: number[] = [];
   onChunkReady: ((chunk: ChunkLike) => void) | null = null;
@@ -58,6 +65,14 @@ export class ServerWorld implements EntityWorld {
         // Only loaded cells change (the simulation treats unloaded ones as solid).
         if (this.setBlock(x, y, z, id, meta) >= 0) this.simEdits.push(x, y, z, id, meta);
       },
+    });
+    this.redstone = new RedstoneSim({
+      getBlock: (x, y, z) => this.getBlock(x, y, z),
+      getMeta: (x, y, z) => this.getMeta(x, y, z),
+      setState: (x, y, z, id, meta) => {
+        if (this.setBlock(x, y, z, id, meta) >= 0) this.simEdits.push(x, y, z, id, meta);
+      },
+      entitiesOn: (x, y, z, oak) => this.entitiesOn?.(x, y, z, oak) ?? 0,
     });
     // Packed states (id | meta << 8); worlds saved before block states hold plain ids, which read as meta 0.
     for (const [k, state] of Object.entries(edits)) {
@@ -87,17 +102,31 @@ export class ServerWorld implements EntityWorld {
     m.set(blockIndex(x & 15, y, z & 15), packState(id, meta));
   }
 
+  // Redstone and liquids read the same chunk over and over: a one-entry cache skips the Map (like the client's World).
+  private cacheCx = NaN;
+  private cacheCz = NaN;
+  private cacheChunk: ServerChunk | undefined;
+
+  private chunkAt(cx: number, cz: number): ServerChunk | undefined {
+    if (cx !== this.cacheCx || cz !== this.cacheCz) {
+      this.cacheCx = cx;
+      this.cacheCz = cz;
+      this.cacheChunk = this.chunks.get(chunkKey(cx, cz));
+    }
+    return this.cacheChunk;
+  }
+
   getBlock(x: number, y: number, z: number): number {
     if (y < 0) return BLOCK.BEDROCK;
     if (y >= CHUNK_HEIGHT) return BLOCK.AIR;
-    const c = this.chunks.get(chunkKey(x >> 4, z >> 4));
+    const c = this.chunkAt(x >> 4, z >> 4);
     return c ? c.blocks[blockIndex(x & 15, y, z & 15)] : BLOCK.UNLOADED;
   }
 
   /** Block state byte; 0 where unknown or in chunks without any state. */
   getMeta(x: number, y: number, z: number): number {
     if (y < 0 || y >= CHUNK_HEIGHT) return 0;
-    const c = this.chunks.get(chunkKey(x >> 4, z >> 4));
+    const c = this.chunkAt(x >> 4, z >> 4);
     return c?.meta ? c.meta[blockIndex(x & 15, y, z & 15)] : 0;
   }
 
@@ -151,7 +180,7 @@ export class ServerWorld implements EntityWorld {
    */
   setBlock(x: number, y: number, z: number, id: number, meta = 0): number {
     if (y < 0 || y >= CHUNK_HEIGHT) return -1;
-    const c = this.chunks.get(chunkKey(x >> 4, z >> 4));
+    const c = this.chunkAt(x >> 4, z >> 4);
     const i = blockIndex(x & 15, y, z & 15);
     this.recordEdit(x, y, z, id, meta);
     if (!c) {
@@ -172,12 +201,18 @@ export class ServerWorld implements EntityWorld {
     }
     this.onEdit?.(x, y, z, id, meta);
     this.liquids.notify(x, y, z);
+    this.redstone.notify(x, y, z);
     return prev;
   }
 
   /** One game tick of liquid flow; returns how many blocks changed. */
   tickLiquids(): number {
     return this.liquids.tick();
+  }
+
+  /** One game tick of redstone; returns how many blocks changed (they join the liquid changes in drainSimEdits). */
+  tickRedstone(): number {
+    return this.redstone.tick();
   }
 
   /** The changes the liquid simulation made since the last call (x, y, z, id, meta tuples); clears the list. */
@@ -257,6 +292,8 @@ export class ServerWorld implements EntityWorld {
     for (const key of this.chunks.keys()) {
       if (this.wanted.has(key)) continue;
       this.chunks.delete(key);
+      this.cacheChunk = undefined;
+      this.cacheCx = NaN;
       this.onChunkUnloaded?.(key);
     }
   }
@@ -279,9 +316,11 @@ export class ServerWorld implements EntityWorld {
     for (let i = 0; i < CHUNK_VOLUME; i++) if (LIGHT_EMIT[blocks[i]] > 0) emitters.add(i);
     const chunk: ServerChunk = { key, cx, cz, blocks, meta, tops, emitters };
     this.chunks.set(key, chunk);
+    this.cacheCx = NaN;
     // Liquid that was still flowing when the chunk went away carries on.
     if (edits) {
       for (const [i, state] of edits) {
+        if (isRedstoneBlock(stateId(state))) this.redstone.loaded((cx << 4) + (i & 15), i >> 8, (cz << 4) + ((i >> 4) & 15), stateId(state));
         if (isLiquid(stateId(state)) && stateMeta(state) !== 0) {
           this.liquids.schedule((cx << 4) + (i & 15), i >> 8, (cz << 4) + ((i >> 4) & 15), stateId(state) === BLOCK.LAVA ? LAVA_TICK_DELAY : WATER_TICK_DELAY);
         }

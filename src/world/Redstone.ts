@@ -99,9 +99,17 @@ export const MAX_CHANGES_PER_TICK = 800;
 export const MAX_UPDATES_PER_CHUNK = 2500;
 export const MAX_PENDING = 50_000;
 /** Dust blocks solved in one go (a bigger network is finished by the next pass). */
-export const MAX_NETWORK = 4096;
+export const MAX_NETWORK = 2048;
 
 const RING = 256;
+
+/**
+ * Small-integer key of a cell inside one dust network (11 bits of x and z, 7 of y): a network never spans 2048 blocks
+ * (MAX_NETWORK), so it is unique there, and Smi keys keep the Map lookups cheap.
+ */
+function netKey(x: number, y: number, z: number): number {
+  return ((x & 2047) << 18) | ((z & 2047) << 7) | y;
+}
 
 // ---------------------------------------------------------------- dust colour and use
 
@@ -581,7 +589,7 @@ export class RedstoneSim {
         this.breakAway(x, y, z, WIRE, g.getMeta(x, y, z));
         continue;
       }
-      const key = RedstoneSim.key(x, y, z);
+      const key = netKey(x, y, z);
       if (index.has(key)) continue;
       index.set(key, cells.length / 3);
       cells.push(x, y, z);
@@ -591,7 +599,7 @@ export class RedstoneSim {
       const x = cells[i], y = cells[i + 1], z = cells[i + 2];
       this.neighbours(x, y, z, cand);
       for (let k = 0; k < cand.length; k += 3) {
-        const key = RedstoneSim.key(cand[k], cand[k + 1], cand[k + 2]);
+        const key = netKey(cand[k], cand[k + 1], cand[k + 2]);
         if (index.has(key)) continue;
         index.set(key, cells.length / 3);
         cells.push(cand[k], cand[k + 1], cand[k + 2]);
@@ -618,7 +626,7 @@ export class RedstoneSim {
         if (power[u] !== p) continue;
         this.readersOf(cells[u * 3], cells[u * 3 + 1], cells[u * 3 + 2], readers);
         for (let r = 0; r < readers.length; r += 3) {
-          const j = index.get(RedstoneSim.key(readers[r], readers[r + 1], readers[r + 2]));
+          const j = index.get(netKey(readers[r], readers[r + 1], readers[r + 2]));
           if (j === undefined || power[j] >= p - 1) continue;
           power[j] = p - 1;
           buckets[p - 1].push(j);
@@ -640,7 +648,7 @@ export class RedstoneSim {
       for (let i = 0; i < cells.length; i += 3) {
         this.neighbours(cells[i], cells[i + 1], cells[i + 2], cand);
         for (let k = 0; k < cand.length; k += 3) {
-          if (!index.has(RedstoneSim.key(cand[k], cand[k + 1], cand[k + 2]))) this.requeueWire(cand[k], cand[k + 1], cand[k + 2]);
+          if (!index.has(netKey(cand[k], cand[k + 1], cand[k + 2]))) this.requeueWire(cand[k], cand[k + 1], cand[k + 2]);
         }
       }
     }
