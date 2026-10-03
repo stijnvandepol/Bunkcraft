@@ -725,6 +725,33 @@ export class AudioEngine {
     });
   }
 
+  /**
+   * Arcade objective cue (flag taken, zone captured, round won ...): `good` = your side gained, `bad` = it lost,
+   * `alarm` = your flag is on the move, `neutral` = something to notice (the hill moved, a round starts).
+   */
+  playModeCue(kind: 'good' | 'bad' | 'alarm' | 'neutral'): void {
+    this.emit(`arcade.cue.${kind}`, NaN, NaN, NaN, 0.35);
+    this.placed(undefined, 0, Priority.Ui, () => {
+      if (kind === 'good') {
+        this.voice('triangle', 784, 784, 0.16, 0.26);
+        this.voice('triangle', 988, 988, 0.16, 0.26, 0.1);
+        this.voice('triangle', 1319, 1319, 0.3, 0.24, 0.2);
+      } else if (kind === 'bad') {
+        this.voice('triangle', 659, 659, 0.18, 0.24);
+        this.voice('triangle', 523, 523, 0.18, 0.24, 0.12);
+        this.voice('triangle', 392, 392, 0.32, 0.22, 0.24);
+      } else if (kind === 'alarm') {
+        for (let i = 0; i < 3; i++) {
+          this.voice('square', 880, 880, 0.12, 0.12, i * 0.24);
+          this.voice('square', 660, 660, 0.12, 0.12, i * 0.24 + 0.12);
+        }
+      } else {
+        this.voice('sine', 1047, 1047, 0.22, 0.22);
+        this.voice('sine', 1568, 1568, 0.3, 0.16, 0.09);
+      }
+    });
+  }
+
   /** Little whoosh when you respawn. */
   playSpawn(): void {
     this.emit('player.spawn', NaN, NaN, NaN, 0.2);

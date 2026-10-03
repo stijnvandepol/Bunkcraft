@@ -3,12 +3,13 @@ import {
   ARCADE_AIR_ACCEL, ARCADE_SPEED_MULT, FireControl, KillFeed, SPAWN_PROTECTION, SPECTATE_KILLER_SECONDS, currentSpread, cycleSlot, cycleTarget,
   impactNormal, reloadProgress, spectateCandidates, spreadPixels,
 } from '../modes/ArcadeLogic';
-import { type Team, TEAM_COLORS, gameTypeDef } from '../modes/GameTypes';
+import { type GameTypeDef, type Team, TEAM_COLORS, gameTypeDef } from '../modes/GameTypes';
+import { carriesFlag, eventView, phaseBanner } from '../modes/ModeView';
 import { LOADOUT_PRESETS } from '../modes/Loadouts';
 import {
   DEFAULT_PRIMARY, DEFAULT_SECONDARY, PLAYER_MAX_HEALTH, PRIMARY_WEAPONS, RESPAWN_SECONDS, SECONDARY_WEAPONS, type WeaponDef, fireInterval, weaponDef,
 } from '../modes/Weapons';
-import type { ClientMessage, MatchInfo, MatchPhase, RosterEntry, ServerMessage } from '../net/protocol';
+import type { ClientMessage, MatchInfo, MatchPhase, ModeState, RosterEntry, ServerMessage } from '../net/protocol';
 import type { RemotePlayers } from '../net/RemotePlayers';
 import type { Player } from '../player/Player';
 import { PHYSICS } from '../player/Physics';
@@ -17,6 +18,8 @@ import { Tracers } from '../rendering/Tracers';
 import { WEAPON_MODELS } from '../rendering/WeaponModels';
 import { WeaponViewmodel } from '../rendering/WeaponViewmodel';
 import { ArcadeHud, type ScoreboardContext } from '../ui/ArcadeHud';
+import { ModeHud } from '../ui/ModeHud';
+import { ModeVisuals } from '../rendering/ModeVisuals';
 import { BLOCK } from '../world/BlockRegistry';
 import { type RayHit, createRayHit, raycast } from '../world/Raycast';
 import type { AudioEngine } from './Audio';
@@ -87,6 +90,15 @@ export class ArcadeSession {
 
   readonly info: MatchInfo;
   readonly teams: boolean;
+  /** The game type's rules as data (HUD widgets, respawn rule, loadout rule). */
+  readonly def: GameTypeDef;
+  /** Objective HUD (zones, flags, rounds, ladder) and the flags/zone rings in the world. */
+  readonly modeHud: ModeHud;
+  readonly modeVisuals = new ModeVisuals();
+  private modeState: ModeState | null = null;
+  private matchText = '';
+  private selfPts = 0;
+  private carrying = false;
   phase: MatchPhase = 'warmup';
   private timeLeft = 0;
   private timeStamp = 0;
@@ -137,11 +149,16 @@ export class ArcadeSession {
   private lastClockSec = -1;
   private selfKills = 0;
   private leader = '';
-  private readonly matchCtx = { selfId: 0, teams: false, scores: { red: 0, blue: 0 }, scoreLimit: 0, selfKills: 0, leader: '' };
+  private readonly matchCtx = {
+    selfId: 0, teams: false, scores: { red: 0, blue: 0 }, scoreLimit: 0, selfKills: 0, leader: '', text: '', selfScore: undefined as string | undefined,
+  };
 
   constructor(private readonly d: ArcadeDeps) {
     this.info = d.info;
-    this.teams = gameTypeDef(d.info.type).teams;
+    this.def = gameTypeDef(d.info.type);
+    this.teams = this.def.teams;
+    this.modeHud = new ModeHud(this.def);
+    this.hud.el.append(this.modeHud.el);
     this.players.set(d.selfId, { name: d.selfName, team: '' });
     this.hud.onLoadout = (id, secondary) => this.selectLoadout(id, secondary);
     this.hud.setHealth(this.health);
@@ -156,7 +173,9 @@ export class ArcadeSession {
 
   /** Movement multiplier for Player.speedMultiplier: always-sprint pace times the weapon's modifier. */
   get speedMultiplier(): number {
-    return ARCADE_SPEED_MULT * this.weapon.moveSpeed * (1 - 0.2 * this.ads);
+    // A flag carrier is slower (capture the flag); the server announces who carries in the mode state.
+    const carry = this.carrying ? 1 - (this.def.params?.carrySlow ?? 0.1) : 1;
+    return ARCADE_SPEED_MULT * this.weapon.moveSpeed * (1 - 0.2 * this.ads) * carry;
   }
 
   readonly airAccel = ARCADE_AIR_ACCEL;
@@ -185,6 +204,9 @@ export class ArcadeSession {
     this.players.delete(id);
     this.d.remote.remove(id);
   }
+
+  private readonly nameOfFn = (id: number): string => this.nameOf(id);
+  private readonly selfRef: { team: Team | ''; id: number } = { team: '', id: 0 };
 
   private nameOf(id: number): string {
     return this.players.get(id)?.name ?? `Player ${id}`;
@@ -235,6 +257,8 @@ export class ArcadeSession {
       case 'matchend': this.onMatchEnd(msg, now); break;
       case 'holds': this.d.remote.setWeapon(msg.id, msg.weapon); break;
       case 'gear': this.onGear(msg); break;
+      case 'mode': this.onMode(msg.state); break;
+      case 'event': this.onEvent(msg, now); break;
       default: break;
     }
   }
@@ -251,6 +275,7 @@ export class ArcadeSession {
       return;
     }
     this.phase = msg.phase;
+    this.matchText = msg.text ?? '';
     this.timeLeft = msg.timeLeft;
     this.timeStamp = now;
     this.scores = msg.scores;
@@ -264,10 +289,10 @@ export class ArcadeSession {
     let best: RosterEntry | null = null;
     this.selfKills = 0;
     for (const p of players) {
-      if (!best || p.kills > best.kills) best = p;
-      if (p.id === this.d.selfId) this.selfKills = p.kills;
+      if (!best || (p.pts ?? 0) > (best.pts ?? 0) || ((p.pts ?? 0) === (best.pts ?? 0) && p.kills > best.kills)) best = p;
+      if (p.id === this.d.selfId) { this.selfKills = p.kills; this.selfPts = p.pts ?? 0; }
     }
-    this.leader = best ? `Leader: ${best.name}` : '';
+    this.leader = best ? `Leader: ${best.name}${this.def.ladder ? ` (level ${(best.pts ?? 0) + 1})` : ''}` : '';
     for (const p of players) {
       this.players.set(p.id, { name: p.name, team: p.team });
       if (p.id === this.d.selfId) this.setTeam(p.team);
@@ -323,6 +348,38 @@ export class ArcadeSession {
     this.equipSlot(0, false);
     this.d.audio.playSpawn();
   }
+
+  /** New objective state from the server: markers, panels, world flags and rings, the carrier slow-down. */
+  private onMode(state: ModeState): void {
+    this.modeState = state;
+    this.modeHud.setState(state);
+    this.modeVisuals.setState(state);
+    this.carrying = state.kind === 'ctf' && carriesFlag(state.flags, this.d.selfId);
+    this.matchDirty = true;
+  }
+
+  private onEvent(msg: Extract<ServerMessage, { t: 'event' }>, now: number): void {
+    const who = msg.id ? (msg.id === this.d.selfId ? 'You' : this.nameOf(msg.id)) : '';
+    const v = eventView(msg.kind, msg.team ?? '', this.team, msg.text ?? '', who, msg.id === this.d.selfId);
+    const color = msg.team ? TEAM_COLORS[msg.team] : '#ffff55';
+    // Ladder steps of other players are not worth a banner.
+    if (v.text) this.modeHud.toast(v.text, color, now);
+    if (v.text || msg.id === this.d.selfId) this.d.audio.playModeCue(v.cue);
+  }
+
+  /** Position of a player for markers and carried flags: yourself or the interpolated remote pose. */
+  private readonly carrierPose = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0 };
+  readonly carrierPos = (id: number, out: THREE.Vector3): boolean => {
+    if (id === this.d.selfId) {
+      if (this.dead) return false;
+      const p = this.d.player;
+      out.set(p.x, p.y, p.z);
+      return true;
+    }
+    if (!this.d.remote.pose(id, this.carrierPose)) return false;
+    out.set(this.carrierPose.x, this.carrierPose.y, this.carrierPose.z);
+    return true;
+  };
 
   private onHealth(hp: number, now: number): void {
     this.health = hp;
@@ -524,6 +581,7 @@ export class ArcadeSession {
   }
 
   openLoadout(): void {
+    if (this.def.loadout === 'ladder') return; // gun game: the ladder chooses
     this.loadoutOpen = true;
     this.hud.showLoadout(this.pendingPrimary || this.primary, !this.dead, this.pendingSecondary || this.secondary);
   }
@@ -624,7 +682,7 @@ export class ArcadeSession {
       if (input.wheel !== 0) this.equipSlot(cycleSlot(this.slot, input.wheel), true);
       if (input.actionPressed(KB.QUICK_SWITCH)) this.equipSlot(this.prevSlot, true);
       if (input.actionPressed(KB.RELOAD)) this.requestReload(now);
-    } else if (this.dead && f.controls) {
+    } else if (this.dead && f.controls && this.def.loadout !== 'ladder') {
       // On the death screen the number keys pick the next weapon (the loadout menu is B).
       for (let i = 0; i < LOADOUT_PRESETS.length; i++) if (input.wasPressed(`Digit${i + 1}`)) this.selectLoadout(LOADOUT_PRESETS[i].primary, LOADOUT_PRESETS[i].secondary);
     }
@@ -664,7 +722,7 @@ export class ArcadeSession {
   }
 
   private boardContext(): ScoreboardContext {
-    return { selfId: this.d.selfId, teams: this.teams, scores: this.scores };
+    return { selfId: this.d.selfId, teams: this.teams, scores: this.scores, scoreColumn: this.def.scoreColumn };
   }
 
   private updateHud(f: ArcadeFrame, w: WeaponDef, ammo: AmmoState, reload: number, input: Input): void {
@@ -689,9 +747,19 @@ export class ArcadeSession {
       const c = this.matchCtx;
       c.selfId = this.d.selfId; c.teams = this.teams; c.scores = this.scores;
       c.scoreLimit = this.info.scoreLimit; c.selfKills = this.selfKills; c.leader = this.leader;
+      c.text = this.matchText;
+      const ladder = this.def.ladder;
+      c.selfScore = ladder ? `${Math.min(this.selfPts + 1, ladder.length)}/${ladder.length}` : undefined;
       hud.setMatch(this.phase, left, c);
-      hud.setBanner(this.phase === 'warmup' ? `Warm-up: match starts in ${Math.max(0, sec)}` : '');
+      const round = this.modeState?.kind === 'rounds' ? this.modeState.round : 1;
+      hud.setBanner(this.phase === 'warmup' ? `Warm-up: match starts in ${Math.max(0, sec)}` : phaseBanner(this.phase, left, round));
+      if (ladder) this.modeHud.setLadder(this.selfPts, ladder, this.leader);
+      if (this.def.hud?.includes('zones') || this.def.hud?.includes('flags')) this.modeHud.setScores(this.scores.red, this.scores.blue, this.info.scoreLimit);
     }
+    const me = this.selfRef;
+    me.team = this.team; me.id = this.d.selfId;
+    this.modeHud.frame(now, this.d.cam.camera, window.innerWidth, window.innerHeight, me, this.nameOfFn, this.carrierPos);
+    this.modeVisuals.update(now, this.carrierPos);
 
     // Scoreboard while the key is held.
     const showBoard = f.controls && input.actionDown(KB.SCOREBOARD) && !this.ended;
@@ -702,7 +770,9 @@ export class ArcadeSession {
     }
 
     if (this.dead) {
-      hud.setRespawn(RESPAWN_SECONDS - (now - this.deadAt), this.primary, this.pendingPrimary, this.secondary, this.pendingSecondary);
+      const rule = this.def.respawn;
+      const wait = rule?.rule === 'never' ? -1 : (rule?.seconds ?? RESPAWN_SECONDS) - (now - this.deadAt);
+      hud.setRespawn(wait, this.primary, this.pendingPrimary, this.secondary, this.pendingSecondary, this.def.loadout !== 'ladder');
       if (!this.ended) this.updateSpectate(f, input);
     }
     if (this.ended) hud.setNextMatch(this.endAt - now);
@@ -721,6 +791,8 @@ export class ArcadeSession {
   /** Leaving the game: drop effects and remote state. */
   dispose(): void {
     this.hud.reset();
+    this.modeHud.reset();
+    this.modeVisuals.dispose();
     this.tracers.clear();
     this.d.cam.kick = 0;
     this.d.cam.zoom = 1;

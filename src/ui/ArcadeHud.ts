@@ -14,6 +14,8 @@ export interface ScoreboardContext {
   selfId: number;
   teams: boolean;
   scores: { red: number; blue: number };
+  /** Header of the mode's objective column ("Caps", "Level"); absent = no column. */
+  scoreColumn?: string;
 }
 
 interface DamageMarker {
@@ -348,17 +350,20 @@ export class ArcadeHud {
   }
 
   /** Timer, team scores (or your own score in free for all) and the phase line. Call when something changed. */
-  setMatch(phase: MatchPhase, timeLeft: number, ctx: ScoreboardContext & { scoreLimit: number; selfKills: number; leader: string }): void {
-    this.clock.textContent = phase === 'warmup' ? 'WARM-UP' : formatClock(timeLeft);
+  setMatch(
+    phase: MatchPhase, timeLeft: number,
+    ctx: ScoreboardContext & { scoreLimit: number; selfKills: number; leader: string; text?: string; selfScore?: string },
+  ): void {
+    this.clock.textContent = phase === 'warmup' ? 'WARM-UP' : phase === 'intermission' || phase === 'countdown' ? 'NEXT ROUND' : formatClock(timeLeft);
     this.rightScore.classList.toggle('hidden', !ctx.teams);
     if (ctx.teams) {
       this.leftScore.textContent = String(ctx.scores.red);
       this.leftScore.style.background = TEAM_COLORS.red;
       this.rightScore.textContent = String(ctx.scores.blue);
       this.rightScore.style.background = TEAM_COLORS.blue;
-      this.subline.textContent = `First to ${ctx.scoreLimit}`;
+      this.subline.textContent = ctx.text || `First to ${ctx.scoreLimit}`;
     } else {
-      this.leftScore.textContent = `${ctx.selfKills}/${ctx.scoreLimit}`;
+      this.leftScore.textContent = ctx.selfScore ?? `${ctx.selfKills}/${ctx.scoreLimit}`;
       this.leftScore.style.background = '#3a3a3a';
       this.rightScore.textContent = '';
       this.subline.textContent = ctx.leader;
@@ -406,13 +411,21 @@ export class ArcadeHud {
   }
 
   /** Respawn countdown in whole seconds; also lists the loadout choices. */
-  setRespawn(seconds: number, primary: string, pending: string, secondary: string = DEFAULT_SECONDARY, pendingSecondary = ''): void {
-    const n = Math.max(0, Math.ceil(seconds));
+  /**
+   * Respawn countdown in whole seconds (negative = no respawn before the next round) and the loadout
+   * choices (hidden when the mode chooses the weapons).
+   */
+  setRespawn(seconds: number, primary: string, pending: string, secondary: string = DEFAULT_SECONDARY, pendingSecondary = '', choice = true): void {
+    const n = seconds < 0 ? -1 : Math.max(0, Math.ceil(seconds));
     const key = `${pending}|${pendingSecondary}`;
     if (n === this.lastCount && key === this.lastRespawnPending) return;
     this.lastCount = n;
     this.lastRespawnPending = key;
-    this.deathCount.textContent = `Respawning in ${n}`;
+    this.deathCount.textContent = n < 0 ? 'Eliminated: you are back next round' : `Respawning in ${n}`;
+    if (!choice) {
+      this.deathLoadout.replaceChildren();
+      return;
+    }
     const cur = presetFor(pending || primary, pendingSecondary || secondary);
     this.deathLoadout.replaceChildren(h('div', { class: 'arc-death-hint', text: `Next class (keys 1-${LOADOUT_PRESETS.length}, or B for the loadout menu)` }),
       h('div', { class: 'arc-death-weapons' }, ...LOADOUT_PRESETS.map((pr, i) =>
@@ -493,14 +506,17 @@ function statRows(def: WeaponDef): HTMLElement[] {
 /** Scoreboard table: rank, name (team colour), kills, deaths, K/D and ping; yours is highlighted. */
 function renderBoard(host: HTMLElement, roster: readonly RosterEntry[], ctx: ScoreboardContext): void {
   const rows: HTMLElement[] = [];
-  const header = h('div', { class: 'arc-row head' },
+  const cols = ctx.scoreColumn ? ' pts' : '';
+  const header = h('div', { class: `arc-row head${cols}` },
     h('span', { class: 'rank', text: '#' }), h('span', { class: 'name', text: 'Player' }),
+    ctx.scoreColumn ? h('span', { text: ctx.scoreColumn }) : null,
     h('span', { text: 'Kills' }), h('span', { text: 'Deaths' }), h('span', { text: 'K/D' }), h('span', { text: 'Ping' }));
   rows.push(header);
   sortRoster(roster).forEach((p, i) => {
-    rows.push(h('div', { class: `arc-row${p.id === ctx.selfId ? ' self' : ''}` },
+    rows.push(h('div', { class: `arc-row${cols}${p.id === ctx.selfId ? ' self' : ''}` },
       h('span', { class: 'rank', text: String(i + 1) }),
       h('span', { class: 'name', style: `color:${teamColor(p.team)}`, text: p.name }),
+      ctx.scoreColumn ? h('span', { text: String(ctx.scoreColumn === 'Level' ? (p.pts ?? 0) + 1 : p.pts ?? 0) }) : null,
       h('span', { text: String(p.kills) }), h('span', { text: String(p.deaths) }),
       h('span', { text: kdRatio(p.kills, p.deaths) }), h('span', { text: p.ping > 0 ? String(Math.round(p.ping)) : '-' })));
   });

@@ -103,7 +103,7 @@ export function damageAngle(dx: number, dz: number, yaw: number): number {
 
 /** Scoreboard order: most kills first, then fewest deaths, then name. Does not modify the input. */
 export function sortRoster(players: readonly RosterEntry[]): RosterEntry[] {
-  return [...players].sort((a, b) => b.kills - a.kills || a.deaths - b.deaths || a.name.localeCompare(b.name));
+  return [...players].sort((a, b) => (b.pts ?? 0) - (a.pts ?? 0) || b.kills - a.kills || a.deaths - b.deaths || a.name.localeCompare(b.name));
 }
 
 /** Total kills per team from the roster (the server also sends these in `match.scores`). */

@@ -12,7 +12,7 @@ import { MobRenderer } from '../entities/MobRenderer';
 import { NetClient, type WelcomeMessage } from '../net/NetClient';
 import { NetEntities } from '../net/NetEntities';
 import { type ClientMessage, type ServerMessage, formatCode, normalizeCode } from '../net/protocol';
-import { gameTypeDef } from '../modes/GameTypes';
+import { type GameType, gameTypeDef } from '../modes/GameTypes';
 import { inviteLink, inviteText, rememberGame } from '../net/RoomApi';
 import { RemotePlayers } from '../net/RemotePlayers';
 import { Chat } from '../ui/Chat';
@@ -881,10 +881,12 @@ export class Game {
     session.setBindings(this.input);
     this.renderer.scene.add(session.tracers.mesh);
     this.renderer.shadowExcluded.push(session.tracers.mesh);
+    this.renderer.scene.add(session.modeVisuals.group);
+    this.renderer.shadowExcluded.push(session.modeVisuals.group);
     this.root.append(session.hud.el, session.hud.loadoutEl);
     session.setHudVisible(false);
     for (const pl of welcome.players) session.addPlayer(pl.id, pl.name, pl.team ?? '');
-    this.arcadeHint = `${def.name}: first to ${info.scoreLimit} wins. Tab = scoreboard, B = loadout, R = reload.`;
+    this.arcadeHint = `${def.name}: ${def.description}. Tab = scoreboard,${def.loadout === 'ladder' ? '' : ' B = loadout,'} R = reload.`;
   }
 
   private stopArcade(): void {
@@ -896,8 +898,10 @@ export class Game {
     this.remote.clear();
     session.dispose();
     session.tracers.mesh.removeFromParent();
-    const i = this.renderer.shadowExcluded.indexOf(session.tracers.mesh);
-    if (i >= 0) this.renderer.shadowExcluded.splice(i, 1);
+    for (const o of [session.tracers.mesh, session.modeVisuals.group]) {
+      const i = this.renderer.shadowExcluded.indexOf(o);
+      if (i >= 0) this.renderer.shadowExcluded.splice(i, 1);
+    }
     session.hud.el.remove();
     session.hud.loadoutEl.remove();
     this.hud.setArcade(false);
@@ -989,7 +993,7 @@ export class Game {
    * real server. With a map id (`arcadePreview('tdm', 'You', 'canyon')`) it plays on the real arena
    * of that map instead of a fake one. The fake server is `game.previewServer` (see ArcadePreview.ts for scripted events).
    */
-  async arcadePreview(type: 'tdm' | 'ffa' = 'tdm', name = 'You', mapId?: string): Promise<void> {
+  async arcadePreview(type: GameType = 'tdm', name = 'You', mapId?: string): Promise<void> {
     if (!import.meta.env.DEV) return;
     const { ArcadePreviewServer } = await import('./ArcadePreview');
     this.audio.unlock();
@@ -1011,7 +1015,7 @@ export class Game {
         const hit = raycast(this.getBlock, ox, oy, oz, dx, dy, dz, max, ray);
         return hit.hit ? hit.distance : max;
       },
-    }, type, name);
+    }, type, name, 10, mapId);
     const welcome = {
       t: 'welcome', id: server.selfId, worldName: 'Arcade preview', seed: meta.seed, gameMode: 'creative', time: 0.3,
       gameType: type, worldType: 'arena', match: server.info, spawn: { x: 8, y: 100, z: 8 }, edits: [], player: null,
@@ -1207,7 +1211,7 @@ export class Game {
       this.hud.setVisible(!this.hudHidden);
       this.arcade?.setHudVisible(!this.hudHidden);
     }
-    if (this.arcade && code === input.bound(KB.LOADOUT)) {
+    if (this.arcade && this.arcade.def.loadout !== 'ladder' && code === input.bound(KB.LOADOUT)) {
       // The loadout menu needs the mouse, like the inventory.
       if (this.state === 'playing' && this.input.locked) {
         this.state = 'inventory';
