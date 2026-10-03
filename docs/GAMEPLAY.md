@@ -128,17 +128,50 @@ Schermafdrukken: `docs/screenshots/survival-*.png` (`scripts/survival-shots.py`)
 |---|---|---|---|---|
 | Varken | 10 | 0,9×0,9 | dwalen, vluchten bij schade | 1–3 rauw varkensvlees |
 | Koe | 10 | 0,9×1,4 | dwalen, vluchten | 1–3 rauw rundvlees |
-| Schaap | 8 | 0,9×1,3 | dwalen, vluchten | 1 witte wol, 1–2 schapenvlees |
+| Schaap | 8 | 0,9×1,3 | dwalen, vluchten, gras eten | 1 wol in zijn kleur (geschoren: geen), 1–2 schapenvlees |
 | Kip | 4 | 0,4×0,7 | dwalen, fladderen, geen valschade | 1 kip, 0–2 veren |
 | Zombie | 20 | 0,6×1,95 | achtervolgen, slaan (3), brandt in de zon | 0–2 rot vlees |
 | Creeper | 20 | 0,6×1,7 | achtervolgen, 1,5 s opzwellen, explosie (kracht 3) | 0–2 buskruit |
 | Skelet | 20 | 0,6×1,99 | afstand houden, pijlen schieten, brandt in de zon | 0–2 botten, 0–2 pijlen |
 | Spin | 16 | 1,4×0,9 | klimt, springt, neutraal bij helder licht | 0–2 draad, soms een spinnenoog |
+| Wolf | 8 (tam 40) | 0,6×0,85 | neutraal; bot temt (1/3), zit/volgt, vecht mee met de eigenaar, roedel wordt boos | niets |
+| Enderman | 40 | 0,6×2,9 | neutraal; boos bij 5 ticks aankijken (64 blokken), teleporteert na schade en in water, slaat 7 | 0–1 ender pearl |
+| Slime | 16 / 4 / 1 | 0,52 × grootte | springt, slaat 3 / 2 / 0, splitst in 2–4 kleinere | kleine: 0–2 slimeballs |
+| Drowned | 20 | 0,6×1,95 | zwemt achter je aan, slaat 3, brandt niet | 0–2 rot vlees, 11 % goudstaaf (onzeker) |
+| Husk | 20 | 0,6×1,95 | woestijnzombie, brandt niet, een klap geeft 7 s honger | 0–2 rot vlees |
+| Stray | 20 | 0,6×1,99 | skelet van sneeuwgebieden, pijlen geven 30 s slowness | botten, pijlen |
+| Cave spider | 12 | 0,7×0,5 | klein, vergif 7 s per beet (effectensysteem) | draad, spinnenoog |
+| Witch | 26 | 0,6×1,95 | gooit elke 3 s een splash-drankje binnen 10 blokken: slowness (≥ 8 blokken), vergif (≥ 8 HP), soms weakness, anders harming | 3× 0–2 uit glowstone, buskruit, redstone, spinnenoog, suiker, stok |
+| Paard | 15–30 | 1,4×1,6 | temmen door te rijden (temper), zadel, sturen met WASD, springen | 0–2 leer |
+
+![Nieuwe mobs](screenshots/mobs-new-a-front.jpg)
+![Nieuwe mobs van opzij](screenshots/mobs-new-b-side.jpg)
+
+### AI (Minecraft-goals, `src/entities/ai/`)
+
+- **Goal selector** (`Goal.ts`): elke mob heeft prioriteiten-lijsten met goals (`canUse`, `canContinue`, `start`, `tick`, `stop`) en vlaggen MOVE/LOOK/JUMP/TARGET; een goal met een lager nummer onderbreekt een lopende goal met dezelfde vlag. Doelkeuze (`targetGoals`) loopt apart. Per soort staan de lijsten in `brains.ts`, in de volgorde van de Java-klassen.
+- **Goals:** zwemmen, paniek, lokken met voer, fokken, ouder volgen, wandelen (alleen op droge grond in geladen chunks), naar spelers kijken, rondkijken, gras eten, melee, creeper-lont, sprong (spin), boog (skelet, 3 s), schaduw zoeken (skelet in de zon), wolven ontwijken (skelet), zitten, eigenaar volgen en teleporteren (≥ 12 blokken), verdedigen/meevechten, prooi, enderman-blik en teleport, slime-sprongen, drowned-zwemmen, witch-drankjes, eieren leggen, paard berijden.
+- **Pad zoeken** (`Pathfinder.ts`, `Navigator.ts`): A* op het voxelrooster (1 blok omhoog, tot 3 omlaag, diagonaal als beide buren vrij zijn; lava en cactus nooit, water duurder of verboden). Knoopbudget per zoektocht (160), herberekening elke 10–20 ticks per mob, een rechte lijn zonder zoektocht als die vrij is, en per tick maximaal 6 zoektochten voor alle mobs samen. Is het doel onbereikbaar, dan loopt de mob het beste deelpad. Deuren: nog dicht = muur.
+- **Kosten:** `npx tsx scripts/bench-spawn.ts` (laatste blok): 51 mobs van elke soort rond 8 spelers op de serverwereld, 0,73 ms per tick inclusief wereld en vloeistoffen, 1,1 zoektochten en ~155 knopen per tick. De Vitest-check houdt 40 mobs achter obstakels onder 1 ms per tick.
+
+### Fokken, baby's en boerderij
+
+- **Voer** gaat via *tags* (`Breeding.ts`): koe/schaap tarwe, varken wortel/aardappel/bietwortel, kip zaden (tarwe, pompoen, meloen, bietwortel, torchflower: wat er bestaat telt), wolf vlees, paard gouden appel/wortel. Nieuwe gewassen werken dus vanzelf zodra het item bestaat.
+- Voeren geeft 30 s love mode (hartjes), twee dieren lopen naar elkaar toe en krijgen na 3 s samen een baby; daarna 5 minuten afkoeling. Fokken geeft 1–7 XP als ervaringsbollen (`EntityManager.spawnXp`).
+- **Baby's** groeien in 20 minuten op (voeren haalt 10 % van de resttijd af), zijn half zo groot met een relatief grote kop, volgen een ouder, praten hoger en laten niets vallen. 5 % van de natuurlijke dieren is een baby.
+- **Schapen** eten gras (gras → aarde, tufjes weg) en krijgen zo hun wol terug; scheren met een schaar geeft 1–3 wol in hun kleur, verf kleurt ze. Natuurlijke kleuren: wit 81,8 %, zwart/grijs/lichtgrijs 5 %, bruin 3 %, roze 0,16 %.
+- **Koeien** geven melk in een emmer (nieuw item `milk_bucket`), kippen leggen elke 5–10 minuten een ei (nieuw item `egg`).
+- **Paarden:** rechtsklik met lege hand = opstappen; een wild paard gooit je na 2–5 s af en wordt elke keer makkelijker (temper +5) tot het tam is. Tam paard + zadel = sturen met WASD en springen; snelheid 4,9–14,6 blokken/s en springhoogte per paard (Minecraft-formules). Alleen singleplayer.
+
+![Baby's](screenshots/mobs-babies.jpg)
+![Schapen](screenshots/mobs-sheep.jpg)
+![Wolven temmen](screenshots/mobs-wolf-taming.jpg)
 
 - **Spawnen** (`src/entities/MobSpawner.ts`, dezelfde code in singleplayer en op de server):
   - Dieren: bij het genereren van een grasrijke chunk komt in een kwart van de chunks een groepje van 2–4 (gewichten schaap 12, varken 10, kip 10, koe 8; vaste kans per seed en chunk). Daarnaast vult elke 10 s overdag een nieuw groepje aan tot ongeveer 28 dieren in de buurt, met een wereldplafond van 80.
   - Monsters: twee spawnpogingen per tick per speler, 24–48 blokken weg, nooit dichterbij. Op elke vloer met twee vrije blokken erboven (gras, bloemen en tufjes tellen als vrij), bij block light 0 en een sky light min de duisternis van de dag ≤ willekeurig 0..7. Dat geldt 's nachts overal buiten en altijd in grotten en andere donkere plekken.
   - Helft van de pogingen kijkt naar het oppervlak, de andere helft naar willekeurige diepte (tot 40 blokken onder de speler), zodat grotten ook overdag spawnen.
+  - Biomen en diepte (extra worpen, de hoofdtabel blijft gelijk): enderman (10) en witch (5) als zeldzame pakken; in de woestijn is 80 % van de zombies een husk, in sneeuw 80 % van de skeletten een stray; in slime chunks (1 op 10, vast per seed) spawnen onder y 40 slimes van grootte 1, 2 of 4; diep in grotten is de helft van de spinnen een cave spider; in de oceaan zoekt een kwart van de pogingen drowned in water van minstens 3 diep. Bossen en taiga's krijgen soms een roedel wolven, vlaktes een kudde paarden.
   - Tabel: zombie 100, skelet 100, creeper 100, spin 100. Groepen: zombie en skelet 4, creeper 1, spin 1–2. Leden staan binnen een paar blokken van elkaar, met drie pogingen per lid.
   - Plafond: 40 monsters voor één speler (+20 per extra speler, max 100), overdag 40 % daarvan, zodat de grotten niet het hele plafond opeten.
 - **Despawnen:** monsters verdwijnen direct verder dan 128 blokken, en verder dan 32 blokken met kans 1/800 per tick. Overdag verdwijnen monsters in open zon buiten bereik na gemiddeld ongeveer 12 s, zodat de ochtend de oppervlakte opruimt zonder dat zombies en skeletten allemaal tegelijk in vlammen opgaan. Dieren verdwijnen met hun chunk en keren terug vanuit de seed.
@@ -283,6 +316,20 @@ gaan niet over het net (ze veranderen niets aan wat je ziet). Vallende blokken k
 **Voor andere systemen (landbouw):** `RandomTicker.register(blockId, (w, x, y, z) => …)` voegt gedrag toe zonder `RandomTicks.ts` aan te
 passen (`w.setBlock`, `w.setMeta` voor een stille leeftijd, `w.brightness`, `w.randomInt`, `w.breakBlock`); `registerBoneMeal` en
 `registerSupportedPlant`/`registerBlockUpdate` (`BlockUpdates.ts`) werken op dezelfde manier.
+
+## Redstone
+
+- **Stof** leg je met het redstone-item; het verbindt met stof ernaast, een blok hoger (als er niets massiefs boven ligt) en lager, en met
+  bronnen en repeaters. Elk blok stof verliest 1 signaal, een repeater maakt het weer 15. Kleur van donkerrood (0) tot felrood (15).
+- **Bronnen:** hendel (rechtsklik), knop (puls van 1 s steen / 1,5 s eik), drukplaat (steen: spelers en mobs, eik: ook items; 0,5 s nagloeien),
+  redstonefakkel (inverteert het blok waaraan hij vastzit), redstoneblok.
+- **Repeater:** rechtsklik zet de vertraging 1–4 redstone ticks; stuurt alleen vooruit en verlengt korte pulsen.
+- **Verbruikers:** lamp (licht 15), deuren, luiken en hekpoorten (openen op stroom, handmatig openen blijft tot de stroom verandert), nootblok
+  (rechtsklik = hogere toon, stroom = spelen; instrument naar het blok eronder), TNT, zuigers (duwen tot 12 blokken, sticky trekt er één terug).
+- **Sterk en zwak:** een bron voedt het blok waaraan hij vastzit sterk; een sterk gevoed blok voedt stof, repeaters, fakkels en verbruikers ernaast.
+  Stof voedt het blok waar het naar wijst en het blok eronder.
+- **Klokken:** een fakkel die te snel schakelt (8× in 3 s) brandt door en blijft 8 s uit.
+- **Recepten (Java):** hendel, knoppen, drukplaten, fakkel (hand); repeater, lamp, nootblok, zuiger (werkbank). Redstone-erts geeft 4–5 stof.
 
 ## Roadmap
 

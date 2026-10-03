@@ -42,14 +42,22 @@ wat al is doorgevoerd.
 | Gedeelde GLSL voor licht en mist (5 kopieën lopen nu uiteen; entities missen de onderwater-mist) | **Gedaan:** `LIGHT_GLSL`, `FOG_GLSL` en `ATLAS_GLSL` in `Materials.ts`; mobs, items, deeltjes en pijlen gebruiken nu dezelfde lichtcurve en mist (incl. zonsondergang-gloed en onderwater-mist), de hand dezelfde lichtcurve. Items zijn in schemerige gebieden iets donkerer (ze volgen nu de curve van de blokken) |
 | Worker-crash: jobs blijven "in flight" en het streamen stopt | **Gedaan:** worker vervangen, job opnieuw ingepland (max. 3 pogingen, daarna laat `ChunkManager` de chunk opnieuw proberen); Vitest met nep-worker |
 | Grotten, ravijnen en ertsen (feedback: "geen grotten en grotingangen te zien") | **Gedaan:** generator versie 2 (`CaveCarver.ts`, `OreTable.ts`): cheese, spaghetti, noodle, ingangen in heuvels, ravijnen met lava/water, aquifer-meren met barrières, lavameren onder y 10, ertsblobs uit één tabel. Grotopeningen per 100 landchunks 13 → 56, lucht onder zeeniveau 7,4 → 11,7 %, `generate` 1,4–1,6× (zie RESEARCH.md §4). Zee, kust en bedrock blijven heel; geen bomen boven gaten |
-| Generatorversies (`genVersion`) zodat een nieuwe generator bestaande werelden niet stuk maakt | **Gedaan:** `WorldMeta.genVersion` (save-versie 3, zonder = 1), `world.json`, optioneel veld in `welcome`, `generate`-verzoek. Versie 1 blijft bitgelijk (golden hashes). Nieuwe wereld = versie 2 |
-| Ertsen voor nieuwe blokken (lapis, redstone, koper, smaragd) | S: de rijen staan al in `ORE_TABLE` met `minGen: 3`; zodra de blokken bestaan `GEN_VERSION_CURRENT` op 3 zetten en golden hashes bijwerken |
-| Dripstone, mos en andere grotbiomes; deepslate-laag onder y ~8 | M (wacht op blokken) |
+| Generatorversies (`genVersion`) zodat een nieuwe generator bestaande werelden niet stuk maakt | **Gedaan:** `WorldMeta.genVersion` (save-versie 3, zonder = 1), `world.json`, optioneel veld in `welcome`, `generate`-verzoek. Versie 1 en 2 blijven bitgelijk (golden hashes). Nieuwe wereld = versie 3 |
+| Ertsen voor nieuwe blokken (lapis, redstone, koper, smaragd) | **Gedaan** in generator versie 3: koper y 24–80, lapis 8–46 (ingebed), redstone onder y 36, smaragd als losse blokken alleen in Mountains/Windswept Hills; ertsen ook in deepslate. Open: echte `deepslate_*_ore`-blokken |
+| Generator versie 3: biomes, rivieren, gesteente (feedback: "meer Minecraft-achtige variatie") | **Gedaan** (`GeneratorV3.ts`, `TreesV3.ts`, `Structures.ts`, zie RESEARCH.md §4): 27 biomes uit temperatuur/vochtigheid/continentaliteit, rivieren als domain-warped ruiscontour met zandoevers (bevroren met ijs), badlands met terracotta-banden (block states uit de generator), moeras met modder en groen water, deepslate onder y 16, granite/diorite/andesite/tuff, bronnen, grotpaddenstoelen, waterkleur per biome, woestijnputten en zwerfkeien. `generate` ~1,3–1,5× van v2 |
+| Structuren-registry (`Structures.ts`): dorpen, dungeons, mijnschachten | M per stuk: registry met chunk-geseede ankers en `place(target, ax, az, rng)` staat er; nieuwe features met `minGen` 4 en een generatorversie erbij |
+| Dripstone, mos en andere grotbiomes | M (wacht op blokken). Deepslate-laag: **gedaan** (v3, onder y 16 met overgang) |
 | `Game.ts` (~1000 regels) opsplitsen: GameStateMachine, WorldSession, SimulationLoop, Combat, DebugInfo | M |
 | Save-formaatversie en migraties, nodig vóór block states | **Gedaan:** `version` op `WorldMeta` en op de chunk-edit-records, lijst `MIGRATIONS` + `migrateMeta`, nieuwere records worden overgeslagen i.p.v. verkeerd gelezen; Vitest met `fake-indexeddb`. **Versie 2 (block states):** edit-record `index << 16 \| meta << 8 \| id`, v1-records worden met meta 0 gelezen (`decodeEdit`); `world.json` op de server bewaart `id \| meta << 8`, oude bestanden blijven geldig |
 | Meshtijd na block states (`scripts/bench-mesh.ts`, seed 12345, 25 chunks) | **Gedaan:** 3,55 ms gemiddeld per chunk tegen 3,96 ms ervoor (gemeten afwisselend op dezelfde machine): de nieuwe vormen zijn betaald met een snellere skylight-kolom (`LIGHT_COLUMN`, 1 opzoeking) en een allocatievrije regio-kopie. Meta kost niets zolang een chunk er geen heeft (lazy; altijd alloceren: 10 MB bij render distance 8 en +0,1 ms per mesh) |
 | Instellingen valideren (min/max/enum) uit `localStorage` | **Gedaan:** `sanitizeSettings` begrenst getallen op het bereik van het menu, valideert enums, negeert onbekende sleutels; Vitest |
 | Standaardpreset kiezen op basis van de hardware | **Gedaan:** GPU-naam, cores en `deviceMemory` bij de eerste start (software-GPU, Intel HD/UHD, Mali, Adreno → Low) |
+| GC tijdens het streamen van chunks, `updateMatrixWorld` over alle chunk-meshes | **Gedaan:** overgedragen en gepoolde buffers (worker `BufferPool`), CPU-kopie van chunkgeometrie weg na de GPU-upload, CPU-culling per kolom. rd 16 met 4× tragere CPU: mediaan frame 16,6 → 8,7 ms, frames > 20 ms 240 → 6 per 30 s, major GC's 17 → 3 (RESEARCH.md §2) |
+| Render distance tijdelijk verlagen als de framerate laag blijft bij minimale resolutie | **Gedaan:** `DynamicResolution.distanceDrop` (min. 4 chunks, komt na 12 s soepel terug); mesh-uploads begrensd op ~2 ms/frame, chunks vóór de speler eerst |
+| Bundel: three.js apart, compressie, preloads, arcade lazy | **Gedaan:** 1498 → 488 KB tot het titelscherm, Fast 3G 18,6 → 11,4 s. Open: spritesheet voor het standaard-texturepack (56 PNG's = ~10 round trips op HTTP/1.1), fflate lazy (vereist `WorldArchive` lazy) |
+| Redstone-tickpieken > 20 ms | **Gedaan:** het waren GC-pauzes; netwerkoplosser zonder allocaties (garbage 8× minder, tick 0,95 → 0,26 ms bij 1500 dust). Open: `RedstoneSim.key` > 2^31 boxt nog in de Sets |
+| Mob-rendering maakt de meeste garbage per frame (`MobRenderer.update`, ~1,5 MB/s met mobs in beeld) | S/M: waarschijnlijk geboxte doubles in Euler/Matrix-velden; meten met `perf-report.py --alloc` |
+| 16×16×16 secties + cave culling, multi-draw | L: de volgende grote stap voor draw calls (rd 16: ~600) |
 | Dynamische resolutie voor zwakke GPU's en Retina | **Gedaan:** interne resolutie zakt bij < 48 FPS tot 0,5 px per CSS-pixel, en stijgt weer bij headroom. Software-GPU op Medium: 11–16 → 26–28 FPS |
 | Menu-blur (`backdrop-filter`) kostte zwakke GPU's het grootste deel van de frame | **Gedaan:** uit bij Fast of verlaagde resolutie (pauzemenu op een software-GPU: 14 → 45 FPS); `-webkit-`-prefix voor Safari < 18 |
 | Shadow map begrenzen op `maxTextureSize` | **Gedaan:** `ShadowRenderer.configure` klemt de grootte op `capabilities.maxTextureSize` |
@@ -127,16 +135,42 @@ Screenshots: `docs/screenshots/xp-bar-orbs.png`, `enchanting-table.png`, `sword-
   Swift Sneak en alles van kruisboog, trietand en hengel; een zwevend boek op de enchanting table en glyph-deeltjes van de boekenkasten; de
   server bewaakt XP niet (de client stuurt zijn punten mee, zoals health); dood-XP en erts-XP zijn in multiplayer lokale orbs; creative-tab met kant-en-klare enchanted books.
 
+## 4d. Redstone (minimaal, klaar)
+
+Screenshots: `docs/screenshots/redstone_lever_lamp.png`, `redstone_clock_a.png`, `redstone_plate_door.png`, `redstone_piston_closed.png`
+(`scripts/redstone-shots.py`, controleert ook de werking).
+
+- **Kern:** `src/world/Redstone.ts` (`RedstoneSim`, puur, getest met een nep-grid in `tests/redstone.test.ts`). Signaal 0–15 in de meta van stof,
+  sterke en zwakke voeding zoals Java, een volledig stofnetwerk wordt in één keer opgelost (afname 1 per blok, ook trapjes op en af).
+  Vertragingen als geplande ticks: repeater 2–8, fakkel 2, lamp uit 4, knop 20/30, zuiger 2 game ticks; fakkels branden door (8 keer in 60 ticks, 160 ticks uit).
+  Budgetten per tick: 4000 updates, 800 blokwijzigingen, 2500 updates per chunk, 50 000 geplande ticks; netwerken tot 2048 stof per pass.
+- **Componenten:** stof, hendel, knop (steen/eik), drukplaat (steen/eik), redstonefakkel (vloer + muur), redstoneblok, repeater (1–4),
+  lamp, nootblok (25 tonen, instrument naar het blok eronder), TNT, deuren/luiken/hekpoorten, (sticky) zuigers (12 blokken, niet obsidiaan/bedrock/
+  kisten/ovens/deuren/bedden; planten en stof breken).
+- **Weergave:** stofkleur via de per-vertex tint (geen extra textures), vorm uit de buren zoals hekken; kleurwijzigingen worden max. 5×/s per
+  chunk opnieuw gemesht. 14 textuurlagen.
+- **Multiplayer:** `ServerWorld` simuleert, wijzigingen gaan mee in de bestaande `blocks`-batch; clients simuleren niet. Protocol ongewijzigd.
+  Arcade-rooms hebben geen redstone. Geluiden (klik, zuiger, noot, deur) leidt de client af uit binnenkomende wijzigingen.
+- **Metingen:** 510 stof (34 netwerken) aan/uit: server ~0,5 ms per tick (mediaan), singleplayer 720 stof ~0,6–1 ms per tick (mediaan, uitschieters
+  door GC/drukke machine).
+- **Bewust vereenvoudigd:** geen quasi-connectivity/BUD, geen repeater-lock, comparator, observer, dropper/dispenser, hopper, slime; zuigers
+  verschuiven direct (geen animatie, geen entities meeduwen); zuigerkop breken laat de basis gewoon intrekken; sticky piston heeft geen recept
+  (geen slijmbal); lamp/deur-updates hebben geen Minecraft-updatevolgorde; netwerken > 2048 stof worden in delen opgelost; een uitgedoofde
+  redstonefakkel geeft nog steeds licht 7 (licht per blok-id).
+- **Nog te doen:** comparator, observer, hopper, dispenser/dropper, rails, slijmbal + slime block, zuigeranimatie, quasi-connectivity.
+  `BlockUpdates` (2 ticks, 400 checks) is bewust niet hergebruikt: redstone heeft directe stofpropagatie, vertragingen tot 160 ticks en de
+  tweede ring via sterk gevoede blokken nodig.
+
 ## 5. Sfeer
 
 | Item | Effort |
 |---|---|
 | ~~Grotgeluiden en muziek die per biome wisselt~~ (klaar, zie hieronder) | S |
 | Vuurvliegjes en vallende bladeren | S |
-| Suikerriet, pompoenen, meloenen, paddenstoelen, waterlelies | S–M |
+| Suikerriet, pompoenen, meloenen, paddenstoelen, waterlelies | **Gedaan** in de generator (v3), behalve waterlelies (blok bestaat nog niet). Groei via random ticks: andere ontwikkelaar |
 | Weer: regen, sneeuw, onweer, bliksem, maanfasen, sterren met twinkel | **Gedaan** (`Weather.ts`, `Precipitation.ts`, `Lightning.ts`; zie [`GAMEPLAY.md`](GAMEPLAY.md#weer-en-lucht)). Open: regengeluid en donder via `AudioEngine.setWeather`, sneeuwlagen en bevriezend water (block states + random ticks), farmland-hydratatie en vuur-blussen via `Weather.isRainingAt`, geladen creepers, onweer-slapen |
-| Rivieren | M |
-| Nieuwe biomes: moeras, savanne, jungle, badlands | M per stuk |
+| Rivieren | **Gedaan** (generator v3) |
+| Nieuwe biomes: moeras, savanne, jungle, badlands | **Gedaan** (generator v3). Open: mangrove-moeras, mushroom fields, ice spikes, jungle-lianen (geen vine-blok), waterlelies |
 
 ### Audio-herziening (klaar, `src/core/audio/*`)
 
@@ -289,7 +323,7 @@ spawnpunt en nacht overslaan, difficulty en game rules, harnas, attack cooldown 
 **Fase 2, mid game:** fokken en baby's, weer, dungeons met spawner, meer mobs (enderman, witch, slime, wolf, paard),
 status-effecten, schild, vuur, enchanting, anvil en grindstone, mijnschachten en kleine structuren, vissen, meer planten.
 
-**Fase 3, late game:** minimale redstone, dorpen met handel, brewing, Nether-lite, extra biomes (jungle, savanne, moeras,
+**Fase 3, late game:** minimale redstone (**gedaan**, zie 4d), dorpen met handel, brewing, Nether-lite, extra biomes (jungle, savanne, moeras,
 badlands), rivieren.
 
 Onzeker en eerst te verifiëren: verdrinkings- en lava-intervallen in de code tegen de wiki, de void-grens (y < −64 terwijl
@@ -315,3 +349,22 @@ de wereld 0–127 loopt), sapling-groeilicht en de XP-tabel (zie "onzeker" in ME
    - nieuwe biomes en dorpen;
    - touch en gamepad;
    - portals.
+
+## Mobs 2 (oktober 2026)
+
+**Gedaan:** goal-AI met A* (`src/entities/ai/`), fokken en baby's, schapen scheren/verven/grazen, melk, eieren,
+wolven (temmen, zitten, volgen, meevechten, halsband), enderman, slime (splitsen, slime chunks), drowned, husk, stray,
+cave spider, witch (drankje = vergif als placeholder), paard (minimaal rijden in singleplayer), hartjes/rook boven
+mobs, blob-schaduwen, nieuwe geluiden en ondertitels, server-sync (`NET_MOB_KINDS` uitgebreid, vlaggen en variant-byte).
+
+**Open, op volgorde:**
+1. Effecten zijn gekoppeld (`MobEffects.ts`: cave-spider-vergif, husk-honger, stray-slowness, witch-drankjes) en
+   fokken geeft XP-bollen. Open: melk drinken die effecten wist, witch die zelf drankjes drinkt, de server kent de
+   gezondheid van de speler niet (witch kiest dan als bij volle gezondheid).
+2. Mob-drops naar `rollLoot` (`src/items/Loot.ts`).
+3. Getemde wolven en paarden opslaan in de wereld (nu verdwijnen ze bij afsluiten; ze blijven wel geladen zolang je
+   speelt) en rijden in multiplayer (de server moet de paardsnelheid toestaan).
+4. Deuren in het pad zoeken (openen door zombies op Hard), enderman die blokken oppakt, wolf-bedel-goal, paard-
+   uitrusting en ezels/muildieren.
+5. Ambient en water: vleermuizen, inktvissen en vissen (eigen spawn-caps per categorie).
+

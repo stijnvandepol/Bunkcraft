@@ -150,6 +150,9 @@ export class Particles {
     this.tint[i * 4 + 3] = OPAQUE[blockId] ? 0 : 1;
   }
 
+  /** Particle count of the last GPU upload. */
+  private uploaded = 0;
+
   update(dt: number, world: BlockQuery): void {
     const p = this.pos, v = this.vel;
     let i = 0;
@@ -182,6 +185,9 @@ export class Particles {
       i++;
     }
     const n = this.count;
+    // Nothing alive now and nothing uploaded last frame: skip the subarray views and update ranges.
+    if (n === 0 && this.uploaded === 0) return;
+    this.uploaded = n;
     (this.iPos.array as Float32Array).set(p.subarray(0, n * 3));
     (this.iData.array as Float32Array).set(this.data.subarray(0, n * 4));
     (this.iLight.array as Float32Array).set(this.light.subarray(0, n * 2));

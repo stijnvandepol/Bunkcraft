@@ -5,6 +5,7 @@ import {
   ARMOR_BASE_DURABILITY, ARMOR_FIRST, ARMOR_MATERIALS, ARMOR_SLOT_NAMES, FOODS, FOOD_FIRST, HOE_FIRST, MATERIALS, MATERIAL_FIRST,
   SHEARS, type ItemSpec, armorItemId,
 } from './ItemContent';
+import { MOB_ITEMS, MOB_ITEM_FIRST } from './MobItems';
 
 /**
  * Items. Ids below 256 are blocks (same id as the block); ids from 256 up are
@@ -249,6 +250,7 @@ function addSpec(id: number, spec: ItemSpec): void {
 export const ITEM_ID: Record<string, number> = {};
 FOODS.forEach((f, i) => { addSpec(FOOD_FIRST + i, f); ITEM_ID[f.name] = FOOD_FIRST + i; });
 MATERIALS.forEach((m, i) => { addSpec(MATERIAL_FIRST + i, m); ITEM_ID[m.name] = MATERIAL_FIRST + i; });
+MOB_ITEMS.forEach((m, i) => { addSpec(MOB_ITEM_FIRST + i, m); ITEM_ID[m.name] = MOB_ITEM_FIRST + i; });
 let blockNames: Map<string, number> | null = null;
 /** Id of a block or item by its registry name ('cobblestone', 'granite', 'copper_ingot', 'stick'). */
 export function itemId(name: string): number {
@@ -622,6 +624,9 @@ export function blockDrop(blockId: number, held: number, meta = 0, ench?: Mining
     return Math.random() < 0.125 ? { id: named('wheat_seeds'), count: 1 } : null;
   }
   switch (blockId) {
+    case B.REDSTONE_WIRE: return { id: named('redstone'), count: 1 };
+    case B.REDSTONE_LAMP_LIT: return { id: B.REDSTONE_LAMP, count: 1 };
+    case B.PISTON_HEAD: return null;
     case B.STONE: return { id: B.COBBLESTONE, count: 1 };
     case CUBE_ID.deepslate: return { id: CUBE_ID.cobbled_deepslate, count: 1 };
     // Gravel drops flint 10% of the time (14%, 25% and 100% with Fortune I-III).
@@ -662,6 +667,9 @@ function plainBlockDrops(blockId: number, meta: number): ItemStack[] {
   }
   if (WITH_SHEARS_ONLY.has(blockId)) return [{ id: blockId, count: 1 }, { id: ITEM.STICK, count: 2 }, { id: named('wheat_seeds'), count: 1 }];
   switch (blockId) {
+    case B.REDSTONE_WIRE: return [{ id: named('redstone'), count: 1 }];
+    case B.REDSTONE_LAMP_LIT: return [{ id: B.REDSTONE_LAMP, count: 1 }];
+    case B.PISTON_HEAD: return [];
     case B.STONE: return [{ id: B.COBBLESTONE, count: 1 }];
     case CUBE_ID.deepslate: return [{ id: CUBE_ID.cobbled_deepslate, count: 1 }];
     case B.GRAVEL: return [{ id: B.GRAVEL, count: 1 }, { id: ITEM.FLINT, count: 1 }];

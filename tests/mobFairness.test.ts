@@ -106,7 +106,12 @@ describe('zombie melee', () => {
     const world = new TestWorld();
     for (let y = 63; y < 66; y++) for (let zz = -2; zz <= 2; zz++) world.set(3, y, zz, id, meta);
     const { hits, events } = recorder();
+    // Only hits from the zombie's side of the wall count: with path finding it may walk around the 5-wide wall
+    // and hit from the player's side, which is fair (Minecraft does the same).
+    const through: number[] = [];
     const z = new Mob(MOB_TYPES.zombie);
+    const attack = events.attack;
+    events.attack = (m, d, t) => { attack(m, d, t); if (m.x < 3) through.push(d); };
     z.setPosition(2.5, 63, 0.5);
     const target: MobTarget = { x: 4.35, y: 63, z: 0.5, attackable: true };
     Entity.metaGetter = (x, y, zz) => world.getMeta(x, y, zz);
@@ -115,7 +120,7 @@ describe('zombie melee', () => {
     } finally {
       Entity.metaGetter = null;
     }
-    expect(hits.length).toBe(expected);
+    expect(expected === 0 ? through.length : hits.length).toBe(expected);
   });
 
   it('line of sight follows collision shapes: an open door and the empty half of a slab do not block', () => {

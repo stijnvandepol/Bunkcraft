@@ -1,3 +1,4 @@
+import { findSpawnColumn } from '../src/world/Spawn';
 import { enchantsOf } from '../src/items/EnchantRules';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -15,7 +16,6 @@ import { BLOCK, getBlockDef } from '../src/world/BlockRegistry';
 import { isValidMeta } from '../src/world/BlockShapes';
 import { needsSupport, plantCanStand } from '../src/world/PlantRules';
 import { packState, stateId, stateMeta } from '../src/world/BlockStates';
-import { SEA_LEVEL } from '../src/world/constants';
 import { hashString } from '../src/world/Noise';
 import { Weather, type WeatherState, parseWeatherCommand } from '../src/world/Weather';
 import { arenaWorldType } from '../src/world/WorldGenerator';
@@ -430,15 +430,9 @@ export class GameServer {
   /** Same dry-land spawn search as the client, using the shared terrain generator. */
   private findSpawn(seed: number, genVersion: number): { x: number; y: number; z: number } {
     const gen = new TerrainGenerator(seed, genVersion);
-    for (let r = 0; r < 2000; r += 8) {
-      const steps = Math.max(1, Math.floor((r * Math.PI * 2) / 16));
-      for (let s = 0; s < steps; s++) {
-        const a = (s / steps) * Math.PI * 2;
-        const x = Math.round(Math.cos(a) * r), z = Math.round(Math.sin(a) * r);
-        const h = gen.heightAt(x, z);
-        if (h > SEA_LEVEL + 2 && h < 85 && !gen.surfaceOpen(x, z)) return { x: x + 0.5, y: Math.floor(h) + 2, z: z + 0.5 };
-      }
-    }
+    // Versions 1 and 2 never checked the biome here; keep that so the server picks the spot it always did.
+    const at = findSpawnColumn(gen, genVersion, false);
+    if (at) return { x: at.x + 0.5, y: Math.floor(at.h) + 2, z: at.z + 0.5 };
     return { x: 0.5, y: 100, z: 0.5 };
   }
 
@@ -835,6 +829,7 @@ export class GameServer {
       case 'block': return this.onBlock(s, msg);
       case 'chat': return this.onChat(s, msg.text);
       case 'attack': return void (s.attacks.take() && entities.attack(s, Number(msg.id), enchantData(msg.e)));
+      case 'usemob': return void (s.attacks.take() && entities.useMob(s, Number(msg.id)));
       case 'shoot':
         return void (s.shots.take() && entities.shoot(s, msg.x, msg.y, msg.z, msg.dx, msg.dy, msg.dz, msg.power, enchantData(msg.e)));
       case 'ignite': return void (s.edits.take() && entities.ignite(s, msg.x, msg.y, msg.z));

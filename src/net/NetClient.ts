@@ -146,6 +146,10 @@ export class NetClient {
     this.send(e ? { t: 'attack', id, e } : { t: 'attack', id });
   }
 
+  sendUseMob(id: number): void {
+    this.send({ t: 'usemob', id });
+  }
+
   sendShoot(x: number, y: number, z: number, dx: number, dy: number, dz: number, power: number, e?: number[]): void {
     this.send(e ? { t: 'shoot', x, y, z, dx, dy, dz, power, e } : { t: 'shoot', x, y, z, dx, dy, dz, power });
   }

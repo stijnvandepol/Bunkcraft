@@ -71,15 +71,20 @@ const MOB_SOUNDS: Record<string, [string, string]> = {
   // kind: [name, idle verb]
   pig: ['Pig', 'oinks'], cow: ['Cow', 'moos'], sheep: ['Sheep', 'bleats'], chicken: ['Chicken', 'clucks'],
   zombie: ['Zombie', 'groans'], creeper: ['Creeper', 'hisses'], skeleton: ['Skeleton', 'rattles'], spider: ['Spider', 'hisses'],
+  wolf: ['Wolf', 'barks'], enderman: ['Enderman', 'vwoops'], slime: ['Slime', 'squishes'], drowned: ['Drowned', 'gurgles'],
+  husk: ['Husk', 'groans'], stray: ['Stray', 'rattles'], cave_spider: ['Cave Spider', 'hisses'], witch: ['Witch', 'giggles'],
+  horse: ['Horse', 'neighs'],
 };
 
 /** Caption for a mob sound: "Zombie groans", "Cow hurts", "Creeper dies", "Creeper hisses" (fuse). */
-export function mobSoundLabel(kind: string, event: 'idle' | 'hurt' | 'death' | 'fuse' | 'shoot'): string {
+export function mobSoundLabel(kind: string, event: 'idle' | 'hurt' | 'death' | 'fuse' | 'shoot' | 'angry' | 'teleport'): string {
   const [name, idle] = MOB_SOUNDS[kind] ?? [kind.charAt(0).toUpperCase() + kind.slice(1), 'makes a sound'];
   if (event === 'shoot') return `${name} shoots`;
   if (event === 'hurt') return `${name} hurts`;
   if (event === 'death') return `${name} dies`;
   if (event === 'fuse') return `${name} hisses`;
+  if (event === 'angry') return kind === 'wolf' ? 'Wolf growls' : `${name} screams`;
+  if (event === 'teleport') return `${name} teleports`;
   return `${name} ${idle}`;
 }
 
