@@ -506,6 +506,17 @@ html, body {
   box-shadow: inset 0 0 0 var(--s) #fff, inset 0 0 0 calc(var(--s) * 2) #a0a0a0;
 }
 
+.attack-xh {
+  position: absolute; left: 50%; top: calc(50% + var(--s) * 9); width: calc(var(--s) * 16); height: calc(var(--s) * 4);
+  transform: translateX(-50%); background: rgba(40, 40, 40, 0.8); mix-blend-mode: difference;
+}
+.attack-xh i { display: block; height: 100%; width: 0; background: #fff; }
+.attack-hotbar {
+  position: absolute; right: calc(var(--s) * -24); bottom: calc(var(--s) * 3); width: calc(var(--s) * 18); height: calc(var(--s) * 18);
+  background: rgba(20, 20, 20, 0.55); border: var(--s) solid #000; display: flex; align-items: flex-end;
+}
+.attack-hotbar i { display: block; width: 100%; height: 0; background: #a0a0a0; }
+
 .slot-icon { width: calc(var(--s) * 16); height: calc(var(--s) * 16); image-rendering: pixelated; }
 
 /* ---------------------------------------------------------------- creative inventory */
@@ -608,6 +619,9 @@ html, body {
 
 .mc-tooltip {
   position: fixed;
+  left: 0;
+  top: 0;
+  will-change: transform;
   padding: calc(var(--s) * 3) calc(var(--s) * 4);
   background: rgba(16, 0, 16, 0.94);
   border: var(--s) solid;
@@ -727,7 +741,9 @@ html, body {
 .inv-columns { display: flex; gap: calc(var(--s) * 8); }
 .inv-subtitle { color: #404040; margin: calc(var(--s) * 3) 0 calc(var(--s) * 2); }
 .inv-slot.disabled img { opacity: 0.35; }
-.cursor-stack { position: fixed; pointer-events: none; z-index: 40; width: calc(var(--s) * 16); height: calc(var(--s) * 16); }
+.tip-name { color: #fff; }
+.tip-lore { color: #a8a8a8; }
+.cursor-stack { position: fixed; left: 0; top: 0; will-change: transform; pointer-events: none; z-index: 40; width: calc(var(--s) * 16); height: calc(var(--s) * 16); }
 .cursor-stack img { width: 100%; height: 100%; image-rendering: pixelated; }
 
 /* ---------------------------------------------------------------- multiplayer */

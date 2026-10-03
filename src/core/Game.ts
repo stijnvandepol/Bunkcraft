@@ -434,6 +434,7 @@ export class Game {
     this.cam.viewBobbing = s.viewBobbing;
     setLanguage(s.language);
     this.chat.applySettings(s);
+    this.hud.setAttackIndicator(s.attackIndicator);
     this.cam.fovEffects = s.fovEffects / 100;
     this.player.autoJump = s.autoJump;
     this.input.rawInput = s.rawInput;
@@ -754,7 +755,7 @@ export class Game {
     this.renderer.three.domElement.toBlob((blob) => {
       if (!blob) return;
       downloadBlob(blob, name);
-      showToast(`Saved screenshot ${name}`);
+      showToast(t('hud.screenshot', name));
     }, 'image/png');
   }
 
@@ -1256,6 +1257,11 @@ export class Game {
     }
     if (code === 'F3') this.debug.toggle();
     if (code === 'F2' && this.world) this.wantScreenshot = true;
+    // F11: fullscreen like Minecraft (the page's own fullscreen; the browser's F11 is a different mode).
+    if (code === 'F11') {
+      if (document.fullscreenElement) void document.exitFullscreen();
+      else void document.documentElement.requestFullscreen().catch(() => undefined);
+    }
     // With keyboard lock (fullscreen) Esc arrives as a key press instead of ending pointer lock.
     if (code === 'Escape' && keyboardLockActive() && this.state === 'playing') this.input.exitLock();
     if (code === 'F1' && this.state === 'playing') {
@@ -1648,7 +1654,10 @@ export class Game {
     this.audioProbe.update(dt, this.audio.env, eye.x, eye.y, eye.z, this.cycle.dayFactor, this.underwater);
     this.hud.setUnderwater(this.underwater);
     this.hud.setHurt(this.arcade ? this.arcade.hurt * 0.8 : this.stats.hurtTime / 10);
-    if (!this.arcade) this.hud.survival.update({ health: this.stats.health, hunger: this.stats.hunger, air: this.stats.air, maxAir: MAX_AIR, armor: this.stats.armorPoints }, this.time);
+    if (!this.arcade) this.hud.survival.update({
+      health: this.stats.health, hunger: this.stats.hunger, air: this.stats.air, maxAir: MAX_AIR, armor: this.stats.armorPoints,
+      hardcore: this.mode === 'hardcore', poison: this.stats.poison > 0, hurtTime: this.stats.hurtTime, saturation: this.stats.saturation,
+    }, this.time);
 
     if (this.net) {
       const flags = (p.sprinting ? 1 : 0) | (p.flying ? 2 : 0) | (p.onGround ? 4 : 0);
@@ -1717,38 +1726,40 @@ export class Game {
     const target = ray?.hit ? `${getBlockDef(ray.id)?.displayName} @ ${ray.x}, ${ray.y}, ${ray.z}` : '—';
     const e = this.entities;
     const near = this.countMobsNear(p.x, p.z, 64);
+    // Grouped like Minecraft 1.21's F3: left = version, performance, renderer counts, then position and world
+    // state; right = memory, system/display, then the targeted block. F3 text stays English, as in Minecraft.
+    const towards: Record<string, string> = { north: 'Towards negative Z', south: 'Towards positive Z', east: 'Towards positive X', west: 'Towards negative X' };
     d.set([
       `BunkCraft 1.0 (WebGL2 · three.js r${THREE.REVISION})`,
       `${d.fps} fps · frame ${d.frameMs.toFixed(2)} ms CPU · worst ${d.worstMs.toFixed(1)} ms`,
-      `Chunks: ${stats.loaded} loaded · ${stats.meshed} meshed · ${visible} rendered`,
-      `Draw calls: ${r.drawCalls} (+${r.shadowCalls} shadow) · Triangles: ${(r.triangles / 1000).toFixed(1)}k`,
+      `C: ${visible}/${stats.loaded} (meshed ${stats.meshed}) D: ${world.chunks.renderDistance} · Draw calls: ${r.drawCalls} (+${r.shadowCalls} shadow)`,
+      `E: ${e?.mobs.length ?? 0} mobs, ${e?.items.length ?? 0} items · P: ${this.renderer.particles.active}${this.renderer.precipitation.count > 0 ? ` · Rain: ${this.renderer.precipitation.count}` : ''} · Tris: ${(r.triangles / 1000).toFixed(1)}k`,
       `Workers: ${this.pool.size} · queue ${this.pool.queued} · gen ${this.pool.genMs.toFixed(1)} ms · mesh ${this.pool.meshMs.toFixed(1)} ms`,
-      `Entities: ${e?.mobs.length ?? 0} mobs · ${e?.items.length ?? 0} items · Particles: ${this.renderer.particles.active}${this.renderer.precipitation.count > 0 ? ` · Precipitation: ${this.renderer.precipitation.count}` : ''}`,
+      '',
+      `XYZ: ${p.x.toFixed(3)} / ${p.y.toFixed(5)} / ${p.z.toFixed(3)}`,
+      `Block: ${bx} ${by} ${bz}`,
+      `Chunk: ${bx & 15} ${by} ${bz & 15} in ${bx >> 4} ${bz >> 4}`,
+      `Facing: ${facing} (${towards[facing] ?? ''}) (${yawDeg.toFixed(1)} / ${((-p.pitch * 180) / Math.PI).toFixed(1)})`,
+      `Light: ${Math.max(light >> 4, light & 15)} (${light >> 4} sky, ${light & 15} block)`,
+      `Biome: ${BIOME_NAMES[world.biomeName(bx, bz)]}`,
+      `Day ${this.cycle.day + 1} · ${this.cycle.clock()} · Moon: ${MOON_PHASE_NAMES[this.cycle.moonPhase]}`,
+      this.weatherSys.debugLine(),
       `Mobs within 64: ${near.hostile} hostile · ${near.passive} passive${this.net ? ' (server)' : ''}`,
       '',
-      `XYZ: ${p.x.toFixed(3)} / ${p.y.toFixed(3)} / ${p.z.toFixed(3)}`,
-      `Block: ${bx} ${by} ${bz}`,
-      `Chunk: ${bx >> 4} ${bz >> 4} (in chunk ${bx & 15} ${by} ${bz & 15})`,
-      `Facing: ${facing} (${yawDeg.toFixed(1)} / ${((-p.pitch * 180) / Math.PI).toFixed(1)})`,
-      `Biome: ${BIOME_NAMES[world.biomeName(bx, bz)]}`,
-      `Light: ${light >> 4} sky, ${light & 15} block`,
-      `${this.audio.debugLine()} · enclosure ${this.audio.env.enclosure.toFixed(2)}`,
-      `Time: ${this.cycle.clock()} · Day ${this.cycle.day + 1} · Moon: ${MOON_PHASE_NAMES[this.cycle.moonPhase]}`,
-      this.weatherSys.debugLine(),
-      `Render distance: ${world.chunks.renderDistance} chunks`,
       `${GAME_MODE_NAMES[this.mode]} · ${p.flying ? 'Flying' : p.onGround ? 'On ground' : 'Airborne'}${p.sprinting ? ' · Sprinting' : ''}${p.inWater ? ' · In water' : ''}`,
       `Health ${this.stats.health} · Food ${this.stats.hunger} (sat ${this.stats.saturation.toFixed(1)}) · Air ${this.stats.air}`,
+      `${this.audio.debugLine()} · enclosure ${this.audio.env.enclosure.toFixed(2)}`,
     ], [
-      mem ? `JS heap: ${(mem.usedJSHeapSize / 1048576).toFixed(0)} / ${(mem.totalJSHeapSize / 1048576).toFixed(0)} MB` : 'JS heap: n/a',
-      `World blocks: ${(worldBlocks / 1e6).toFixed(2)}M (${(worldBlocks / 1048576).toFixed(1)} MB)`,
-      `Edited chunks: ${world.edits.size}`,
+      mem ? `Mem: ${Math.round((mem.usedJSHeapSize / mem.totalJSHeapSize) * 100)}% ${(mem.usedJSHeapSize / 1048576).toFixed(0)}/${(mem.totalJSHeapSize / 1048576).toFixed(0)}MB` : 'Mem: n/a',
+      `World blocks: ${(worldBlocks / 1e6).toFixed(2)}M (${(worldBlocks / 1048576).toFixed(1)} MB) · edited chunks ${world.edits.size}`,
       `Upload queue: ${stats.uploadQueue} · in flight ${stats.genInFlight}g/${stats.meshInFlight}m`,
       '',
-      `Display: ${window.innerWidth}×${window.innerHeight} @ ${this.renderer.three.getPixelRatio().toFixed(2)}x`
+      `CPU: ${navigator.hardwareConcurrency || '?'} threads`,
+      `Display: ${window.innerWidth}x${window.innerHeight} @ ${this.renderer.three.getPixelRatio().toFixed(2)}x`
         + (this.dynamicResolution.enabled ? ` (dynamic ${Math.round(this.dynamicResolution.scale * 100)}%)` : ''),
-      `GPU: ${this.gpuName.replace(/^ANGLE \(|\)$/g, '').split(',').slice(0, 2).join(',')}`,
+      `${this.gpuName.replace(/^ANGLE \(|\)$/g, '').split(',').slice(0, 2).join(',')}`,
       '',
-      `Targeted: ${target}`,
+      `Targeted Block: ${target}`,
       `Holding: ${getItemDef(this.hotbar.selectedBlock)?.displayName ?? 'Empty hand'}`,
       `Seed: ${world.seed}`,
     ]);
