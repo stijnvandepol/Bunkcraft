@@ -54,8 +54,8 @@ with sync_playwright() as p:
     page.on('pageerror', lambda e: logs.append('PAGEERR ' + str(e)))
     page.goto(f'http://localhost:{port}/')
     page.wait_for_function('!!(window.game && window.game.createWorld)', timeout=30000)
-    page.evaluate("window.game.createWorld('enchant', '4242', 'creative')")
-    for _ in range(300):
+    print(page.evaluate("window.game.createWorld('enchant', '1', 'creative').then(() => 'created', (e) => 'ERR ' + e)"))
+    for _ in range(600):
         page.bring_to_front()
         if page.evaluate("window.game.state") in ('playing', 'paused'):
             break

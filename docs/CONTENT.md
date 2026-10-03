@@ -133,6 +133,12 @@ Totaal: **182 bloktypes** (hoogste id 185 van 254, dus nog ruim 60 vrij), ~480 u
   `[id, count, damage, sleutel, waarde, ...]`, dus oude saves (3 getallen) blijven geldig; `drop` en `taken` dragen `data` mee.
 - **Harnas** zit als 4 extra records (slot 36-39) in `PlayerInventory.serialize()`: oude saves en de server (limiet 64 records) blijven werken.
 
+- **Enchantments en naam** staan in dezelfde `data`: elke enchantment is een sleutel met het level, `repair_cost` is de prior-work-straf
+  van de anvil en een eigen naam staat in `custom_name` t/m `custom_name_7` (drie UTF-16-tekens per getal, max 24 tekens; `EnchantRules.customName`).
+  Een rij mag daarom 40 getallen lang zijn (server: `InventoryGuard`, `drop`). Het **enchanted book** is item 900 met zijn enchantments in `data`.
+  Enchanting table (250), anvil (251, variant: chipped/damaged in bits 2-3) en grindstone (252) hebben id's bovenin het bereik zodat de
+  append-only content-tabellen eronder kunnen groeien.
+
 ### Wat bewust anders is dan vanilla
 
 - Beton heeft geen poeder (4 zand + 4 grind + kleurstof → 8 beton); kleurstoffen: bruin (cacao), zwart (inktzak) en grijs (heeft zwart nodig) hebben nog geen bron.
@@ -147,7 +153,7 @@ Totaal: **182 bloktypes** (hoogste id 185 van 254, dus nog ruim 60 vrij), ~480 u
 
 ### Tier 2 en nooit
 
-Tier 2: redstone en alles ervan, landbouw met groeifases en random ticks, enchanting, brouwen, smithing en netherite, anvil, grindstone, blast furnace, smoker,
+Tier 2: redstone en alles ervan, landbouw met groeifases en random ticks, brouwen, smithing en netherite, blast furnace, smoker,
 stonecutter, schild, kruisboog, hengel en vis, boten en minecarts, kaarsen, banners, borden, koraal, amethist, dripstone, azalea, kelp en bamboe, concrete powder,
 doorzichtig glas en ijs, kisten in multiplayer, dubbele kisten, vallende blokken. Nooit: Nether en End (blackstone, crimson/warped, quartz, purpur, end stone,
 prismarine), Deep Dark, Trial Chambers, spawn eggs en operator-blokken.

@@ -131,6 +131,25 @@ Onderzoek, ontwerp en tellingen: [`CONTENT.md`](CONTENT.md). Kort:
 - **Recepten:** ongeveer 420, met vanilla-aantallen. Het receptenboek heeft tabs (Now, All, Build, Wood, Tools, Combat, Food, Items, Colors, Smelt)
   en een zoekveld; alleen recepten van stations binnen 4 blokken worden getoond.
 
+## Ervaring en enchanting
+
+- **XP-orbs** vallen uit monsters (5), dieren (1–3), ertsen (kolen 0–2, lapis 2–5, redstone 1–5, diamant en smaragd 3–7; niet met Silk
+  Touch), de oven en de grindstone. Ze vliegen naar je toe binnen 8 blokken, voegen samen en verdwijnen na 5 minuten. De balk boven de
+  hotbar vult volgens Minecraft (level 0→1: 7 punten, 15→16: 37, 30→31: 112; level 30 = 1395 punten). Bij doodgaan valt `min(7 × level, 100)`
+  als orbs, de rest is weg.
+- **Enchanting table** (boek + 2 diamant + 4 obsidiaan): leg een tool, wapen, harnas of boek erin plus lapis. Boekenkasten in de ring op
+  2 blokken afstand (met lucht ertussen) tillen de aanbiedingen op tot level 30. Je betaalt 1/2/3 levels en lapis; het niveau dat erbij
+  staat moet je wel hebben. De hover toont één enchantment ("Efficiency II . . . ?").
+- **Anvil** (3 ijzerblokken + 4 ijzerstaven): repareer met materiaal (25% per stuk), combineer twee gelijke tools (+12%) of leg er een
+  enchanted book op, en geef het een naam. Elke keer wordt het volgende gebruik duurder (prior work); vanaf 40 levels: "Too Expensive!".
+  Een anvil slijt (chipped, damaged, kapot).
+- **Grindstone** (2 stokken + stenen slab + 2 planken): haalt alle enchantments weg en geeft een deel van de XP terug; twee gelijke
+  tools worden samen gerepareerd (+5%).
+- **Effecten:** Sharpness +0,5 × level + 0,5, Smite/Bane +2,5 per level tegen ondoden/geleedpotigen, Fire Aspect zet in brand,
+  Looting tot +level drops, Efficiency `level² + 1` erbij, Fortune tot ×4 op ertsen, Silk Touch laat het blok zelf vallen, Unbreaking
+  `1/(level+1)` kans op slijtage, Protection 4% per punt (max 80%), Feather Falling 12% per level bij vallen, Mending repareert 2 per XP.
+- **Commando's (creative):** `/enchant sharpness 5` op het item in je hand, `/xp 100` of `/xp 10L`.
+
 ## Nieuwe blokken
 
 | Blok | Details |
@@ -151,7 +170,7 @@ Een geïmporteerd Minecraft-resourcepack levert ook textures voor `torch`, `lava
 2. **Vloeistofstroming:** **gedaan** (water en lava, emmers).
 3. **Vallend zand en grind** als entity.
 4. **Meer mobs:** skeleton (pijlen) en spin (klimmen).
-5. **Meer blokken en items:** XP-orbs en de XP-balk, landbouw met groeifases, enchanting (de `ItemStack.data` is er klaar voor), brouwen, anvil, schilden en boten (zie `CONTENT.md`, tier 2).
+5. **Meer blokken en items:** XP, enchanting, anvil en grindstone zijn **gedaan**; landbouw met groeifases, brouwen, schilden en boten (zie `CONTENT.md`, tier 2).
 6. **Multiplayer:** zie [`MULTIPLAYER.md`](MULTIPLAYER.md).
 
 ## Bronnen

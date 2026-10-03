@@ -88,7 +88,7 @@ export class ItemRenderer {
           vec3 c = tex.rgb * combineLight(vLight.x, vLight.y, 1.0);
           // Enchanted items shimmer purple (the same sliding band as the held item).
           float a = fract((vLocal.x + vLocal.y * 0.6) * 1.2 - uTime * 0.45);
-          c += vGlint * vec3(0.5, 0.25, 0.95) * (0.18 + 0.55 * smoothstep(0.0, 0.18, a) * (1.0 - smoothstep(0.18, 0.36, a)));
+          c += vGlint * vec3(0.5, 0.25, 0.95) * (0.3 + 0.7 * smoothstep(0.0, 0.18, a) * (1.0 - smoothstep(0.18, 0.36, a)));
           gl_FragColor = vec4(applyFog(c, vWorldPos), 1.0);
         }
       `,

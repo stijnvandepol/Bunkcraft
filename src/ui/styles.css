@@ -945,7 +945,7 @@ html, body {
 .glint {
   position: absolute; left: 50%; top: 50%; width: calc(var(--s) * 16); height: calc(var(--s) * 16); transform: translate(-50%, -50%);
   pointer-events: none; -webkit-mask-size: 100% 100%; mask-size: 100% 100%;
-  background: linear-gradient(120deg, rgba(128, 64, 255, 0.22) 0%, rgba(128, 64, 255, 0.22) 38%, rgba(200, 140, 255, 0.75) 48%, rgba(128, 64, 255, 0.22) 58%, rgba(128, 64, 255, 0.22) 100%);
+  background: linear-gradient(120deg, rgba(140, 70, 255, 0.38) 0%, rgba(140, 70, 255, 0.38) 36%, rgba(220, 160, 255, 0.95) 48%, rgba(140, 70, 255, 0.38) 60%, rgba(140, 70, 255, 0.38) 100%);
   background-size: 300% 300%; mix-blend-mode: screen; animation: glint-slide 2.6s linear infinite;
 }
 @keyframes glint-slide { from { background-position: 100% 0; } to { background-position: 0 100%; } }
@@ -959,7 +959,7 @@ html, body {
 /* Station screens (enchanting table, anvil, grindstone) above the inventory. */
 .inv-box-row { display: flex; gap: calc(var(--s) * 6); align-items: flex-start; }
 .inv-box.station { margin-bottom: calc(var(--s) * 6); }
-.inv-box.station .inv-grid { grid-template-columns: repeat(3, calc(var(--s) * 18)); column-gap: calc(var(--s) * 8); }
+.inv-box.station .inv-grid { grid-template-columns: repeat(3, calc(var(--s) * 18)); column-gap: calc(var(--s) * 8); width: max-content; flex: 0 0 auto; }
 .inv-box.station-enchant .inv-grid { grid-template-columns: repeat(2, calc(var(--s) * 18)); column-gap: calc(var(--s) * 4); }
 .inv-box.station .inv-grid > .inv-slot:nth-child(3) { box-shadow: 0 0 0 var(--s) #5a5a5a; }
 .ench-panel { display: flex; flex-direction: column; gap: calc(var(--s) * 1); }

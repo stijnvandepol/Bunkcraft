@@ -84,7 +84,7 @@ wat al is doorgevoerd.
    - Nog te doen op deze basis: **ladders, muurfakkels, gewassen** (groeifase in `meta`), **oven met een richting** (en een brandende staat), **bed** (2 blokken), vallend zand en grind, waterlogged slabs, stroming die entities meeduwt, lava-fakkels/vuur, trapdoors en hekken (zelfde `partial`-machinerie).
    - Bewust anders dan Minecraft: de trapvorm wordt afgeleid uit de buren (niet opgeslagen) en lava vertraagt niet willekeurig (`random.nextInt(4)`).
 5. **Landbouw (M):** saplings, tarwe, brood en een schoffel. Hernieuwbaar hout en voedsel.
-6. **Meer survival-inhoud (M):** harnas met een armor-bar: **Gedaan** (zie §4b). XP-orbs met een XP-balk. Skeleton (schiet elke 2 s, verbrandt in daglicht; drops botten en pijlen) en spin (klimt, springt, neutraal in fel licht; drops draad en spinnenoog met Poison) zijn **Gedaan**.
+6. **Meer survival-inhoud (M):** harnas met een armor-bar: **Gedaan** (zie §4b). XP-orbs met een XP-balk, enchanting, anvil en grindstone: **Gedaan** (zie §4c). Skeleton (schiet elke 2 s, verbrandt in daglicht; drops botten en pijlen) en spin (klimt, springt, neutraal in fel licht; drops draad en spinnenoog met Poison) zijn **Gedaan**.
 7. **Structuren (M per stuk):** dungeon met spawner en kisten, mijnschachten, later dorpen.
 8. **Eindspel (L):** een "Underworld"-dimensie of een stronghold met een eindbaas en credits.
 
@@ -98,10 +98,35 @@ Ontwerp, tellingen en tier-lijst: [`CONTENT.md`](CONTENT.md). **Gedaan:**
 - **`ItemStack.data`** (enchants en dergelijke) is er, wordt opgeslagen en over het netwerk meegestuurd; stapels met verschillende data voegen nooit samen.
 - Harnas (armor-balk, schadeformule, slijtage), schoffel, schaar, tooluse (akkergrond, paden, strippen, pompoen snijden), kist (27 slots), bed, ladder.
 - Creative inventory met tabs, scrollen, zoeken en tooltips; receptenboek met tabs en zoeken; ~420 recepten.
-- **Nog te doen (tier 2):** landbouw (tarwe, wortels en aardappels, hoofdreden dat brood, koekjes en modderstenen nog niet te maken zijn), enchanting, brouwen, smithing en
-  netherite, anvil, grindstone, blast furnace, smoker, schild, hengel, kaarsen, banners, koraal, ruitjes met doorzichtigheid (gekleurd glas is alpha-getest),
+- **Nog te doen (tier 2):** landbouw (tarwe, wortels en aardappels, hoofdreden dat brood, koekjes en modderstenen nog niet te maken zijn), brouwen, smithing en
+  netherite, blast furnace, smoker, schild, hengel, kaarsen, banners, koraal, ruitjes met doorzichtigheid (gekleurd glas is alpha-getest),
   kisten in multiplayer, een echte kist-animatie, kisten met richting-afhankelijke dubbele variant, vallend zand en grind, en dat de worldgen de nieuwe blokken
   (graniet, diorite, andesiet, tuff, calciet, deepslate, nieuwe ertsen, bloemen, junglebomen) nog moet plaatsen.
+
+## 4c. Ervaring en enchanting (klaar)
+
+Screenshots: `docs/screenshots/xp-bar-orbs.png`, `enchanting-table.png`, `sword-tooltip.png`, `anvil.png`, `grindstone.png`, `enchant-blocks.png`
+(`scripts/enchant-shots.py`).
+
+- **XP:** `src/player/Experience.ts` (formules van de wiki, getest per tabelwaarde), orbs als entity (`src/entities/XpOrb.ts`, 11 groottes,
+  aantrekking binnen 8 blokken, samenvoegen, 5 minuten levensduur, pulserend groen/geel, `XpOrbRenderer`: één draw call). Bronnen: mobs
+  (monsters 5, dieren 1–3), ertsen (kolen 0–2, lapis 2–5, redstone 1–5, diamant en smaragd 3–7, niet met Silk Touch), oven (via de
+  `onFurnaceXp`-hook van de block entities: orbs bij de speler), grindstone. Hooks: `awardXp(entities, x, y, z, n)`, `breedingXp`, `fishingXp`,
+  `SMELT_XP`. XP-balk en level boven de hotbar, plingetje bij oppakken, klokje elk 5e level. Dood: `min(7 × level, 100)` als orbs
+  (een `keepInventory`-gamerule op `WorldMeta.rules` slaat dit over). Opgeslagen als `stats[5]` (punten) en `stats[6]` (enchant-seed).
+- **Enchantments:** 25 stuks (`src/items/EnchantRules.ts`) met vanilla max-levels, conflicten, gewichten en anvil-kosten; effecten op
+  breken (Efficiency, Aqua Affinity, Silk Touch, Fortune), drops (Looting, brandende dieren laten gebakken vlees vallen), melee (Sharpness,
+  Smite, Bane, Knockback, Fire Aspect), boog (Power, Punch, Flame, Infinity), slijtage (Unbreaking), harnas (Protection-familie via
+  `PlayerStats.registerDamageModifier`, Thorns, Respiration, Depth Strider) en Mending. Paarse glint op iconen (CSS-mask), hotbar, hand en
+  gevallen items (shader); tooltips met romeinse cijfers, aqua naam, cursief bij een eigen naam.
+- **Blokken:** enchanting table (250), anvil (251, met chipped/damaged als variant, 12% slijtage per gebruik) en grindstone (252) als
+  box-modellen met procedurele textures, recepten en creative-items. Enchanting table: boekenkasten in de 5×5-ring (max 15), drie aanbiedingen
+  met Minecraft's algoritme, seed per speler, glyph-tekst. Anvil: repareren met materiaal, combineren, boeken, hernoemen, prior-work-straf,
+  "Too Expensive!" vanaf 40. Grindstone: haalt enchantments weg en geeft XP terug. `/enchant <naam> [level]` en `/xp <n>[L]` (creative).
+- **Nog te doen:** Sweeping Edge heeft geen effect zolang er geen sweep-aanval is; de vloeken (Binding, Vanishing), Frost Walker, Soul Speed,
+  Swift Sneak en alles van kruisboog, trietand en hengel; een zwevend boek op de enchanting table en glyph-deeltjes van de boekenkasten; de
+  server bewaakt XP niet (de client stuurt zijn punten mee, zoals health); dood-XP en erts-XP zijn in multiplayer lokale orbs; de
+  `combat`-pijplijn kan de lokale `registerDamageModifier` overnemen; creative-tab met kant-en-klare enchanted books.
 
 ## 5. Sfeer
 
