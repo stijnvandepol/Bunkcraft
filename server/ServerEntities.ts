@@ -2,6 +2,7 @@ import { EntityManager } from '../src/entities/EntityManager';
 import { explosionDamage, explosionDropChance } from '../src/entities/Explosion';
 import type { Mob, MobEvents, MobTarget } from '../src/entities/Mob';
 import { type ItemStack, ITEM, blockDrop, encodeData, getItemDef, itemId } from '../src/items/ItemRegistry';
+import { touchesPlate } from '../src/world/Redstone';
 import { fireAspectTicks, levelOf, meleeBonus, powerBonus, punchKnockback } from '../src/items/EnchantRules';
 import { canCarry } from '../src/items/Enchanting';
 import {
@@ -110,6 +111,24 @@ export class ServerEntities {
     };
     this.world.skyDarkness = () => Math.round((1 - dayFactorAt(this.getTime())) * 11 + (this.host.skyDarkness?.() ?? 0));
     this.manager = new EntityManager(this.world, seed);
+    // Redstone: pressure plates see players and mobs (oak plates also items); popped-off parts drop; powered TNT is lit.
+    this.world.entitiesOn = (x, y, z, oak) => {
+      let n = 0;
+      for (const p of this.players) if (p.hasPos && touchesPlate(p.x, p.y, p.z, 0.3, 1.8, x, y, z)) n++;
+      for (const m of this.manager.mobs) if (!m.dead && touchesPlate(m.x, m.y, m.z, m.width / 2, m.height, x, y, z)) n++;
+      if (oak) for (const it of this.manager.items) if (!it.removed && touchesPlate(it.x, it.y, it.z, 0.125, 0.25, x, y, z)) n++;
+      return n;
+    };
+    this.world.redstone.onBreak = (x, y, z, id, meta) => {
+      const drop = hasSurvivalRules(this.mode) ? (id === BLOCK.REDSTONE_WIRE ? { id: itemId('redstone'), count: 1 } : blockDrop(id, 0, meta)) : null;
+      if (drop) this.manager.dropItem(drop, x + 0.5, y + 0.3, z + 0.5);
+    };
+    this.world.redstone.onIgnite = (x, y, z) => {
+      if (this.world.setBlock(x, y, z, BLOCK.AIR) < 0) return false;
+      this.host.broadcastBlock(x, y, z, BLOCK.AIR);
+      this.manager.primeTnt(x, y, z);
+      return true;
+    };
     // A broken chest or furnace spills its contents (survival rules; creative empties it, like Minecraft).
     this.world.blockEntities.onDrops = (x, y, z, stacks) => {
       if (!hasSurvivalRules(this.mode)) return;
@@ -125,6 +144,7 @@ export class ServerEntities {
     this.world.update([]);
     // Flowing liquid resumes from the saved edits when its chunks load again.
     this.world.liquids.clear();
+    this.world.redstone.clear();
     this.world.updates.clear();
     this.world.drainSimEdits();
     this.sentAnything.clear();
@@ -172,6 +192,7 @@ export class ServerEntities {
     this.world.update(targets);
     // Water and lava flow (budgeted per tick); what changed goes out as one batch.
     this.world.tickLiquids();
+    this.world.tickRedstone();
     // Random ticks and block updates; their changes join the liquid batch (one message, capped per tick).
     this.world.tickGrowth(targets);
     // Furnaces burn while their chunk is loaded; lighting up or going out is a block change like flowing water.

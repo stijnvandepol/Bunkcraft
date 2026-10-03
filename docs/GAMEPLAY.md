@@ -284,6 +284,20 @@ gaan niet over het net (ze veranderen niets aan wat je ziet). Vallende blokken k
 passen (`w.setBlock`, `w.setMeta` voor een stille leeftijd, `w.brightness`, `w.randomInt`, `w.breakBlock`); `registerBoneMeal` en
 `registerSupportedPlant`/`registerBlockUpdate` (`BlockUpdates.ts`) werken op dezelfde manier.
 
+## Redstone
+
+- **Stof** leg je met het redstone-item; het verbindt met stof ernaast, een blok hoger (als er niets massiefs boven ligt) en lager, en met
+  bronnen en repeaters. Elk blok stof verliest 1 signaal, een repeater maakt het weer 15. Kleur van donkerrood (0) tot felrood (15).
+- **Bronnen:** hendel (rechtsklik), knop (puls van 1 s steen / 1,5 s eik), drukplaat (steen: spelers en mobs, eik: ook items; 0,5 s nagloeien),
+  redstonefakkel (inverteert het blok waaraan hij vastzit), redstoneblok.
+- **Repeater:** rechtsklik zet de vertraging 1–4 redstone ticks; stuurt alleen vooruit en verlengt korte pulsen.
+- **Verbruikers:** lamp (licht 15), deuren, luiken en hekpoorten (openen op stroom, handmatig openen blijft tot de stroom verandert), nootblok
+  (rechtsklik = hogere toon, stroom = spelen; instrument naar het blok eronder), TNT, zuigers (duwen tot 12 blokken, sticky trekt er één terug).
+- **Sterk en zwak:** een bron voedt het blok waaraan hij vastzit sterk; een sterk gevoed blok voedt stof, repeaters, fakkels en verbruikers ernaast.
+  Stof voedt het blok waar het naar wijst en het blok eronder.
+- **Klokken:** een fakkel die te snel schakelt (8× in 3 s) brandt door en blijft 8 s uit.
+- **Recepten (Java):** hendel, knoppen, drukplaten, fakkel (hand); repeater, lamp, nootblok, zuiger (werkbank). Redstone-erts geeft 4–5 stof.
+
 ## Roadmap
 
 1. **Block states:** **gedaan** voor slabs, trappen, deuren en vloeistoffen ([`BLOCKSTATES.md`](BLOCKSTATES.md)); ladders, muurfakkels, gewassen en een oven met een richting volgen op dezelfde basis.

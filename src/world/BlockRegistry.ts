@@ -1,5 +1,6 @@
 import type { BlockSound } from '../core/audio/profiles';
 import { TINT_BIRCH, TINT_FOLIAGE, TINT_GRASS, TINT_NONE, TINT_SPRUCE } from './BiomeColors';
+import { BOX_BUTTON, BOX_DUST, BOX_LEVER, BOX_PISTON, BOX_PISTON_HEAD, BOX_PLATE, BOX_REPEATER, BOX_RTORCH } from './RedstoneShapes';
 import { BOX_ANVIL, BOX_BED, BOX_CARPET, BOX_FENCE, BOX_GATE, BOX_GRINDSTONE, BOX_LADDER, BOX_NONE, BOX_PANE, BOX_TABLE, BOX_TRAPDOOR, BOX_WALL, isTall } from './BoxShapes';
 import { CUBES, CUBE_FIRST, DYES, type MineTool, PARTIAL_EXT, WALL_MATERIALS, WOODS, titleCase } from './Content';
 
@@ -188,6 +189,19 @@ export const BLOCK = {
   LANTERN: 83,
   SAPLING: 84,
   IRON_BARS: 85,
+  // Redstone (see docs/CONTENT.md): the three free ids after LIT_FURNACE, the rest just below the enchanting blocks.
+  REDSTONE_WIRE: 87,
+  LEVER: 88,
+  BUTTON: 89,
+  PRESSURE_PLATE: 242,
+  REPEATER: 241,
+  REDSTONE_TORCH: 249,
+  REDSTONE_LAMP: 248,
+  REDSTONE_LAMP_LIT: 247,
+  NOTE_BLOCK: 246,
+  PISTON: 245,
+  STICKY_PISTON: 244,
+  PISTON_HEAD: 243,
   /** A furnace that is burning (same state bits as FURNACE; emits light 13, drops a plain furnace). */
   LIT_FURNACE: 86,
   /**
@@ -465,6 +479,41 @@ BLOCK_DEFS.push(
   }),
 );
 
+// ---- Redstone: dust, sources, repeater, lamp, note block and pistons (behaviour in Redstone.ts) ----
+const stoneOak = (shift: number, noun: string): VariantSpec => ({
+  shift, count: 2, names: [`Stone ${noun}`, `Oak ${noun}`],
+  textures: [{ all: 'stone' }, { all: 'oak_planks' }], sounds: ['stone', 'wood'],
+});
+BLOCK_DEFS.push(
+  box(B.REDSTONE_WIRE, 'redstone_wire', 'Redstone Dust', BOX_DUST, { all: 'redstone_dust' }, {
+    solid: false, hardness: 0, sound: 'stone', metaMask: 15, inInventory: false,
+  }),
+  box(B.LEVER, 'lever', 'Lever', BOX_LEVER, { all: 'cobblestone', front: 'lever' }, { solid: false, hardness: 0.5, sound: 'stone', metaMask: 15 }),
+  box(B.BUTTON, 'button', 'Button', BOX_BUTTON, { all: 'stone' }, {
+    solid: false, hardness: 0.5, sound: 'stone', metaMask: 0x1f, variant: stoneOak(4, 'Button'),
+  }),
+  box(B.PRESSURE_PLATE, 'pressure_plate', 'Pressure Plate', BOX_PLATE, { all: 'stone' }, {
+    solid: false, hardness: 0.5, sound: 'stone', metaMask: 3, variant: stoneOak(1, 'Pressure Plate'),
+  }),
+  box(B.REPEATER, 'repeater', 'Redstone Repeater', BOX_REPEATER, { top: 'repeater', bottom: 'repeater_on', side: 'smooth_stone', front: 'redstone_torch' }, {
+    hardness: 0, sound: 'stone', metaMask: 0x1f,
+  }),
+  box(B.REDSTONE_TORCH, 'redstone_torch', 'Redstone Torch', BOX_RTORCH, { all: 'redstone_torch', front: 'redstone_torch_off' }, {
+    solid: false, hardness: 0, sound: 'wood', metaMask: 15, light: 7,
+  }),
+  cube(B.REDSTONE_LAMP, 'redstone_lamp', 'Redstone Lamp', { all: 'redstone_lamp' }, 0.3, 'glass'),
+  cube(B.REDSTONE_LAMP_LIT, 'redstone_lamp_lit', 'Redstone Lamp', { all: 'redstone_lamp_on' }, 0.3, 'glass', { light: 15, inInventory: false }),
+  cube(B.NOTE_BLOCK, 'note_block', 'Note Block', { all: 'note_block' }, 0.8, 'wood', { tool: 'axe', metaMask: 0x3f }),
+  box(B.PISTON, 'piston', 'Piston', BOX_PISTON, { top: 'piston_top', bottom: 'piston_bottom', side: 'piston_side', front: 'piston_inner' }, {
+    hardness: 1.5, sound: 'stone', metaMask: 15,
+  }),
+  box(B.STICKY_PISTON, 'sticky_piston', 'Sticky Piston', BOX_PISTON, { top: 'piston_top_sticky', bottom: 'piston_bottom', side: 'piston_side', front: 'piston_inner' }, {
+    hardness: 1.5, sound: 'stone', metaMask: 15,
+  }),
+  box(B.PISTON_HEAD, 'piston_head', 'Piston Head', BOX_PISTON_HEAD, { top: 'piston_top', bottom: 'piston_bottom', side: 'piston_side', front: 'piston_side' }, {
+    hardness: 1.5, sound: 'stone', metaMask: 15, inInventory: false,
+  }),
+);
 // ---- Growth states (see Growth.ts): sapling stage, persistent leaves, sugar cane and cactus age ----
 /** Sapling: the wood is bits 0-2, the growth stage bit 5 (above the variant lookup mask of 31). */
 export const SAPLING_STAGE_BIT = 32;

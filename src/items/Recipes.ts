@@ -227,6 +227,18 @@ smelt(B.SANDSTONE, CUBE_ID.smooth_sandstone);
 smelt(CUBE_ID.red_sandstone, CUBE_ID.smooth_red_sandstone);
 smelt(B.STONE_BRICKS, CUBE_ID.cracked_stone_bricks);
 smelt(id('clay_ball'), id('brick'));
+// ---------------------------------------------------------------- redstone (Java 1.21 recipes; the sticky piston needs a slime ball, which has no source yet)
+add(B.LEVER, 1, 'hand', one(ITEM.STICK), any(COBBLES, 1));
+add(itemFromState(B.BUTTON, 0), 1, 'hand', one(B.STONE));
+add(itemFromState(B.BUTTON, 16), 1, 'hand', one(B.OAK_PLANKS));
+add(itemFromState(B.PRESSURE_PLATE, 0), 1, 'hand', one(B.STONE, 2));
+add(itemFromState(B.PRESSURE_PLATE, 2), 1, 'hand', one(B.OAK_PLANKS, 2));
+add(B.REDSTONE_TORCH, 1, 'hand', one(id('redstone')), one(ITEM.STICK));
+add(B.REPEATER, 1, 'table', one(B.STONE, 3), one(B.REDSTONE_TORCH, 2), one(id('redstone')));
+add(B.REDSTONE_LAMP, 1, 'table', one(id('redstone'), 4), one(B.GLOWSTONE));
+add(B.NOTE_BLOCK, 1, 'table', any(PLANKS, 8), one(id('redstone')));
+add(B.PISTON, 1, 'table', any(PLANKS, 3), any(COBBLES, 4), one(ITEM.IRON_INGOT), one(id('redstone')));
+
 smelt(B.CLAY, CUBE_ID.terracotta);
 DYES.forEach((_, i) => smelt(itemFromState(B.STAINED_TERRACOTTA, i), itemFromState(B.GLAZED_TERRACOTTA, i)));
 smelt(LOGS, id('charcoal'));
