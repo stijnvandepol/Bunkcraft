@@ -52,8 +52,13 @@ export interface MatchInfo {
   map?: string;
 }
 
-/** Snapshot entry: [id, x, y, z, yaw, pitch, flags, heldItem]. flags: 1 sprinting, 2 flying, 4 on ground. */
+/**
+ * Snapshot entry: [id, x, y, z, yaw, pitch, flags, heldItem]. flags: 1 sprinting, 2 flying, 4 on ground,
+ * 8 stale (arcade anti-wallhack: the player just left your view; this is its last visible position, hide it).
+ * Arcade servers leave out enemies you cannot see (see server/anticheat/Visibility.ts).
+ */
 export type SnapshotEntry = [number, number, number, number, number, number, number, number];
+export const SNAP_FLAG_STALE = 8;
 
 /** Mob snapshot: [id, kind, x, y, z, yaw, headYaw, headPitch, flags, hurtTime, fuse, deathTime]. flags: 1 on ground, 2 burning, 4 dead. */
 export type MobEntry = [number, number, number, number, number, number, number, number, number, number, number, number];

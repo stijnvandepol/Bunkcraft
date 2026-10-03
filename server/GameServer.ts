@@ -2,7 +2,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameS
 import { join } from 'node:path';
 import type { WebSocket } from 'ws';
 import {
-  type ClientMessage, NAME_PATTERN, PROTOCOL_VERSION, type PlayerRecord, type ServerMessage, type SnapshotEntry, sanitizeChat,
+  type ClientMessage, NAME_PATTERN, PROTOCOL_VERSION, type PlayerRecord, SNAP_FLAG_STALE, type ServerMessage, type SnapshotEntry, sanitizeChat,
 } from '../src/net/protocol';
 import { ARENA_FLOOR_Y, DEFAULT_MAP, type MapId, type MapSetting, getMap, nextMap, parseMapId, parseMapSetting } from '../src/modes/maps';
 import { type GameType, gameTypeDef } from '../src/modes/GameTypes';
@@ -28,6 +28,7 @@ import { metrics } from './Metrics';
 import { ArcadeGuard } from './anticheat/ArcadeGuard';
 import { ORIGIN_TOLERANCE, isUnitVector, originError, viewDir } from './anticheat/AimCheck';
 import { AimStats, SUSPICION } from './anticheat/Suspicion';
+import { Send, type Viewer, Visibility } from './anticheat/Visibility';
 import type { ShotReport } from './Match';
 import { type RateLimiter, hashIp, newToken, safeEqual, tokenMatches, verifyPassword, hashToken } from './Security';
 
@@ -190,6 +191,8 @@ export interface ServerOptions {
   binary?: boolean;
   /** Called when something changed that the room list shows (name, listing, password). */
   onMetaChange?: () => void;
+  /** Arcade: leave enemies out of snapshots when they cannot be seen (default on; env ARCADE_CULLING=off). */
+  culling?: boolean;
   /** Arcade: kick at this aim suspicion score (0 = never, the default; env ARCADE_AUTOKICK_SCORE). */
   autokickScore?: number;
   /** Arcade game type and match settings for a new world (a saved world keeps its own). */
@@ -225,6 +228,10 @@ export class GameServer {
   private arena: ServerWorld | null = null;
   /** Arcade: movement validation against the arena (see anticheat/). */
   private readonly guard: ArcadeGuard | null = null;
+  /** Arcade: per-recipient snapshot culling (anti-wallhack); null when switched off. */
+  private readonly visibility: Visibility | null = null;
+  private readonly viewers: Viewer[] = [];
+  private readonly staleAt = { x: 0, y: 0, z: 0 };
   /** Arcade: the map setting of this game ("rotate" moves on to the next map after every match). */
   private mapSetting: MapSetting = DEFAULT_MAP;
   private readonly logger: ChildLogger;
@@ -253,6 +260,7 @@ export class GameServer {
         { getBlock: (x, y, z) => this.arena!.getBlock(x, y, z), getMeta: (x, y, z) => this.arena!.getMeta(x, y, z) },
         (x, z) => this.match!.inBounds(x, z),
       );
+      if (opts.culling ?? process.env.ARCADE_CULLING !== 'off') this.visibility = new Visibility({ getBlock: (x, y, z) => this.arena!.getBlock(x, y, z) });
       this.match = new Match(this.matchHost(), {
         type: def.id, scoreLimit: this.world.scoreLimit ?? def.scoreLimit, timeLimitSec: this.world.timeLimitSec ?? def.timeLimitSec,
         map: first,
@@ -456,6 +464,7 @@ export class GameServer {
         s.lastPosTime = Date.now();
         s.awaiting = { x, y, z, until: Date.now() + 1500 };
         this.guard?.reset(id, x, y, z, Date.now() / 1000);
+        this.visibility?.resetTrail(id);
       },
       random: Math.random,
       ping: (id) => this.sessions.get(id)?.pingMs ?? 0,
@@ -680,6 +689,7 @@ export class GameServer {
     this.entities?.forget(s.id);
     this.match?.leave(s.id);
     this.guard?.leave(s.id);
+    this.visibility?.forget(s.id);
     this.broadcast({ t: 'leave', id: s.id, name: s.name });
     this.broadcast({ t: 'chat', from: '', text: `${s.name} left the game`, system: true });
     this.log(`[leave] ${s.name} (${this.sessions.size} online)`);
@@ -1118,13 +1128,51 @@ export class GameServer {
         }
       }
     }
-    const players: SnapshotEntry[] = [];
-    for (const s of this.sessions.values()) {
-      if (!s.hasPos) continue;
-      players.push([s.id, round(s.x), round(s.y), round(s.z), round(s.yaw), round(s.pitch), s.flags, s.held]);
+    if (this.visibility && this.match?.phase === 'live') this.sendCulledSnapshots();
+    else {
+      const players: SnapshotEntry[] = [];
+      for (const s of this.sessions.values()) {
+        if (!s.hasPos) continue;
+        players.push([s.id, round(s.x), round(s.y), round(s.z), round(s.yaw), round(s.pitch), s.flags, s.held]);
+      }
+      if (players.length > 0) this.broadcast({ t: 'snap', players });
     }
-    if (players.length > 0) this.broadcast({ t: 'snap', players });
     if (this.tickCount % 100 === 0 && !this.match) this.broadcast({ t: 'time', time: this.world.time, day: this.world.day ?? 0 });
+  }
+
+  /** Arcade, live phase: every player gets only the enemies it may see (see anticheat/Visibility.ts). */
+  private sendCulledSnapshots(): void {
+    const vis = this.visibility!, match = this.match!;
+    const now = Date.now() / 1000;
+    const viewers = this.viewers;
+    let n = 0;
+    for (const s of this.sessions.values()) {
+      const p = match.players.get(s.id);
+      if (!s.hasPos || !p) continue;
+      const v = viewers[n] ??= { id: 0, team: '', alive: false, x: 0, y: 0, z: 0, firedAt: -1e9 };
+      v.id = s.id; v.team = p.team; v.alive = p.alive; v.x = s.x; v.y = s.y; v.z = s.z;
+      v.firedAt = s.lastFireAt > 0 ? s.lastFireAt / 1000 : -1e9;
+      vis.track(v, now);
+      n++;
+    }
+    for (const r of this.sessions.values()) {
+      if (r.ws.readyState !== r.ws.OPEN) continue;
+      let rv: Viewer | null = null;
+      for (let i = 0; i < n; i++) if (viewers[i].id === r.id) { rv = viewers[i]; break; }
+      const players: SnapshotEntry[] = [];
+      for (let i = 0; i < n; i++) {
+        const v = viewers[i];
+        if (v.id === r.id) continue;
+        const s = this.sessions.get(v.id)!;
+        const what = rv ? vis.select(rv, v, match.teams, now, this.staleAt) : Send.Fresh;
+        if (what === Send.Fresh) players.push([s.id, round(s.x), round(s.y), round(s.z), round(s.yaw), round(s.pitch), s.flags, s.held]);
+        else if (what === Send.Stale) {
+          const a = this.staleAt;
+          players.push([s.id, round(a.x), round(a.y), round(a.z), round(s.yaw), round(s.pitch), (s.flags & ~SNAP_FLAG_STALE) | SNAP_FLAG_STALE, s.held]);
+        }
+      }
+      if (players.length > 0) this.send(r, { t: 'snap', players });
+    }
   }
 
   /** The weather targets for the clients: flags as 0/1, they fade the level themselves. */

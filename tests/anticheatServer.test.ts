@@ -155,4 +155,19 @@ describe('arcade movement enforcement on the server', () => {
     expect(row.suspicion).toBe(0);
     expect(row.strikes).toBe(0);
   });
+
+  it('live arcade snapshots are per recipient: no self entry, enemies only when visible or near', () => {
+    const server = room();
+    const a = enter(server, 'alpha'), b = enter(server, 'bravo');
+    const tick = () => (server as unknown as { tick(): void }).tick();
+    for (let i = 0; i < 12 * 20; i++) { clock += 50; tick(); }
+    // Live now; everybody respawned: arrive at the new spawns.
+    for (const p of [a, b]) { const sp = p.ws.of('spawn').at(-1)!; p.me.x = sp.x; p.me.y = sp.y; p.me.z = sp.z; p.pos(sp.x, sp.y, sp.z); }
+    a.ws.sent = []; b.ws.sent = [];
+    for (let i = 0; i < 10; i++) { clock += 50; a.pos(a.me.x, a.me.y, a.me.z); b.pos(b.me.x, b.me.y, b.me.z); tick(); }
+    for (const [ws, selfName] of [[a.ws, 'alpha'], [b.ws, 'bravo']] as const) {
+      const self = server.playerList().find((p) => p.name === selfName)!.id;
+      expect(ws.of('snap').every((m) => m.players.every((e) => e[0] !== self))).toBe(true);
+    }
+  });
 });
