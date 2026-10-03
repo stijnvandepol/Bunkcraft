@@ -12,7 +12,7 @@ eindtelling per groep staat onderaan bij **Status**.
 | Colored Blocks | 250+ (wol, beton, terracotta, glas, tapijt, bedden, kaarsen, banners, shulkers) | Tier 1: wol, beton, terracotta, geglazuurd terracotta, gekleurd glas + ruiten, tapijt, bedden (16 kleuren). Tier 2: kaarsen, banners, shulkerkisten, concrete powder (zwaartekracht) |
 | Natural Blocks | 250+ (grond, erts, planten, bloemen, koraal) | Tier 1: aarde-varianten, zand, erts (kool, ijzer, goud, diamant, koper, lapis, redstone, smaragd), bladeren (8), saplings (7), bloemen, pompoen, meloen, sneeuw, ijs, klei, mos, hooibaal. Tier 2: koraal, amethist, dripstone, azalea, kelp, bamboe. Nooit: Nether-erts en -planten |
 | Functional Blocks | 150 (torches, kisten, ovens, tafels, borden, deuren) | Tier 1: crafting table, furnace, kist (27 slots), boekenkast, ladder, fakkel, lantaarn, zeelantaarn, glowstone, TNT. Tier 2: blast furnace, smoker, anvil, grindstone, enchanting, brewing, borden, vaten (container-systemen) |
-| Redstone Blocks | 50 | Alleen lijst: knoppen, drukplaten, hendels, repeaters, comparators, zuigers, dispensers, hoppers, rails, observers, redstone lamp. Tier 2 (redstone-systeem ontbreekt). Redstone stof en redstoneblok zijn wel items/blokken |
+| Redstone Blocks | 50 | Alleen lijst: knoppen, drukplaten, hendels, repeaters, comparators, zuigers, dispensers, hoppers, rails, observers, redstone lamp. Minimaal systeem gebouwd (zie hieronder, Redstone); comparators, observers, hoppers, dispensers en rails nog niet |
 | Tools & Utilities | 80 | Tier 1: houweel, bijl, schop, schoffel (5 tiers), schaar, emmers, vuur-en-staal. Tier 2: hengel, kompas, klok, kaart, boten, minecarts |
 | Combat | 60 | Tier 1: zwaarden (5 tiers), harnas (leer, maliën, ijzer, goud, diamant: 20 stukken), boog, pijl, bijl. Tier 2: schild, kruisboog, trident, enchanting, totem. Nooit: netherite (smithing), elytra |
 | Food & Drinks | 70 | Tier 1: brood, appel, gouden appel, koekje, gebakken aardappel, wortel, aardappel, vlees (rauw en gebakken), meloen, pompoentaart, stoofpot, vis. Tier 2: potions, melk, honing (brewing, vee). Nooit: Nether/End-voedsel |
@@ -86,7 +86,7 @@ Duurzaamheid = basis (11/16/15/13) × multiplier (leer 5, maliën 15, ijzer 15, 
 | Colored Blocks | 129 | 16 × (wol, tapijt, bed, terracotta, geglazuurd, beton, glas, glasruit) + terracotta |
 | Natural Blocks | 70 | grond, erts, logs, 8 bladsoorten, 7 saplings, 10 bloemen, paddenstoelen, suikerriet, pompoen, meloen, hooibaal, spinnenweb |
 | Functional Blocks | 15 | werkbank, oven, kist, boekenkast, ladder, fakkel, lantaarn, glowstone, zeelantaarn, uitgesneden pompoen, TNT, tralies, glasruit |
-| Redstone Blocks | 3 | alleen redstone-stof, redstoneblok en TNT: de rest is tier 2 |
+| Redstone Blocks | 19 | stof, fakkel, redstoneblok, repeater, (sticky) zuiger, hendel, knoppen, drukplaten, nootblok, lamp, TNT, deur, luik, hekpoort |
 | Tools & Utilities | 26 | schop, houweel, bijl, schoffel (5 tiers), schaar, vuur-en-staal, emmers, kom |
 | Combat | 32 | zwaarden en bijlen (5 tiers), boog, pijl, 20 harnasstukken |
 | Food & Drinks | 29 | 10 vleessoorten, appel, gouden appel, brood, koekje, aardappel, wortel, meloen, taart, stoofpot, vis, bessen |
@@ -153,7 +153,7 @@ Totaal: **182 bloktypes** (hoogste id 185 van 254, dus nog ruim 60 vrij), ~480 u
 
 ### Tier 2 en nooit
 
-Tier 2: redstone en alles ervan, landbouw met groeifases en random ticks, brouwen, smithing en netherite, blast furnace, smoker,
+Tier 2: comparator, observer, hopper, dispenser, rails, landbouw met groeifases en random ticks, brouwen, smithing en netherite, blast furnace, smoker,
 stonecutter, schild, kruisboog, hengel en vis, boten en minecarts, kaarsen, banners, borden, koraal, amethist, dripstone, azalea, kelp en bamboe, concrete powder,
 doorzichtig glas en ijs, kisten in multiplayer, dubbele kisten, vallende blokken. Nooit: Nether en End (blackstone, crimson/warped, quartz, purpur, end stone,
 prismarine), Deep Dark, Trial Chambers, spawn eggs en operator-blokken.
@@ -163,3 +163,20 @@ prismarine), Deep Dark, Trial Chambers, spawn eggs en operator-blokken.
 Voor de nieuwe blokken zijn uit de Pixel Perfection-repo (CC BY-SA 4.0) 38 textures toegevoegd in `public/texturepacks/pixel-perfection/`: jungle- en acaciahout, kistzijden,
 metaalblokken, rood zand, ijs, ladder, suikerriet, hooi, paddenstoelen, tulp en saplings. Alles wat het pack niet heeft blijft procedureel
 (`src/rendering/ContentPainters.ts`). De namen voor een Minecraft-jar staan in `MINECRAFT_LAYOUT` (`MINECRAFT_SAME_NAME` voor de textures met dezelfde naam).
+
+### Redstone
+
+Zie `ROADMAP.md` 4d voor gedrag en vereenvoudigingen. Blok-ids: stof 87, hendel 88, knop 89 (de vrije ids na `LIT_FURNACE`), repeater 241,
+drukplaat 242, onderdeel 243–249 (zuigerkop 243, sticky zuiger 244, zuiger 245, nootblok 246, lamp aan 247, lamp 248, fakkel 249).
+Box-vormen 12–19 (`RedstoneShapes.ts`). State bytes:
+
+| Blok | Bits |
+|---|---|
+| stof | 0-3 signaal (verbindingen afgeleid uit de buren) |
+| hendel, knop, fakkel | 0-2 richting van het blok waaraan hij vastzit (vlakvolgorde +X −X +Y −Y +Z −Z), bit 3 aan/ingedrukt/uit (fakkel), knop bit 4 eik |
+| drukplaat | 0 ingedrukt, 1 eik |
+| repeater | 0-1 richting van het signaal, 2-3 vertraging − 1, 4 aan |
+| nootblok | 0-4 toon, 5 gevoed |
+| zuiger / kop | 0-2 richting, bit 3 uitgeschoven / sticky |
+
+Textures procedureel (`RedstonePainters.ts`, 14 lagen); de Minetest-`mesecons`-textures zijn niet gebruikt (andere stijl, niet in Pixel Perfection).

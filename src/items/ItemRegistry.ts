@@ -624,6 +624,9 @@ export function blockDrop(blockId: number, held: number, meta = 0, ench?: Mining
     return Math.random() < 0.125 ? { id: named('wheat_seeds'), count: 1 } : null;
   }
   switch (blockId) {
+    case B.REDSTONE_WIRE: return { id: named('redstone'), count: 1 };
+    case B.REDSTONE_LAMP_LIT: return { id: B.REDSTONE_LAMP, count: 1 };
+    case B.PISTON_HEAD: return null;
     case B.STONE: return { id: B.COBBLESTONE, count: 1 };
     case CUBE_ID.deepslate: return { id: CUBE_ID.cobbled_deepslate, count: 1 };
     // Gravel drops flint 10% of the time (14%, 25% and 100% with Fortune I-III).
@@ -664,6 +667,9 @@ function plainBlockDrops(blockId: number, meta: number): ItemStack[] {
   }
   if (WITH_SHEARS_ONLY.has(blockId)) return [{ id: blockId, count: 1 }, { id: ITEM.STICK, count: 2 }, { id: named('wheat_seeds'), count: 1 }];
   switch (blockId) {
+    case B.REDSTONE_WIRE: return [{ id: named('redstone'), count: 1 }];
+    case B.REDSTONE_LAMP_LIT: return [{ id: B.REDSTONE_LAMP, count: 1 }];
+    case B.PISTON_HEAD: return [];
     case B.STONE: return [{ id: B.COBBLESTONE, count: 1 }];
     case CUBE_ID.deepslate: return [{ id: CUBE_ID.cobbled_deepslate, count: 1 }];
     case B.GRAVEL: return [{ id: B.GRAVEL, count: 1 }, { id: ITEM.FLINT, count: 1 }];

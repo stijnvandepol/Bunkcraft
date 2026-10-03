@@ -66,6 +66,11 @@ export function buildCatalog(): CatalogEntry[] {
   add('block.door.open', 0.5, (e) => e.playDoor(true));
   add('block.door.close', 0.5, (e) => e.playDoor(false));
   add('block.fizz', 0.8, (e) => e.playFizz(1));
+  add('block.click.on', 0.3, (e) => e.playClick(true));
+  add('block.click.off', 0.3, (e) => e.playClick(false));
+  add('block.piston.extend', 0.5, (e) => e.playPiston(true));
+  add('block.piston.contract', 0.5, (e) => e.playPiston(false));
+  for (const n of ['harp', 'basedrum', 'snare', 'hat', 'bass', 'chime']) add(`block.note.${n}`, 1, (e) => e.playNote(n, 1));
   add('item.bucket.water', 0.6, (e) => e.playBucket(false));
   add('item.bucket.lava', 0.6, (e) => e.playBucket(true));
   add('item.pickup', 0.3, (e) => e.playPop());

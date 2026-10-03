@@ -12,6 +12,7 @@ import { BIOME } from './TerrainGenerator';
 import { BlockUpdates } from './BlockUpdates';
 import { createRandomTicker } from './Growth';
 import { LAVA_TICK_DELAY, LiquidSim, WATER_TICK_DELAY, isLiquid } from './Liquids';
+import { RedstoneSim, isRedstoneBlock } from './Redstone';
 import { type RandomTicker, type RandomTickHost, noteRandomTickable } from './RandomTicks';
 import { type WorldGenerator, type WorldType, arenaMapOf, createGenerator, isArenaWorld } from './WorldGenerator';
 
@@ -38,6 +39,17 @@ export class World {
    * its block changes). Null until enableLiquids().
    */
   liquids: LiquidSim | null = null;
+  /** Redstone (singleplayer only, like the liquids: a server simulates it and the client mirrors). Null until enableRedstone(). */
+  redstone: RedstoneSim | null = null;
+  /**
+   * A redstone block changed state through the simulation or the server (not the local player's own click): hook for its
+   * sound (lever, button, plate, piston, door, note block).
+   */
+  onRedstoneChange: ((x: number, y: number, z: number, prevId: number, prevMeta: number, id: number, meta: number) => void) | null = null;
+  /** Chunks whose only changes were dust strength (vertex colours): remeshed together at most 5 times a second. */
+  private readonly deferredMesh = new Map<Chunk, number>();
+  private deferTicks = 0;
+  private simEdit = false;
   /**
    * Random ticks (plants grow, leaves decay, grass spreads) and scheduled block updates (falling sand, plants that
    * lose their ground). Singleplayer only: on a multiplayer server the server simulates and the client mirrors.
@@ -68,6 +80,9 @@ export class World {
         for (const [i, state] of e) {
           writeState(chunk, i, stateId(state), stateMeta(state));
           // Liquid that was still flowing when the world was saved carries on.
+          if (this.redstone && isRedstoneBlock(stateId(state))) {
+            this.redstone.loaded(chunk.cx * 16 + (i & 15), i >> 8, chunk.cz * 16 + ((i >> 4) & 15), stateId(state));
+          }
           if (this.liquids && isLiquid(stateId(state)) && stateMeta(state) !== 0) {
             this.liquids.schedule(chunk.cx * 16 + (i & 15), i >> 8, chunk.cz * 16 + ((i >> 4) & 15), stateId(state) === BLOCK.LAVA ? LAVA_TICK_DELAY : WATER_TICK_DELAY);
           }
@@ -91,6 +106,51 @@ export class World {
 
   tickLiquids(): void {
     this.liquids?.tick();
+  }
+
+  /** Turns on redstone; the caller ticks it with tickRedstone() at 20 Hz. */
+  enableRedstone(entitiesOn?: (x: number, y: number, z: number, oak: boolean) => number): RedstoneSim {
+    const sim = new RedstoneSim({
+      entitiesOn,
+      getBlock: (x, y, z) => this.getBlock(x, y, z),
+      getMeta: (x, y, z) => this.getMeta(x, y, z),
+      setState: (x, y, z, id, meta) => {
+        this.simEdit = true;
+        try { this.setBlock(x, y, z, id, meta); } finally { this.simEdit = false; }
+      },
+    });
+    this.redstone = sim;
+    return sim;
+  }
+
+  /** One game tick of redstone (singleplayer), then the batched dust remeshes (also in multiplayer, for the server's changes). */
+  tickRedstone(): void {
+    this.redstone?.tick();
+    if (++this.deferTicks % 4 !== 0 || this.deferredMesh.size === 0) return;
+    for (const [c, border] of this.deferredMesh) {
+      if (this.chunks.chunks.get(c.key) !== c) continue;
+      this.remeshAround(c, border);
+    }
+    this.deferredMesh.clear();
+  }
+
+  /** Remesh a chunk now, and the neighbours whose border it touched (`border`: bit 0 −x, 1 +x, 2 −z, 3 +z). */
+  private remeshAround(c: Chunk, border: number): void {
+    c.version++;
+    this.remesh(c);
+    for (let dz = -1; dz <= 1; dz++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (!dx && !dz) continue;
+        const touches = (dx === -1 ? (border & 1) !== 0 : dx === 1 ? (border & 2) !== 0 : true)
+          && (dz === -1 ? (border & 4) !== 0 : dz === 1 ? (border & 8) !== 0 : true);
+        if (!touches) continue;
+        const n = this.chunks.get(c.cx + dx, c.cz + dz);
+        if (!n || n.state !== CHUNK_READY) continue;
+        n.version++;
+        this.remesh(n);
+      }
+    }
+    this.chunks.markDirty();
   }
 
   /** Turns on random ticks and block updates; the caller ticks them with tickGrowth() at 20 Hz. */
@@ -255,21 +315,18 @@ export class World {
     // Faces and AO reach one block into the neighbours: only chunks the edit touches are remeshed
     // right away. Light reaches up to 14 blocks, but ChunkManager remeshes a further neighbour only
     // when the border light of the edited chunk actually changed (see propagateLight).
-    c.version++;
-    this.remesh(c);
-    for (let dz = -1; dz <= 1; dz++) {
-      for (let dx = -1; dx <= 1; dx++) {
-        if (!dx && !dz) continue;
-        const touches = (dx === -1 ? lx === 0 : dx === 1 ? lx === 15 : true) && (dz === -1 ? lz === 0 : dz === 1 ? lz === 15 : true);
-        if (!touches) continue;
-        const n = this.chunks.get(cx + dx, cz + dz);
-        if (!n || n.state !== CHUNK_READY) continue;
-        n.version++;
-        this.remesh(n);
-      }
+    const border = (lx === 0 ? 1 : 0) | (lx === 15 ? 2 : 0) | (lz === 0 ? 4 : 0) | (lz === 15 ? 8 : 0);
+    if (prev === BLOCK.REDSTONE_WIRE && id === BLOCK.REDSTONE_WIRE) {
+      // Only the dust colour changed: batched (a clock would otherwise remesh its chunk every tick).
+      this.deferredMesh.set(c, (this.deferredMesh.get(c) ?? 0) | border);
+    } else {
+      this.remeshAround(c, border);
     }
-    this.chunks.markDirty();
+    if ((remote || this.simEdit) && (isRedstoneBlock(id) || isRedstoneBlock(prev) || SHAPE[id] === SHAPE_DOOR || BOX_KIND[id] !== 0)) {
+      this.onRedstoneChange?.(x, y, z, prev, prevMeta, id, meta);
+    }
     this.liquids?.notify(x, y, z);
+    this.redstone?.notify(x, y, z);
     this.updates?.notify(x, y, z);
     return true;
   }
@@ -342,6 +399,7 @@ export class World {
     }
     this.chunks.markDirty();
     if (this.liquids) for (let k = 0; k < cleared.length; k += 3) this.liquids.notify(cleared[k], cleared[k + 1], cleared[k + 2]);
+    if (this.redstone) for (let k = 0; k < cleared.length; k += 3) this.redstone.notify(cleared[k], cleared[k + 1], cleared[k + 2]);
     if (this.updates) for (let k = 0; k < cleared.length; k += 3) this.updates.notify(cleared[k], cleared[k + 1], cleared[k + 2]);
     return destroyed;
   }
@@ -480,6 +538,7 @@ export class World {
 
   dispose(): void {
     this.liquids?.clear();
+    this.redstone?.clear();
     this.updates?.clear();
     this.chunks.dispose();
   }
