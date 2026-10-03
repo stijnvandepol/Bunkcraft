@@ -132,12 +132,12 @@ Nog open: gebakken buffers voor veelgebruikte geluiden (minder CPU), geluiden va
 
 - **Werkende keybind-remapping:** **Gedaan.** Key Binds-scherm zoals Minecraft 1.21 (categorieën, `> key <`, Esc = Not Bound, conflicten rood, Reset Keys); toetsen en muisknoppen, opgeslagen in `bunkcraft.settings`. Centrale tabel in `src/core/Keybinds.ts`.
 - **Contexthints en ontdekken van recepten (S):** voor nieuwe spelers.
-- **Toegankelijkheid (S–M):** ondertitels voor geluiden, reduced motion (hurt cam, bobbing en FOV-kick uit) en kleurenblind-veilige balken.
-- **UI op Minecraft 1.21-niveau:** **Gedaan** (zie [`docs/UI.md`](UI.md)): Nederlands/Engels (`src/ui/i18n.ts`), Language-, Mouse- en Chat Settings-schermen, Max Framerate/Entity Distance/FOV Effects/Attack Indicator/Auto-Jump/Raw Input, chatgeschiedenis en `/`-aanvulling, Allow Cheats en chat in singleplayer, Statistics, laadscherm met tips, toetsenbordnavigatie in menu's, F3 zoals 1.21, effect-hearts, inventory-sneltoetsen, en een screenshot- en pixel-diff-suite (`scripts/ui-shots.py`).
+- **Toegankelijkheid (S–M):** **Gedaan** (zie `docs/CONTROLS.md`): ondertitels met richtingspijlen, reduced motion (default uit `prefers-reduced-motion`), reduce flashes (`limitFlash`/`FlashLimiter` in `src/core/Accessibility.ts` voor de weer-ontwikkelaar), kleurenblind-veilig palet, hoog contrast (ook `prefers-contrast`/`forced-colors`), tekstgrootte, hold/toggle voor sneak, sprint, attack en use, FOV-effecten, stick-curve, menu-herhaalvertraging, `role=dialog`, aria-live en echte `<button>`s. **Nog open:** patronen/iconen op teamkleuren (nu alleen palet), ondertitels voor blokgeluiden, volledige screenreader-tekst voor de inventaris.
+- **UI op Minecraft 1.21-niveau:** **Gedaan** (zie [`docs/UI.md`](UI.md)): Nederlands/Engels (`src/ui/i18n.ts`), Language-, Mouse- en Chat Settings-schermen, Max Framerate/Entity Distance/FOV Effects/Attack Indicator/Auto-Jump/Raw Input, chatgeschiedenis en `/`-aanvulling, Allow Cheats en chat in singleplayer, Statistics, laadscherm met tips, F3 zoals 1.21, effect-hearts, inventory-sneltoetsen, en een screenshot- en pixel-diff-suite (`scripts/ui-shots.py`).
 - **UI vervolg (S–M):** drag-split en muiswiel in de inventory, 2×2 crafting-raster, offhand-slot en speler-preview (eerst API afstemmen met furnace/enchanting), toegankelijkheidsknop op het titelscherm, overige schermen vertalen (sleutels toevoegen aan `i18n.ts`), aanvals-cooldown koppelen aan `hud.setAttackCharge`.
 - **`navigator.storage.persist()`:** **Gedaan.** Safari wist anders werelden na 7 dagen zonder bezoek.
-- **Gamepad (M)** via de Gamepad API.
-- **Touchbediening (L):** joystick, slepen om te kijken en knoppen. Vereist voor mobiele portals.
+- **Gamepad (M):** **Gedaan.** Standard mapping, dode zone en curve, menunavigatie met focusring, hot-plug, rumble, Controller Settings, southpaw. **Nog open:** knoppen herbinden in de UI en een muiscursor voor de inventaris.
+- **Touchbediening (L):** **Gedaan.** Zwevende joystick, kijken door slepen, tikken om te gebruiken en vasthouden om te breken, knoppen, hotbar tikken en vegen, auto-jump, arcade-knoppen, safe-area, fullscreen en oriëntatiehint. **Nog open:** test op echte toestellen, aim-assist voor arcade (staat bewust uit) en haptics op telefoons.
 
 ## 7. Multiplayer (vervolg op v1)
 

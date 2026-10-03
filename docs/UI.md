@@ -40,7 +40,7 @@ maak je met `scripts/ui-shots.py`; die staat niet in git (99 MB).
 |---|---|---|
 | A1 | Knoppen 200×20, halve knoppen 98×20, rijen 24 uit elkaar, header/footer 33 | Klopte al |
 | A2 | Lijstschermen: 1.20.5+ gebruikt een vervaagd panorama met donkere lijst en scheidingslijnen, geen dirt meer | Klopte al. Dirt alleen nog op het laadscherm, zoals in 1.21 (procedurele tegel, geen Mojang-asset) |
-| A3 | Geen toetsenbordnavigatie: pijltjes deden niets, focus was onzichtbaar op sliders en lijstitems | **Gedaan:** `src/ui/menuNav.ts`, pijltjes kiezen het dichtstbijzijnde element in die richting (werkt ook in de 2-koloms grids), Tab/Enter native, Esc via de game. Focus = witte rand zoals Minecraft, ook op sliders, tabs en werelden |
+| A3 | Geen toetsenbordnavigatie: pijltjes deden niets, focus was onzichtbaar op sliders en lijstitems | **Gedaan:** de pijltjes/controller-navigatie is `src/ui/MenuNav.ts` van de accessibility-ontwikkelaar (mijn eigen versie is bij de merge vervallen). Van deze ronde: witte focusrand op sliders, tabs en werelden, en werelden zijn met Tab/Enter/Spatie te kiezen |
 | A4 | Alles alleen Engels | **Gedaan:** `src/ui/i18n.ts` met getypte sleuteltabel, Engels + Nederlands, `t(key, fallback)` voor schermen van anderen. Taal wordt bij de eerste start uit de browser gehaald |
 
 ### Titelscherm
@@ -51,17 +51,17 @@ maak je met `scripts/ui-shots.py`; die staat niet in git (99 MB).
 | T2 | Splash: schaal 1,8 × 100 / (breedte + 32) en de puls | Klopte al |
 | T3 | Datum-splashes (kerst, nieuwjaar, Halloween) ontbraken | **Gedaan:** `dateSplash()` |
 | T4 | Taalknop (wereldbol) links naast Options ontbrak | **Gedaan:** pixel-wereldbol op 20×20, buiten de 200-kolom zoals in 1.21 |
-| T5 | Toegankelijkheidsknop rechts naast Quit | Open: het toegankelijkheidsscherm is van de touch/accessibility-ontwikkelaar (zie §3) |
+| T5 | Toegankelijkheidsknop rechts naast Quit | Open: het scherm bestaat nu (`accessibilityScreen`), alleen het icoon op het titelscherm nog toevoegen |
 
 ### Options
 
 | # | Bevinding | Status |
 |---|---|---|
-| O1 | Geen Language, Chat Settings, Mouse Settings, Accessibility in de hub | **Gedaan.** Accessibility is een uitgeschakelde knop totdat `OptionsNav.accessibility` is ingevuld |
-| O2 | Video: Max Framerate, Entity Distance, Attack Indicator, FOV Effects ontbraken | **Gedaan:** Max Framerate 30–250/Unlimited met een goedkope frame-limiter in `Game.frame` (een refresh overslaan, geen timers); Entity Distance 50–500% schaalt de mob-cullafstand; FOV Effects schaalt de sprint/vlieg-zoom; Attack Indicator (Crosshair/Hotbar/Off) zie H6 |
+| O1 | Geen Language, Chat Settings, Mouse Settings, Accessibility in de hub | **Gedaan.** Accessibility, Touch en Controller komen van de accessibility-ontwikkelaar en staan nu (vertaald) in dezelfde hub |
+| O2 | Video: Max Framerate, Entity Distance, Attack Indicator ontbraken | **Gedaan:** Max Framerate 30–250/Unlimited met een goedkope frame-limiter in `Game.frame` (een refresh overslaan, geen timers); Entity Distance 50–500% schaalt de mob-cullafstand; Attack Indicator (Crosshair/Hotbar/Off) zie H6. FOV Effects staat, net als in 1.21, onder Accessibility |
 | O3 | VSync, Biome Blend, Distortion Effects | Bewust niet: VSync kan niet in de browser, Biome Blend overgeslagen, Distortion Effects hoort bij het accessibility-scherm |
 | O4 | Music & Sounds: Minecraft heeft 9 categorieën | Alleen wat de audio-engine heeft: Master, Music, Blocks & Actions, Ambient, Interface, 3D Sound. Geen lege sliders |
-| O5 | Controls: Mouse Settings-submenu en Auto-Jump ontbraken | **Gedaan:** Mouse Settings (gevoeligheid, invert, Raw Input = `unadjustedMovement`), Auto-Jump (springt op een blok-hoge rand met twee vrije blokken erboven) |
+| O5 | Controls: Mouse Settings-submenu en Auto-Jump ontbraken | **Gedaan:** Mouse Settings (gevoeligheid, invert, Raw Input = `unadjustedMovement`), Auto-Jump (gebruikt dezelfde `needsAutoJump` als de touch-bediening) |
 | O6 | Chat Settings ontbrak | **Gedaan:** tekstdekking, tekstgrootte, regelafstand, breedte, kleuren aan/uit, commandosuggesties |
 
 ### Wereldlijst en wereld maken
@@ -136,11 +136,11 @@ maak je met `scripts/ui-shots.py`; die staat niet in git (99 MB).
 
 ## 3. Afstemming met andere ontwikkelaars
 
-- **Accessibility/touch:** als het toegankelijkheidsscherm klaar is, vul `accessibility()` in `Game.optionsNav()` in; de knop in Options wordt dan actief. Distortion Effects hoort daar.
+- **Accessibility/touch:** hun schermen (Accessibility, Touch, Controller) staan in de Options-hub; de labels in die schermen zijn nog Engels (sleutels toevoegen aan `i18n.ts`). Distortion Effects hoort daar.
 - **Combat/effects:** `hud.setAttackCharge(v)` aanroepen vanuit de aanvals-cooldown; voor wither/absorption de velden `wither` en `absorption` meegeven aan `hud.survival.update`.
 - **Andere schermen vertalen:** sleutel toevoegen aan `EN` en `NL` in `src/ui/i18n.ts` en `t('sleutel')` gebruiken; tot dan werkt `t('sleutel', 'English')` met de fallback.
 
 ## 4. Testen
 
-- `npm test`: `tests/i18n.test.ts` (elke sleutel in beide talen, gelijke placeholders), `tests/chatLogic.test.ts` (geschiedenis, aanvulling, kleurcodes, synchroon met `server/Commands.ts`), `tests/statTracker.test.ts`, `tests/menuNav.test.ts`.
+- `npm test`: `tests/i18n.test.ts` (elke sleutel in beide talen, gelijke placeholders), `tests/chatLogic.test.ts` (geschiedenis, aanvulling, kleurcodes, synchroon met `server/Commands.ts`), `tests/statTracker.test.ts`.
 - `python3 scripts/ui-shots.py --check`: pixel-diff van 25 schermen tegen `docs/screenshots/ui/baseline/` in een stabiele modus (3D-canvas verborgen, animaties bevroren, willekeurige teksten verborgen). Faalt bij meer dan 1% gewijzigde pixels. Na een bewuste wijziging: `--update-baselines`. Zie de kop van het script voor de Vite-config zonder HMR.

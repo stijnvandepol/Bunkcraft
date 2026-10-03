@@ -58,8 +58,6 @@ const ARMOR_PALETTE: Record<string, string> = { ...PALETTE, w: '#ffffff' };
 const POISON_PALETTE: Record<string, string> = { ...PALETTE, r: '#8c9a1c', R: '#b8c63a', w: '#e2ee9c' };
 const WITHER_PALETTE: Record<string, string> = { ...PALETTE, r: '#2a2a2a', R: '#4c4c4c', w: '#8a8a8a' };
 const ABSORB_PALETTE: Record<string, string> = { ...PALETTE, r: '#d4af0f', R: '#f2d44a', w: '#fff3b0' };
-/** Damage flash: the heart outlines blink white. */
-const FLASH_PALETTE: Record<string, string> = { ...PALETTE, o: '#ffffff' };
 /** Hardcore hearts: Minecraft's version has a darker "eye" pair on the heart. */
 const HARDCORE_HEART = [
   '.oo...oo.',
@@ -72,6 +70,17 @@ const HARDCORE_HEART = [
   '....o....',
   '.........',
 ];
+
+/** Colour-blind-safe heart and hunger colours (see core/Accessibility.ts). */
+const SAFE: Record<string, string> = { r: '#d6217f', R: '#ff6fb3', w: '#ffd6ea', b: '#e8c61c', B: '#fff07a' };
+const NORMAL: Record<string, string> = { r: PALETTE.r, R: PALETTE.R, w: PALETTE.w, b: PALETTE.b, B: PALETTE.B };
+let paletteVersion = 0;
+
+/** Switch the hearts and hunger icons to the colour-blind-safe palette (and back). */
+export function setSurvivalColorBlind(on: boolean): void {
+  Object.assign(PALETTE, on ? SAFE : NORMAL);
+  paletteVersion++;
+}
 
 export interface SurvivalValues {
   health: number;
@@ -125,12 +134,14 @@ export class SurvivalHud {
     const starving = v.saturation === 0 && v.hunger < 20;
     const animate = lowHealth || regen || starving;
     // Shaking hearts at low health (and the regen wave, hunger jitter) need a redraw every few frames.
-    const key = `${v.health}|${v.hunger}|${Math.ceil(v.air / 30)}|${animate ? Math.floor(time * 12) : 0}|${v.armor ?? 0}|${v.absorption ?? 0}|${flash}|${v.poison}|${v.wither}|${v.hardcore}`;
+    const key = `${paletteVersion}|${v.health}|${v.hunger}|${Math.ceil(v.air / 30)}|${animate ? Math.floor(time * 12) : 0}|${v.armor ?? 0}|${v.absorption ?? 0}|${flash}|${v.poison}|${v.wither}|${v.hardcore}`;
     if (key === this.last) return;
     this.last = key;
     const ctx = this.ctx;
     ctx.clearRect(0, 0, 182, 20);
-    const palette = flash ? FLASH_PALETTE : v.wither ? WITHER_PALETTE : v.poison ? POISON_PALETTE : PALETTE;
+    const base = v.wither ? WITHER_PALETTE : v.poison ? POISON_PALETTE : PALETTE;
+    // Built on redraw only (the colour-blind setting changes PALETTE in place).
+    const palette = flash ? { ...base, o: '#ffffff' } : base;
     const heart = v.hardcore ? HARDCORE_HEART : HEART;
     const absorb = v.absorption ?? 0;
     for (let i = 0; i < 10; i++) {

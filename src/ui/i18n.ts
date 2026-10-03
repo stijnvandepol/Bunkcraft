@@ -53,6 +53,8 @@ const EN = {
   'options.chat': 'Chat Settings...',
   'options.language': 'Language...',
   'options.accessibility': 'Accessibility Settings...',
+  'options.touch': 'Touch Settings...',
+  'options.controller': 'Controller Settings...',
   'options.resourcePacks': 'Resource Packs...',
   'options.credits': 'Credits & Attribution...',
   'options.fullscreen': 'Fullscreen: {0}',
@@ -89,7 +91,6 @@ const EN = {
   'video.attackIndicator': 'Attack Indicator',
   'video.attackIndicator.crosshair': 'Crosshair',
   'video.attackIndicator.hotbar': 'Hotbar',
-  'video.fovEffects': 'FOV Effects: {0}',
 
   // Music & sounds
   'sound.title': 'Music & Sound Options',
@@ -286,6 +287,8 @@ const NL: Record<I18nKey, string> = {
   'options.chat': 'Chatinstellingen...',
   'options.language': 'Taal...',
   'options.accessibility': 'Toegankelijkheid...',
+  'options.touch': 'Aanraakbediening...',
+  'options.controller': 'Controller...',
   'options.resourcePacks': 'Texturepakketten...',
   'options.credits': 'Credits en bronvermelding...',
   'options.fullscreen': 'Volledig scherm: {0}',
@@ -321,7 +324,6 @@ const NL: Record<I18nKey, string> = {
   'video.attackIndicator': 'Aanvalsindicator',
   'video.attackIndicator.crosshair': 'Dradenkruis',
   'video.attackIndicator.hotbar': 'Hotbar',
-  'video.fovEffects': 'Gezichtsveldeffecten: {0}',
 
   'sound.title': 'Muziek en geluidsopties',
   'sound.master': 'Hoofdvolume',

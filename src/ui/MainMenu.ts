@@ -6,7 +6,7 @@ import { type ShareParams } from '../save/share';
 import { NAME_PATTERN, formatCode, normalizeCode } from '../net/protocol';
 import { type RoomInfo, browseRooms, createRoom, forgetGame, lookupRoom, ownerToken, recentGames, roomPassword, serverInfo, setRoomPassword } from '../net/RoomApi';
 import { GAME_TYPES, type GameType, gameTypeDef } from '../modes/GameTypes';
-import { DEFAULT_MAP, MAP_SETTINGS, type MapSetting, getMap, mapName } from '../modes/maps';
+import { MAP_SETTINGS, MENU_DEFAULT_MAP, type MapSetting, getMap, mapName } from '../modes/maps';
 import { installButton } from '../pwa/Pwa';
 import { button, dirtBackground, h, menuScreen, screen } from './dom';
 import { cheatsAllowed } from '../save/SaveSystem';
@@ -293,7 +293,7 @@ export class MainMenu {
     let mode: GameMode = 'survival';
     let scoreLimit = gameTypeDef('tdm').scoreLimit;
     let timeLimit = gameTypeDef('tdm').timeLimitSec;
-    let map: MapSetting = DEFAULT_MAP;
+    let map: MapSetting = MENU_DEFAULT_MAP;
 
     const typeHint = h('div', { class: 'hint' });
     const typeButton = h('button', { class: 'mc-btn' });
