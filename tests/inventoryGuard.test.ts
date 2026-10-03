@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { ITEM } from '../src/items/ItemRegistry';
-import { BLOCK } from '../src/world/BlockRegistry';
+import { ITEM, blockDrop, itemFromState, itemId, possibleBlockDrops } from '../src/items/ItemRegistry';
+import { BLOCK, BLOCK_DEFS, VARIANT_MASK } from '../src/world/BlockRegistry';
 import { InventoryGuard, parseInventory } from '../server/InventoryGuard';
 import { KEY_A, type TestServer, cleanup, createRoom, joinGame, startTestServer } from './helpers/serverHarness';
 
@@ -145,6 +145,55 @@ describe('InventoryGuard: drops', () => {
     g.creditPickup(BLOCK.DIRT, 5); // the server item entity was taken back
     expect(g.check(inv([BLOCK.DIRT, 5, 0])).ok).toBe(true);
     expect(g.check(inv([BLOCK.DIRT, 10, 0])).ok).toBe(false);
+  });
+
+  it('a coloured block explains its own colour (the state byte is part of the drop)', () => {
+    const g = new InventoryGuard([]);
+    g.creditBreak(BLOCK.WOOL, 14); // red wool
+    expect(g.authorizeDrop(itemFromState(BLOCK.WOOL, 14), 1)).toBe(true);
+  });
+
+  it('random drops are credited at their highest roll (ores, leaves)', () => {
+    const lapisOre = BLOCK_DEFS.find((d) => d?.name === 'lapis_ore')!.id;
+    const g = new InventoryGuard([]);
+    g.creditBreak(lapisOre);
+    expect(g.authorizeDrop(itemId('lapis_lazuli'), 9)).toBe(true);
+    const leaves = new InventoryGuard([]);
+    leaves.creditBreak(BLOCK.OAK_LEAVES);
+    expect(leaves.authorizeDrop(itemFromState(BLOCK.SAPLING, 0), 1)).toBe(true);
+    leaves.creditBreak(BLOCK.OAK_LEAVES);
+    expect(leaves.authorizeDrop(ITEM.STICK, 2)).toBe(true);
+    leaves.creditBreak(BLOCK.OAK_LEAVES);
+    expect(leaves.authorizeDrop(itemId('apple'), 1)).toBe(true);
+  });
+
+  it('possibleBlockDrops covers every roll of blockDrop for every block, state and tool', () => {
+    const tools = [0, ITEM.DIAMOND_PICKAXE, ITEM.SHEARS, ITEM.DIAMOND_SHOVEL, ITEM.DIAMOND_AXE, ITEM.WOODEN_PICKAXE];
+    const misses: string[] = [];
+    for (const def of BLOCK_DEFS) {
+      if (!def) continue;
+      const mask = VARIANT_MASK[def.id];
+      for (let meta = 0; meta < 256; meta++) {
+        if ((meta & mask) !== meta) continue;
+        const possible = possibleBlockDrops(def.id, meta);
+        for (const held of tools) {
+          for (let roll = 0; roll < 30; roll++) {
+            const d = blockDrop(def.id, held, meta);
+            if (!d) continue;
+            const p = possible.find((s) => s.id === d.id);
+            if (!p || d.count > p.count) misses.push(`${def.name}:${meta} with ${held} dropped ${d.count} x ${d.id}`);
+          }
+        }
+      }
+    }
+    expect(misses.slice(0, 5)).toEqual([]);
+  });
+
+  it('a refused drop does not use up the break credit', () => {
+    const g = new InventoryGuard([]);
+    g.creditBreak(BLOCK.STONE);
+    expect(g.authorizeDrop(BLOCK.COBBLESTONE, 2)).toBe(false);
+    expect(g.authorizeDrop(BLOCK.COBBLESTONE, 1)).toBe(true);
   });
 
   it('break credits expire', () => {

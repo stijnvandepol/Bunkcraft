@@ -567,5 +567,35 @@ export function blockDrop(blockId: number, held: number, meta = 0): ItemStack | 
   }
 }
 
+/**
+ * Every stack {@link blockDrop} can return for this block and state, with any tool and any random roll, at its
+ * highest count. The server credits these when a player breaks a block (it does not know the client's roll).
+ */
+export function possibleBlockDrops(blockId: number, meta = 0): ItemStack[] {
+  if (blockId >= SLAB_FIRST && blockId < STAIRS_FIRST) return [{ id: blockId, count: 2 }];
+  if (blockId === B.SLAB_X) return [{ id: itemFromState(blockId, meta), count: 2 }];
+  const ore = ORE_DROPS[blockId];
+  if (ore) return [{ id: named(ore.item), count: ore.max }];
+  const legacy = LEGACY_ITEMS[blockId];
+  if (legacy) return [{ id: legacy, count: 1 }];
+  if (EARTH_TO_DIRT.has(blockId)) return [{ id: B.DIRT, count: 1 }];
+  if (NO_DROP.has(blockId)) return [];
+  const leaves = LEAVES_SAPLING[blockId];
+  if (leaves) {
+    const out: ItemStack[] = [{ id: blockId, count: 1 }, { id: ITEM.STICK, count: 2 }];
+    if (leaves.sapling >= 0) out.push({ id: itemFromState(B.SAPLING, leaves.sapling), count: 1 });
+    if (leaves.apple) out.push({ id: named('apple'), count: 1 });
+    return out;
+  }
+  if (WITH_SHEARS_ONLY.has(blockId)) return [{ id: blockId, count: 1 }, { id: ITEM.STICK, count: 2 }, { id: named('wheat_seeds'), count: 1 }];
+  switch (blockId) {
+    case B.STONE: return [{ id: B.COBBLESTONE, count: 1 }];
+    case CUBE_ID.deepslate: return [{ id: CUBE_ID.cobbled_deepslate, count: 1 }];
+    case B.GRAVEL: return [{ id: B.GRAVEL, count: 1 }, { id: ITEM.FLINT, count: 1 }];
+    case CUBE_ID.cobweb: return [{ id: ITEM.STRING, count: 1 }];
+    default: return [{ id: itemFromState(blockId, meta), count: 1 }];
+  }
+}
+
 // Every non-block item by name (the content tables fill ITEM_ID as they register).
 for (const d of items.values()) ITEM_ID[d.name] = d.id;

@@ -833,7 +833,8 @@ export class GameServer {
     // Breaking a block lets this player's client spawn its drop (see InventoryGuard.creditBreak).
     if (id === 0 && this.entities && this.guarded()) {
       const old = this.entities.world.getBlock(x, y, z);
-      if (old > 0) s.guard.creditBreak(old);
+      // The state byte matters: red wool drops red wool, a double slab two slabs.
+      if (old > 0) s.guard.creditBreak(old, this.entities.world.getMeta(x, y, z));
     }
     this.entities?.setBlock(x, y, z, id, meta); // records the edit and updates what the mobs see
     this.broadcast(blockMessage(x, y, z, id, meta), s.id);

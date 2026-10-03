@@ -1,7 +1,6 @@
 import { ARMOR_SLOTS, INVENTORY_SLOTS } from '../src/items/Inventory';
-import { ITEM, blockDrop, getItemDef, maxDurability, normalizeItem } from '../src/items/ItemRegistry';
+import { getItemDef, maxDurability, normalizeItem, possibleBlockDrops } from '../src/items/ItemRegistry';
 import { RECIPES } from '../src/items/Recipes';
-import { BLOCK, SLAB_FIRST, STAIRS_FIRST } from '../src/world/BlockRegistry';
 
 /**
  * Server-side plausibility check of a player's survival inventory.
@@ -120,40 +119,35 @@ export class InventoryGuard {
     if (this.ledger.length < MAX_LEDGER) this.ledger.push({ id, count, damage });
   }
 
-  /** The player broke a block: the client may now spawn what that block can drop. */
-  creditBreak(blockId: number): void {
+  /** The player broke a block (with this state byte): the client may now spawn what that block can drop. */
+  creditBreak(blockId: number, meta = 0): void {
     const now = this.now();
     this.credits = this.credits.filter((c) => c.until > now);
-    const add = (id: number, count: number) => {
-      if (this.credits.length < MAX_BREAK_CREDITS) this.credits.push({ id, count, until: now + CREDIT_TTL_MS });
-    };
-    // The held tool is not tracked exactly, so credit the best case; gravel and leaves roll random drops.
-    const best = blockDrop(blockId, ITEM.DIAMOND_PICKAXE);
-    if (best) add(best.id, blockId >= SLAB_FIRST && blockId < STAIRS_FIRST ? 2 : best.count);
-    const hand = blockDrop(blockId, 0);
-    if (hand && hand.id !== best?.id) add(hand.id, hand.count);
-    if (blockId === BLOCK.GRAVEL || (best && best.id === ITEM.FLINT)) add(ITEM.FLINT, 1); // gravel
-    add(ITEM.STICK, 1); // leaves (5 %); harmless, only valid as a drop
+    // The held tool and the client's random roll are not known here, so credit every possible drop at its highest count.
+    for (const d of possibleBlockDrops(blockId, meta)) {
+      if (this.credits.length < MAX_BREAK_CREDITS) this.credits.push({ id: d.id, count: d.count, until: now + CREDIT_TTL_MS });
+    }
   }
 
-  /** May this item entity be created from the player's `drop` request? Consumes the backing. */
+  /** May this item entity be created from the player's `drop` request? Consumes the backing (nothing when refused). */
   authorizeDrop(id: number, count: number, damage?: number): boolean {
     const now = this.now();
-    this.credits = this.credits.filter((c) => c.until > now);
-    let need = count;
-    // A block just broken explains the drop; consume the credit.
+    this.credits = this.credits.filter((c) => c.until > now && c.count > 0);
+    // A block just broken explains the drop; whatever it does not cover must come out of the inventory (Q, death).
+    let credited = 0;
+    for (const c of this.credits) if (c.id === id) credited += c.count;
+    const need = Math.max(0, count - credited);
+    const have = this.pool.get(id) ?? 0;
+    if (have < need) return false;
+    let left = count - need;
     for (const c of this.credits) {
-      if (c.id !== id || c.count <= 0) continue;
-      const n = Math.min(need, c.count);
+      if (c.id !== id || left === 0) continue;
+      const n = Math.min(left, c.count);
       c.count -= n;
-      need -= n;
-      if (need === 0) break;
+      left -= n;
     }
     this.credits = this.credits.filter((c) => c.count > 0);
     if (need === 0) return true;
-    // Otherwise it must come out of the inventory (Q, death).
-    const have = this.pool.get(id) ?? 0;
-    if (have < need) return false;
     this.pool.set(id, have - need);
     if (this.ledger.length < MAX_LEDGER) this.ledger.push({ id, count: -need, damage });
     return true;
