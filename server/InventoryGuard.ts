@@ -1,5 +1,5 @@
 import { ARMOR_SLOTS, INVENTORY_SLOTS } from '../src/items/Inventory';
-import { ITEM, getItemDef, itemId, maxDurability, normalizeItem, possibleBlockDrops } from '../src/items/ItemRegistry';
+import { ALL_ITEMS, ITEM, getItemDef, itemId, maxDurability, normalizeItem, possibleBlockDrops } from '../src/items/ItemRegistry';
 import { RECIPES } from '../src/items/Recipes';
 
 /**
@@ -37,6 +37,17 @@ const MAX_ROW_LENGTH = 40;
 const CONVERSIONS: { result: number; from: number }[] = [
   { result: ITEM.ENCHANTED_BOOK, from: itemId('book') },
   { result: itemId('book'), from: ITEM.ENCHANTED_BOOK },
+  // Buckets fill and empty in the world (the liquid itself is a block edit the server sees); milk comes from `mobused`.
+  { result: ITEM.WATER_BUCKET, from: ITEM.BUCKET },
+  { result: ITEM.LAVA_BUCKET, from: ITEM.BUCKET },
+  { result: ITEM.BUCKET, from: ITEM.WATER_BUCKET },
+  { result: ITEM.BUCKET, from: ITEM.LAVA_BUCKET },
+  { result: ITEM.BUCKET, from: itemId('milk_bucket') },
+  // Eating a stew leaves its bowl (food.returns).
+  ...ALL_ITEMS.flatMap((id) => {
+    const back = getItemDef(id)?.food?.returns;
+    return back ? [{ result: itemId(back), from: id }] : [];
+  }),
 ];
 
 export type StateCheck = { ok: true; inventory: number[][] } | { ok: false; reason: string; correction: number[][] };

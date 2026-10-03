@@ -161,9 +161,11 @@ export class Bot {
     this.timer = null;
   }
 
-  block(x: number, y: number, z: number, id: number, meta = 0): number {
+  /** `prev` = the block id this client believes is there (current clients send it; leave out to act like an old client). */
+  block(x: number, y: number, z: number, id: number, meta = 0, prev?: number): number {
     const seq = this.seq++;
-    this.send(meta ? { t: 'block', seq, x, y, z, id, meta } : { t: 'block', seq, x, y, z, id });
+    const p = prev === undefined ? {} : { prev };
+    this.send(meta ? { t: 'block', seq, x, y, z, id, meta, ...p } : { t: 'block', seq, x, y, z, id, ...p });
     return seq;
   }
 

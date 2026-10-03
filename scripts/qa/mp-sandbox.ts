@@ -231,8 +231,8 @@ async function edits(): Promise<void> {
   await sleep(2500);
   const cx = x - 1, cy = y, cz = z + 2;
   t = performance.now();
-  owner.block(cx, cy, cz, BLOCK.STONE);
-  friend.block(cx, cy, cz, BLOCK.GLASS);
+  owner.block(cx, cy, cz, BLOCK.STONE, 0, BLOCK.AIR); // both saw air
+  friend.block(cx, cy, cz, BLOCK.GLASS, 0, BLOCK.AIR);
   await sleep(600);
   // What each client ends up showing = its own edit, overwritten by any broadcast that arrived after it.
   const ownerView = owner.of('block', t).filter((m) => m.x === cx && m.y === cy && m.z === cz).at(-1)?.id ?? BLOCK.STONE;
@@ -452,13 +452,23 @@ async function mobs(): Promise<void> {
     let dead = false, hurtSeenBy = new Set<string>();
     for (let i = 0; i < 40 && !dead; i++) {
       const m = owner.of('ent').at(-1)!.m.find((e) => e[0] === id);
-      if (!m) break;
-      // Stand right next to it (both players), then swing.
-      for (const b of [owner, friend]) { b.x = m[2] + (b === owner ? 1 : -1); b.y = m[3]; b.z = m[4]; b.pos(); }
-      await sleep(60);
+      if (!m) { dead = true; break; }
+      // Walk (≤ 2 blocks per 100 ms, under the speed check) until both stand right next to it, then swing.
+      for (let step = 0; step < 40; step++) {
+        const cur = owner.of('ent').at(-1)!.m.find((e) => e[0] === id) ?? m;
+        let far = false;
+        for (const b of [owner, friend]) {
+          const tx = cur[2] + (b === owner ? 1 : -1), tz = cur[4], d = Math.hypot(tx - b.x, tz - b.z);
+          const k = d > 2 ? 2 / d : 1;
+          b.x += (tx - b.x) * k; b.z += (tz - b.z) * k; b.y = cur[3]; b.pos();
+          if (d > 2) far = true;
+        }
+        await sleep(100);
+        if (!far) break;
+      }
       (i % 2 ? friend : owner).send({ t: 'attack', id });
       await sleep(320);
-      for (const [b, n] of [[owner, 'owner'], [friend, 'friend']] as const) if (b.of('ent').at(-1)?.m.find((e) => e[0] === id)?.[9]) hurtSeenBy.add(n);
+      for (const [b, n] of [[owner, "owner"], [friend, "friend"]] as const) if (b.of("ent", t1).some((en) => en.m.find((e) => e[0] === id)?.[9])) hurtSeenBy.add(n);
       const now = owner.of('ent').at(-1)!.m.find((e) => e[0] === id);
       dead = !now || !!(now[8] & 4);
     }

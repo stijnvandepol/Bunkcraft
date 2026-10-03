@@ -129,7 +129,8 @@ export class NetClient {
     this.pending.set(seq, { x, y, z, prev, prevMeta });
     // Keep only recent edits around for rollback.
     if (this.pending.size > 256) this.pending.delete(this.pending.keys().next().value!);
-    this.send(meta ? { t: 'block', seq, x, y, z, id, meta } : { t: 'block', seq, x, y, z, id });
+    // `prev` lets the server spot a race with another player's edit of the same block (see protocol.ts).
+    this.send(meta ? { t: 'block', seq, x, y, z, id, meta, prev } : { t: 'block', seq, x, y, z, id, prev });
   }
 
   /** Sends the player position at most 20 times per second. */
