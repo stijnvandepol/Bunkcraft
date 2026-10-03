@@ -71,7 +71,59 @@ De CPU kost per frame ~0,4–0,8 ms (renderen) en vrijwel niets voor chunks; de 
 
 - **Hapering bij het betreden van een wereld (~250 ms):** shaders van mobs, items, pijlen, TNT en de hand compileerden pas bij hun eerste gebruik. Ze worden nu tijdens het titelscherm voorgecompileerd (`compileAsync`).
 - **Hapering elke 30 s:** elke autosave las een frame terug van de GPU voor de wereldthumbnail (synchroon). De thumbnail wordt nu alleen bij pauzeren, afsluiten of een wereld zonder icoon gemaakt.
-- **Nog open:** garbage collection tijdens het streamen van chunks (`WorkerPool.pump`, `onmessage`), `updateMatrixWorld` over alle chunk-meshes per frame (statische meshes kunnen `matrixAutoUpdate = false`), en `toDataURL` voor de hotbar-iconen (eenmalig ~6 ms).
+- **Nog open (was):** garbage collection tijdens het streamen, `updateMatrixWorld` over alle chunk-meshes: opgelost in de ronde hieronder. `toDataURL` voor de hotbar-iconen (eenmalig ~6 ms) staat nog open.
+
+### Meetscript: `scripts/perf-report.py`
+
+`python3 scripts/perf-report.py [--browser chromium|webkit] [--distance 16] [--cpu 4] [--seconds 30]` start een eigen Vite-server (vrije poort, `hmr: false`, `watch: null`), maakt een creative-wereld (seed 1234) en vliegt 30 s met sprintsnelheid (~21 blokken/s) in een flauwe S-bocht. Chromium draait met `--use-angle=metal`. Het script drukt één tabel af: mediaan/p95/p99/slechtste frame, frames > 20 en > 33 ms, GC-pauzes van de main thread (CDP-trace, `MinorGC`/`MajorGC`), draw calls, JS-heap en de render distance aan het eind. `--cpu 4` vertraagt de main thread 4× (zwakke laptop; GC-pauzes worden dan ook 4× langer), `--profile` toont de duurste functies, `--alloc` de grootste allocatieplekken, `--eval` voert JS uit vóór de vlucht (experimenten). Redstone: `npx tsx --expose-gc scripts/bench-redstone.ts [lijnen] [lengte] [ticks]`.
+
+### Gemeten: streaming, culling en GC (Apple M1 Pro, 120 Hz, oktober 2026)
+
+`feature/bunkcraft-engine` vóór deze ronde tegen erna (zelfde machine, na elkaar, 30 s vlucht):
+
+| | rd 8 | rd 16 | rd 16, CPU 4× | WebKit rd 8 (60 Hz) |
+|---|---|---|---|---|
+| Mediaan frame | 8,3 → 8,3 ms | 8,3 → 8,3 ms | 16,6 → **8,7 ms** | 17,0 → 16,0 ms |
+| p99 | 10,3 → 10,3 ms | 10,3 → 10,3 ms | 31,7 → **18,4 ms** | 19 → 19 ms |
+| Frames > 20 ms | 0 → 0 | 0 → 0 | 240 → **6** | 6 → 10 (ruis) |
+| GC-pauzes (aantal / totaal) | 35 / 55 ms → 25 / 32 ms | 54 / 113 ms → **14 / 26 ms** | 25 / 177 ms → **13 / 73 ms** | – |
+| Major GC's | 26 → 8 | 42 → **4** | 17 → 3 | – |
+| Draw calls | 190 → 150 | 673 → 600 | 675 → 599 | 199 → 154 |
+
+Let op: de commit van de culling noemt 577 → 135 draw calls bij rd 16. Die meting klopte niet: het script zette de render distance zonder `settings.set`, waardoor de mist (en dus de culling) op 8 chunks bleef staan. De tabel hierboven is met de gecorrigeerde meting.
+
+Op normale snelheid haalt de M1 Pro de schermlimiet al; de winst zit in de 4× vertraagde main thread (zwakke laptop): de CPU-tijd per frame zakt van boven naar onder de 8,3 ms. Zonder vertraging duurt geen enkele GC-pauze langer dan 4 ms.
+
+Wat er gebeurde:
+
+1. **CPU-culling per chunkkolom** (`ChunkManager.cull`): één box-test per kolom in plaats van de bol-test van three.js per mesh (opaque, cutout en water). Verborgen meshes verliezen alleen layer 0, de schaduwcamera ziet alle layers, dus schaduwen van chunks achter de speler blijven. Kolommen die volledig in de mist liggen worden overgeslagen. De chunkgroepen slaan `updateMatrixWorld` over (three r186 loopt anders nog steeds door ~1000 kinderen). Profiel bij rd 16, CPU 4×: `projectObject` 5,6 → 3,6 s en `updateMatrixWorld` 3,8 → ~0 s per 25 s.
+2. **Geen ArrayBuffer-churn bij het streamen.** Mesh-verzoeken stoppen de 3×3 buurt in één gepoolde buffer die wordt *overgedragen* (niet gekloond: was ~300 KB kopie per mesh) en terugkomt. Resultaat-arrays en chunk-arrays gaan terug naar een `BufferPool` in de worker zodra three.js ze naar de GPU heeft gekopieerd. De CPU-kopie van alle chunkgeometrie (~25–40 MB bij rd 8) bestaat dus niet meer. Elke nieuwe ArrayBuffer telt bij V8 als externe geheugendruk en trok een volledige mark-compact.
+3. **Kleine lekken van garbage:** sorteerfuncties voor three.js die gehele getallen teruggeven (three's eigen `a.z - b.z` boxt een heap-getal per vergelijking), hergebruik van geometrie, mesh en bounding-volumes, `forEach` in `unloadFar`, geen herscan zolang alle workers bezig zijn, een toroïdaal grid voor chunk-lookups (berekende sleutels > 2^31 boxen bij elke `Map.get`), stilstaande deeltjes slaan hun upload over.
+4. **Adaptieve budgetten:** mesh-uploads per frame begrensd op bytes én ~2 ms main-thread-tijd, en kleiner als frames lang duren (`ChunkManager.adapt`). Generatie, meshing en uploads doen chunks vóór de speler eerst.
+5. **Render distance tijdelijk verlagen** (`DynamicResolution`): blijft de framerate laag terwijl de resolutie al minimaal is, dan gaat de render distance per 3 s één chunk omlaag (nooit onder 4) en komt na 12 s soepel spelen op volle resolutie terug (langer wachten na een terugval). F3 toont `(adaptive -n)`. Test met CPU 12× bij rd 16: eindigt op rd 14 en resolutie 69 %.
+6. **Redstone:** de >20 ms tick-pieken waren GC. Het oplossen van een stroomnetwerk maakte per keer nieuwe arrays, Maps en `Uint8Array`s (`neighbours()` met `out.length = 0` hergroeit elke aanroep). Nu met hergebruikte typed arrays, een eigen hashtabel en gelinkte emmers: 1500 schakelende dust (100 lijnen × 15, hendels elke 4 ticks) maakt 750 → 94 MB garbage per 2000 ticks, mediane tick 0,95 → 0,26 ms. De rest zit in `requeueWire`/`Set.add` met sleutels > 2^31.
+
+### Gemeten: geheugen over 10 minuten vliegen (rd 8, ~3,3 km)
+
+JS-heap na geforceerde GC: 14,3 MB na 30 s, 14,6 MB na 10 minuten. three.js-geometrieën stabiel rond 600, textures 10, mesh-pool ≤ 100, pack-buffers 8. Geen lek gevonden. GPU-geometrie van de chunks ~25–40 MB; die bestaat nu alleen nog op de GPU.
+
+### Gemeten: laden en bundel (productie-server, cache uit)
+
+| | Vóór | Na |
+|---|---|---|
+| Overgedragen tot titelscherm | 1498 KB | **488 KB** |
+| Titelscherm op Fast 3G (562 ms RTT, 1,44 Mbit/s) | 18,6 s | **11,4 s** |
+| Titelscherm op 4G (170 ms RTT, 9 Mbit/s) | 4,84 s | **3,47 s** |
+
+- three.js zit in een eigen chunk (532 KB, brotli 107 KB) met lange cache; een game-update downloadt hem niet opnieuw.
+- `vite build` schrijft brotli- (niveau 11) en gzip-kopieën; `server/App.ts` levert ze voor gehashte assets. Caddy geeft voorgecomprimeerde antwoorden ongewijzigd door. De PWA-precache slaat `.br`/`.gz` over.
+- Preload-hints in de HTML voor de chunk-worker, het pixelfont en de 56 PNG's van Pixel Perfection: het titelscherm wachtte op die afbeeldingen, en ze begonnen pas nadat de bundel draaide.
+- De arcade-client (`ArcadeSession`, HUD's, wapenmodellen; 46 KB) is een aparte chunk die vóór een multiplayer-join of de arcade-preview laadt. Singleplayer downloadt hem niet.
+- **Nog open:** de 56 losse PNG's kosten op HTTP/1.1 ~10 round trips (6 verbindingen). Een spritesheet van het standaardpack bij de build zou het titelscherm op 3G nog ~4 s sneller maken. Met Caddy (HTTP/2) speelt dit veel minder. fflate staat nog in de hoofdbundel omdat `WorldArchive` het statisch importeert.
+
+### Gemeten: opstarten (dev, warme cache)
+
+Titelscherm 0,34 s na navigatie; `new Game` ~50 ms, waarvan renderer 29 ms (texture-atlas 9 ms) en het schilderen van mob-textures 13 ms. Shaders worden na het titelscherm asynchroon voorgecompileerd. Een wereld betreden (25 chunks rond de spawn) duurt 0,8 s, vrijwel alleen workertijd. Opstarten is dus netwerkgebonden, niet CPU-gebonden.
 
 ### Doorgevoerd (geen visuele trade-off)
 
@@ -81,11 +133,12 @@ De CPU kost per frame ~0,4–0,8 ms (renderen) en vrijwel niets voor chunks; de 
 4. **Echte upload-budgettering** (bytes per frame) + nieuwe meshes één frame geforceerd tekenen, zodat GPU-uploads niet pas plaatsvinden als de camera draait.
 5. **Geen per-frame allocaties** in game loop en shadow pass.
 6. **Worker pool** `hardwareConcurrency − 2` → main thread en GPU-proces houden ruimte.
+7. **CPU-culling per kolom, overgedragen en gepoolde chunkbuffers, adaptief upload-budget en render distance** (zie de metingen hierboven).
 
 ### Roadmap (volgende stappen, op volgorde van impact)
 
 1. **16×16×16 secties** — strakkere frustum culling, kleinere remeshes.
-2. **Cave/occlusion culling** (Tommo's visibility graph, zoals Minecraft/Sodium) — 50–80 % minder geometrie ondergronds.
+2. **Cave/occlusion culling** (Tommo's visibility graph, zoals Minecraft/Sodium) — 50–80 % minder geometrie ondergronds. Vereist 16×16×16 secties: met kolommen van 128 hoog is een chunk nooit volledig ingesloten, dus de goedkope variant levert niets op.
 3. **Multi-draw** (`BatchedMesh` / `WEBGL_multi_draw`) — van ~550 naar ~4 draw calls per pass.
 4. **Per-richting face culling** — vlakken die van de camera af wijzen overslaan (30–50 % minder vertices).
 5. **Light cache per chunk + SharedArrayBuffer** (vereist COOP/COEP headers) — sneller streamen.
