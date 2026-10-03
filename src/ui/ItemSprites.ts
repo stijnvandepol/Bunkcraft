@@ -1,5 +1,6 @@
 import { mulberry32, hashString } from '../world/Noise';
 import { paintExtraSprite } from './ItemSpritesExtra';
+import { paintMobSprite } from './MobItemSprites';
 
 /**
  * Procedural 16×16 item sprites (food, materials, tools) in the flat pixel-art style
@@ -106,7 +107,7 @@ export function paintItemSprite(key: string): HTMLCanvasElement {
     drawTool(px, tool[1], Number(tool[2]));
     return c;
   }
-  if (paintExtraSprite(px, r, key)) return c;
+  if (paintExtraSprite(px, r, key) || paintMobSprite(px, key)) return c;
   const pick = (cols: string[]) => cols[Math.floor(r() * cols.length)];
   switch (key) {
     case 'meat_pink':

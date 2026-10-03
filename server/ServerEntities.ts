@@ -1,5 +1,5 @@
 import { EntityManager } from '../src/entities/EntityManager';
-import type { Mob, MobEvents, MobTarget } from '../src/entities/Mob';
+import type { Mob, MobEvents, MobSound, MobTarget } from '../src/entities/Mob';
 import { type ItemStack, ITEM, blockDrop, encodeData, getItemDef } from '../src/items/ItemRegistry';
 import {
   type ArrowEntry, type ItemEntry, type MobEntry, NET_MOB_KINDS, type ServerMessage, type TntEntry,
@@ -201,11 +201,11 @@ export class ServerEntities {
     playerArrowHit: () => undefined,
   };
 
-  private mobSound(m: Mob, event: 'idle' | 'hurt' | 'death' | 'fuse'): void {
+  private mobSound(m: Mob, event: MobSound): void {
     this.soundNear(m.type.kind, event, m.x, m.y, m.z);
   }
 
-  private soundNear(kind: string, event: 'idle' | 'hurt' | 'death' | 'fuse' | 'arrow' | 'shoot', x: number, y: number, z: number): void {
+  private soundNear(kind: string, event: MobSound | 'arrow' | 'shoot', x: number, y: number, z: number): void {
     const msg: ServerMessage = { t: 'msound', kind, event, x: r2(x), y: r2(y), z: r2(z) };
     for (const p of this.players) {
       if (p.hasPos && Math.hypot(p.x - x, p.y - y, p.z - z) < SOUND_RADIUS) this.host.send(p.id, msg);

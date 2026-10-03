@@ -3,7 +3,8 @@ import { BLOCK } from '../world/BlockRegistry';
 import { Arrow, type ArrowTarget } from './Arrow';
 import { Entity } from './Entity';
 import { ItemEntity } from './ItemEntity';
-import { Mob, type MobEvents, type MobTarget } from './Mob';
+import { Mob, type MobEvents, type MobTarget, type MobWorld } from './Mob';
+import { initMob } from './MobInit';
 import { MOB_TYPES, type MobKind } from './MobTypes';
 import { MobSpawner, SPAWN, hostileDespawns } from './MobSpawner';
 import { PrimedTnt, TNT_FUSE } from './PrimedTnt';
@@ -20,6 +21,10 @@ export interface EntityWorld {
   getSkyLight?(x: number, y: number, z: number): number;
   /** Packed light (sky << 4 | block). */
   getLight(x: number, y: number, z: number): number;
+  /** Block change by a mob (sheep grazing); returns false when refused. */
+  setBlock?(x: number, y: number, z: number, id: number, meta?: number): unknown;
+  /** Biome id of a column (client World and ServerWorld). */
+  biomeName?(x: number, z: number): number;
 }
 
 /** A freshly generated chunk, as far as passive spawning cares. */
@@ -40,7 +45,7 @@ export interface PickupHandler {
  * ticks. Passive mobs spawn in groups when a grassy chunk generates (like Minecraft's
  * chunk-generation spawns); hostile mobs spawn in darkness around the player.
  */
-export class EntityManager {
+export class EntityManager implements MobWorld {
   readonly mobs: Mob[] = [];
   readonly items: ItemEntity[] = [];
   readonly tnt: PrimedTnt[] = [];
@@ -61,6 +66,18 @@ export class EntityManager {
   private readonly spawnedChunks = new Set<number>();
   private tickCount = 0;
   hostileSpawning = true;
+  /** MobWorld: ticks simulated so far and the path searches left this tick. */
+  time = 0;
+  pathBudget = 0;
+  /** Path searches allowed per tick for all mobs together (each costs up to ~0.1 ms). */
+  static PATHS_PER_TICK = 6;
+  /** Server: a block a mob changed must reach the clients. */
+  blockHook: ((x: number, y: number, z: number, id: number) => void) | null = null;
+  private dayBright = false;
+  /** Who hit which player last: player id → mob and tick (tamed wolves defend their owner). */
+  private readonly playerAttackers = new Map<number, { mob: Mob; time: number }>();
+  private wrappedFor: MobEvents | null = null;
+  private wrapped: MobEvents | null = null;
   /** Multiplayer v1 is peaceful: mobs are not yet simulated by the server. */
   passiveSpawning = true;
 
@@ -87,8 +104,50 @@ export class EntityManager {
     const m = new Mob(MOB_TYPES[kind]);
     m.setPosition(x, y, z);
     m.netId = this.nextNetId++;
+    m.world = this;
+    initMob(m);
     this.mobs.push(m);
     return m;
+  }
+
+  // ---------------------------------------------------------------- MobWorld
+
+  sunlit(x: number, y: number, z: number): boolean {
+    if (!this.dayBright) return false;
+    const bx = Math.floor(x), by = Math.floor(y), bz = Math.floor(z);
+    return (this.world.getSkyLight ? this.world.getSkyLight(bx, by, bz) : this.world.getLight(bx, by, bz) >> 4) > 11;
+  }
+
+  setBlock(x: number, y: number, z: number, id: number): boolean {
+    if (!this.world.setBlock) return false;
+    const r = this.world.setBlock(x, y, z, id, 0);
+    if (r === false || r === -1) return false;
+    this.blockHook?.(x, y, z, id);
+    return true;
+  }
+
+  biomeAt(x: number, z: number): number {
+    return this.world.biomeName ? this.world.biomeName(Math.floor(x), Math.floor(z)) : -1;
+  }
+
+  lastAttackerOf(playerId: number): Mob | null {
+    const e = this.playerAttackers.get(playerId);
+    return e && this.time - e.time < 100 && !e.mob.dead && !e.mob.removed ? e.mob : null;
+  }
+
+  /** The events with the melee hook that remembers who hit which player. */
+  private wrapEvents(events: MobEvents): MobEvents {
+    if (this.wrappedFor === events && this.wrapped) return this.wrapped;
+    const log = this.playerAttackers;
+    this.wrappedFor = events;
+    this.wrapped = {
+      ...events,
+      attack: (mob, damage, target) => {
+        log.set(target.id ?? 0, { mob, time: this.time });
+        events.attack(mob, damage, target);
+      },
+    };
+    return this.wrapped;
   }
 
   /** @param force ignore the entity cap (death drops must never vanish). */
@@ -173,6 +232,10 @@ export class EntityManager {
    */
   tick(target: MobTarget, darkness: number, events: MobEvents, pickup: PickupHandler | null, dayBright: boolean): void {
     this.tickCount++;
+    this.time = this.tickCount;
+    this.pathBudget = EntityManager.PATHS_PER_TICK;
+    this.dayBright = dayBright;
+    events = this.wrapEvents(events);
     this.events = events;
     Entity.metaGetter = this.world.getMeta ? this.getMeta : null;
     const getBlock = this.getBlock;
@@ -216,7 +279,9 @@ export class EntityManager {
       if (m.burning > 0) m.burning--;
       if (m.inLava && this.tickCount % 10 === 0) m.hurt(4, m.x, m.z, 0);
       if (m.dead && m.deathTime === 1) {
-        for (const s of m.type.drops(m.hurtByPlayer > 0)) this.dropItem(s, m.x, m.y + 0.5, m.z);
+        // Babies drop nothing (Minecraft), big slimes split into 2-4 smaller ones.
+        if (!m.baby) for (const s of m.type.drops(m.hurtByPlayer > 0, m)) this.dropItem(s, m.x, m.y + 0.5, m.z);
+        if (m.type.kind === 'slime' && m.size > 1) this.splitSlime(m);
         events.sound(m, 'death');
         if (m.hurtByPlayer > 0) events.killed(m);
       }
@@ -269,6 +334,17 @@ export class EntityManager {
     if (this.tickCount % 10 === 0) this.mergeItems();
 
     this.compact();
+  }
+
+  private splitSlime(m: Mob): void {
+    const n = 2 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < n; i++) {
+      const c = this.spawnMob('slime', m.x + (Math.random() - 0.5) * m.width, m.y + 0.2, m.z + (Math.random() - 0.5) * m.width);
+      c.size = m.size / 2;
+      c.refreshSize();
+      c.health = c.size * c.size;
+      c.persistent = m.persistent;
+    }
   }
 
   /** Sky light at a mob's head. */

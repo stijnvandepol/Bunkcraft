@@ -145,6 +145,11 @@ export class ServerWorld implements EntityWorld {
     return 0;
   }
 
+  /** Biome id of a column (spawn rules: husks in deserts, strays in snow, drowned in oceans). */
+  biomeName(x: number, z: number): number {
+    return this.generator.biomeAt(x, z, Math.floor(this.generator.heightAt(x, z)));
+  }
+
   /**
    * Changes one block (a player edit or an explosion). Unloaded chunks only remember it,
    * so it is applied when they generate. Returns the previous block, or −1 if unchanged.

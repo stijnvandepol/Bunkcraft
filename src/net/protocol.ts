@@ -154,7 +154,7 @@ export type ServerMessage =
   | { t: 'hurt'; amount: number; cause: 'mob' | 'arrow'; by: string; yaw: number }
   /** An explosion: destroyed blocks as x, y, z triples; the client plays effects and takes its own damage. */
   | { t: 'boom'; x: number; y: number; z: number; power: number; by: string; water: boolean; blocks: number[] }
-  | { t: 'msound'; kind: string; event: 'idle' | 'hurt' | 'death' | 'fuse' | 'arrow' | 'shoot'; x: number; y: number; z: number }
+  | { t: 'msound'; kind: string; event: 'idle' | 'hurt' | 'death' | 'fuse' | 'angry' | 'teleport' | 'arrow' | 'shoot'; x: number; y: number; z: number }
   // ---- arcade game types ----
   /** Match state, about once a second and on every change. `scores` is team kills (tdm) or empty (ffa). */
   | { t: 'match'; phase: MatchPhase; timeLeft: number; scores: { red: number; blue: number }; info: MatchInfo }

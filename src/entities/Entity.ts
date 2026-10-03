@@ -40,7 +40,10 @@ export abstract class Entity {
   private renderLightFrame = -LIGHT_INTERVAL;
   protected readonly box: AABB = { minX: 0, minY: 0, minZ: 0, maxX: 0, maxY: 0, maxZ: 0 };
 
-  constructor(readonly width: number, readonly height: number) {}
+  /** Swimmers (drowned, fish): vertical speed wanted while in water, replaces the buoyancy. null = float up. */
+  swimVy: number | null = null;
+
+  constructor(public width: number, public height: number) {}
 
   setPosition(x: number, y: number, z: number): void {
     this.x = this.prevX = x;
@@ -109,7 +112,10 @@ export abstract class Entity {
     this.inWater = feet === BLOCK.WATER || feet === BLOCK.LAVA;
     this.inLava = feet === BLOCK.LAVA;
 
-    if (this.inWater) {
+    if (this.inWater && this.swimVy !== null) {
+      this.vy += (this.swimVy - this.vy) * 0.25;
+      this.vx *= 0.85; this.vz *= 0.85;
+    } else if (this.inWater) {
       // Mobs float up to the surface.
       this.vy = Math.min(this.vy + 18 * dt, 2.2);
       this.vx *= 0.8; this.vz *= 0.8;
