@@ -185,7 +185,11 @@ export type ClientMessage =
   | { t: 'hello'; v: number; name: string; key?: string; owner?: string; password?: string; bin?: boolean; binv?: number }
   | { t: 'pos'; x: number; y: number; z: number; yaw: number; pitch: number; flags: number; held: number }
   /** `meta` is the block state byte (see BlockStates); absent = 0. */
-  | { t: 'block'; seq: number; x: number; y: number; z: number; id: number; meta?: number }
+  /**
+   * `prev` (optional, older clients leave it out) is the block id this client saw there before its edit. When the
+   * server's block differs, somebody else changed it first: the edit is refused and the sender gets the server's block.
+   */
+  | { t: 'block'; seq: number; x: number; y: number; z: number; id: number; meta?: number; prev?: number }
   | { t: 'chat'; text: string }
   | { t: 'state'; inventory: number[][]; stats: number[]; effects?: number[][] }
   /** Right click on a bed: set the respawn point and try to sleep (the server checks the time and monsters). */

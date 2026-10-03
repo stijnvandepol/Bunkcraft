@@ -1068,6 +1068,15 @@ export class GameServer {
     // Reach: distance from the player's eyes to the block centre.
     const d = Math.hypot(x + 0.5 - s.x, y + 0.5 - (s.y + 1.62), z + 0.5 - s.z);
     if (!s.hasPos || d > REACH) return reject();
+    // Two players changed this block at the same moment: the one whose view is stale loses, and gets the server's
+    // block back right after the reject (otherwise his screen keeps the other player's edit overwritten by his own).
+    if (this.entities && typeof m.prev === 'number') {
+      const current = this.entities.world.getBlock(x, y, z);
+      if (current !== BLOCK.UNLOADED && current !== m.prev) {
+        reject();
+        return this.send(s, blockMessage(x, y, z, current, this.entities.world.getMeta(x, y, z)));
+      }
+    }
     // Breaking a block lets this player's client spawn its drop (see InventoryGuard.creditBreak).
     if (id === 0 && this.entities && this.guarded()) {
       const old = this.entities.world.getBlock(x, y, z);
@@ -1346,6 +1355,8 @@ export class GameServer {
     if (s.ws.readyState !== s.ws.OPEN || this.overloaded(s)) return;
     // A pickup the server approved is what lets the next inventory update contain the item.
     if (msg.t === 'taken' && msg.id >= 0) s.guard.creditPickup(msg.itemId, msg.count, msg.damage);
+    // Using an item on a mob can hand one back (milking a cow gives a milk bucket).
+    if (msg.t === 'mobused' && msg.give) s.guard.creditPickup(msg.give, 1);
     if (s.bin) {
       const frame = s.binq && msg.t === 'snap' ? encodeSnapQ(msg.players, 0, ARENA_FLOOR_Y, 0) : encodeBinary(msg);
       if (frame) {

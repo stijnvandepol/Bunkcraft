@@ -138,7 +138,7 @@ client stuurt alleen de chattekst. `/help` toont alleen wat jij mag gebruiken.
 | `/tp <naam>` of `/tp <naam> to <naam>` | operator | Teleporteren |
 | `/gamemode survival\|creative\|hardcore\|spectator` | operator | Geldt voor iedereen in die game |
 | `/time set day\|noon\|night\|midnight` | operator | |
-| `/weather clear\|rain\|thunder` | operator | Stub: meldt dat weer nog niet beschikbaar is (haakje `setWeather` in `CommandHost`) |
+| `/weather clear\|rain\|thunder [seconden]` | operator | Zet het weer voor iedereen in die game (niet in arcade-games) |
 | `/give <naam> <item> [aantal]` | operator | **Alleen in creative-games** |
 
 Opslag: `ops`, `bans` en `whitelist` staan in `world.json` en overleven herstarts. Een game die van vóór de eigenaars-tokens
@@ -221,7 +221,7 @@ inventory), maar ook daar moet de vorm kloppen. `INVENTORY_GUARD=warn` logt alle
 - Een speler die al vóór deze versie vals speelde: zijn opgeslagen inventory geldt als beginsituatie.
 - Een legitieme drop zonder blokbreuk die de server niet kent (bijvoorbeeld bladverval aan de clientkant) wordt geweigerd:
   `INVENTORY_GUARD=warn` laat zien of dat gebeurt (`unbacked drop` in de logs).
-- Kisten bestaan nog niet; als ze er komen, moeten overdrachten via een servervalidatie lopen en krediet geven in `InventoryGuard`.
+- Kisten en ovens staan op de server (`server/Containers.ts`): elke klik draagt de inventory mee, gaat langs de guard en geeft krediet (`creditTransfer`) of boekt af (`spendTransfer`).
 
 ## Binair protocol voor `snap` en `ent`
 
@@ -454,7 +454,7 @@ Beveiliging (dreigingsmodel, bevindingen, hardening-checklist voor een domein): 
 - **Items:** blokdrops, Q en doodsdrops gaan via de server en zijn voor iedereen zichtbaar; wie het eerst bij een item komt, krijgt het.
 - **Geen accounts, wel gebonden namen:** een naam hoort bij de browser die hem het eerst gebruikte (zie *Wachtwoorden, privacy en namen*); er is geen herstel als je je browserdata wist. Een game is toegankelijk met de code (zes tekens uit 31, met een limiet op het aantal pogingen per bezoeker) en eventueel een wachtwoord. De whitelist werkt op naam: iemand kan een naam claimen die nog nooit gebruikt is, dus combineer hem met een wachtwoord als dat telt.
 - **Ban op adres** raakt iedereen achter hetzelfde IP (huishouden, school). Bans op naam helpen weinig tegen iemand die een andere naam kiest; gebruik daarvoor een wachtwoord of de whitelist.
-- **Weer** bestaat nog niet in multiplayer: `/weather` is een stub.
+- **Weer** loopt op de server (regen, onweer, bliksem) en `/weather` werkt voor operators; arcade-games zijn altijd helder.
 - **Aanmaken is beperkt:** zes games per uur per bezoeker en `MAX_ROOMS` in totaal, zodat een publieke server niet volloopt.
 - **Advancements** staan uit in multiplayer.
 
