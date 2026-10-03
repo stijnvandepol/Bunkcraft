@@ -25,6 +25,7 @@ import { type Actor, type BanEntry, type CommandHost, type Moderation, type Targ
 import { InventoryGuard, parseInventory } from './InventoryGuard';
 import { type ChildLogger, log } from './Log';
 import { metrics } from './Metrics';
+import { ArcadeGuard } from './anticheat/ArcadeGuard';
 import { type RateLimiter, hashIp, newToken, safeEqual, tokenMatches, verifyPassword, hashToken } from './Security';
 
 const TICK_MS = 50; // 20 ticks per second, like Minecraft
@@ -32,7 +33,6 @@ const DAY_SECONDS = 1200;
 const SAVE_INTERVAL_MS = 30_000;
 const REACH = 8; // lenient server-side reach check (client uses 5)
 const MAX_SPEED = 26; // blocks/second (fast flying + slack)
-const ARENA_MAX_SPEED = 40; // arcade: sprint + jump + slack
 const PING_INTERVAL_TICKS = 60; // arcade: measure the round trip every 3 s
 /** Block changes per 'blocks' message (flowing water). */
 const BLOCKS_PER_MESSAGE = 100;
@@ -213,6 +213,8 @@ export class GameServer {
   /** Arcade games: the match and the arena as bullets see it. */
   private readonly match: Match | null = null;
   private arena: ServerWorld | null = null;
+  /** Arcade: movement validation against the arena (see anticheat/). */
+  private readonly guard: ArcadeGuard | null = null;
   /** Arcade: the map setting of this game ("rotate" moves on to the next map after every match). */
   private mapSetting: MapSetting = DEFAULT_MAP;
   private readonly logger: ChildLogger;
@@ -237,6 +239,10 @@ export class GameServer {
       this.mapSetting = parseMapSetting(this.world.mapId) ?? DEFAULT_MAP;
       const first: MapId = parseMapId(this.mapSetting) ?? DEFAULT_MAP;
       this.loadArena(first);
+      this.guard = new ArcadeGuard(
+        { getBlock: (x, y, z) => this.arena!.getBlock(x, y, z), getMeta: (x, y, z) => this.arena!.getMeta(x, y, z) },
+        (x, z) => this.match!.inBounds(x, z),
+      );
       this.match = new Match(this.matchHost(), {
         type: def.id, scoreLimit: this.world.scoreLimit ?? def.scoreLimit, timeLimitSec: this.world.timeLimitSec ?? def.timeLimitSec,
         map: first,
@@ -434,6 +440,7 @@ export class GameServer {
         s.hasPos = true;
         s.lastPosTime = Date.now();
         s.awaiting = { x, y, z, until: Date.now() + 1500 };
+        this.guard?.reset(id, x, y, z, Date.now() / 1000);
       },
       random: Math.random,
       ping: (id) => this.sessions.get(id)?.pingMs ?? 0,
@@ -617,7 +624,11 @@ export class GameServer {
       pingMs: 0, pingSentAt: 0, awaiting: null,
     };
     const joined = this.match?.join(session.id, name) ?? null;
-    if (joined) { session.x = joined.x; session.y = joined.y; session.z = joined.z; session.hasPos = true; }
+    if (joined) {
+      session.x = joined.x; session.y = joined.y; session.z = joined.z; session.hasPos = true;
+      this.guard?.join(session.id, name);
+      this.guard?.reset(session.id, joined.x, joined.y, joined.z, Date.now() / 1000);
+    }
     const edits: number[] = [];
     for (const [key, state] of Object.entries(this.world.edits)) {
       const [x, y, z] = key.split(',').map(Number);
@@ -652,6 +663,7 @@ export class GameServer {
     this.sessions.delete(s.id);
     this.entities?.forget(s.id);
     this.match?.leave(s.id);
+    this.guard?.leave(s.id);
     this.broadcast({ t: 'leave', id: s.id, name: s.name });
     this.broadcast({ t: 'chat', from: '', text: `${s.name} left the game`, system: true });
     this.log(`[leave] ${s.name} (${this.sessions.size} online)`);
@@ -781,7 +793,7 @@ export class GameServer {
     if (Math.abs(m.x) > WORLD_LIMIT || Math.abs(m.z) > WORLD_LIMIT || m.y < -512 || m.y > 1024) return;
     const now = Date.now();
     if (s.awaiting) {
-      // We moved this player (spawn): ignore positions from before the client got the message.
+      // We moved this player (spawn, rubber band): ignore positions from before the client got the message.
       const a = s.awaiting;
       if (Math.hypot(m.x - a.x, m.z - a.z) <= 2.5 && Math.abs(m.y - a.y) <= 3) {
         s.awaiting = null;
@@ -789,22 +801,28 @@ export class GameServer {
         if (now > a.until) {
           a.until = now + 1500;
           this.send(s, { t: 'teleport', x: a.x, y: a.y, z: a.z });
+          // Arcade: a client that keeps ignoring the correction is not lagging.
+          const r = this.guard?.ignoredTeleport(s.id, now / 1000);
+          if (r && !r.ok) this.onCheat(s, r);
         }
         return;
       }
     }
     if (this.match) {
-      // Arcade: inside the arena, on or above the floor.
-      if (!this.match.inBounds(m.x, m.z) || m.y < ARENA_FLOOR_Y - 2 || m.y > ARENA_FLOOR_Y + 40) {
-        if (++s.violations > 3) this.send(s, { t: 'teleport', x: s.x, y: s.y, z: s.z });
+      // Arcade: inside the arena, on or above the floor, and every move checked against the map.
+      const outside = !this.match.inBounds(m.x, m.z) || m.y < ARENA_FLOOR_Y - 2 || m.y > ARENA_FLOOR_Y + 40;
+      const p = this.match.players.get(s.id);
+      if (p) this.guard!.setMoveSpeed(s.id, p.slots[p.slot].def.moveSpeed, now / 1000);
+      const r = outside ? this.guard!.flag(s.id, 'bounds', 2, now / 1000) : this.guard!.move(s.id, m.x, m.y, m.z, now / 1000);
+      if (!r.ok) {
+        this.onCheat(s, r);
         return;
       }
-    }
-    if (s.hasPos) {
+    } else if (s.hasPos) {
       // Movement sanity check: reject impossible speeds and snap the player back.
       const dt = Math.max(0.05, (now - s.lastPosTime) / 1000);
       const dist = Math.hypot(m.x - s.x, m.z - s.z);
-      if (dist > (this.match ? ARENA_MAX_SPEED : MAX_SPEED) * dt + 4) {
+      if (dist > MAX_SPEED * dt + 4) {
         if (++s.violations > 3) this.send(s, { t: 'teleport', x: s.x, y: s.y, z: s.z });
         return;
       }
@@ -816,6 +834,39 @@ export class GameServer {
     s.hasPos = true;
     s.lastPosTime = now;
     this.match?.setPosition(s.id, s.x, s.y, s.z, s.yaw, s.pitch);
+  }
+
+  /** Arcade anti-cheat verdict: rubber band to the last valid position, count, log, and kick or ban on repeat. */
+  private onCheat(s: Session, r: Exclude<ReturnType<ArcadeGuard['move']>, { ok: true }>): void {
+    metrics.cheat(r.lag ? 'lag' : r.rule);
+    const at = this.guard!.lastValid(s.id) ?? { x: s.x, y: s.y, z: s.z };
+    if (!r.lag) this.logger.warn('cheat', { name: s.name, kind: 'movement', rule: r.rule, strikes: Math.round(r.strikes * 10) / 10, action: r.action });
+    if (r.action === 'correct' || s.owner) {
+      s.x = at.x; s.y = at.y; s.z = at.z;
+      s.awaiting = { x: at.x, y: at.y, z: at.z, until: Date.now() + 1500 };
+      this.match?.setPosition(s.id, s.x, s.y, s.z, s.yaw, s.pitch);
+      this.send(s, { t: 'teleport', x: at.x, y: at.y, z: at.z });
+      this.guard!.reset(s.id, at.x, at.y, at.z, Date.now() / 1000);
+      return;
+    }
+    if (r.action === 'ban' && !s.op) {
+      metrics.cheatBans++;
+      this.banByAnticheat(s, `anti-cheat (${r.rule})`);
+      return;
+    }
+    metrics.cheatKicks++;
+    this.broadcast({ t: 'chat', from: '', text: `${s.name} was kicked by the anti-cheat`, system: true });
+    this.kickSession(s, `Kicked by the anti-cheat (${r.rule}). Lagging? Check your connection.`);
+  }
+
+  /** A name-only ban (no address: shared networks must not lock others out of the room). */
+  private banByAnticheat(s: Session, reason: string): void {
+    this.world.bans = this.world.bans!.filter((b) => lc(b.name) !== lc(s.name));
+    this.world.bans.push({ name: s.name, reason, by: 'anti-cheat', at: Date.now() });
+    this.dirty = true;
+    this.logger.warn('cheat ban', { name: s.name, reason });
+    this.broadcast({ t: 'chat', from: '', text: `${s.name} was banned by the anti-cheat`, system: true });
+    this.kickSession(s, `You were banned: ${reason}`);
   }
 
   private onBlock(s: Session, m: Extract<ClientMessage, { t: 'block' }>): void {
@@ -916,6 +967,7 @@ export class GameServer {
         p.x = x; p.y = y; p.z = z;
         p.hasPos = true;
         p.awaiting = { x, y, z, until: Date.now() + 1500 };
+        self.guard?.reset(p.id, x, y, z, Date.now() / 1000);
         self.send(p, { t: 'teleport', x, y, z });
       },
       setGameMode: (mode) => {
