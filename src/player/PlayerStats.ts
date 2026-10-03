@@ -53,7 +53,6 @@ export class PlayerStats {
   /** The loaded save was made while dead (on the death screen). */
   wasDead = false;
   private regenTimer = 0;
-  private starveTimer = 0;
   private hazardTimer = 0;
   /** Fired on every successful hit (sound). */
   onHurt: ((cause: DamageCause) => void) | null = null;
@@ -181,21 +180,31 @@ export class PlayerStats {
       if (this.saturation > 0) this.saturation = Math.max(0, this.saturation - 1);
       else this.hunger = Math.max(0, this.hunger - 1);
     }
-    // Natural regeneration (fast with full hunger and saturation) and starvation.
-    this.regenTimer++;
-    const fast = this.hunger >= MAX_HUNGER && this.saturation > 0;
-    if (this.health < MAX_HEALTH && (fast ? this.regenTimer >= 10 : this.hunger >= 18 && this.regenTimer >= 80)) {
-      this.heal(1);
-      this.addExhaustion(6);
-      this.regenTimer = 0;
-    }
-    if (this.hunger === 0) {
-      this.starveTimer++;
-      // Normal difficulty stops at half a heart; Hardcore (hard) can starve to death.
-      if (this.starveTimer >= 80 && (mode === 'hardcore' || this.health > 1)) {
-        this.damage(1, 'starve', mode);
-        this.starveTimer = 0;
+    // Natural regeneration and starvation share one timer, like Minecraft's FoodData: it only runs while one of
+    // them applies, so a hit at full health does not heal at once.
+    const hurt = this.health < MAX_HEALTH;
+    if (hurt && this.hunger >= MAX_HUNGER && this.saturation > 0) {
+      // Saturation boost: every 10 ticks heal min(saturation, 6) / 6 for min(saturation, 6) exhaustion.
+      if (++this.regenTimer >= 10) {
+        const f = Math.min(this.saturation, 6);
+        this.heal(f / 6);
+        this.addExhaustion(f);
+        this.regenTimer = 0;
       }
+    } else if (hurt && this.hunger >= 18) {
+      if (++this.regenTimer >= 80) {
+        this.heal(1);
+        this.addExhaustion(6);
+        this.regenTimer = 0;
+      }
+    } else if (this.hunger <= 0) {
+      // Normal difficulty stops at half a heart; Hardcore (hard) can starve to death.
+      if (++this.regenTimer >= 80) {
+        if (mode === 'hardcore' || this.health > 1) this.damage(1, 'starve', mode);
+        this.regenTimer = 0;
+      }
+    } else {
+      this.regenTimer = 0;
     }
   }
 
