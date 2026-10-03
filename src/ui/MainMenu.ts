@@ -15,6 +15,7 @@ import { difficultyButton, gameRulesScreen } from './GameRulesScreen';
 import { DEFAULT_DIFFICULTY, type Difficulty } from '../world/Difficulty';
 import { GameRules } from '../world/GameRules';
 import { pickFile } from './download';
+import { announce } from './Announcer';
 import type { ScreenStack } from './Screens';
 
 export interface MenuActions {
@@ -437,6 +438,8 @@ export class MainMenu {
   /** "Connection Lost" / failed to connect screen. */
   showDisconnected(reason: string): void {
     this.stack.clear();
+    // Replaces whatever the live region still held (an old death message read out next to the reconnect notice).
+    announce(reason);
     this.stack.push(menuScreen(t('disconnected.title'), [
       h('div', { class: 'hint', text: reason }),
     ], [button(t('disconnected.back'), () => this.showTitle())]));

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { EntityManager, type EntityWorld } from '../src/entities/EntityManager';
 import { Mob, type MobEvents, type MobTarget } from '../src/entities/Mob';
 import {
-  HOSTILE_TABLE, MobSpawner, PASSIVE_TABLE, SPAWN, type SpawnHost, hostileCap, hostileDespawns, hostileLightOk, pickEntry,
+  HOSTILE_TABLE, MobSpawner, PASSIVE_TABLE, SPAWN, type SpawnHost, capAreas, hostileCap, hostileDespawns, hostileLightOk, pickEntry,
 } from '../src/entities/MobSpawner';
 import { MOB_TYPES, type MobKind } from '../src/entities/MobTypes';
 import { BLOCK } from '../src/world/BlockRegistry';
@@ -107,6 +107,31 @@ describe('light rules', () => {
 });
 
 describe('caps and rates', () => {
+  it('counts chunks shared by players once (Minecraft mob cap): friends together get about one cap', () => {
+    const at = (x: number, z: number) => ({ x, z });
+    expect(capAreas([at(0.5, 0.5)])).toBe(1);
+    // Three friends at spawn, a few blocks apart: at most one extra chunk row/column.
+    const together = capAreas([at(0.5, 0.5), at(3, -2), at(-4, 5)]);
+    expect(together).toBeLessThan(1.3);
+    expect(hostileCap(together, 11)).toBeLessThanOrEqual(Math.round(SPAWN.hostileCap * 1.3));
+    // Far apart (no shared chunks): each player brings a full area.
+    expect(capAreas([at(0, 0), at(1000, 0), at(0, 1000)])).toBe(3);
+    // Half overlapping: in between.
+    const half = capAreas([at(0, 0), at(80, 0)]);
+    expect(half).toBeGreaterThan(1.3);
+    expect(half).toBeLessThan(2);
+  });
+
+  it('three players standing together at midnight meet about a single-player number of hostiles', () => {
+    const a = fakeHost(new FlatWorld());
+    const s = new MobSpawner(a.host, 1, mulberry32(12));
+    const group = [player, { ...player, x: player.x + 2 }, { ...player, z: player.z + 3 }];
+    for (let tick = 0; tick < 60 * 20; tick++) { s.recount(); s.tickHostile(group, 11); }
+    const hostiles = a.mobs.filter((m) => m.type.hostile).length;
+    expect(hostiles).toBeLessThanOrEqual(Math.round(SPAWN.hostileCap * 1.3));
+    expect(hostiles).toBeLessThan(SPAWN.hostileCap * 2);
+  });
+
   it('fills up to the cap within a minute at night, never beyond it', () => {
     const a = fakeHost(new FlatWorld());
     const s = new MobSpawner(a.host, 1, mulberry32(11));
@@ -115,8 +140,8 @@ describe('caps and rates', () => {
     expect(hostileCap(1, 11)).toBe(SPAWN.hostileCap);
   });
 
-  it('scales the cap with players and shrinks it in daylight', () => {
-    expect(hostileCap(2, 11)).toBe(SPAWN.hostileCap + SPAWN.hostileCapPerExtraPlayer);
+  it('scales the cap with the area players cover and shrinks it in daylight', () => {
+    expect(hostileCap(2, 11)).toBe(SPAWN.hostileCap * 2);
     expect(hostileCap(50, 11)).toBe(SPAWN.hostileCapMax);
     // By day only a share of the cap is available, and it is the same for every darkness below the threshold.
     expect(hostileCap(1, 0)).toBeGreaterThan(0);

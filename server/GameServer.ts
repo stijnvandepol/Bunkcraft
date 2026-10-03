@@ -664,9 +664,11 @@ export class GameServer {
     const proceed = () => this.finishLogin(ws, ip, name, hello, { owner, verified, key });
     const hash = this.world.passwordHash;
     if (!hash || owner) return proceed();
-    // Password: refuse before doing any work when this address failed too often.
+    // Password: refuse before doing any work when this address failed too often for THIS game (per game, so one
+    // housemate's typos in one game do not lock the whole household out of every other game).
     const limiter = this.opts.failLimiter;
-    if (limiter && !limiter.allowed(ip)) {
+    const limitKey = `${this.opts.label ?? 'main'}|${ip}`;
+    if (limiter && !limiter.allowed(limitKey)) {
       metrics.rateLimited('password');
       return kick('Too many wrong passwords. Try again in a few minutes.', 'password');
     }
@@ -675,7 +677,7 @@ export class GameServer {
     return verifyPassword(password, hash).then((ok) => {
       if (this.closed || ws.readyState !== ws.OPEN) return null;
       if (!ok) {
-        limiter?.record(ip);
+        limiter?.record(limitKey);
         return kick('Wrong password.', 'password');
       }
       return proceed();

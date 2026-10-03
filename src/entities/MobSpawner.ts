@@ -10,13 +10,18 @@ import { BIOME } from '../world/Biomes';
 /** Tunables, grouped so the tests and the F3 overlay can read them. */
 export const SPAWN = {
   /**
-   * Hostile mobs alive at once for one player; each extra player adds some. Minecraft spreads its cap of 70 over
-   * 289 chunks and spawns up to 128 blocks out, so a player rarely meets more than a handful at once: with all
-   * of them inside our 28-64 block ring the cap must be lower to feel the same (first measured: 16 hostiles
-   * within 32 blocks at midnight, which made bare-handed survival unwinnable).
+   * Hostile mobs alive at once for one player. Minecraft spreads its cap of 70 over 289 chunks and spawns up to
+   * 128 blocks out, so a player rarely meets more than a handful at once: with all of them inside our 28-64 block
+   * ring the cap must be lower to feel the same (first measured: 16 hostiles within 32 blocks at midnight, which
+   * made bare-handed survival unwinnable).
+   *
+   * With several players the cap scales like Minecraft's: by the number of chunks within `capChunkRadius` of any
+   * player, each chunk counted once. Friends standing together share one area and get about a single-player cap;
+   * players far apart each get their own.
    */
   hostileCap: 18,
-  hostileCapPerExtraPlayer: 8,
+  /** Chunks around a player that count for the cap (a square of (2r+1)², 9×9 covers the 64-block spawn ring). */
+  capChunkRadius: 4,
   hostileCapMax: 48,
   /** Darkness (0 noon … 11 midnight) from which the full cap applies, and the share of it available by day. */
   fullDarkness: 7,
@@ -124,10 +129,36 @@ export function hostileDespawns(distance: number, roll: number): boolean {
   return distance > SPAWN.randomDespawn && roll < 1 / 800;
 }
 
-/** Mobs alive at once: the full cap in the dark, 40 % of it in daylight (only caves and shade spawn then). */
-export function hostileCap(players: number, darkness: number = SPAWN.fullDarkness): number {
-  const full = Math.min(SPAWN.hostileCapMax, SPAWN.hostileCap + SPAWN.hostileCapPerExtraPlayer * Math.max(0, players - 1));
+/** Chunks one player's cap area covers. */
+const CAP_AREA = (2 * SPAWN.capChunkRadius + 1) ** 2;
+
+/**
+ * Mobs alive at once: the full cap in the dark, a share of it in daylight (only caves and shade spawn then).
+ * `areas` is how many single-player cap areas the players cover: 1 for one player (or a group standing together),
+ * the player count when they are far apart (see `capAreas`).
+ */
+export function hostileCap(areas: number, darkness: number = SPAWN.fullDarkness): number {
+  const full = Math.min(SPAWN.hostileCapMax, Math.round(SPAWN.hostileCap * Math.max(1, areas)));
   return darkness >= SPAWN.fullDarkness ? full : Math.ceil(full * SPAWN.daylightCapShare);
+}
+
+const capChunks = new Set<number>();
+
+/**
+ * How many single-player cap areas these players cover: the chunks within `capChunkRadius` of any player, each
+ * counted once, divided by one player's area (Minecraft's mob cap rule). Two players side by side ≈ 1.1, far apart 2.
+ */
+export function capAreas(targets: readonly { x: number; z: number }[]): number {
+  if (targets.length <= 1) return 1;
+  const r = SPAWN.capChunkRadius;
+  capChunks.clear();
+  for (const t of targets) {
+    const cx = Math.floor(t.x) >> 4, cz = Math.floor(t.z) >> 4;
+    for (let dz = -r; dz <= r; dz++) {
+      for (let dx = -r; dx <= r; dx++) capChunks.add(((cx + dx) & 0xffff) * 0x10000 + ((cz + dz) & 0xffff));
+    }
+  }
+  return capChunks.size / CAP_AREA;
 }
 
 /** What the spawner needs from the entity manager. */
@@ -172,7 +203,7 @@ export class MobSpawner {
 
   /** Monster spawn attempts for this tick (the caller decides whether hostile spawning is on). */
   tickHostile(targets: readonly MobTarget[], darkness: number): void {
-    const cap = hostileCap(targets.length, darkness);
+    const cap = hostileCap(capAreas(targets), darkness);
     for (const t of targets) {
       for (let i = 0; i < SPAWN.hostileAttemptsPerTick && this.hostileCount < cap; i++) this.tryPack(t, targets, darkness, cap);
     }
