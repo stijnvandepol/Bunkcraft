@@ -86,6 +86,9 @@ limieten per bezoeker werken in plaats van per proxy.
 | `LIST_MAX` | `50` | Maximum aantal games in de publieke serverlijst |
 | `INVENTORY_GUARD` | `enforce` | Inventory-controle in survival: `enforce` (terugdraaien), `warn` (alleen loggen) of `off` |
 | `BINARY_PROTOCOL` | `on` | Binaire `snap`/`ent`-frames voor clients die erom vragen (`off` = altijd JSON) |
+| `ARCADE_TICK_HZ` | `30` | Tickrate van arcade-kamers (10-60); Minecraft-werelden blijven 20 Hz |
+| `ARCADE_CULLING` | `on` | Anti-wallhack: arcade-snapshots per speler zonder onzichtbare vijanden (`off` = iedereen naar iedereen) |
+| `ARCADE_AUTOKICK_SCORE` | `0` | Kick bij deze aim-verdenkingsscore (0-100; `0` = nooit, alleen loggen) |
 | `BACKUP_KEEP` | `12` | Aantal back-ups per wereld (`0` = geen back-ups) |
 | `BACKUP_INTERVAL_MIN` | `60` | Minuten tussen back-ups |
 | `RECONNECT_HINT_MS` | `8000` | Bij afsluiten (SIGTERM) krijgen spelers de hint om zoveel milliseconden later opnieuw te verbinden |
@@ -171,7 +174,8 @@ adressen blokkeren. Alle data gaat via `textContent` de pagina in en een strikte
   `process_cpu_seconds_total`, `bunkcraft_ws_messages_{received,sent}_total`, `bunkcraft_ws_bytes_{received,sent}_total`,
   `bunkcraft_ws_messages_per_second{direction}`, `bunkcraft_ws_bytes_per_second{direction}`,
   `bunkcraft_rate_limit_hits_total{kind}`, `bunkcraft_connections_refused_total`, `bunkcraft_logins_failed_total`,
-  `bunkcraft_inventory_rejects_total`. Scrape-config: `bearer_token: <METRICS_TOKEN>` of scrape lokaal.
+  `bunkcraft_inventory_rejects_total`, `bunkcraft_cheat_events_total{rule}`, `bunkcraft_cheat_kicks_total`,
+  `bunkcraft_cheat_bans_total`, `bunkcraft_suspicion_flags_total` (arcade anti-cheat, zie SECURITY.md). Scrape-config: `bearer_token: <METRICS_TOKEN>` of scrape lokaal.
 - **Afsluiten (SIGTERM/SIGINT):** de server stopt met nieuwe verbindingen, slaat alle werelden op, stuurt elke speler
   `kick` met `reconnect: <ms>` en sluit de sockets met code 1012. De client toont "Server restarting" en probeert tot vijf keer
   zelf opnieuw te joinen. Docker stuurt SIGTERM en wacht 10 seconden: ruim genoeg.
@@ -220,6 +224,9 @@ inventory), maar ook daar moet de vorm kloppen. `INVENTORY_GUARD=warn` logt alle
 - Kisten bestaan nog niet; als ze er komen, moeten overdrachten via een servervalidatie lopen en krediet geven in `InventoryGuard`.
 
 ## Binair protocol voor `snap` en `ent`
+
+Arcade-kamers gebruiken daarnaast versie 2: `hello` met `binv: 2` → `welcome` met `binaryVersion: 2` en `tickHz`, en
+`snap` als gekwantiseerd frame (soort 3, 13 bytes per speler, zie `binary.ts` en `docs/SECURITY.md` §Arcade).
 
 De twee berichten met de meeste bytes kunnen als binaire WebSocket-frames (`src/net/binary.ts`, `DataView`, geen
 afhankelijkheid). De client zet `bin: true` in `hello`; de server antwoordt `binary: true` in `welcome` en verstuurt vanaf dan

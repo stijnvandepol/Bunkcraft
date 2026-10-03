@@ -22,6 +22,11 @@ export class Metrics {
   loginsFailed = 0;
   inventoryRejects = 0;
   readonly rateLimitHits = new Map<string, number>();
+  /** Arcade anti-cheat: movement and shot violations by rule, kicks/bans it issued, suspicion warnings. */
+  readonly cheatEvents = new Map<string, number>();
+  cheatKicks = 0;
+  cheatBans = 0;
+  suspicionFlags = 0;
   private readonly ticks = new Float64Array(RING);
   private tickN = 0;
   private lastCpu = process.cpuUsage();
@@ -32,6 +37,7 @@ export class Metrics {
   recvd(bytes: number): void { this.msgIn++; this.bytesIn += bytes; }
   sent(bytes: number, count = 1): void { this.msgOut += count; this.bytesOut += bytes; }
   rateLimited(kind: string): void { this.rateLimitHits.set(kind, (this.rateLimitHits.get(kind) ?? 0) + 1); }
+  cheat(rule: string): void { this.cheatEvents.set(rule, (this.cheatEvents.get(rule) ?? 0) + 1); }
   tick(ms: number): void { this.ticks[this.tickN++ % RING] = ms; }
 
   /** Quantile (0..1) of recent tick durations in ms. */
@@ -115,6 +121,11 @@ export class Metrics {
     metric('bunkcraft_connections_refused_total', 'counter', 'WebSocket connections refused (limits, origin, bans).', [`bunkcraft_connections_refused_total ${this.connectionsRefused}`]);
     metric('bunkcraft_logins_failed_total', 'counter', 'Failed logins (password, ban, whitelist, identity).', [`bunkcraft_logins_failed_total ${this.loginsFailed}`]);
     metric('bunkcraft_inventory_rejects_total', 'counter', 'Inventory updates rolled back by the server.', [`bunkcraft_inventory_rejects_total ${this.inventoryRejects}`]);
+    metric('bunkcraft_cheat_events_total', 'counter', 'Arcade anti-cheat violations (corrected), by rule.',
+      [...this.cheatEvents].map(([k, v]) => `bunkcraft_cheat_events_total{rule="${k.replace(/[^\w-]/g, '_')}"} ${v}`));
+    metric('bunkcraft_cheat_kicks_total', 'counter', 'Players kicked by the arcade anti-cheat.', [`bunkcraft_cheat_kicks_total ${this.cheatKicks}`]);
+    metric('bunkcraft_cheat_bans_total', 'counter', 'Players banned by the arcade anti-cheat.', [`bunkcraft_cheat_bans_total ${this.cheatBans}`]);
+    metric('bunkcraft_suspicion_flags_total', 'counter', 'Aim anomaly warnings (suspicion score over the threshold).', [`bunkcraft_suspicion_flags_total ${this.suspicionFlags}`]);
     return `${out.join('\n')}\n`;
   }
 }

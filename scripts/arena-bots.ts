@@ -12,6 +12,7 @@ import { WebSocket } from 'ws';
 import { ARENA_FLOOR_Y, MAP_IDS, getMap, parseMapId } from '../src/modes/maps';
 import { PROTOCOL_VERSION, type ClientMessage, type ServerMessage } from '../src/net/protocol';
 import { traceBlocks } from '../server/Combat';
+import { BOT_SPEED, aimAt, arenaPath, follow } from './lib/arenaPath';
 
 const type = process.argv[2] === 'ffa' ? 'ffa' : 'tdm';
 const mapArg = process.argv[3];
@@ -29,7 +30,7 @@ class Bot {
   readonly log: ServerMessage[] = [];
   id = 0;
   x = 0; y = ARENA_FLOOR_Y + 1; z = 0;
-  target: [number, number] | null = null;
+  route: [number, number][] = [];
   fresh = false;
   phase = '';
   private ws!: WebSocket;
@@ -46,7 +47,7 @@ class Bot {
         const m = JSON.parse(raw.toString()) as ServerMessage;
         this.log.push(m);
         if (m.t === 'welcome') { this.id = m.id; resolve(); }
-        if (m.t === 'spawn') { this.x = m.x; this.y = m.y; this.z = m.z; this.fresh = true; }
+        if (m.t === 'spawn') { this.x = m.x; this.y = m.y; this.z = m.z; this.fresh = true; this.route = []; }
         if (m.t === 'match') this.phase = m.phase;
         if (m.t === 'kick') reject(new Error(m.reason));
       });
@@ -54,11 +55,7 @@ class Bot {
       this.timer = setInterval(() => {
         if (!this.id) return;
         if (this.fresh) this.fresh = false;
-        else if (this.target) {
-          const dx = this.target[0] - this.x, dz = this.target[1] - this.z, d = Math.hypot(dx, dz);
-          const k = d > 3 ? 3 / d : 1; // 30 blocks/s, below the server's limit
-          this.x += dx * k; this.z += dz * k;
-        }
+        else follow(this, this.route, BOT_SPEED / 10); // honest pace on a path: the server validates movement
         this.send({ t: 'pos', x: this.x, y: this.y, z: this.z, yaw: 0, pitch: 0, flags: 4, held: 0 });
       }, 100);
     });
@@ -143,10 +140,14 @@ async function main(): Promise<void> {
   for (let i = 0; i < 300 && !(alice.phase === 'live' && bob.phase === 'live'); i++) await sleep(100);
   check('the match goes live after the warm-up', alice.phase === 'live' && bob.phase === 'live');
   // Everybody respawned at the start: walk to the duel spots (spawn protection lasts 2 s).
-  alice.target = spotA; bob.target = spotB;
-  await sleep(4500);
+  const map = getMap(mapId), variant = map.variantFor(welcome.seed);
+  const routeA = arenaPath(map, variant, [alice.x, alice.z], spotA), routeB = arenaPath(map, variant, [bob.x, bob.z], spotB);
+  check('there are walking paths to the duel spots', !!routeA && !!routeB);
+  alice.route = routeA ?? []; bob.route = routeB ?? [];
+  for (let i = 0; i < 400 && (alice.route.length || bob.route.length); i++) await sleep(100);
+  await sleep(300);
   check('bots reached their duel spots', Math.hypot(alice.x - spotA[0], alice.z - spotA[1]) < 0.5 && Math.hypot(bob.x - spotB[0], bob.z - spotB[1]) < 0.5);
-  check('no teleport corrections were needed', alice.of('teleport').length <= 1 && bob.of('teleport').length <= 1);
+  check('no teleport corrections were needed (honest movement passes the validator)', alice.of('teleport').length === 0 && bob.of('teleport').length === 0);
 
   // Alice shoots bob until he is dead (rifle: 5 body hits).
   const killsBefore = alice.of('kill').length;
@@ -154,7 +155,7 @@ async function main(): Promise<void> {
   for (let i = 0; i < 40 && alice.of('kill').length === killsBefore; i++) {
     alice.send({
       t: 'fire', slot: 0, ox: alice.x, oy: alice.y + 1.62, oz: alice.z,
-      dx: bob.x - alice.x, dy: bob.y + 0.9 - (alice.y + 1.62), dz: bob.z - alice.z, ads: false,
+      ...aimAt(alice.x, alice.y + 1.62, alice.z, bob.x, bob.y + 0.9, bob.z), ads: false,
     });
     await sleep(110);
   }

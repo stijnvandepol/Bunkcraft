@@ -4,12 +4,13 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameS
 import { join } from 'node:path';
 import type { WebSocket } from 'ws';
 import {
-  type ClientMessage, NAME_PATTERN, PROTOCOL_VERSION, type PlayerRecord, type ServerMessage, type SnapshotEntry, sanitizeChat,
+  type ClientMessage, NAME_PATTERN, PROTOCOL_VERSION, type PlayerRecord, SNAP_FLAG_STALE, type ServerMessage, type SnapshotEntry, sanitizeChat,
 } from '../src/net/protocol';
 import { ARENA_FLOOR_Y, DEFAULT_MAP, type MapId, type MapSetting, getMap, mapFor, nextMap, parseMapId, parseMapSetting } from '../src/modes/maps';
 import { type GameType, gameTypeDef } from '../src/modes/GameTypes';
 import { GAME_MODES, type GameMode, hasSurvivalRules } from '../src/player/GameMode';
-import { encodeBinary, encodeSnap } from '../src/net/binary';
+import { BINARY_VERSION, encodeBinary, encodeSnap, encodeSnapQ } from '../src/net/binary';
+import { ARCADE_TICK_HZ, ARCADE_TICK_MAX, ARCADE_TICK_MIN, arcadeInterpDelay } from '../src/modes/ArcadeLogic';
 import { decodeData } from '../src/items/ItemRegistry';
 import { BLOCK, getBlockDef } from '../src/world/BlockRegistry';
 import { isValidMeta } from '../src/world/BlockShapes';
@@ -31,6 +32,11 @@ import { type Actor, type BanEntry, type CommandHost, type Moderation, type Targ
 import { InventoryGuard, parseInventory } from './InventoryGuard';
 import { type ChildLogger, log } from './Log';
 import { metrics } from './Metrics';
+import { ArcadeGuard } from './anticheat/ArcadeGuard';
+import { ORIGIN_TOLERANCE, isUnitVector, originError, viewDir } from './anticheat/AimCheck';
+import { AimStats, SUSPICION } from './anticheat/Suspicion';
+import { Send, type Viewer, Visibility } from './anticheat/Visibility';
+import type { ShotReport } from './Match';
 import { type RateLimiter, hashIp, newToken, safeEqual, tokenMatches, verifyPassword, hashToken } from './Security';
 
 const TICK_MS = 50; // 20 ticks per second, like Minecraft
@@ -38,8 +44,7 @@ const DAY_SECONDS = 1200;
 const SAVE_INTERVAL_MS = 30_000;
 const REACH = 8; // lenient server-side reach check (client uses 4.5, creative 5)
 const MAX_SPEED = 26; // blocks/second (fast flying + slack)
-const ARENA_MAX_SPEED = 40; // arcade: sprint + jump + slack
-const PING_INTERVAL_TICKS = 60; // arcade: measure the round trip every 3 s
+const PING_INTERVAL_SECONDS = 3; // arcade: measure the round trip every 3 s
 /** Block changes per 'blocks' message (flowing water). */
 const BLOCKS_PER_MESSAGE = 100;
 const ARENA_DAY = 0.25; // arcade games are always noon
@@ -156,6 +161,8 @@ interface Session {
   verified: boolean;
   /** Receives snap and ent as binary frames. */
   bin: boolean;
+  /** Arcade: receives snapshots in the quantised binary format (binary version 2). */
+  binq: boolean;
   guard: InventoryGuard;
   /** Arcade: fire, reload, weapon and loadout requests. */
   fires: Bucket;
@@ -166,6 +173,11 @@ interface Session {
   pingSentAt: number;
   /** After a server-side move (spawn) positions from before it are ignored until the client arrives. */
   awaiting: { x: number; y: number; z: number; until: number } | null;
+  /** Velocity between the last two accepted position reports (blocks/s), for the shot origin check. */
+  velX: number; velY: number; velZ: number;
+  /** Arcade: aim statistics (suspicion score) and the time of the last shot (ms). */
+  aim: AimStats;
+  lastFireAt: number;
 }
 
 export interface ServerOptions {
@@ -199,6 +211,12 @@ export interface ServerOptions {
   binary?: boolean;
   /** Called when something changed that the room list shows (name, listing, password). */
   onMetaChange?: () => void;
+  /** Arcade: server tick rate in Hz (default 30; env ARCADE_TICK_HZ, clamped to 10-60). */
+  arcadeTickHz?: number;
+  /** Arcade: leave enemies out of snapshots when they cannot be seen (default on; env ARCADE_CULLING=off). */
+  culling?: boolean;
+  /** Arcade: kick at this aim suspicion score (0 = never, the default; env ARCADE_AUTOKICK_SCORE). */
+  autokickScore?: number;
   /** Arcade game type and match settings for a new world (a saved world keeps its own). */
   gameType?: GameType;
   scoreLimit?: number;
@@ -219,6 +237,8 @@ export class GameServer {
   private dirty = false;
   private lastTick = Date.now();
   private tickCount = 0;
+  /** Ticks per second: 20 (Minecraft), arcade rooms ARCADE_TICK_HZ (default 30). */
+  private readonly tickHz: number = 20;
   /** Weather of this world (minecraft game types only; arcade rooms are always clear). */
   private readonly weather = new Weather();
   private weatherVersion = -1;
@@ -232,6 +252,12 @@ export class GameServer {
   /** Arcade games: the match and the arena as bullets see it. */
   private readonly match: Match | null = null;
   private arena: ServerWorld | null = null;
+  /** Arcade: movement validation against the arena (see anticheat/). */
+  private readonly guard: ArcadeGuard | null = null;
+  /** Arcade: per-recipient snapshot culling (anti-wallhack); null when switched off. */
+  private readonly visibility: Visibility | null = null;
+  private readonly viewers: Viewer[] = [];
+  private readonly staleAt = { x: 0, y: 0, z: 0 };
   /** Chests and furnaces: who has which open, click validation, updates (null in arcade games). */
   private readonly containers: ContainerService | null = null;
   /** Arcade: the map setting of this game ("rotate" moves on to the next map after every match). */
@@ -258,6 +284,11 @@ export class GameServer {
       this.mapSetting = parseMapSetting(this.world.mapId) ?? DEFAULT_MAP;
       const first: MapId = mapFor(parseMapId(this.mapSetting) ?? DEFAULT_MAP, def.requires);
       this.loadArena(first);
+      this.guard = new ArcadeGuard(
+        { getBlock: (x, y, z) => this.arena!.getBlock(x, y, z), getMeta: (x, y, z) => this.arena!.getMeta(x, y, z) },
+        (x, z) => this.match!.inBounds(x, z),
+      );
+      if (opts.culling ?? process.env.ARCADE_CULLING !== 'off') this.visibility = new Visibility({ getBlock: (x, y, z) => this.arena!.getBlock(x, y, z) });
       this.match = new Match(this.matchHost(), {
         type: def.id, scoreLimit: this.world.scoreLimit ?? def.scoreLimit, timeLimitSec: this.world.timeLimitSec ?? def.timeLimitSec,
         map: first,
@@ -318,7 +349,11 @@ export class GameServer {
         session: (id) => this.sessions.get(id),
       });
     }
-    this.timers.push(setInterval(() => this.tick(), TICK_MS));
+    if (this.match) {
+      const hz = this.opts.arcadeTickHz ?? (Number(process.env.ARCADE_TICK_HZ) || ARCADE_TICK_HZ);
+      this.tickHz = Math.max(ARCADE_TICK_MIN, Math.min(ARCADE_TICK_MAX, Math.round(hz)));
+    }
+    this.timers.push(setInterval(() => this.tick(), this.match ? 1000 / this.tickHz : TICK_MS));
     this.timers.push(setInterval(() => {
       try {
         this.save();
@@ -451,8 +486,13 @@ export class GameServer {
   }
 
   /** Online players for the admin page. */
-  playerList(): { id: number; name: string; ip: string; op: boolean; pingMs: number }[] {
-    return [...this.sessions.values()].map((s) => ({ id: s.id, name: s.name, ip: s.ip, op: s.op, pingMs: s.pingMs }));
+  playerList(): { id: number; name: string; ip: string; op: boolean; pingMs: number; suspicion?: number; strikes?: number }[] {
+    const now = Date.now() / 1000;
+    return [...this.sessions.values()].map((s) => ({
+      id: s.id, name: s.name, ip: s.ip, op: s.op, pingMs: s.pingMs,
+      // Arcade anti-cheat (read-only): aim suspicion 0-100 and current movement strike points.
+      ...(this.match ? { suspicion: s.aim.report().score, strikes: Math.round((this.guard?.strikes(s.id, now) ?? 0) * 10) / 10 } : {}),
+    }));
   }
 
   /** Disconnects a player by name (admin tools); true if somebody was online. */
@@ -488,6 +528,7 @@ export class GameServer {
 
   /** The match's view of this server: clock, messages, bullets' world and moving players. */
   private matchHost(): MatchHost {
+    const gs = this;
     return {
       now: () => Date.now() / 1000,
       send: (id, msg) => { const s = this.sessions.get(id); if (s) this.send(s, msg); },
@@ -500,9 +541,13 @@ export class GameServer {
         s.hasPos = true;
         s.lastPosTime = Date.now();
         s.awaiting = { x, y, z, until: Date.now() + 1500 };
+        this.guard?.reset(id, x, y, z, Date.now() / 1000);
+        this.visibility?.resetTrail(id);
       },
       random: Math.random,
       ping: (id) => this.sessions.get(id)?.pingMs ?? 0,
+      onShot: (r) => this.onShot(r),
+      get interpDelay() { return arcadeInterpDelay(gs.tickHz); },
       nextMap: (current, requires) => {
         if (this.mapSetting !== 'rotate') return null;
         const next = nextMap(parseMapId(current) ?? DEFAULT_MAP, requires);
@@ -673,6 +718,7 @@ export class GameServer {
     const session: Session = {
       id: this.nextId++, name, ws, ip, op, owner: who.owner, verified: who.verified,
       bin: hello.bin === true && this.opts.binary !== false,
+      binq: hello.bin === true && this.opts.binary !== false && !!this.match && Number(hello.binv) >= BINARY_VERSION,
       guard: new InventoryGuard(initial.error ? [] : initial.slots),
       x: start.x, y: start.y, z: start.z, yaw: 0, pitch: 0, flags: 0, held: 0,
       hasPos: false, lastPosTime: Date.now(),
@@ -680,10 +726,14 @@ export class GameServer {
       drops: new Bucket(30, 60, 'drops'), takes: new Bucket(20, 30, 'takes'),
       chat: new Bucket(1, 5, 'chat'), moves: new Bucket(40, 80, 'moves'), states: new Bucket(0.5, 10, 'states'), containers: new Bucket(20, 40, 'containers'),
       fires: new Bucket(25, 30, 'fires'), actions: new Bucket(15, 30, 'actions'), violations: 0,
-      pingMs: 0, pingSentAt: 0, awaiting: null,
+      pingMs: 0, pingSentAt: 0, awaiting: null, velX: 0, velY: 0, velZ: 0, aim: new AimStats(), lastFireAt: 0,
     };
     const joined = this.match?.join(session.id, name) ?? null;
-    if (joined) { session.x = joined.x; session.y = joined.y; session.z = joined.z; session.hasPos = true; }
+    if (joined) {
+      session.x = joined.x; session.y = joined.y; session.z = joined.z; session.hasPos = true;
+      this.guard?.join(session.id, name);
+      this.guard?.reset(session.id, joined.x, joined.y, joined.z, Date.now() / 1000);
+    }
     const edits: number[] = [];
     for (const [key, state] of Object.entries(this.world.edits)) {
       const [x, y, z] = key.split(',').map(Number);
@@ -697,6 +747,8 @@ export class GameServer {
       motd: this.opts.motd,
       ...(op ? { op: true } : {}),
       ...(session.bin ? { binary: true } : {}),
+      ...(session.binq ? { binaryVersion: BINARY_VERSION } : {}),
+      ...(this.match ? { tickHz: this.tickHz } : {}),
       ...(this.survival ? this.survival.welcome() : {}),
       ...(this.containers ? { containers: true } : {}),
     });
@@ -722,6 +774,8 @@ export class GameServer {
     this.survival?.forget(s.id);
     this.containers?.onLeave(s.id);
     this.match?.leave(s.id);
+    this.guard?.leave(s.id);
+    this.visibility?.forget(s.id);
     this.broadcast({ t: 'leave', id: s.id, name: s.name });
     this.broadcast({ t: 'chat', from: '', text: `${s.name} left the game`, system: true });
     this.log(`[leave] ${s.name} (${this.sessions.size} online)`);
@@ -840,7 +894,7 @@ export class GameServer {
     switch (msg.t) {
       case 'pos': return this.onPos(s, msg);
       case 'chat': return this.onChat(s, msg.text);
-      case 'fire': return void (s.fires.take() && match.fire(s.id, msg));
+      case 'fire': return void (s.fires.take() && this.onFire(s, msg, match));
       case 'reload': return void (s.actions.take() && match.reload(s.id, Number(msg.slot)));
       case 'weapon': return void (s.actions.take() && match.switchWeapon(s.id, Number(msg.slot)));
       case 'loadout': return void (s.actions.take() && match.setLoadout(s.id, String(msg.primary), msg.secondary === undefined ? undefined : String(msg.secondary)));
@@ -859,7 +913,7 @@ export class GameServer {
     if (Math.abs(m.x) > WORLD_LIMIT || Math.abs(m.z) > WORLD_LIMIT || m.y < -512 || m.y > 1024) return;
     const now = Date.now();
     if (s.awaiting) {
-      // We moved this player (spawn): ignore positions from before the client got the message.
+      // We moved this player (spawn, rubber band): ignore positions from before the client got the message.
       const a = s.awaiting;
       if (Math.hypot(m.x - a.x, m.z - a.z) <= 2.5 && Math.abs(m.y - a.y) <= 3) {
         s.awaiting = null;
@@ -867,33 +921,137 @@ export class GameServer {
         if (now > a.until) {
           a.until = now + 1500;
           this.send(s, { t: 'teleport', x: a.x, y: a.y, z: a.z });
+          // Arcade: a client that keeps ignoring the correction is not lagging.
+          const r = this.guard?.ignoredTeleport(s.id, now / 1000);
+          if (r && !r.ok) this.onCheat(s, r);
         }
         return;
       }
     }
     if (this.match) {
-      // Arcade: inside the arena, on or above the floor.
-      if (!this.match.inBounds(m.x, m.z) || m.y < ARENA_FLOOR_Y - 2 || m.y > ARENA_FLOOR_Y + 40) {
-        if (++s.violations > 3) this.send(s, { t: 'teleport', x: s.x, y: s.y, z: s.z });
+      // Arcade: inside the arena, on or above the floor, and every move checked against the map.
+      const outside = !this.match.inBounds(m.x, m.z) || m.y < ARENA_FLOOR_Y - 2 || m.y > ARENA_FLOOR_Y + 40;
+      const p = this.match.players.get(s.id);
+      if (p) {
+        // The weapon in the hands sets the pace; a flag carrier (capture the flag) is params.carrySlow slower.
+        const logic = this.match.logic as { isCarrier?(p: unknown): boolean };
+        const carry = logic.isCarrier?.(p) ? 1 - (gameTypeDef(this.match.info.type).params?.carrySlow ?? 0.1) : 1;
+        this.guard!.setMoveSpeed(s.id, p.slots[p.slot].def.moveSpeed * carry, now / 1000);
+      }
+      const r = outside ? this.guard!.flag(s.id, 'bounds', 2, now / 1000) : this.guard!.move(s.id, m.x, m.y, m.z, now / 1000);
+      if (!r.ok) {
+        this.onCheat(s, r);
         return;
       }
-    }
-    if (s.hasPos) {
+    } else if (s.hasPos) {
       // Movement sanity check: reject impossible speeds and snap the player back.
       const dt = Math.max(0.05, (now - s.lastPosTime) / 1000);
       const dist = Math.hypot(m.x - s.x, m.z - s.z);
-      if (dist > (this.match ? ARENA_MAX_SPEED : MAX_SPEED) * dt + 4) {
+      if (dist > MAX_SPEED * dt + 4) {
         if (++s.violations > 3) this.send(s, { t: 'teleport', x: s.x, y: s.y, z: s.z });
         return;
       }
     }
     s.violations = Math.max(0, s.violations - 1);
+    const dtPos = (now - s.lastPosTime) / 1000;
+    if (s.hasPos && dtPos > 0.005) {
+      s.velX = (m.x - s.x) / dtPos; s.velY = (m.y - s.y) / dtPos; s.velZ = (m.z - s.z) / dtPos;
+    }
     s.x = m.x; s.y = m.y; s.z = m.z;
     s.yaw = m.yaw; s.pitch = m.pitch;
     s.flags = m.flags | 0; s.held = m.held | 0;
     s.hasPos = true;
     s.lastPosTime = now;
     this.match?.setPosition(s.id, s.x, s.y, s.z, s.yaw, s.pitch);
+  }
+
+  /**
+   * Arcade: a shot. The direction must be a unit vector (the client builds it from yaw and pitch); an
+   * origin further than 0.6 blocks from the extrapolated eye is replaced by the server's eye.
+   */
+  private onFire(s: Session, msg: Extract<ClientMessage, { t: 'fire' }>, match: Match): boolean {
+    if (!isUnitVector(msg.dx, msg.dy, msg.dz)) {
+      metrics.cheat('aim-vector');
+      return false;
+    }
+    const now = Date.now();
+    let m = msg;
+    const nums = [msg.ox, msg.oy, msg.oz];
+    const err = nums.every((n) => typeof n === 'number' && Number.isFinite(n))
+      ? originError(msg.ox, msg.oy, msg.oz, s.x, s.y, s.z, s.velX, s.velY, s.velZ, (now - s.lastPosTime) / 1000) : Infinity;
+    if (err > ORIGIN_TOLERANCE) {
+      metrics.cheat('origin');
+      this.logger.debug('cheat', { name: s.name, kind: 'shot', rule: 'origin', error: Math.round(err * 100) / 100 });
+      m = { ...msg, ox: s.x, oy: s.y + 1.62, oz: s.z };
+    }
+    s.lastFireAt = now;
+    return match.fire(s.id, m);
+  }
+
+  /** Arcade: every resolved shot feeds the shooter's aim statistics. */
+  private onShot(r: ShotReport): void {
+    const s = this.sessions.get(r.shooter);
+    const match = this.match;
+    if (!s || !match) return;
+    const me = match.players.get(r.shooter);
+    // The opponent closest to the aim line is what the shot was meant for.
+    let best = Infinity, dist = NaN;
+    for (const o of match.players.values()) {
+      if (o.id === r.shooter || !o.alive || (match.teams && me && o.team === me.team)) continue;
+      const vx = o.x - r.ox, vy = o.y + 0.9 - r.oy, vz = o.z - r.oz, d = Math.hypot(vx, vy, vz) || 1;
+      const ang = 1 - (vx * r.dx + vy * r.dy + vz * r.dz) / d;
+      if (ang < best) { best = ang; dist = d; }
+    }
+    const view = s.hasPos ? viewDir(s.yaw, s.pitch, [0, 0, 0]) : null;
+    s.aim.shot({ now: Date.now() / 1000, dx: r.dx, dy: r.dy, dz: r.dz, view, targetDist: dist, hit: r.hits.length > 0, head: r.hits.some((h) => h.head) });
+    const rep = s.aim.report();
+    const now = Date.now() / 1000;
+    if (rep.score >= SUSPICION.WARN_AT && now - s.aim.warnedAt > 60) {
+      s.aim.warnedAt = now;
+      metrics.suspicionFlags++;
+      this.logger.warn('cheat', { name: s.name, kind: 'aim', suspicion: rep.score, shots: rep.shots, hits: rep.hits,
+        headRatio: round(rep.headRatio), farAccuracy: round(rep.farAccuracy), snapRatio: round(rep.snapRatio), mismatchRatio: round(rep.mismatchRatio) });
+    }
+    const autokick = this.opts.autokickScore ?? (Number(process.env.ARCADE_AUTOKICK_SCORE) || 0);
+    if (autokick > 0 && rep.score >= autokick && rep.hits >= 20 && !s.owner) {
+      metrics.cheatKicks++;
+      this.logger.warn('cheat kick', { name: s.name, kind: 'aim', suspicion: rep.score });
+      this.broadcast({ t: 'chat', from: '', text: `${s.name} was kicked by the anti-cheat`, system: true });
+      this.kickSession(s, 'Kicked by the anti-cheat (aim)');
+    }
+  }
+
+  /** Arcade anti-cheat verdict: rubber band to the last valid position, count, log, and kick or ban on repeat. */
+  private onCheat(s: Session, r: Exclude<ReturnType<ArcadeGuard['move']>, { ok: true }>): void {
+    metrics.cheat(r.lag ? 'lag' : r.rule);
+    const at = this.guard!.lastValid(s.id) ?? { x: s.x, y: s.y, z: s.z };
+    if (!r.lag) this.logger.warn('cheat', { name: s.name, kind: 'movement', rule: r.rule, strikes: Math.round(r.strikes * 10) / 10, action: r.action });
+    if (r.action === 'correct' || s.owner) {
+      s.x = at.x; s.y = at.y; s.z = at.z;
+      s.awaiting = { x: at.x, y: at.y, z: at.z, until: Date.now() + 1500 };
+      this.match?.setPosition(s.id, s.x, s.y, s.z, s.yaw, s.pitch);
+      this.send(s, { t: 'teleport', x: at.x, y: at.y, z: at.z });
+      this.guard!.reset(s.id, at.x, at.y, at.z, Date.now() / 1000);
+      return;
+    }
+    if (r.action === 'ban' && !s.op) {
+      metrics.cheatBans++;
+      this.banByAnticheat(s, `anti-cheat (${r.rule})`);
+      return;
+    }
+    metrics.cheatKicks++;
+    this.broadcast({ t: 'chat', from: '', text: `${s.name} was kicked by the anti-cheat`, system: true });
+    this.kickSession(s, `Kicked by the anti-cheat (${r.rule}). Lagging? Check your connection.`);
+  }
+
+  /** A name-only ban (no address: shared networks must not lock others out of the room). */
+  private banByAnticheat(s: Session, reason: string): void {
+    this.world.bans = this.world.bans!.filter((b) => lc(b.name) !== lc(s.name));
+    this.world.bans.push({ name: s.name, reason, by: 'anti-cheat', at: Date.now() });
+    this.dirty = true;
+    this.logger.warn('cheat ban', { name: s.name, reason });
+    this.broadcast({ t: 'chat', from: '', text: `${s.name} was banned by the anti-cheat`, system: true });
+    this.kickSession(s, `You were banned: ${reason}`);
   }
 
   private onBlock(s: Session, m: Extract<ClientMessage, { t: 'block' }>): void {
@@ -997,6 +1155,7 @@ export class GameServer {
         p.x = x; p.y = y; p.z = z;
         p.hasPos = true;
         p.awaiting = { x, y, z, until: Date.now() + 1500 };
+        self.guard?.reset(p.id, x, y, z, Date.now() / 1000);
         self.send(p, { t: 'teleport', x, y, z });
       },
       setGameMode: (mode) => {
@@ -1103,19 +1262,57 @@ export class GameServer {
     this.containers?.tick();
     if (this.match) {
       this.match.tick();
-      if (this.tickCount % PING_INTERVAL_TICKS === 0) {
+      if (this.tickCount % Math.round(PING_INTERVAL_SECONDS * this.tickHz) === 0) {
         for (const s of this.sessions.values()) {
           if (s.ws.readyState === s.ws.OPEN && s.pingSentAt === 0) { s.pingSentAt = Date.now(); s.ws.ping(); }
         }
       }
     }
-    const players: SnapshotEntry[] = [];
-    for (const s of this.sessions.values()) {
-      if (!s.hasPos) continue;
-      players.push([s.id, round(s.x), round(s.y), round(s.z), round(s.yaw), round(s.pitch), s.flags, s.held]);
+    if (this.visibility && this.match && this.match.phase !== 'warmup' && this.match.phase !== 'ended') this.sendCulledSnapshots();
+    else {
+      const players: SnapshotEntry[] = [];
+      for (const s of this.sessions.values()) {
+        if (!s.hasPos) continue;
+        players.push([s.id, round(s.x), round(s.y), round(s.z), round(s.yaw), round(s.pitch), s.flags, s.held]);
+      }
+      if (players.length > 0) this.broadcast({ t: 'snap', players });
     }
-    if (players.length > 0) this.broadcast({ t: 'snap', players });
     if (this.tickCount % 100 === 0 && !this.match) this.broadcast({ t: 'time', time: this.world.time, day: this.world.day ?? 0 });
+  }
+
+  /** Arcade, live phase: every player gets only the enemies it may see (see anticheat/Visibility.ts). */
+  private sendCulledSnapshots(): void {
+    const vis = this.visibility!, match = this.match!;
+    const now = Date.now() / 1000;
+    const viewers = this.viewers;
+    let n = 0;
+    for (const s of this.sessions.values()) {
+      const p = match.players.get(s.id);
+      if (!s.hasPos || !p) continue;
+      const v = viewers[n] ??= { id: 0, team: '', alive: false, x: 0, y: 0, z: 0, firedAt: -1e9 };
+      v.id = s.id; v.team = p.team; v.alive = p.alive; v.x = s.x; v.y = s.y; v.z = s.z;
+      v.firedAt = s.lastFireAt > 0 ? s.lastFireAt / 1000 : -1e9;
+      vis.track(v, now);
+      n++;
+    }
+    for (const r of this.sessions.values()) {
+      if (r.ws.readyState !== r.ws.OPEN) continue;
+      let rv: Viewer | null = null;
+      for (let i = 0; i < n; i++) if (viewers[i].id === r.id) { rv = viewers[i]; break; }
+      const players: SnapshotEntry[] = [];
+      for (let i = 0; i < n; i++) {
+        const v = viewers[i];
+        if (v.id === r.id) continue;
+        const s = this.sessions.get(v.id)!;
+        const what = rv ? vis.select(rv, v, match.teams, now, this.staleAt) : Send.Fresh;
+        if (what === Send.Fresh) players.push([s.id, round(s.x), round(s.y), round(s.z), round(s.yaw), round(s.pitch), s.flags, s.held]);
+        else if (what === Send.Stale) {
+          const a = this.staleAt;
+          players.push([s.id, round(a.x), round(a.y), round(a.z), round(s.yaw), round(s.pitch), (s.flags & ~SNAP_FLAG_STALE) | SNAP_FLAG_STALE, s.held]);
+        }
+      }
+      if (players.length > 0) this.send(r, { t: 'snap', players });
+    }
   }
 
   /** The weather targets for the clients: flags as 0/1, they fade the level themselves. */
@@ -1150,7 +1347,7 @@ export class GameServer {
     // A pickup the server approved is what lets the next inventory update contain the item.
     if (msg.t === 'taken' && msg.id >= 0) s.guard.creditPickup(msg.itemId, msg.count, msg.damage);
     if (s.bin) {
-      const frame = encodeBinary(msg);
+      const frame = s.binq && msg.t === 'snap' ? encodeSnapQ(msg.players, 0, ARENA_FLOOR_Y, 0) : encodeBinary(msg);
       if (frame) {
         s.ws.send(frame);
         metrics.sent(frame.byteLength);
@@ -1165,8 +1362,15 @@ export class GameServer {
   private broadcast(msg: ServerMessage, except = -1): void {
     const data = JSON.stringify(msg);
     let frame: ArrayBuffer | null | undefined;
+    let frameQ: ArrayBuffer | undefined;
     for (const s of this.sessions.values()) {
       if (s.id === except || s.ws.readyState !== s.ws.OPEN || this.overloaded(s)) continue;
+      if (s.binq && msg.t === 'snap') {
+        frameQ ??= encodeSnapQ(msg.players, 0, ARENA_FLOOR_Y, 0);
+        s.ws.send(frameQ);
+        metrics.sent(frameQ.byteLength);
+        continue;
+      }
       if (s.bin && (msg.t === 'snap' || msg.t === 'ent')) {
         frame ??= msg.t === 'snap' ? encodeSnap(msg.players) : encodeBinary(msg);
         if (frame) {

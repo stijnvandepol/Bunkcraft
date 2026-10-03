@@ -114,8 +114,13 @@ export interface MatchInfo {
   map?: string;
 }
 
-/** Snapshot entry: [id, x, y, z, yaw, pitch, flags, heldItem]. flags: 1 sprinting, 2 flying, 4 on ground. */
+/**
+ * Snapshot entry: [id, x, y, z, yaw, pitch, flags, heldItem]. flags: 1 sprinting, 2 flying, 4 on ground,
+ * 8 stale (arcade anti-wallhack: the player just left your view; this is its last visible position, hide it).
+ * Arcade servers leave out enemies you cannot see (see server/anticheat/Visibility.ts).
+ */
 export type SnapshotEntry = [number, number, number, number, number, number, number, number];
+export const SNAP_FLAG_STALE = 8;
 
 /**
  * Mob snapshot: [id, kind, x, y, z, yaw, headYaw, headPitch, flags, hurtTime, fuse, deathTime]. flags: MOB_FLAG bits.
@@ -176,7 +181,8 @@ export type ClientMessage =
    * name to this player, `owner` the token POST /api/rooms returned to the creator (grants op),
    * `password` the room password, `bin` asks for binary snap/ent frames (see binary.ts).
    */
-  | { t: 'hello'; v: number; name: string; key?: string; owner?: string; password?: string; bin?: boolean }
+  /** `binv`: highest binary format understood (2 = quantised arcade snapshots, see binary.ts); absent = 1. */
+  | { t: 'hello'; v: number; name: string; key?: string; owner?: string; password?: string; bin?: boolean; binv?: number }
   | { t: 'pos'; x: number; y: number; z: number; yaw: number; pitch: number; flags: number; held: number }
   /** `meta` is the block state byte (see BlockStates); absent = 0. */
   | { t: 'block'; seq: number; x: number; y: number; z: number; id: number; meta?: number }
@@ -238,6 +244,10 @@ export type ServerMessage =
     op?: boolean;
     /** The server will send snap and ent as binary frames (negotiated by `bin` in hello). */
     binary?: boolean;
+    /** Binary format the server uses (2 = quantised snapshots in arcade rooms); absent = 1. */
+    binaryVersion?: number;
+    /** Arcade: server tick rate (Hz) for the interpolation delay and the position send rate; absent = 20. */
+    tickHz?: number;
     /** World difficulty and the game rules that differ from the defaults (absent on older servers = Normal, defaults). */
     difficulty?: Difficulty;
     rules?: Record<string, boolean | number>;

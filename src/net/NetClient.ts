@@ -1,4 +1,4 @@
-import { decodeBinary } from './binary';
+import { BINARY_VERSION, decodeBinary } from './binary';
 import { type ClientMessage, type ContainerClientMessage, PROTOCOL_VERSION, type ServerMessage } from './protocol';
 import { identityKey, ownerToken, roomPassword } from './RoomApi';
 
@@ -22,6 +22,8 @@ export class NetClient {
   private seq = 1;
   private readonly pending = new Map<number, PendingEdit>();
   private sendTimer = 0;
+  /** Seconds between position messages (20 Hz; arcade rooms send at their tick rate, up to 30 Hz). */
+  posInterval = 0.05;
   private closedByUser = false;
   id = -1;
   /** All server messages after the welcome. */
@@ -63,8 +65,8 @@ export class NetClient {
       ws.onopen = () => {
         const owner = room ? ownerToken(room) : undefined;
         const password = room ? roomPassword(room) : undefined;
-        // `bin`: this client understands binary snap/ent frames (older servers ignore the field).
-        this.send({ t: 'hello', v: PROTOCOL_VERSION, name, key: identityKey(host, room), bin: true, ...(owner ? { owner } : {}), ...(password ? { password } : {}) });
+        // `bin`: this client understands binary snap/ent frames, `binv` which formats (older servers ignore both).
+        this.send({ t: 'hello', v: PROTOCOL_VERSION, name, key: identityKey(host, room), bin: true, binv: BINARY_VERSION, ...(owner ? { owner } : {}), ...(password ? { password } : {}) });
       };
       ws.onmessage = (e) => {
         let msg: ServerMessage;
@@ -136,7 +138,7 @@ export class NetClient {
   update(dt: number, x: number, y: number, z: number, yaw: number, pitch: number, flags: number, held: number): void {
     this.sendTimer -= dt;
     if (this.sendTimer > 0) return;
-    this.sendTimer = 0.05;
+    this.sendTimer = this.posInterval;
     this.send({ t: 'pos', x, y, z, yaw, pitch, flags, held });
   }
 

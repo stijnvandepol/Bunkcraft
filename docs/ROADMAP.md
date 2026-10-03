@@ -251,6 +251,11 @@ regenereert, respawns en een scoreboard. Beschrijving, besturing en wapentabel: 
   door muren, scorebalk, vlagstatus, rondepips, ladder), vlagmodellen, geluidscues, Vitest per mode en `scripts/modes-bots.ts`.
 - **Kaartobjectives: Gedaan.** Zones en/of vlaggen op Classic, Maple Court, Old Quarter, Harbor Yard en Atomic Lane, plus de
   nieuwe CTF-kaart Bunker Flag.
+- **Anti-cheat en netcode: Gedaan** (`server/anticheat/`, details in [`SECURITY.md`](SECURITY.md) §Arcade): bewegingscontrole
+  tegen de kaart met de gedeelde botsingscode (noclip, tunnelen, snelheid via real-time token bucket, vliegen, teleport;
+  rubber band, strafpunten, kick/ban), schotcontrole (eenheidsvector, oorsprong ≤ 0,6 blok, lag-compensatie max 250 ms,
+  peeker-limiet 150 ms), verdenkingsscore in `/admin`, anti-wallhack-culling met `stale`-vlag, 30 Hz-tick en gekwantiseerde
+  binaire snapshots (v2). Tests: client-physics-replay over alle kaarten, `scripts/cheat-bots.ts`.
 - **Wapenherziening: Gedaan.** Shotgun 10 × 13 (one-shot dichtbij), SMG 15, nieuwe DMR, burst rifle en revolver, klassen in het
   loadoutmenu.
 
@@ -266,7 +271,10 @@ regenereert, respawns en een scoreboard. Beschrijving, besturing en wapentabel: 
 4. **Objective-afwerking:** dragerpijl met interval voor de vijand, MVP-punten (dragerkill, terugbrengen), overtime bij een
    gelijkspel in ctf, rondes met zijwissel, granaten voor elimination, de vlag als echt derde-persoonsmodel op de rug.
 5. **Meer wapens en perks**, scorestreaks, kill cam, headshot-statistieken, teamchat.
-6. **Lag compensation** voor hitscan (server) en client-side tracer-voorspelling tegen spelers.
+6. **Anti-cheat vervolg:** server-side invoersimulatie (de client stuurt invoer + tijd, de server speelt `Player.step` na)
+   zodat ook kleine speedhacks en lage zweefhacks opvallen; drempels van de verdenkingsscore kalibreren met echte
+   spelersdata; tracers alleen naar wie de schutter mag zien; delta-snapshots (alleen wat veranderde) voor de overige
+   bytes (ammo/tracers zijn nu groter dan de snapshots); client-side tracer-voorspelling tegen spelers.
 7. **Bots** voor lege servers, en een snelle "Quick Play"-knop die een open arcade-game zoekt.
 8. **Mobiel:** touchbediening voor schieten en richten (hoort bij de touch-taak in 6).
 

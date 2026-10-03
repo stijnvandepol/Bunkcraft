@@ -8,6 +8,7 @@ import type {
   ClientMessage, MatchInfo, MatchPhase, ModeEventKind, RosterEntry, ServerMessage,
 } from '../src/net/protocol';
 import { type BlockQuery, rayPlayer, spreadDirection, traceBlocks } from './Combat';
+import { PEEK_LIMIT, bodyVisible, rewindWindow } from './anticheat/LagComp';
 import { type MatchResult, type ModeLogic } from './modes/ModeLogic';
 import { createLogic } from './modes';
 
@@ -18,12 +19,15 @@ export const ENDED_SECONDS = 12;
 export const SPAWN_PROTECTION = 2;
 export const SWITCH_DELAY = 0.25;
 export const EYE_HEIGHT = 1.62;
-/** A client-reported shot origin further than this from the server's eye is replaced by the server's. */
+/**
+ * A client-reported shot origin further than this from the server's eye is replaced by the server's.
+ * Backstop only: GameServer already checks the origin against the extrapolated eye within 0.6 blocks
+ * (see anticheat/AimCheck.ts) and replaces it before the shot gets here.
+ */
 export const MAX_ORIGIN_DRIFT = 1.6;
-/** Lag compensation: history kept per player, and the furthest we rewind. */
+/** Lag compensation: history kept per player; the rewind limits live in anticheat/LagComp.ts. */
 export const HISTORY_SECONDS = 1;
-export const MAX_REWIND = 0.35;
-export const DEFAULT_REWIND = 0.1;
+export { DEFAULT_REWIND, MAX_REWIND } from './anticheat/LagComp';
 /** Fire messages may arrive this much (s) earlier than the weapon's cadence allows (network jitter). */
 const FIRE_SLACK = 0.04;
 const HISTORY_SIZE = 24;
@@ -42,11 +46,25 @@ export interface MatchHost {
   random(): number;
   /** Round-trip time in ms, 0 when unknown. */
   ping(id: number): number;
+  /** Seconds the clients draw other players in the past (2 snapshot intervals); default 0.1. */
+  interpDelay?: number;
+  /** Every resolved shot, for the anti-cheat statistics (see anticheat/Suspicion.ts). */
+  onShot?(shot: ShotReport): void;
   /**
    * A new match is about to start on `current`: returns the map to play next (the host swaps its
    * bullet world), or null to keep the map. `requires` is the map data the game type needs.
    */
   nextMap?(current: string, requires?: readonly ('zones' | 'flags')[]): string | null;
+}
+
+export interface ShotReport {
+  shooter: number;
+  weapon: string;
+  /** Normalised aim direction and origin as used by the server. */
+  ox: number; oy: number; oz: number;
+  dx: number; dy: number; dz: number;
+  /** Players hit by this shot (any pellet), with the distance and whether a pellet hit the head. */
+  hits: { victim: number; dist: number; head: boolean }[];
 }
 
 interface Slot {
@@ -122,6 +140,7 @@ export class Match {
   private moveId = 0;
   private readonly tmpDir: [number, number, number] = [0, 0, 0];
   private readonly tmpPos: [number, number, number] = [0, 0, 0];
+  private readonly targets: { o: MatchPlayer; x: number; y: number; z: number }[] = [];
 
   /** The arena this match is played on. */
   map: ArenaMap;
@@ -319,25 +338,44 @@ export class Match {
     const spread = m.ads && w.slot !== 'melee' ? w.adsSpread : w.spread;
 
     // Lag compensation: targets are tested where this shooter saw them.
-    const ping = this.host.ping(id);
-    const rewind = Math.min(MAX_REWIND, ping > 0 ? ping / 1000 + DEFAULT_REWIND : DEFAULT_REWIND);
+    const rewind = rewindWindow(this.host.ping(id), this.host.interpDelay);
     const at = now - rewind;
     const damaging = this.phase === 'live';
+    // Where each target is tested. Peeker's advantage limit: a target that was already behind cover
+    // PEEK_LIMIT seconds ago (as seen from this shot's origin) is not rewound further back into the open.
+    const targets = this.targets;
+    targets.length = 0;
+    for (const o of this.players.values()) {
+      if (o === p || !o.alive) continue;
+      if (this.teams && o.team === p.team) continue; // no friendly fire
+      const t = { o, x: 0, y: 0, z: 0 };
+      this.positionAt(o, at, now, this.tmpPos);
+      t.x = this.tmpPos[0]; t.y = this.tmpPos[1]; t.z = this.tmpPos[2];
+      if (rewind > PEEK_LIMIT) {
+        this.positionAt(o, now - PEEK_LIMIT, now, this.tmpPos);
+        if (!bodyVisible(this.host.blocks, ox, oy, oz, this.tmpPos[0], this.tmpPos[1], this.tmpPos[2])) {
+          t.x = this.tmpPos[0]; t.y = this.tmpPos[1]; t.z = this.tmpPos[2];
+        }
+      }
+      targets.push(t);
+    }
 
     const dealt = new Map<number, { damage: number; head: boolean }>();
     let tracer: [number, number, number] | null = null;
-    const dir = this.tmpDir, pos = this.tmpPos;
+    const dir = this.tmpDir;
+    const hitList: ShotReport['hits'] = [];
     for (let k = 0; k < w.pellets; k++) {
       spreadDirection(dx, dy, dz, spread, this.host.random(), this.host.random(), dir);
       let tEnd = traceBlocks(this.host.blocks, ox, oy, oz, dir[0], dir[1], dir[2], w.maxRange);
       let victim: MatchPlayer | null = null;
       let hitHead = false;
-      for (const o of this.players.values()) {
-        if (o === p || !o.alive) continue;
-        if (this.teams && o.team === p.team) continue; // no friendly fire
-        this.positionAt(o, at, now, pos);
-        const hit = rayPlayer(ox, oy, oz, dir[0], dir[1], dir[2], pos[0], pos[1], pos[2]);
-        if (hit && hit.t < tEnd) { tEnd = hit.t; victim = o; hitHead = hit.head; }
+      for (const t of targets) {
+        const hit = rayPlayer(ox, oy, oz, dir[0], dir[1], dir[2], t.x, t.y, t.z);
+        if (hit && hit.t < tEnd) { tEnd = hit.t; victim = t.o; hitHead = hit.head; }
+      }
+      if (victim) {
+        const prevHit = hitList.find((h) => h.victim === victim!.id);
+        if (prevHit) prevHit.head ||= hitHead; else hitList.push({ victim: victim.id, dist: tEnd, head: hitHead });
       }
       if (!tracer) tracer = [ox + dir[0] * tEnd, oy + dir[1] * tEnd, oz + dir[2] * tEnd];
       if (victim && damaging && now >= victim.protectedUntil) {
@@ -351,6 +389,7 @@ export class Match {
       this.host.broadcast({ t: 'shot', id, weapon: w.id, ox: r2(ox), oy: r2(oy), oz: r2(oz), ex: r2(tx), ey: r2(ty), ez: r2(tz) });
     }
     for (const [vid, d] of dealt) this.applyDamage(p, this.players.get(vid)!, Math.max(1, Math.round(d.damage)), w, d.head, now);
+    this.host.onShot?.({ shooter: id, weapon: w.id, ox, oy, oz, dx, dy, dz, hits: hitList });
     return true;
   }
 
