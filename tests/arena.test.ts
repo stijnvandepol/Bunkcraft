@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { ARENA_FLOOR_Y, ARENA_SPAWNS, ArenaGenerator } from '../src/modes/arena';
+import { TEAM } from '../src/modes/maps/ArenaMap';
 import { DEFAULT_MAP, MAPS, MAP_IDS, getMap, nextMap, parseMapId, parseMapSetting } from '../src/modes/maps';
 import { traceBlocks } from '../server/Combat';
-import { BLOCK, SOLID } from '../src/world/BlockRegistry';
+import { BLOCK, BLOCK_DEFS, SOLID } from '../src/world/BlockRegistry';
 import { CHUNK_SIZE, CHUNK_VOLUME, blockIndex } from '../src/world/constants';
 import { arenaMapOf, arenaWorldType, createGenerator, isArenaWorld } from '../src/world/WorldGenerator';
 
@@ -155,6 +156,11 @@ describe('arena maps', () => {
       });
     }
   }
+
+  it('the TEAM placeholder is not a real block id', () => {
+    expect(BLOCK_DEFS.some((d) => d.id === TEAM)).toBe(false);
+    expect(Object.values(BLOCK)).not.toContain(TEAM);
+  });
 
   it('only uses blocks that exist', () => {
     for (const map of MAPS) {

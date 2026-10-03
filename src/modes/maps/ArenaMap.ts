@@ -7,7 +7,7 @@ export const QUADRANT = 48;
 /** Tallest cover/roof in blocks above the floor (the wall has its own height). */
 export const MAX_COVER = 10;
 /** Placeholder block resolved to red wool on the left half (x < 0) and blue wool on the right half. */
-export const TEAM = 250;
+export const TEAM = 254;
 
 export interface Spawn { x: number; y: number; z: number; yaw: number }
 
