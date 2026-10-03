@@ -121,10 +121,10 @@ Totaal: **182 bloktypes** (hoogste id 185 van 254, dus nog ruim 60 vrij), ~480 u
 
 - Beton heeft geen poeder (4 zand + 4 grind + kleurstof → 8 beton); kleurstoffen: bruin (cacao), zwart (inktzak) en grijs (heeft zwart nodig) hebben nog geen bron.
 - Een bed zet je respawnpunt en slaapt 's nachts door, zonder spelers-in-bed-telling of monstercheck.
-- Mud bricks en hooi vragen tarwe, dus landbouw (tier 2). Het brood-, koekje-, taart- en leerrecept zijn er, maar wat ze als grondstof nodig hebben ontbreekt nog in de wereld
-  (tarwe, cacao, eieren, leer van koeien). `tests/recipes.test.ts` houdt dit lijstje bij ("OUT_OF_REACH").
+- Mud bricks en hooi vragen tarwe, dus landbouw (tier 2). Het brood-, koekje- en taartrecept zijn er, maar wat ze als grondstof nodig hebben ontbreekt nog in de wereld
+  (tarwe, cacao, eieren). Koeien laten sinds de balans-audit 0–2 leer vallen (`docs/qa/BALANCE.md`). `tests/recipes.test.ts` houdt dit lijstje bij ("OUT_OF_REACH").
 - Een kist is een volle kubus (geen kleinere kist met deksel) en heeft geen dubbele variant.
-- Boekenkast blijft 6 planken (vanilla: + 3 boeken), omdat leer nog geen bron heeft.
+- Boekenkast blijft 6 planken (vanilla: + 3 boeken); nu leer van koeien komt, kan het vanilla-recept terug.
 - Gouden appel geeft honger en saturatie maar nog geen Absorption en Regeneration (geen effectensysteem).
 - Het bed, de kist en de lantaarn hebben procedurele texturen (in een Minecraft-jar zijn ze entity-textures); de rest wordt wel uit een geïmporteerd jar geladen.
 - Een ontploft blok laat een gekleurd blok als witte wol vallen (`World.explode` kent de state van vernietigde blokken niet).
