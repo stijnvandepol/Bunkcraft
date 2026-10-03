@@ -92,6 +92,8 @@ export const LEGACY_ITEMS: Record<number, number> = {
   [BLOCK.BLUE_WOOL]: itemFromState(BLOCK.WOOL, 11),
   [BLOCK.YELLOW_WOOL]: itemFromState(BLOCK.WOOL, 4),
   [BLOCK.GREEN_WOOL]: itemFromState(BLOCK.WOOL, 13),
+  /** A burning furnace is the same item as an unlit one. */
+  [BLOCK.LIT_FURNACE]: BLOCK.FURNACE,
 };
 
 export function normalizeItem(id: number): number {
@@ -391,6 +393,7 @@ const MINING: Record<number, Mining> = {
   [B.DIAMOND_ORE]: { hardness: 3, tool: 'pickaxe', minTier: 2 },
   [B.OBSIDIAN]: { hardness: 50, tool: 'pickaxe', minTier: 3 },
   [B.FURNACE]: { hardness: 3.5, tool: 'pickaxe', minTier: 0 },
+  [B.LIT_FURNACE]: { hardness: 3.5, tool: 'pickaxe', minTier: 0 },
   [B.DIRT]: { hardness: 0.5, tool: 'shovel' },
   [B.GRASS]: { hardness: 0.6, tool: 'shovel' },
   [B.SNOWY_GRASS]: { hardness: 0.6, tool: 'shovel' },

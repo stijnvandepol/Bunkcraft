@@ -66,6 +66,40 @@ export type TntEntry = [number, number, number, number, number];
 
 // ---------------------------------------------------------------- client → server
 
+/**
+ * Containers (chests, furnaces). The server owns their contents. A client opens one (`open`), the server replies with
+ * the contents and from then on sends `slots` whenever they change (also by other players). Every `click` carries the
+ * player's inventory rows and the stack on the cursor, because the inventory is client-owned: the server checks them
+ * with the inventory guard, applies the click to its container and answers with `result` (the new cursor and, for a
+ * shift-click, the items that move into or out of the inventory). Slots are `[id, count, damage, ...data]` rows, an
+ * empty slot is `[]`. Double chests are one container of 54 slots addressed by either half.
+ */
+export type ContainerKindName = 'chest' | 'furnace';
+
+export type ContainerClientMessage =
+  | { t: 'container'; op: 'open'; x: number; y: number; z: number }
+  | { t: 'container'; op: 'close' }
+  /**
+   * `slot` is the container slot (0-based); for a shift-click that deposits from the inventory it is -1 and `from` is
+   * the inventory slot. `inv` is the inventory as `state` sends it (36 + 4 armor rows), `cursor` the stack on the cursor.
+   */
+  | { t: 'container'; op: 'click'; seq: number; slot: number; button: 0 | 1; shift?: boolean; from?: number; inv: number[][]; cursor: number[] };
+
+export type ContainerServerMessage =
+  /** The container opened: `props` is [burnTime, burnTotal, cookTime, cookTotal] for a furnace. */
+  | { t: 'container'; op: 'open'; x: number; y: number; z: number; kind: ContainerKindName; title: string; slots: number[][]; props?: number[] }
+  /** The container could not be opened (too far, not a container, too many opened). */
+  | { t: 'container'; op: 'deny'; x: number; y: number; z: number; reason: string }
+  /** New contents of the container you have open. */
+  | { t: 'container'; op: 'slots'; slots: number[][]; props?: number[] }
+  /**
+   * Answer to a `click`: `ok` false means the server refused it (the client resets its cursor to `cursor`). `toInv`
+   * is a stack to add to the inventory, `fromInv` items to take out of an inventory slot, `xp` experience from a furnace.
+   */
+  | { t: 'container'; op: 'result'; seq: number; ok: boolean; cursor: number[]; toInv?: number[]; fromInv?: { slot: number; count: number }; xp?: number }
+  /** The container is gone (broken) or you walked away: close the screen. */
+  | { t: 'container'; op: 'close'; reason?: string };
+
 export type ClientMessage =
   /**
    * Optional fields (older clients leave them out): `key` is a random per-browser secret that binds the
@@ -95,7 +129,8 @@ export type ClientMessage =
   /** Arcade: switch weapon slot (so everyone sees what you hold). */
   | { t: 'weapon'; slot: 0 | 1 | 2 }
   /** Drop an item into the world (block drops, Q, death); yaw = throw direction. */
-  | { t: 'drop'; id: number; count: number; damage?: number; data?: number[]; x: number; y: number; z: number; yaw?: number; delay?: number };
+  | { t: 'drop'; id: number; count: number; damage?: number; data?: number[]; x: number; y: number; z: number; yaw?: number; delay?: number }
+  | ContainerClientMessage;
 
 // ---------------------------------------------------------------- server → client
 
@@ -122,6 +157,8 @@ export type ServerMessage =
     op?: boolean;
     /** The server will send snap and ent as binary frames (negotiated by `bin` in hello). */
     binary?: boolean;
+    /** The server stores chests and furnaces and understands `container` messages. Absent on older servers. */
+    containers?: boolean;
   }
   | { t: 'join'; id: number; name: string }
   | { t: 'leave'; id: number; name: string }
@@ -179,7 +216,8 @@ export type ServerMessage =
   /** A weapon slot a remote player holds (third-person model). */
   | { t: 'holds'; id: number; weapon: string }
   /** The requested item entity is yours. */
-  | { t: 'taken'; id: number; itemId: number; count: number; damage?: number; data?: number[] };
+  | { t: 'taken'; id: number; itemId: number; count: number; damage?: number; data?: number[] }
+  | ContainerServerMessage;
 
 /** No 0/O/1/I/L: game codes are read aloud and typed on phones. */
 export const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';

@@ -26,7 +26,7 @@ const EAT_TIME = 1.6;
 
 /** Blocks a right click does something to (instead of placing against them). */
 function isUsable(id: number): boolean {
-  if (SHAPE[id] === SHAPE_DOOR || id === BLOCK.CHEST) return true;
+  if (SHAPE[id] === SHAPE_DOOR || id === BLOCK.CHEST || id === BLOCK.FURNACE || id === BLOCK.LIT_FURNACE) return true;
   const kind = SHAPE[id] === SHAPE_BOX ? BOX_KIND[id] : 0;
   return kind === BOX_TRAPDOOR || kind === BOX_GATE || kind === BOX_BED;
 }
@@ -48,10 +48,10 @@ export interface InteractionDeps {
   igniteTnt(x: number, y: number, z: number): boolean;
   /** Fires an arrow from the eye along the view direction (power 0..1). */
   shootArrow(power: number, pickup: boolean): void;
-  /** Whether chests may be placed (singleplayer only: the server does not store containers). */
+  /** Whether chests may be placed (optional veto). */
   chestsAllowed?(): boolean;
-  /** Opens the chest at a position (its container screen). */
-  openChest?(x: number, y: number, z: number): void;
+  /** Opens the container (chest, furnace) at a position: its screen. */
+  openContainer?(x: number, y: number, z: number): void;
   /** Right click on a bed: sets the spawn point and sleeps through the night. */
   useBed?(x: number, y: number, z: number): void;
 }
@@ -242,7 +242,7 @@ export class Interaction {
       this.d.audio.playDoor(open);
       this.d.hand.swingHand();
     } else if (kind === BOX_BED) this.d.useBed?.(hit.x, hit.y, hit.z);
-    else if (hit.id === BLOCK.CHEST) this.d.openChest?.(hit.x, hit.y, hit.z);
+    else if (hit.id === BLOCK.CHEST || hit.id === BLOCK.FURNACE || hit.id === BLOCK.LIT_FURNACE) this.d.openContainer?.(hit.x, hit.y, hit.z);
   }
 
   private useDoor(hit: RayHit): void {
@@ -346,7 +346,6 @@ export class Interaction {
       if (survival) {
         const drop = blockDrop(broken, held, brokenMeta);
         if (drop) entities.dropItem(drop, hit.x + 0.5, hit.y + 0.3, hit.z + 0.5);
-        if (broken === BLOCK.CHEST) for (const s of world.containers.take(hit.x, hit.y, hit.z)) entities.dropItem(s, hit.x + 0.5, hit.y + 0.5, hit.z + 0.5);
         // A plant or torch on top breaks with its support and drops too.
         // (the upper half of a door that went with the lower one is no extra drop)
         if (above !== world.getBlock(hit.x, hit.y + 1, hit.z) && !(SHAPE[broken] === SHAPE_DOOR && above === broken)) {
@@ -401,7 +400,7 @@ export class Interaction {
     if (placed.upper && SHAPE[id] === SHAPE_DOOR && player.intersectsBlock(x, y + 1, z)) return;
     if (placed.upper && BOX_KIND[id] === BOX_BED && player.intersectsBlock(placed.upper.x, placed.upper.y, placed.upper.z)) return;
     if (!world.setBlock(x, y, z, id, placed.meta | baseMeta)) return;
-    if (id === BLOCK.CHEST) world.containers.clear(x, y, z);
+    if (placed.neighbor) world.setBlock(placed.neighbor.x, placed.neighbor.y, placed.neighbor.z, placed.neighbor.id, placed.neighbor.meta);
     if (placed.upper) world.setBlock(placed.upper.x, placed.upper.y, placed.upper.z, id, placed.upper.meta | baseMeta);
     const def = getBlockDef(id)!;
     audio.play('place', stateSound(def, baseMeta));

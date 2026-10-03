@@ -548,6 +548,19 @@ function chestSide(img: Img, r: Rand, front: boolean): void {
 put('chest_side', (i, r) => chestSide(i, r, false));
 put('chest_front', (i, r) => chestSide(i, r, true));
 
+/** The front of a burning furnace: the plain front with glowing embers in the mouth. */
+put('furnace_front_on', (i, r) => {
+  paintCobble(i, r, false);
+  const rim = hex('#5a5a5a'), dark = hex('#1e1e1e');
+  for (let y = 7; y < 14; y++) for (let x = 3; x < 13; x++) i.set(x, y, y === 7 || x === 3 || x === 12 ? rim : dark);
+  for (let x = 4; x < 12; x++) i.set(x, 3, rim);
+  const flame = P('#ff9a1f', '#ffc83a', '#e8631a', '#fff1a0');
+  for (let y = 9; y < 14; y++) for (let x = 4; x < 12; x++) {
+    const reach = 13 - y + (x % 3 === 0 ? 1 : 0);
+    if (reach >= 1 && (x + y) % 5 !== 0 && (x > 4 && x < 11 || y > 11)) i.set(x, y, pick(flame, r()));
+  }
+});
+
 put('lantern', (i) => {
   i.clear();
   const frame = hex('#3c3c40'), frameHi = hex('#5a5a60'), glow = P('#ffb83a', '#ffd85a', '#fff2a8');

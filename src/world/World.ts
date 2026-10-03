@@ -1,6 +1,6 @@
 import type { WorkerPool } from '../workers/WorkerPool';
 import { tintColor } from './BiomeColors';
-import { ContainerStore } from './Containers';
+import { BlockEntityStore } from './BlockEntities';
 import { BLOCK, BOX_KIND, DYE, DYE_RGB, SHAPE, SHAPE_CROSS, SHAPE_DOOR, SHAPE_MODEL, SOLID, TINT } from './BlockRegistry';
 import { CHUNK_READY, type Chunk } from './Chunk';
 import { ChunkManager, type ChunkMaterials } from './ChunkManager';
@@ -21,8 +21,15 @@ export class World {
   readonly generator: WorldGenerator;
   readonly edits: EditMap;
   readonly dirtyEditChunks = new Set<number>();
-  /** Chest contents (singleplayer; saved with the world). */
-  readonly containers = new ContainerStore();
+  /**
+   * Block entities (chest and furnace contents, ...): created and removed as the blocks change, saved with the world.
+   * Singleplayer owns them; on a multiplayer server the server does (the client keeps this store disabled).
+   */
+  readonly blockEntities = new BlockEntityStore({
+    getBlock: (x, y, z) => this.getBlock(x, y, z),
+    getMeta: (x, y, z) => this.getMeta(x, y, z),
+    setState: (x, y, z, id, meta) => { this.setBlock(x, y, z, id, meta); },
+  });
   /**
    * Water and lava flow (singleplayer only: on a multiplayer server the server simulates and the client mirrors
    * its block changes). Null until enableLiquids().
@@ -136,6 +143,7 @@ export class World {
     if (prev === id && prevMeta === meta) return false;
     writeState(c, i, id, meta);
     if (!remote) this.onEdit?.(x, y, z, id, meta, prev, prevMeta);
+    if (this.blockEntities.enabled) this.blockEntities.onBlockChange(x, y, z, prev, prevMeta, id, meta);
 
     let e = this.edits.get(c.key);
     if (!e) { e = new Map(); this.edits.set(c.key, e); }
@@ -185,7 +193,9 @@ export class World {
           const i = blockIndex(x & 15, y, z & 15);
           const id = c.blocks[i];
           if (id === BLOCK.AIR || id === BLOCK.BEDROCK || id === BLOCK.OBSIDIAN || id === BLOCK.WATER || id === BLOCK.LAVA) continue;
+          const prevMeta = c.meta ? c.meta[i] : 0;
           writeState(c, i, BLOCK.AIR, 0);
+          if (this.blockEntities.enabled) this.blockEntities.onBlockChange(x, y, z, id, prevMeta, BLOCK.AIR, 0);
           cleared.push(x, y, z);
           let e = this.edits.get(c.key);
           if (!e) { e = new Map(); this.edits.set(c.key, e); }
