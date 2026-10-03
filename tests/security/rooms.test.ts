@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -47,5 +47,24 @@ describe('Rooms filesystem layout', () => {
     const { rooms: r } = rooms();
     const code = r.create('a\u0000b\u001b[31mc\n', undefined, undefined)!;
     expect(r.info(code)?.name).not.toMatch(/[\u0000-\u001f]/);
+  });
+});
+
+describe('Rooms expiry', () => {
+  it('an expired listed game also leaves the public list', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'bunk-rooms-'));
+    dirs.push(dir);
+    const r = new Rooms({ dataDir: dir, maxRooms: 10, maxPlayers: 4, motd: '', idleUnloadMs: 60_000, expireDays: 1 });
+    sets.push(r);
+    const code = r.create('Old game', 'survival', 'x', {}, { listed: true })!;
+    expect(r.listPublic().map((g) => g.code)).toEqual([code]);
+    r.close(code, false); // unloaded, still on disk
+    const old = new Date(Date.now() - 3 * 86_400_000);
+    utimesSync(join(dir, code, 'world.json'), old, old);
+    (r as unknown as { expire(): void }).expire();
+    expect(readdirSync(dir)).toEqual([]);
+    expect(r.count).toBe(0);
+    (r as unknown as { listCache: null }).listCache = null; // the list is cached for 5 s
+    expect(r.listPublic()).toEqual([]);
   });
 });

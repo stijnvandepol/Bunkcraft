@@ -95,6 +95,8 @@ export const LEGACY_ITEMS: Record<number, number> = {
   [BLOCK.BLUE_WOOL]: itemFromState(BLOCK.WOOL, 11),
   [BLOCK.YELLOW_WOOL]: itemFromState(BLOCK.WOOL, 4),
   [BLOCK.GREEN_WOOL]: itemFromState(BLOCK.WOOL, 13),
+  /** A burning furnace is the same item as an unlit one. */
+  [BLOCK.LIT_FURNACE]: BLOCK.FURNACE,
 };
 
 export function normalizeItem(id: number): number {
@@ -346,7 +348,8 @@ export function getItemDef(id: number): ItemDef | undefined {
   const v = b.variant;
   const name = v ? v.names[meta >> v.shift] : undefined;
   if (v && !name) return undefined;
-  def = { id, name: b.name, displayName: name ?? b.displayName, maxStack: 64 };
+  // Beds stack to 1 in Minecraft; every other block item stacks to 64.
+  def = { id, name: b.name, displayName: name ?? b.displayName, maxStack: block === BLOCK.BED ? 1 : 64 };
   blockItemDefs.set(id, def);
   return def;
 }
@@ -404,6 +407,7 @@ const MINING: Record<number, Mining> = {
   [B.DIAMOND_ORE]: { hardness: 3, tool: 'pickaxe', minTier: 2 },
   [B.OBSIDIAN]: { hardness: 50, tool: 'pickaxe', minTier: 3 },
   [B.FURNACE]: { hardness: 3.5, tool: 'pickaxe', minTier: 0 },
+  [B.LIT_FURNACE]: { hardness: 3.5, tool: 'pickaxe', minTier: 0 },
   [B.DIRT]: { hardness: 0.5, tool: 'shovel' },
   [B.GRASS]: { hardness: 0.6, tool: 'shovel' },
   [B.SNOWY_GRASS]: { hardness: 0.6, tool: 'shovel' },
@@ -488,6 +492,18 @@ export function breakSeconds(blockId: number, held: number, onGround: boolean, i
   if (inWater && !ench?.aqua_affinity) speed /= 5;
   const perTick = speed / hardness / (canHarvest(blockId, held, meta) ? 30 : 100);
   return Math.ceil(1 / perTick) / 20;
+}
+
+/**
+ * Durability a tool loses for mining a block (Minecraft's tool component): nothing for blocks that break
+ * instantly (hardness 0: torches, flowers, TNT), 2 for a sword, 1 for other tools; 0 when not holding a tool.
+ */
+export function miningWear(held: number, blockId: number, meta = 0): number {
+  const tool = getItemDef(held)?.tool;
+  if (!tool) return 0;
+  const hardness = miningOf(blockId, meta)?.hardness ?? getBlockDef(blockId)?.hardness ?? 1;
+  if (hardness <= 0) return 0;
+  return tool.kind === 'sword' ? 2 : 1;
 }
 
 export function canHarvest(blockId: number, held: number, meta = 0): boolean {
@@ -595,7 +611,11 @@ export function blockDrop(blockId: number, held: number, meta = 0, ench?: Mining
   }
   if (WITH_SHEARS_ONLY.has(blockId)) {
     if (heldTool === 'shears') return { id: blockId, count: 1 };
-    if (blockId === B.DEAD_BUSH) return Math.random() < 0.5 ? { id: ITEM.STICK, count: rand(1, 2) } : null;
+    if (blockId === B.DEAD_BUSH) {
+      // 0-2 sticks, uniformly (Minecraft's loot table).
+      const n = rand(0, 2);
+      return n > 0 ? { id: ITEM.STICK, count: n } : null;
+    }
     return Math.random() < 0.125 ? { id: named('wheat_seeds'), count: 1 } : null;
   }
   switch (blockId) {
@@ -605,6 +625,45 @@ export function blockDrop(blockId: number, held: number, meta = 0, ench?: Mining
     case B.GRAVEL: return { id: Math.random() < gravelFlintChance(fortune) ? ITEM.FLINT : B.GRAVEL, count: 1 };
     case CUBE_ID.cobweb: return { id: ITEM.STRING, count: 1 };
     default: return { id: itemFromState(blockId, meta), count: 1 };
+  }
+}
+
+/**
+ * Every stack {@link blockDrop} can return for this block and state, with any tool and any random roll, at its
+ * highest count. The server credits these when a player breaks a block (it does not know the client's roll).
+ */
+export function possibleBlockDrops(blockId: number, meta = 0): ItemStack[] {
+  const out = plainBlockDrops(blockId, meta);
+  // Fortune III (x4 on ores, +3 on redstone, glowstone, melon) and Silk Touch (the block itself) raise the ceiling.
+  const ore = ORE_DROPS[blockId];
+  if (ore && out[0]) out[0] = { id: out[0].id, count: FORTUNE_MULTIPLIED.has(blockId) ? ore.max * 4 : Math.min(FORTUNE_ADDED[blockId] ?? ore.max, ore.max + 3) };
+  if (silkTouchable(blockId) && !out.some((d) => d.id === itemFromState(blockId, meta))) out.push({ id: itemFromState(blockId, meta), count: 1 });
+  return out;
+}
+
+function plainBlockDrops(blockId: number, meta: number): ItemStack[] {
+  if (blockId >= SLAB_FIRST && blockId < STAIRS_FIRST) return [{ id: blockId, count: 2 }];
+  if (blockId === B.SLAB_X) return [{ id: itemFromState(blockId, meta), count: 2 }];
+  const ore = ORE_DROPS[blockId];
+  if (ore) return [{ id: named(ore.item), count: ore.max }];
+  const legacy = LEGACY_ITEMS[blockId];
+  if (legacy) return [{ id: legacy, count: 1 }];
+  if (EARTH_TO_DIRT.has(blockId)) return [{ id: B.DIRT, count: 1 }];
+  if (NO_DROP.has(blockId)) return [];
+  const leaves = LEAVES_SAPLING[blockId];
+  if (leaves) {
+    const out: ItemStack[] = [{ id: blockId, count: 1 }, { id: ITEM.STICK, count: 2 }];
+    if (leaves.sapling >= 0) out.push({ id: itemFromState(B.SAPLING, leaves.sapling), count: 1 });
+    if (leaves.apple) out.push({ id: named('apple'), count: 1 });
+    return out;
+  }
+  if (WITH_SHEARS_ONLY.has(blockId)) return [{ id: blockId, count: 1 }, { id: ITEM.STICK, count: 2 }, { id: named('wheat_seeds'), count: 1 }];
+  switch (blockId) {
+    case B.STONE: return [{ id: B.COBBLESTONE, count: 1 }];
+    case CUBE_ID.deepslate: return [{ id: CUBE_ID.cobbled_deepslate, count: 1 }];
+    case B.GRAVEL: return [{ id: B.GRAVEL, count: 1 }, { id: ITEM.FLINT, count: 1 }];
+    case CUBE_ID.cobweb: return [{ id: ITEM.STRING, count: 1 }];
+    default: return [{ id: itemFromState(blockId, meta), count: 1 }];
   }
 }
 

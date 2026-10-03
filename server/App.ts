@@ -374,8 +374,10 @@ export async function startServer(config: Config): Promise<RunningServer> {
       return;
     }
     const server = target;
-    perIp.set(ip, (perIp.get(ip) ?? 0) + 1);
+    // Counted only once the handshake completes: ws answers a bad handshake (400) without calling back,
+    // and a slot taken before that would never be given back.
     wss.handleUpgrade(req, socket, head, (ws) => {
+      perIp.set(ip, (perIp.get(ip) ?? 0) + 1);
       metrics.connectionsTotal++;
       (ws as WebSocket & { ip?: string }).ip = ip;
       // noServer mode does not emit 'connection' by itself: track liveness here.

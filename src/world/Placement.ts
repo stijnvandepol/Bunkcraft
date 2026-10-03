@@ -34,6 +34,8 @@ export interface Placement {
   meta: number;
   /** A second block placed together with this one (the upper half of a door). */
   upper?: Placement;
+  /** An existing block whose state changes with this placement (the other half of a new double chest). */
+  neighbor?: Placement;
 }
 
 /** Can a block stand on top of this one: opaque blocks, double and top slabs, upside-down stairs (isFaceSturdy UP). */
@@ -171,5 +173,23 @@ export function resolvePlacement(c: PlaceContext): Placement | null {
   if (shape === SHAPE_SLAB) return { x, y, z, id, meta: upper ? SLAB_TOP : SLAB_BOTTOM };
   if (shape === SHAPE_STAIRS) return { x, y, z, id, meta: stairMeta(facingFromYaw(c.yaw), upper) };
   // Furnaces, chests and pumpkins show their front to the player.
-  return { x, y, z, id, meta: FACING[id] ? facingFromYaw(c.yaw) : 0 };
+  const facing = FACING[id] ? facingFromYaw(c.yaw) : 0;
+  if (id === BLOCK.CHEST) return chestPlacement(c, x, y, z, facing);
+  return { x, y, z, id, meta: facing };
+}
+
+/**
+ * A chest next to a single chest that faces the same way joins it into a double chest: the one with the lower
+ * coordinate along the row is the low half (bit 4), the other the high half (bit 8). The neighbour's state changes too.
+ */
+function chestPlacement(c: PlaceContext, x: number, y: number, z: number, facing: number): Placement {
+  const dx = facing < 2 ? 1 : 0, dz = facing < 2 ? 0 : 1;
+  const single = (nx: number, nz: number): boolean => c.getBlock(nx, y, nz) === BLOCK.CHEST && (c.getMeta(nx, y, nz) & 15) === facing;
+  if (single(x + dx, z + dz)) {
+    return { x, y, z, id: BLOCK.CHEST, meta: facing | 4, neighbor: { x: x + dx, y, z: z + dz, id: BLOCK.CHEST, meta: facing | 8 } };
+  }
+  if (single(x - dx, z - dz)) {
+    return { x, y, z, id: BLOCK.CHEST, meta: facing | 8, neighbor: { x: x - dx, y, z: z - dz, id: BLOCK.CHEST, meta: facing | 4 } };
+  }
+  return { x, y, z, id: BLOCK.CHEST, meta: facing };
 }

@@ -1,14 +1,14 @@
 import * as THREE from 'three';
 import type { EntityManager } from '../entities/EntityManager';
 import type { PlayerInventory } from '../items/Inventory';
-import { ITEM, blockDrop, breakSeconds, getItemDef, isBlockItem, itemBlock, itemFromState, itemId, itemMeta } from '../items/ItemRegistry';
+import { ITEM, blockDrop, breakSeconds, getItemDef, isBlockItem, itemBlock, itemFromState, itemId, itemMeta, miningWear } from '../items/ItemRegistry';
 import { toolUse } from '../items/ToolUse';
 import { type MiningEnchants } from '../items/ItemRegistry';
 import { fireAspectTicks, levelOf, meleeBonus } from '../items/EnchantRules';
 import { oreXp } from '../player/Experience';
 import { facingFromYaw } from '../world/BlockStates';
 import { type GameMode, hasSurvivalRules } from '../player/GameMode';
-import { PHYSICS } from '../player/Physics';
+import { blockReach } from '../player/Physics';
 import type { Player } from '../player/Player';
 import type { PlayerStats } from '../player/PlayerStats';
 import type { HandRenderer } from '../rendering/HandRenderer';
@@ -44,7 +44,7 @@ export interface BowEnchants {
 
 /** Blocks a right click does something to (instead of placing against them). */
 function isUsable(id: number): boolean {
-  if (SHAPE[id] === SHAPE_DOOR || id === BLOCK.CHEST || STATIONS[id]) return true;
+  if (SHAPE[id] === SHAPE_DOOR || id === BLOCK.CHEST || id === BLOCK.FURNACE || id === BLOCK.LIT_FURNACE || STATIONS[id]) return true;
   const kind = SHAPE[id] === SHAPE_BOX ? BOX_KIND[id] : 0;
   return kind === BOX_TRAPDOOR || kind === BOX_GATE || kind === BOX_BED;
 }
@@ -66,10 +66,10 @@ export interface InteractionDeps {
   igniteTnt(x: number, y: number, z: number): boolean;
   /** Fires an arrow from the eye along the view direction (power 0..1). */
   shootArrow(power: number, pickup: boolean, ench?: BowEnchants): void;
-  /** Whether chests may be placed (singleplayer only: the server does not store containers). */
+  /** Whether chests may be placed (optional veto). */
   chestsAllowed?(): boolean;
-  /** Opens the chest at a position (its container screen). */
-  openChest?(x: number, y: number, z: number): void;
+  /** Opens the container (chest, furnace) at a position: its screen. */
+  openContainer?(x: number, y: number, z: number): void;
   /** Right click on a bed: sets the spawn point and sleeps through the night. */
   useBed?(x: number, y: number, z: number): void;
   /** Opens the enchanting table, anvil or grindstone at a position. */
@@ -110,6 +110,8 @@ export class Interaction {
   private readonly getMeta = (x: number, y: number, z: number): number => this.d.world.getMeta(x, y, z);
   private readonly shapeBoxes = new Float64Array(64);
   private readonly liquidRay: RayHit = createRayHit();
+  /** Block reach of the current game mode. */
+  private reach = 4.5;
 
   reset(): void {
     this.breakProgress = 0;
@@ -131,7 +133,8 @@ export class Interaction {
     const highlight = renderer.highlight;
     const pos = camera.position;
     camera.getWorldDirection(this.dir);
-    const hit = raycast(this.getBlock, pos.x, pos.y, pos.z, this.dir.x, this.dir.y, this.dir.z, PHYSICS.REACH, this.ray, this.getMeta);
+    this.reach = blockReach(!hasSurvivalRules(mode));
+    const hit = raycast(this.getBlock, pos.x, pos.y, pos.z, this.dir.x, this.dir.y, this.dir.z, this.reach, this.ray, this.getMeta);
     const mobHit = active && mode !== 'spectator'
       ? this.d.entities.raycastMob(pos.x, pos.y, pos.z, this.dir.x, this.dir.y, this.dir.z, Math.min(3, hit.hit ? hit.distance + 0.01 : 3))
       : null;
@@ -221,7 +224,7 @@ export class Interaction {
     const slot = hotbar.selected;
     if (id === ITEM.BUCKET) {
       const p = camera.position;
-      const lh = raycast(this.getBlock, p.x, p.y, p.z, this.dir.x, this.dir.y, this.dir.z, PHYSICS.REACH, this.liquidRay, this.getMeta, true);
+      const lh = raycast(this.getBlock, p.x, p.y, p.z, this.dir.x, this.dir.y, this.dir.z, this.reach, this.liquidRay, this.getMeta, true);
       // A solid block in the way (hit earlier than the liquid) means the liquid is out of sight.
       if (!lh.hit || !isLiquid(lh.id) || world.getMeta(lh.x, lh.y, lh.z) !== 0) return;
       if (hit.hit && hit.distance < lh.distance) return;
@@ -259,7 +262,7 @@ export class Interaction {
       this.d.audio.playDoor(open);
       this.d.hand.swingHand();
     } else if (kind === BOX_BED) this.d.useBed?.(hit.x, hit.y, hit.z);
-    else if (hit.id === BLOCK.CHEST) this.d.openChest?.(hit.x, hit.y, hit.z);
+    else if (hit.id === BLOCK.CHEST || hit.id === BLOCK.FURNACE || hit.id === BLOCK.LIT_FURNACE) this.d.openContainer?.(hit.x, hit.y, hit.z);
     else if (STATIONS[hit.id]) {
       this.d.hand.swingHand();
       this.d.openStation?.(STATIONS[hit.id], hit.x, hit.y, hit.z);
@@ -382,7 +385,6 @@ export class Interaction {
           const xp = oreXp(getBlockDef(broken)?.name ?? '');
           if (xp > 0) entities.spawnXp(hit.x + 0.5, hit.y + 0.4, hit.z + 0.5, xp);
         }
-        if (broken === BLOCK.CHEST) for (const s of world.containers.take(hit.x, hit.y, hit.z)) entities.dropItem(s, hit.x + 0.5, hit.y + 0.5, hit.z + 0.5);
         // A plant or torch on top breaks with its support and drops too.
         // (the upper half of a door that went with the lower one is no extra drop)
         if (above !== world.getBlock(hit.x, hit.y + 1, hit.z) && !(SHAPE[broken] === SHAPE_DOOR && above === broken)) {
@@ -390,7 +392,7 @@ export class Interaction {
           if (top) entities.dropItem(top, hit.x + 0.5, hit.y + 1.3, hit.z + 0.5);
         }
         stats.addExhaustion(0.005);
-        if (getItemDef(held)?.tool) inventory.damageTool(hotbar.selected);
+        for (let w = miningWear(held, broken, brokenMeta); w > 0; w--) inventory.damageTool(hotbar.selected);
       }
     }
     this.breakProgress = 0;
@@ -449,7 +451,7 @@ export class Interaction {
     if (placed.upper && SHAPE[id] === SHAPE_DOOR && player.intersectsBlock(x, y + 1, z)) return;
     if (placed.upper && BOX_KIND[id] === BOX_BED && player.intersectsBlock(placed.upper.x, placed.upper.y, placed.upper.z)) return;
     if (!world.setBlock(x, y, z, id, placed.meta | baseMeta)) return;
-    if (id === BLOCK.CHEST) world.containers.clear(x, y, z);
+    if (placed.neighbor) world.setBlock(placed.neighbor.x, placed.neighbor.y, placed.neighbor.z, placed.neighbor.id, placed.neighbor.meta);
     if (placed.upper) world.setBlock(placed.upper.x, placed.upper.y, placed.upper.z, id, placed.upper.meta | baseMeta);
     const def = getBlockDef(id)!;
     audio.play('place', stateSound(def, baseMeta));
