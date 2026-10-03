@@ -110,6 +110,8 @@ export function phaseBanner(phase: MatchPhase, seconds: number, round: number): 
  */
 export function placeMarker(
   ndcX: number, ndcY: number, behind: boolean, width: number, height: number, margin: number, out: { x: number; y: number; edge: boolean },
+  /** Space kept free at the top (the timer and score bar live there). */
+  topMargin = margin,
 ): void {
   let x = ndcX, y = ndcY;
   if (behind) { x = -x; y = -y; }
@@ -121,6 +123,6 @@ export function placeMarker(
     if (behind) y = -1;
   }
   out.x = Math.max(margin, Math.min(width - margin, (x * 0.5 + 0.5) * width));
-  out.y = Math.max(margin, Math.min(height - margin, (0.5 - y * 0.5) * height));
+  out.y = Math.max(topMargin, Math.min(height - margin, (0.5 - y * 0.5) * height));
   out.edge = !inside;
 }

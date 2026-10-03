@@ -73,5 +73,8 @@ describe('mode view: marker placement', () => {
     placeMarker(0.5, 0.1, true, 800, 600, 40, out);
     expect(out.edge).toBe(true);
     expect(out.y).toBe(560);
+    // Markers above the screen stay below the top bar.
+    placeMarker(0, 3, false, 800, 600, 40, out, 150);
+    expect(out.y).toBe(150);
   });
 });

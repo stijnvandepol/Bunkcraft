@@ -139,7 +139,7 @@ export class ModeHud {
       if (m.carrier !== 0 && carrierPos(m.carrier, tmp)) { m.x = tmp.x; m.y = tmp.y + 2.4; m.z = tmp.z; }
       tmp.set(m.x, m.y, m.z).project(camera);
       const behind = tmp.z > 1;
-      placeMarker(tmp.x, tmp.y, behind, width, height, 40, placed);
+      placeMarker(tmp.x, tmp.y, behind, width, height, 40, placed, Math.min(height * 0.3, 150));
       const px = Math.round(placed.x), py = Math.round(placed.y);
       if (px !== m.px || py !== m.py) {
         m.px = px; m.py = py;
