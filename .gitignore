@@ -10,3 +10,5 @@ data-test
 .claude/worktrees/
 coverage
 tests/audio-previews/*.wav
+test-results
+playwright-report
