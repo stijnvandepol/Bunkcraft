@@ -53,8 +53,9 @@ const heapNode = new Int32Array(HEAP_CAP), heapF = new Float32Array(HEAP_CAP);
 let heapSize = 0;
 let nodeCount = 0;
 
-/** Statistics for the F3 overlay and the benchmarks. */
-export const pathStats = { searches: 0, nodes: 0 };
+/** Statistics for the F3 overlay and the benchmarks; `lastNodes` = nodes the latest search expanded, `deferred` = searches
+ * the per-tick budget postponed (Navigator). */
+export const pathStats = { searches: 0, nodes: 0, lastNodes: 0, deferred: 0 };
 
 function heapPush(node: number, f: number): void {
   if (heapSize >= HEAP_CAP) return;
@@ -258,6 +259,7 @@ export function findPath(getBlock: BlockGetter, sx: number, sy: number, sz: numb
     }
   }
   pathStats.nodes += expanded;
+  pathStats.lastNodes = expanded;
 
   if (best === start) return false;
   // Walk back from the best node, then keep the first PATH_MAX cells from the start.

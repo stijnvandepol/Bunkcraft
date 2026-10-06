@@ -83,8 +83,14 @@ export class EntityManager implements MobWorld {
   /** MobWorld: ticks simulated so far and the path searches left this tick. */
   time = 0;
   pathBudget = 0;
-  /** Path searches allowed per tick for all mobs together (each costs up to ~0.1 ms). */
+  pathNodeBudget = 0;
+  /** Path searches allowed per tick for all mobs together (each costs up to ~0.1-0.5 ms). */
   static PATHS_PER_TICK = 6;
+  /**
+   * A* nodes allowed per tick for all mobs together: three searches at the full cap of 160, or the usual six of ~60
+   * nodes. Without it six long searches could land in one tick (~1000 nodes, the worst path-finding spike).
+   */
+  static PATH_NODES_PER_TICK = 480;
   /** Server: a block a mob changed must reach the clients. */
   blockHook: ((x: number, y: number, z: number, id: number) => void) | null = null;
   private dayBright = false;
@@ -105,6 +111,8 @@ export class EntityManager implements MobWorld {
    * mobs (AI, path finding, physics) and the rest (items, arrows, orbs, TNT).
    */
   readonly perf = { spawnMs: 0, mobsMs: 0, otherMs: 0 };
+  /** Clock (ms) of those timings; the benchmarks swap in the thread's CPU time so a loaded machine does not skew them. */
+  static clock: () => number = () => performance.now();
 
   constructor(readonly world: EntityWorld, seed: number) {
     this.spawner = new MobSpawner(this, seed);
@@ -287,6 +295,7 @@ export class EntityManager implements MobWorld {
     this.tickCount++;
     this.time = this.tickCount;
     this.pathBudget = EntityManager.PATHS_PER_TICK;
+    this.pathNodeBudget = EntityManager.PATH_NODES_PER_TICK;
     this.dayBright = dayBright;
     events = this.wrapEvents(events);
     this.events = events;
@@ -298,23 +307,26 @@ export class EntityManager implements MobWorld {
       targets = this.single;
     }
 
-    const t0 = performance.now();
+    const t0 = EntityManager.clock();
     if ((this.hostileSpawning || this.passiveSpawning) && this.spawningEnabled) {
       this.spawner.recount();
       if (this.hostileSpawning && !this.peaceful) this.spawner.tickHostile(targets, darkness);
       if (this.passiveSpawning) this.spawner.tickPassive(targets, darkness, this.tickCount);
     }
 
-    const t1 = performance.now();
+    const t1 = EntityManager.clock();
     for (const m of this.mobs) {
       if (m.removed || m.remote) continue;
       if (this.peaceful && m.type.hostile) { m.removed = true; continue; }
-      // Each mob follows the nearest player.
-      let nearest = targets[0], d = Infinity;
-      for (const t of targets) {
-        const dt = Math.hypot(m.x - t.x, m.z - t.z);
-        if (dt < d) { d = dt; nearest = t; }
+      // Each mob follows the nearest player (squared distances: same order, no hypot per pair).
+      let nearest = targets[0], d2 = Infinity;
+      for (let k = 0; k < targets.length; k++) {
+        const t = targets[k];
+        const dx = m.x - t.x, dz = m.z - t.z;
+        const dt = dx * dx + dz * dz;
+        if (dt < d2) { d2 = dt; nearest = t; }
       }
+      const d = Math.sqrt(d2);
       // Hostiles despawn far away (instantly > 128, randomly > 32 blocks), and out-of-reach ones in the open fade away in daylight.
       if (m.type.hostile && !m.persistent && !m.dead && (hostileDespawns(d, Math.random()) || (dayBright && d > SPAWN.randomDespawn && Math.random() < SPAWN.daylightDespawnChance
         && this.skyAt(m) > 11))) { m.removed = true; continue; }
@@ -362,7 +374,7 @@ export class EntityManager implements MobWorld {
       }
     }
 
-    const t2 = performance.now();
+    const t2 = EntityManager.clock();
     for (let i = 0; i < this.tnt.length; i++) {
       const t = this.tnt[i];
       if (!t.removed && !t.remote && t.tick(getBlock)) events.tntExplode(t);
@@ -373,8 +385,10 @@ export class EntityManager implements MobWorld {
       const a = this.arrows[i];
       if (a.removed || a.remote) continue;
       let hit = targets[0], hd = Infinity;
-      for (const t of targets) {
-        const dt = Math.hypot(a.x - t.x, a.z - t.z);
+      for (let k = 0; k < targets.length; k++) {
+        const t = targets[k];
+        const dx = a.x - t.x, dz = a.z - t.z;
+        const dt = dx * dx + dz * dz;
         if (dt < hd) { hd = dt; hit = t; }
       }
       at.x = hit.x; at.y = hit.y; at.z = hit.z; at.attackable = hit.attackable; at.id = hit.id;
@@ -434,7 +448,7 @@ export class EntityManager implements MobWorld {
     const perf = this.perf;
     perf.spawnMs = t1 - t0;
     perf.mobsMs = t2 - t1;
-    perf.otherMs = performance.now() - t2;
+    perf.otherMs = EntityManager.clock() - t2;
   }
 
   private splitSlime(m: Mob): void {

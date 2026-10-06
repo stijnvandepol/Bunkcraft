@@ -201,9 +201,29 @@ export class MobSpawner {
     this.passiveCount = p;
   }
 
+  /** Chunk of every target at the last `capAreas` count, and its result: players mostly stay in their chunk for seconds. */
+  private readonly capChunksOf: number[] = [];
+  private capAreasValue = 1;
+
+  /** `capAreas(targets)`, recounted only when a player entered another chunk (or joined or left). */
+  private areas(targets: readonly MobTarget[]): number {
+    const key = this.capChunksOf;
+    let same = key.length === targets.length * 2;
+    for (let i = 0; i < targets.length && same; i++) {
+      same = key[i * 2] === Math.floor(targets[i].x) >> 4 && key[i * 2 + 1] === Math.floor(targets[i].z) >> 4;
+    }
+    if (same) return this.capAreasValue;
+    key.length = targets.length * 2;
+    for (let i = 0; i < targets.length; i++) {
+      key[i * 2] = Math.floor(targets[i].x) >> 4;
+      key[i * 2 + 1] = Math.floor(targets[i].z) >> 4;
+    }
+    return (this.capAreasValue = capAreas(targets));
+  }
+
   /** Monster spawn attempts for this tick (the caller decides whether hostile spawning is on). */
   tickHostile(targets: readonly MobTarget[], darkness: number): void {
-    const cap = hostileCap(capAreas(targets), darkness);
+    const cap = hostileCap(this.areas(targets), darkness);
     for (const t of targets) {
       for (let i = 0; i < SPAWN.hostileAttemptsPerTick && this.hostileCount < cap; i++) this.tryPack(t, targets, darkness, cap);
     }

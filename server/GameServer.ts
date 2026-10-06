@@ -1331,7 +1331,7 @@ export class GameServer {
         if (phases) for (const k of TICK_PHASES) p[k] = Math.round(phases[k] * 100) / 100;
         this.logger.warn('slow tick', {
           ms: Math.round(ms * 10) / 10, cpuMs: Math.round(cpuMs * 10) / 10, ...p,
-          players: this.sessions.size, mobs: this.entities?.mobCount ?? 0,
+          players: this.sessions.size, mobCount: this.entities?.mobCount ?? 0,
         });
       }
     }
@@ -1482,7 +1482,8 @@ export class GameServer {
   }
 
   private broadcast(msg: ServerMessage, except = -1): void {
-    const data = JSON.stringify(msg);
+    // JSON only when somebody needs it: snapshots go out 20 times a second and binary clients never read the text.
+    let data: string | undefined;
     let frame: ArrayBuffer | null | undefined;
     let frameQ: ArrayBuffer | undefined;
     for (const s of this.sessions.values()) {
@@ -1501,6 +1502,7 @@ export class GameServer {
           continue;
         }
       }
+      data ??= JSON.stringify(msg);
       s.ws.send(data);
       metrics.sent(data.length);
     }
