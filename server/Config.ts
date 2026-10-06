@@ -5,6 +5,8 @@ import { parseGameMode } from './GameServer';
 /** Everything the server reads from the environment, in one typed place (documented in docs/SERVER.md). */
 export interface Config {
   port: number;
+  /** Listen address (HOST); unset = every interface. 127.0.0.1 behind a reverse proxy on the same machine. */
+  host?: string;
   /** Directory with the built game. */
   staticDir: string;
   dataDir: string;
@@ -56,6 +58,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const guard = (env.INVENTORY_GUARD ?? 'enforce').toLowerCase();
   return {
     port: num(env.PORT, 3000),
+    host: env.HOST || undefined,
     staticDir: resolve(env.STATIC_DIR ?? 'dist'),
     dataDir: resolve(env.DATA_DIR ?? 'data'),
     trustProxy: flag(env.TRUST_PROXY, false),

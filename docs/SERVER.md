@@ -1,5 +1,60 @@
 # BunkCraft server draaien
 
+## Op je eigen Linux-server in 5 minuten
+
+Nodig: een Ubuntu- of Debian-server (vanaf 1 vCPU / 1 GB; aanbevolen 2 vCPU / 2-4 GB, zie hieronder) en een
+domein met een A-record (en eventueel AAAA) naar die server.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/stijnvandepol/Bunkcraft/main/scripts/install.sh \
+  | sudo bash -s -- --domain play.example.com
+```
+
+Of vanuit een clone: `sudo ./scripts/install.sh --domain play.example.com [--admin-token GEHEIM]`.
+Het script installeert wat ontbreekt (Docker Engine + compose uit de officiële apt-repository, git, een swapfile
+op machines met minder dan 2 GB), zet de code in `/opt/bunkcraft`, schrijft `.env` (domein, gegenereerde
+`ADMIN_TOKEN` en `METRICS_TOKEN`, CPU- en geheugenlimieten passend bij de machine), opent poort 80/443 in `ufw` als
+die actief is, start de game achter Caddy (automatisch HTTPS, HTTP/3) en zet een dagelijkse back-up klaar.
+Opnieuw draaien is veilig: bestaande instellingen en werelden blijven staan. `--dry-run` laat zien wat het zou doen.
+
+Daarna open je `https://play.example.com`. Beheer gaat met één commando:
+
+| Commando | Wat |
+|---|---|
+| `bunkcraft status` | containers en `/health` (spelers, games, tick p99, geheugen) |
+| `bunkcraft logs` | serverlog volgen |
+| `bunkcraft update` | back-up, `git pull`, nieuwe image bouwen terwijl de oude draait, herstart (werelden worden eerst opgeslagen), wachten tot hij gezond is |
+| `bunkcraft backup` | back-up nu, naar `/var/backups/bunkcraft` (de dagelijkse timer bewaart er 14) |
+| `bunkcraft restart` | herstart na een wijziging in `/opt/bunkcraft/.env` |
+
+**Firewall:** het script opent 80/tcp, 443/tcp en 443/udp alleen in een *actieve* `ufw`. Zet je hem zelf aan, sta dan eerst
+SSH toe: `ufw allow OpenSSH && ufw allow 80/tcp && ufw allow 443/tcp && ufw allow 443/udp && ufw enable`. Let op: Docker
+publiceert poorten langs ufw heen; een firewall van je cloudprovider ervoor is de strengere optie.
+
+**Welke server?** Gemeten met bots (docs/research/SERVER-DEPLOY.md): één survival-game met 8 spelers en ~40 mobs kost
+~4-5 % van één core en ~14 KiB/s per speler; een arcade-game met 12 spelers ~4 %. Het servergeheugen groeit van ~70 MB leeg
+naar ~375 MB bij 160 spelers.
+
+| VPS | Prijs (indicatie) | Verwachte capaciteit |
+|---|---|---|
+| 1 vCPU / 1 GB (kleinste VPS bij de meeste aanbieders) | ~€2-5/mnd | ~40-60 spelers (5-8 survival-games) of meer in arcade |
+| **2 vCPU / 4 GB (Hetzner CAX11 ARM of CX22)** — aanbevolen | ~€4-5/mnd | ~120-160 spelers; het bouwen van de image gaat zonder swap |
+| 4 vCPU / 8 GB | ~€8-15/mnd | dezelfde ~200-250 per Node-proces (de gamelogica draait op één core); meer pas met meerdere processen |
+
+**Zonder Docker** (systemd): zie [Zonder Docker](#zonder-docker-systemd).
+
+### Back-up terugzetten
+
+```bash
+cd /opt/bunkcraft
+docker compose stop bunkcraft
+docker compose run --rm --no-deps -T --entrypoint sh bunkcraft \
+  -c 'rm -rf /app/data/* && tar -xzf - -C /app' < /var/backups/bunkcraft/bunkcraft-JJJJMMDD-UUMMSS.tar.gz
+docker compose up -d
+```
+
+## Overzicht
+
 Eén Node.js-proces serveert de game (de gebouwde `dist/`) **en** de multiplayer-server
 (WebSocket op `/ws`) op dezelfde poort. Je hoeft dus maar één ding te hosten.
 
@@ -8,20 +63,22 @@ Browser ──HTTP──▶  /            → dist/ (de game)
         ──HTTP──▶  /api/rooms   → een game aanmaken (POST), opzoeken (GET /api/rooms/<CODE>) of de serverlijst (GET /api/rooms?public=1)
         ──WS────▶  /ws          → hoofdwereld
         ──WS────▶  /ws/<CODE>   → een game van een speler
-        ──HTTP──▶  /health      → {"ok":true,"version":"1.0.0","uptime":3600,"players":2,"rooms":3}
+        ──HTTP──▶  /health      → {"ok":true,"version":"1.0.0","uptime":3600,"players":2,"rooms":3,"roomsLoaded":1,"tickP99Ms":2.1,"loopLagP99Ms":1.4,"rssMB":96}
         ──HTTP──▶  /metrics     → Prometheus (alleen lokaal of met token)
         ──HTTP──▶  /admin       → beheerpagina (alleen met ADMIN_TOKEN), API op /api/admin/*
 ```
 
 ## Snel starten
 
-Vereist Node.js 20 of nieuwer.
+Vereist Node.js 22 of nieuwer.
 
 ```bash
 npm install
-npm run build
-npm start          # http://localhost:3000
+npm run build      # dist/ (de game) + dist-server/index.js (de server als één JS-bestand)
+npm start          # node dist-server/index.js → http://localhost:3000
 ```
+
+`npm run server` (tsx watch) blijft de ontwikkelversie: TypeScript direct, herstart bij elke wijziging.
 
 ## Spelen met vrienden: games aanmaken en joinen
 
@@ -52,7 +109,7 @@ DOMAIN=play.example.com docker compose up -d
 ```
 
 Open daarna `https://play.example.com`. De wereld staat in het volume `bunkcraft-data` en overleeft
-herstarts en updates (`git pull && docker compose up -d --build`). Instellingen zet je in een `.env`
+herstarts en updates (`./scripts/update.sh`, of met de hand `git pull && docker compose up -d --build`). Instellingen zet je in een `.env`
 naast `docker-compose.yml`, bijvoorbeeld `ROOM_MAX_PLAYERS=12`.
 
 Heb je al een reverse proxy? Zie de voorbeelden verderop; zet dan `TRUST_PROXY=1`, zodat de
@@ -63,6 +120,7 @@ limieten per bezoeker werken in plaats van per proxy.
 | Variabele | Standaard | Betekenis |
 |---|---|---|
 | `PORT` | `3000` | HTTP- en WebSocket-poort |
+| `HOST` | alle interfaces | Luisteradres; `127.0.0.1` als de reverse proxy op dezelfde machine draait (systemd) |
 | `DATA_DIR` | `./data` | Map voor `world.json` (wereld, wijzigingen, spelers, tijd) |
 | `WORLD_NAME` | `BunkCraft Server` | Naam van de wereld |
 | `SEED` | willekeurig | Seed: een getal of tekst. Geldt alleen bij een nieuwe wereld. |
@@ -76,6 +134,7 @@ limieten per bezoeker werken in plaats van per proxy.
 | `ROOM_MAX_PLAYERS` | `8` | Spelers per game |
 | `ROOM_CREATE_LIMIT` | `6` | Games die één bezoeker per uur mag aanmaken |
 | `ROOM_EXPIRE_DAYS` | `60` | Games zonder bezoek worden na zoveel dagen verwijderd (`0` = nooit) |
+| `ROOM_IDLE_UNLOAD_MIN` | `5` | Minuten dat een lege game in het geheugen blijft voordat hij wordt opgeslagen en uitgeladen |
 | `ADMIN_TOKEN` | niet gezet | Geheim voor `/admin` en `/api/admin/*`. Leeg = beheer staat uit. Minstens 16 willekeurige tekens (`openssl rand -hex 24`). Wie dit token als `owner` meestuurt, is ook operator in elke game. |
 | `METRICS_TOKEN` | niet gezet | Bearer-token voor `/metrics`. Zonder `METRICS_TOKEN` en `ADMIN_TOKEN` is `/metrics` alleen bereikbaar vanaf deze machine (niet via een reverse proxy). |
 | `OPS` | leeg | Komma-gescheiden namen die operator zijn in de **hoofdwereld** (games hebben hun eigen eigenaar). |
@@ -168,14 +227,34 @@ adressen blokkeren. Alle data gaat via `textContent` de pagina in en een strikte
 
 - **Logs:** een JSON-object per regel (`{"ts","level","msg",...velden}`), met `room` op regels van een game. Handig met
   `docker logs bunkcraft | jq`. `LOG_LEVEL` en `LOG_FORMAT=text` voor leesbare regels.
-- **`/health`:** `{ok, version, uptime, players, rooms}`; 503 terwijl de server afsluit.
+- **`/health`:** `{ok, version, uptime, players, rooms, roomsLoaded, tickP99Ms, loopLagP99Ms, rssMB}` (tick en lag over de
+  laatste ~5 s); 503 terwijl de server afsluit. Genoeg voor een uptime-checker (bijv. Uptime Kuma of een cloud-monitor):
+  alarm bij geen 200, of bij `loopLagP99Ms` structureel boven ~20 (de server loopt achter).
 - **`/metrics`** (Prometheus): `bunkcraft_players`, `bunkcraft_rooms_loaded`, `bunkcraft_rooms_total`, `bunkcraft_connections`,
-  `bunkcraft_tick_duration_seconds{quantile="0.5"|"0.99"}`, `process_resident_memory_bytes`, `process_heap_used_bytes`,
-  `process_cpu_seconds_total`, `bunkcraft_ws_messages_{received,sent}_total`, `bunkcraft_ws_bytes_{received,sent}_total`,
+  `bunkcraft_tick_duration_seconds{quantile="0.5"|"0.99"|"1"}`, `bunkcraft_tick_window_seconds{quantile}` (laatste ~5 s),
+  `bunkcraft_event_loop_lag_seconds{quantile}` (hoe laat timers afgaan: hét overbelastingssignaal),
+  `bunkcraft_gc_pauses_total`, `bunkcraft_gc_pause_seconds_total`, `bunkcraft_gc_pause_max_seconds`,
+  `process_resident_memory_bytes`, `process_heap_used_bytes`, `process_cpu_seconds_total`,
+  `process_main_thread_cpu_seconds_total` (de core waarop alle gamelogica draait; Node 22.19+), `bunkcraft_ws_messages_{received,sent}_total`, `bunkcraft_ws_bytes_{received,sent}_total`,
   `bunkcraft_ws_messages_per_second{direction}`, `bunkcraft_ws_bytes_per_second{direction}`,
   `bunkcraft_rate_limit_hits_total{kind}`, `bunkcraft_connections_refused_total`, `bunkcraft_logins_failed_total`,
   `bunkcraft_inventory_rejects_total`, `bunkcraft_cheat_events_total{rule}`, `bunkcraft_cheat_kicks_total`,
   `bunkcraft_cheat_bans_total`, `bunkcraft_suspicion_flags_total` (arcade anti-cheat, zie SECURITY.md). Scrape-config: `bearer_token: <METRICS_TOKEN>` of scrape lokaal.
+- **Prometheus/Grafana (optioneel, niet standaard):** draai ze liever op een andere machine of als losse compose-stack. Minimale
+  scrape-config:
+
+  ```yaml
+  scrape_configs:
+    - job_name: bunkcraft
+      scheme: https
+      metrics_path: /metrics
+      authorization: { credentials: <METRICS_TOKEN uit .env> }
+      static_configs: [{ targets: ['play.example.com'] }]
+  ```
+
+  Nuttige panelen/alerts: `bunkcraft_players`, `bunkcraft_event_loop_lag_seconds{quantile="0.99"} > 0.02` (5 min),
+  `bunkcraft_tick_window_seconds{quantile="0.99"}`, `rate(process_main_thread_cpu_seconds_total[5m]) > 0.6` (tijd voor een
+  grotere server of een tweede proces), `process_resident_memory_bytes`, `rate(bunkcraft_ws_bytes_sent_total[5m])`.
 - **Afsluiten (SIGTERM/SIGINT):** de server stopt met nieuwe verbindingen, slaat alle werelden op, stuurt elke speler
   `kick` met `reconnect: <ms>` en sluit de sockets met code 1012. De client toont "Server restarting" en probeert tot vijf keer
   zelf opnieuw te joinen. Docker stuurt SIGTERM en wacht 10 seconden: ruim genoeg.
@@ -255,7 +334,33 @@ docker build -t bunkcraft .
 docker run -d -p 3000:3000 -v bunkcraft-data:/app/data -e GAMEMODE=survival --name bunkcraft bunkcraft
 ```
 
-De wereld staat in het volume `bunkcraft-data` en overleeft herstarts en updates.
+De wereld staat in het volume `bunkcraft-data` en overleeft herstarts en updates. De image bevat alleen Node, `dist/` en
+`dist-server/index.js` (geen `node_modules`, geen TypeScript tijdens het draaien). Standaard
+`NODE_OPTIONS=--max-old-space-size=384 --max-semi-space-size=16`; `docker-compose.yml` zet geheugen- (`BUNKCRAFT_MEMORY`,
+standaard 640m), CPU- (`BUNKCRAFT_CPUS`) en heap-limiet (`BUNKCRAFT_NODE_OPTIONS`) via `.env`, roteert de logs (3 × 10 MB) en
+herstart bij een crash.
+
+## Zonder Docker (systemd)
+
+Voor wie liever geen Docker draait: Node.js 22+ en Caddy uit de pakketbronnen, de server als systemd-service.
+
+```bash
+# Node.js 24 LTS (NodeSource) en Caddy (apt.caddyserver.com, zie caddyserver.com/docs/install)
+sudo git clone https://github.com/stijnvandepol/Bunkcraft.git /opt/bunkcraft && cd /opt/bunkcraft
+sudo npm ci && sudo npm run build                     # dist/ en dist-server/
+echo "ADMIN_TOKEN=$(openssl rand -hex 24)" | sudo tee /etc/bunkcraft.env && sudo chmod 600 /etc/bunkcraft.env
+sudo cp deploy/bunkcraft.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now bunkcraft
+# Caddy: dezelfde Caddyfile, met de upstream op localhost
+sudo cp Caddyfile /etc/caddy/Caddyfile
+sudo mkdir -p /etc/systemd/system/caddy.service.d
+printf '[Service]\nEnvironment=DOMAIN=play.example.com UPSTREAM=127.0.0.1:3000\n' | sudo tee /etc/systemd/system/caddy.service.d/bunkcraft.conf
+sudo systemctl daemon-reload && sudo systemctl restart caddy
+```
+
+De service draait als tijdelijke gebruiker (`DynamicUser`), luistert alleen op `127.0.0.1`, bewaart de werelden in
+`/var/lib/bunkcraft` en is dichtgezet (`ProtectSystem=strict`, geen capabilities). Updaten:
+`cd /opt/bunkcraft && sudo git pull && sudo npm ci && sudo npm run build && sudo systemctl restart bunkcraft`.
+Back-up: `tar -czf bunkcraft-$(date +%F).tar.gz -C /var/lib bunkcraft` (de bestanden worden atomair geschreven).
 
 ## Achter een reverse proxy (HTTPS)
 
@@ -282,7 +387,8 @@ server {
 ```
 
 Met **Caddy** volstaat `bunkcraft.example.com { reverse_proxy 127.0.0.1:3000 }`. Caddy regelt
-HTTPS en WebSockets automatisch.
+HTTPS en WebSockets automatisch. De meegeleverde `Caddyfile` doet hetzelfde plus de beveiligingsheaders; zet daarvoor
+`DOMAIN` en `UPSTREAM=127.0.0.1:3000` in Caddy's omgeving (zie *Zonder Docker*).
 
 ## Wat de server doet
 

@@ -414,7 +414,7 @@ export async function startServer(config: Config): Promise<RunningServer> {
 
   await new Promise<void>((resolve, reject) => {
     http.once('error', reject);
-    http.listen(config.port, () => resolve());
+    http.listen(config.port, config.host, () => resolve());
   });
   const port = (http.address() as AddressInfo).port;
   log.info('server started', {
