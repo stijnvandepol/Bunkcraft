@@ -3,7 +3,7 @@ import { ARENA_FLOOR_Y, ARENA_SPAWNS, ArenaGenerator } from '../src/modes/arena'
 import { TEAM } from '../src/modes/maps/ArenaMap';
 import { DEFAULT_MAP, MAPS, MAP_IDS, getMap, nextMap, parseMapId, parseMapSetting } from '../src/modes/maps';
 import { traceBlocks } from '../server/Combat';
-import { BLOCK, BLOCK_DEFS, SOLID } from '../src/world/BlockRegistry';
+import { BLOCK, BLOCK_DEFS, SOLID, TALL } from '../src/world/BlockRegistry';
 import { CHUNK_SIZE, CHUNK_VOLUME, blockIndex } from '../src/world/constants';
 import { arenaMapOf, arenaWorldType, createGenerator, isArenaWorld } from '../src/world/WorldGenerator';
 
@@ -72,7 +72,8 @@ describe('arena maps', () => {
         // Flood fill over standing spots (x, z, surface y), so floors under roofs and decks count.
         // A step up may be 1 block (a jump), drops are free; head room is 2 blocks.
         const air = (x: number, y: number, z: number) => at(x, y, z) === BLOCK.AIR;
-        const standable = (x: number, y: number, z: number) => SOLID[at(x, y, z)] === 1 && air(x, y + 1, z) && air(x, y + 2, z);
+        // Fences, walls and gates are 1.5 high: nobody stands on them.
+        const standable = (x: number, y: number, z: number) => SOLID[at(x, y, z)] === 1 && !TALL[at(x, y, z)] && air(x, y + 1, z) && air(x, y + 2, z);
         const key = (x: number, z: number, y: number) => ((x + 100) * 1000 + (z + 100)) * 1000 + y;
         const sx = Math.floor(map.spawns.ffa[0].x), sz = Math.floor(map.spawns.ffa[0].z);
         const seen = new Set<number>([key(sx, sz, ARENA_FLOOR_Y)]);
@@ -86,6 +87,8 @@ describe('arena maps', () => {
               if (!standable(nx, ny, nz) || seen.has(key(nx, nz, ny))) continue;
               // The body passes through the neighbour column at the old head height too.
               if (ny <= y && !(air(nx, y + 1, nz) && air(nx, y + 2, nz))) continue;
+              // A jump up needs head room above the take-off spot (a ceiling 2 blocks up stops it).
+              if (ny > y && !air(x, y + 3, z)) continue;
               seen.add(key(nx, nz, ny));
               queue.push([nx, nz, ny]);
             }
