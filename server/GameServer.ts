@@ -4,9 +4,9 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameS
 import { join } from 'node:path';
 import type { WebSocket } from 'ws';
 import {
-  type ClientMessage, NAME_PATTERN, PROTOCOL_VERSION, type PlayerRecord, SNAP_FLAG_STALE, type ServerMessage, type SnapshotEntry, sanitizeChat,
+  type ClientMessage, type MatchPhase, NAME_PATTERN, PROTOCOL_VERSION, type PlayerRecord, SNAP_FLAG_STALE, type ServerMessage, type SnapshotEntry, sanitizeChat,
 } from '../src/net/protocol';
-import { ARENA_FLOOR_Y, DEFAULT_MAP, type MapId, type MapSetting, getMap, mapFor, nextMap, parseMapId, parseMapSetting } from '../src/modes/maps';
+import { ARENA_FLOOR_Y, DEFAULT_MAP, type MapId, type MapSetting, getMap, mapFor, nextMap, parseMapId, parseMapSetting, voteChoices } from '../src/modes/maps';
 import { type GameType, gameTypeDef } from '../src/modes/GameTypes';
 import { GAME_MODES, type GameMode, hasSurvivalRules } from '../src/player/GameMode';
 import { BINARY_VERSION, encodeBinary, encodeSnap, encodeSnapQ } from '../src/net/binary';
@@ -30,6 +30,7 @@ import { ContainerService } from './Containers';
 import type { SavedEntity } from '../src/world/BlockEntities';
 import { type Actor, type BanEntry, type CommandHost, type Moderation, type Target, lc, runCommand } from './Commands';
 import { InventoryGuard, parseInventory } from './InventoryGuard';
+import { POSE_SAMPLE_DELAY_MS, type Pose, PoseTrail } from './PoseTrail';
 import { type ChildLogger, log } from './Log';
 import { metrics } from './Metrics';
 import { ArcadeGuard } from './anticheat/ArcadeGuard';
@@ -37,6 +38,7 @@ import { ORIGIN_TOLERANCE, isUnitVector, originError, viewDir } from './antichea
 import { AimStats, SUSPICION } from './anticheat/Suspicion';
 import { Send, type Viewer, Visibility } from './anticheat/Visibility';
 import type { ShotReport } from './Match';
+import type { ChunkGenPool } from './chunkgen/ChunkGenPool';
 import { type RateLimiter, hashIp, newToken, safeEqual, tokenMatches, verifyPassword, hashToken } from './Security';
 
 const TICK_MS = 50; // 20 ticks per second, like Minecraft
@@ -90,6 +92,8 @@ interface WorldData extends SurvivalData {
   timeLimitSec?: number;
   /** Arcade: a map id, or "rotate" for the next map after every match (absent = the default map). */
   mapId?: MapSetting;
+  /** Players this game takes (a Realms lobby size); absent = the server's limit. Never above the server's limit. */
+  maxPlayers?: number;
   /** Hash of the owner token handed out when the game was created (see Security.ts). */
   ownerHash?: string;
   /** scrypt hash of the room password; never sent to clients. */
@@ -137,6 +141,8 @@ interface Session {
   id: number;
   name: string;
   ws: WebSocket;
+  /** Hash of the identity key sent in hello (open lobbies tell two players with one name apart by it). */
+  keyHash?: string;
   x: number; y: number; z: number;
   yaw: number; pitch: number;
   flags: number; held: number;
@@ -178,6 +184,8 @@ interface Session {
   /** Arcade: aim statistics (suspicion score) and the time of the last shot (ms). */
   aim: AimStats;
   lastFireAt: number;
+  /** Recent position reports on the receive timeline: snapshots sample them at one fixed moment (see PoseTrail). */
+  trail: PoseTrail;
 }
 
 export interface ServerOptions {
@@ -209,6 +217,8 @@ export interface ServerOptions {
   inventoryGuard?: 'enforce' | 'warn' | 'off';
   /** Send snap/ent as binary frames to clients that ask for it (default on). */
   binary?: boolean;
+  /** Chunk generation threads shared by all games (CHUNK_WORKERS); absent = generate on the main thread. */
+  genPool?: ChunkGenPool | null;
   /** Called when something changed that the room list shows (name, listing, password). */
   onMetaChange?: () => void;
   /** Arcade: server tick rate in Hz (default 30; env ARCADE_TICK_HZ, clamped to 10-60). */
@@ -222,6 +232,10 @@ export interface ServerOptions {
   scoreLimit?: number;
   timeLimitSec?: number;
   mapId?: MapSetting;
+  /** A rotating game: the map of its first match (not saved; after a restart rotation goes on from the default map). */
+  startMap?: MapId;
+  /** For a new game: its own player limit (a Realms lobby size), at most `maxPlayers`. */
+  lobbySize?: number;
 }
 
 /**
@@ -257,6 +271,10 @@ export class GameServer {
   /** Arcade: per-recipient snapshot culling (anti-wallhack); null when switched off. */
   private readonly visibility: Visibility | null = null;
   private readonly viewers: Viewer[] = [];
+  /** Steady snapshot clock (ms): the moment each Minecraft snapshot shows, one tick apart (see tick()). */
+  private snapClock = 0;
+  /** Scratch pose for the snapshot (no allocation per tick). */
+  private readonly pose: Pose = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0 };
   private readonly staleAt = { x: 0, y: 0, z: 0 };
   /** Chests and furnaces: who has which open, click validation, updates (null in arcade games). */
   private readonly containers: ContainerService | null = null;
@@ -282,7 +300,7 @@ export class GameServer {
     const def = gameTypeDef(this.world.gameType ?? 'minecraft');
     if (def.arcade) {
       this.mapSetting = parseMapSetting(this.world.mapId) ?? DEFAULT_MAP;
-      const first: MapId = mapFor(parseMapId(this.mapSetting) ?? DEFAULT_MAP, def.requires);
+      const first: MapId = mapFor(parseMapId(this.mapSetting) ?? parseMapId(opts.startMap) ?? DEFAULT_MAP, def.requires);
       this.loadArena(first);
       this.guard = new ArcadeGuard(
         { getBlock: (x, y, z) => this.arena!.getBlock(x, y, z), getMeta: (x, y, z) => this.arena!.getMeta(x, y, z) },
@@ -304,7 +322,7 @@ export class GameServer {
       },
       recordEdit: (x, y, z, id, meta) => { this.world.edits[`${x},${y},${z}`] = packState(id, meta); this.dirty = true; },
       skyDarkness: () => this.weather.skyDarkness,
-    }, () => this.world.time, this.world.genVersion);
+    }, () => this.world.time, this.world.genVersion, opts.genPool ?? null);
     if (this.entities) {
       const ents = this.entities;
       this.survival = new ServerSurvival({
@@ -391,6 +409,7 @@ export class GameServer {
     if (this.opts.ownerHash) data.ownerHash = this.opts.ownerHash;
     if (this.opts.passwordHash) data.passwordHash = this.opts.passwordHash;
     if (this.opts.listed) data.listed = true;
+    if (this.opts.lobbySize && this.opts.lobbySize < this.opts.maxPlayers) data.maxPlayers = Math.max(2, Math.floor(this.opts.lobbySize));
     if (def.arcade) {
       data.gameType = def.id;
       data.scoreLimit = this.opts.scoreLimit ?? def.scoreLimit;
@@ -462,6 +481,8 @@ export class GameServer {
     this.closed = true;
     this.dirty = true;
     this.save();
+    // Chunks still being generated for this game are no longer needed.
+    this.entities?.world.dispose();
     for (const s of this.sessions.values()) {
       this.send(s, reconnectMs ? { t: 'kick', reason: 'Server restarting', reconnect: reconnectMs } : { t: 'kick', reason });
       try { s.ws.close(reconnectMs ? 1012 : 1001, 'Server closed'); } catch { /* already closed */ }
@@ -520,10 +541,27 @@ export class GameServer {
     map?: MapSetting;
   } {
     return {
-      name: this.world.name, gameMode: this.world.gameMode, players: this.sessions.size, maxPlayers: this.opts.maxPlayers, locked: this.locked,
+      name: this.world.name, gameMode: this.world.gameMode, players: this.sessions.size, maxPlayers: this.maxPlayers, locked: this.locked,
       gameType: this.match?.info.type ?? 'minecraft', scoreLimit: this.match?.info.scoreLimit ?? 0, timeLimitSec: this.match?.info.timeLimitSec ?? 0,
       ...(this.match ? { map: this.mapSetting } : {}),
     };
+  }
+
+  /** An arcade game nobody owns (opened by Realms quick play): names are not claimed there. */
+  private get openLobby(): boolean {
+    return !!this.match && !this.world.ownerHash;
+  }
+
+  /** Players this game takes: its own lobby size when it has one, never more than the server allows. */
+  get maxPlayers(): number {
+    const own = this.world.maxPlayers;
+    return typeof own === 'number' && own >= 2 ? Math.min(own, this.opts.maxPlayers) : this.opts.maxPlayers;
+  }
+
+  /** Arcade: where the match stands, for Realms matchmaking and the lobby list; null in a Minecraft game. */
+  lobbyStatus(): { phase: MatchPhase; timeLeft: number; progress: number; map: string } | null {
+    const m = this.match;
+    return m ? { phase: m.phase, timeLeft: m.timeLeft(), progress: m.progress(), map: m.map.id } : null;
   }
 
   /** The match's view of this server: clock, messages, bullets' world and moving players. */
@@ -538,6 +576,7 @@ export class GameServer {
         const s = this.sessions.get(id);
         if (!s) return;
         s.x = x; s.y = y; s.z = z;
+        s.trail.reset();
         s.hasPos = true;
         s.lastPosTime = Date.now();
         s.awaiting = { x, y, z, until: Date.now() + 1500 };
@@ -548,12 +587,14 @@ export class GameServer {
       ping: (id) => this.sessions.get(id)?.pingMs ?? 0,
       onShot: (r) => this.onShot(r),
       get interpDelay() { return arcadeInterpDelay(gs.tickHz); },
-      nextMap: (current, requires) => {
+      nextMap: (current, requires, preferred) => {
         if (this.mapSetting !== 'rotate') return null;
-        const next = nextMap(parseMapId(current) ?? DEFAULT_MAP, requires);
+        const voted = parseMapId(preferred);
+        const next = voted && getMap(voted).supports(requires) ? voted : nextMap(parseMapId(current) ?? DEFAULT_MAP, requires);
         this.loadArena(next);
         return next;
       },
+      voteMaps: (current, requires) => (this.mapSetting === 'rotate' ? voteChoices(parseMapId(current) ?? DEFAULT_MAP, requires, Math.random) : null),
     };
   }
 
@@ -652,7 +693,8 @@ export class GameServer {
       if (ban) return kick(`You are banned from this game: ${ban.reason}`, 'banned');
     }
     // A name belongs to the browser that first used it (identity key), so nobody can take over an operator.
-    const claim = this.claimOf(name);
+    // Open lobbies (Realms quick play, nobody owns them) keep no names: strangers come and go, a name is only taken while it plays.
+    const claim = this.openLobby ? undefined : this.claimOf(name);
     if (claim && !owner && !tokenMatches(key, claim)) {
       return kick('This name is already used by another player. Pick another name.', 'identity');
     }
@@ -664,9 +706,11 @@ export class GameServer {
     const proceed = () => this.finishLogin(ws, ip, name, hello, { owner, verified, key });
     const hash = this.world.passwordHash;
     if (!hash || owner) return proceed();
-    // Password: refuse before doing any work when this address failed too often.
+    // Password: refuse before doing any work when this address failed too often for THIS game (per game, so one
+    // housemate's typos in one game do not lock the whole household out of every other game).
     const limiter = this.opts.failLimiter;
-    if (limiter && !limiter.allowed(ip)) {
+    const limitKey = `${this.opts.label ?? 'main'}|${ip}`;
+    if (limiter && !limiter.allowed(limitKey)) {
       metrics.rateLimited('password');
       return kick('Too many wrong passwords. Try again in a few minutes.', 'password');
     }
@@ -675,7 +719,7 @@ export class GameServer {
     return verifyPassword(password, hash).then((ok) => {
       if (this.closed || ws.readyState !== ws.OPEN) return null;
       if (!ok) {
-        limiter?.record(ip);
+        limiter?.record(limitKey);
         return kick('Wrong password.', 'password');
       }
       return proceed();
@@ -686,6 +730,15 @@ export class GameServer {
     ws: WebSocket, ip: string, name: string, hello: Extract<ClientMessage, { t: 'hello' }>,
     who: { owner: boolean; verified: boolean; key: string | null },
   ): Session | null {
+    const keyHash = who.key ? hashToken(who.key) : undefined;
+    if (this.openLobby) {
+      for (const s of this.sessions.values()) {
+        if (s.name.toLowerCase() !== name.toLowerCase() || (keyHash && s.keyHash === keyHash)) continue;
+        ws.send(JSON.stringify({ t: 'kick', reason: 'Somebody with this name is already playing in this lobby. Pick another name.', code: 'identity' } satisfies ServerMessage));
+        ws.close(1008, 'Name in use');
+        return null;
+      }
+    }
     // Logging in again from elsewhere replaces the old session, like Minecraft.
     for (const s of this.sessions.values()) {
       if (s.name.toLowerCase() === name.toLowerCase()) {
@@ -694,14 +747,14 @@ export class GameServer {
         this.logout(s);
       }
     }
-    if (this.sessions.size >= this.opts.maxPlayers) {
+    if (this.sessions.size >= this.maxPlayers) {
       metrics.loginsFailed++;
       ws.send(JSON.stringify({ t: 'kick', reason: 'The server is full', code: 'full' } satisfies ServerMessage));
       ws.close(1008, 'The server is full');
       return null;
     }
     // First login with an identity key claims the name (bounded, so names cannot bloat world.json).
-    if (who.key && !this.claimOf(name) && Object.keys(this.world.claims!).length < MAX_CLAIMS) {
+    if (who.key && !this.openLobby && !this.claimOf(name) && Object.keys(this.world.claims!).length < MAX_CLAIMS) {
       // defineProperty: a name like "__proto__" must become an own entry, not touch the prototype.
       Object.defineProperty(this.world.claims!, lc(name), { value: hashToken(who.key), enumerable: true, writable: true, configurable: true });
       this.dirty = true;
@@ -716,7 +769,7 @@ export class GameServer {
     const start = record ?? this.world.spawn;
     const initial = parseInventory(record?.inventory);
     const session: Session = {
-      id: this.nextId++, name, ws, ip, op, owner: who.owner, verified: who.verified,
+      id: this.nextId++, name, ws, ip, op, owner: who.owner, verified: who.verified, keyHash,
       bin: hello.bin === true && this.opts.binary !== false,
       binq: hello.bin === true && this.opts.binary !== false && !!this.match && Number(hello.binv) >= BINARY_VERSION,
       guard: new InventoryGuard(initial.error ? [] : initial.slots),
@@ -726,7 +779,7 @@ export class GameServer {
       drops: new Bucket(30, 60, 'drops'), takes: new Bucket(20, 30, 'takes'),
       chat: new Bucket(1, 5, 'chat'), moves: new Bucket(40, 80, 'moves'), states: new Bucket(0.5, 10, 'states'), containers: new Bucket(20, 40, 'containers'),
       fires: new Bucket(25, 30, 'fires'), actions: new Bucket(15, 30, 'actions'), violations: 0,
-      pingMs: 0, pingSentAt: 0, awaiting: null, velX: 0, velY: 0, velZ: 0, aim: new AimStats(), lastFireAt: 0,
+      pingMs: 0, pingSentAt: 0, awaiting: null, velX: 0, velY: 0, velZ: 0, aim: new AimStats(), lastFireAt: 0, trail: new PoseTrail(),
     };
     const joined = this.match?.join(session.id, name) ?? null;
     if (joined) {
@@ -897,7 +950,10 @@ export class GameServer {
       case 'fire': return void (s.fires.take() && this.onFire(s, msg, match));
       case 'reload': return void (s.actions.take() && match.reload(s.id, Number(msg.slot)));
       case 'weapon': return void (s.actions.take() && match.switchWeapon(s.id, Number(msg.slot)));
-      case 'loadout': return void (s.actions.take() && match.setLoadout(s.id, String(msg.primary), msg.secondary === undefined ? undefined : String(msg.secondary)));
+      case 'vote': return void (s.actions.take() && match.castVote(s.id, Number(msg.map)));
+      case 'loadout': return void (s.actions.take() && match.setLoadout(
+        s.id, String(msg.primary), optStr(msg.secondary), optStr(msg.optic), optStr(msg.perk),
+      ));
       case 'block':
         // Nobody builds in an arcade game: roll the client's guess back.
         return this.send(s, { t: 'reject', seq: msg.seq, x: msg.x, y: msg.y, z: msg.z, id: this.arena!.getBlock(msg.x | 0, msg.y | 0, msg.z | 0) });
@@ -962,6 +1018,7 @@ export class GameServer {
     s.flags = m.flags | 0; s.held = m.held | 0;
     s.hasPos = true;
     s.lastPosTime = now;
+    s.trail.push(now, s.x, s.y, s.z, s.yaw, s.pitch);
     this.match?.setPosition(s.id, s.x, s.y, s.z, s.yaw, s.pitch);
   }
 
@@ -1028,6 +1085,7 @@ export class GameServer {
     if (!r.lag) this.logger.warn('cheat', { name: s.name, kind: 'movement', rule: r.rule, strikes: Math.round(r.strikes * 10) / 10, action: r.action });
     if (r.action === 'correct' || s.owner) {
       s.x = at.x; s.y = at.y; s.z = at.z;
+      s.trail.reset();
       s.awaiting = { x: at.x, y: at.y, z: at.z, until: Date.now() + 1500 };
       this.match?.setPosition(s.id, s.x, s.y, s.z, s.yaw, s.pitch);
       this.send(s, { t: 'teleport', x: at.x, y: at.y, z: at.z });
@@ -1063,11 +1121,14 @@ export class GameServer {
     if (y < 1 || y > 127) return reject();
     if (id !== 0 && (!getBlockDef(id) || id === BLOCK.BEDROCK || id === BLOCK.UNLOADED)) return reject();
     if (!isValidMeta(id, meta)) return reject();
-    // Saplings, sugar cane and cactus only where they can stand (the client checks the same rule).
-    if (this.entities && needsSupport(id) && !plantCanStand(id, (a, b, c) => this.entities!.world.getBlock(a, b, c), x, y, z)) return reject();
     // Reach: distance from the player's eyes to the block centre.
     const d = Math.hypot(x + 0.5 - s.x, y + 0.5 - (s.y + 1.62), z + 0.5 - s.z);
     if (!s.hasPos || d > REACH) return reject();
+    // Within reach, so next to the player: if the worker pool has not delivered that chunk yet, make it here, so the
+    // checks below and the inventory credit see the real block instead of UNLOADED.
+    this.entities?.world.ensureChunk(x, z);
+    // Saplings, sugar cane and cactus only where they can stand (the client checks the same rule).
+    if (this.entities && needsSupport(id) && !plantCanStand(id, (a, b, c) => this.entities!.world.getBlock(a, b, c), x, y, z)) return reject();
     // Two players changed this block at the same moment: the one whose view is stale loses, and gets the server's
     // block back right after the reject (otherwise his screen keeps the other player's edit overwritten by his own).
     if (this.entities && typeof m.prev === 'number') {
@@ -1077,11 +1138,20 @@ export class GameServer {
         return this.send(s, blockMessage(x, y, z, current, this.entities.world.getMeta(x, y, z)));
       }
     }
-    // Breaking a block lets this player's client spawn its drop (see InventoryGuard.creditBreak).
-    if (id === 0 && this.entities && this.guarded()) {
-      const old = this.entities.world.getBlock(x, y, z);
+    if (this.entities && this.guarded()) {
+      const w = this.entities.world;
+      const raw = w.getBlock(x, y, z);
+      const old = raw === BLOCK.UNLOADED ? BLOCK.AIR : raw;
+      const oldMeta = raw === BLOCK.UNLOADED ? 0 : w.getMeta(x, y, z);
+      // A placed block must come out of the inventory (or be crafted from it): no diamond ore out of nothing.
+      if (!s.guard.authorizeEdit({ x, y, z }, old, oldMeta, id, meta, w.getBlock(x, y + 1, z))) {
+        metrics.inventoryRejects++;
+        this.logger.warn('unbacked place', { name: s.name, block: id, meta, mode: this.guardMode });
+        if (this.guardMode === 'enforce') return reject();
+      }
+      // Breaking a block lets this player's client spawn its drop (see InventoryGuard.creditBreak).
       // The state byte matters: red wool drops red wool, a double slab two slabs.
-      if (old > 0) s.guard.creditBreak(old, this.entities.world.getMeta(x, y, z));
+      if (id === 0 && old > 0) s.guard.creditBreak(old, oldMeta);
     }
     this.entities?.setBlock(x, y, z, id, meta); // records the edit and updates what the mobs see
     this.broadcast(blockMessage(x, y, z, id, meta), s.id);
@@ -1162,6 +1232,7 @@ export class GameServer {
         const p = self.findSession(name);
         if (!p) return;
         p.x = x; p.y = y; p.z = z;
+        p.trail.reset();
         p.hasPos = true;
         p.awaiting = { x, y, z, until: Date.now() + 1500 };
         self.guard?.reset(p.id, x, y, z, Date.now() / 1000);
@@ -1280,9 +1351,19 @@ export class GameServer {
     if (this.visibility && this.match && this.match.phase !== 'warmup' && this.match.phase !== 'ended') this.sendCulledSnapshots();
     else {
       const players: SnapshotEntry[] = [];
+      // Minecraft games: everybody's pose at one moment slightly in the past (even steps, see PoseTrail). Arcade keeps
+      // the newest report: its lag compensation and tick rate are built around that.
+      // The sample times advance by one tick (setInterval fires a few ms early or late; sampling at "now" would turn
+      // that into uneven steps) and drift slowly towards the real clock. A real stall resyncs it.
+      const now = Date.now();
+      const expected = this.snapClock + TICK_MS;
+      this.snapClock = Math.abs(now - expected) > 2 * TICK_MS ? now : expected + (now - expected) * 0.1;
+      const at = this.snapClock - POSE_SAMPLE_DELAY_MS;
+      const pose = this.pose;
       for (const s of this.sessions.values()) {
         if (!s.hasPos) continue;
-        players.push([s.id, round(s.x), round(s.y), round(s.z), round(s.yaw), round(s.pitch), s.flags, s.held]);
+        if (this.match || !s.trail.sample(at, pose)) { pose.x = s.x; pose.y = s.y; pose.z = s.z; pose.yaw = s.yaw; pose.pitch = s.pitch; }
+        players.push([s.id, round(pose.x), round(pose.y), round(pose.z), round(pose.yaw), round(pose.pitch), s.flags, s.held]);
       }
       if (players.length > 0) this.broadcast({ t: 'snap', players });
     }
@@ -1421,4 +1502,9 @@ const MAX_ITEM_DATA = 40;
 function enchantData(raw: unknown): Record<string, number> | undefined {
   if (!Array.isArray(raw)) return undefined;
   return enchantsOf(decodeData(raw.slice(0, MAX_ITEM_DATA).map(Number)));
+}
+
+/** An optional string field of a client message (anything else is treated as absent). */
+function optStr(v: unknown): string | undefined {
+  return v === undefined || v === null ? undefined : String(v).slice(0, 32);
 }

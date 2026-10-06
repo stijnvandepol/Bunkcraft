@@ -1,10 +1,21 @@
 # BunkCraft on your own domain with automatic HTTPS (Caddy gets the certificate).
 #
+#   Fresh Ubuntu/Debian server:  sudo ./scripts/install.sh --domain play.example.com
+#   By hand:
 #   1. Point an A/AAAA record for your domain at this server (ports 80 and 443 open).
 #   2. DOMAIN=play.example.com docker compose up -d
 #   3. Open https://play.example.com and press Multiplayer → Create Game.
 #
-# Optional settings go in a .env file next to this one (see docs/SERVER.md).
+# Optional settings go in a .env file next to this one (see docs/SERVER.md). Updates: ./scripts/update.sh.
+# Resource limits below are sized from the load tests in docs/research/SERVER-DEPLOY.md.
+
+# Docker's default json-file log grows without bound: rotate it (3 × 10 MB per container).
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "3"
+
 services:
   bunkcraft:
     build: .
@@ -16,9 +27,13 @@ services:
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
-    mem_limit: 1g
-    cpus: 2
+    # The V8 heap limit (NODE_OPTIONS, 384 MB by default) stays well below the container limit, so an
+    # overload shows up as a slower GC first, not as the kernel's OOM killer. 80 players measured ~290 MB RSS.
+    mem_limit: ${BUNKCRAFT_MEMORY:-640m}
+    # At most the number of cores of the machine (Docker refuses more); install.sh writes it to .env.
+    cpus: ${BUNKCRAFT_CPUS:-1}
     pids_limit: 256
+    logging: *logging
     # SIGTERM saves every game and tells players to reconnect; give it time to finish.
     stop_grace_period: 15s
     environment:
@@ -40,7 +55,11 @@ services:
       MAX_CONN_PER_IP: ${MAX_CONN_PER_IP:-10}
       INVENTORY_GUARD: ${INVENTORY_GUARD:-enforce}
       BACKUP_KEEP: ${BACKUP_KEEP:-12}
+      ROOM_IDLE_UNLOAD_MIN: ${ROOM_IDLE_UNLOAD_MIN:-5}
+      # Terrain generation threads; empty = min(2, BUNKCRAFT_CPUS − 1), 0 = on the main thread (docs/SERVER.md).
+      CHUNK_WORKERS: ${CHUNK_WORKERS:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      NODE_OPTIONS: ${BUNKCRAFT_NODE_OPTIONS:---max-old-space-size=384 --max-semi-space-size=16}
     volumes:
       - bunkcraft-data:/app/data
     healthcheck:
@@ -48,16 +67,19 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+      start_period: 10s
 
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
     depends_on:
-      - bunkcraft
+      bunkcraft:
+        condition: service_healthy
     security_opt:
       - no-new-privileges:true
     mem_limit: 256m
     pids_limit: 256
+    logging: *logging
     ports:
       - "80:80"
       - "443:443"

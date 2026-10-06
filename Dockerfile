@@ -1,34 +1,35 @@
 # BunkCraft: game + multiplayer server in one container (multi-stage, non-root).
 #
 # Pin the base image by digest for reproducible builds (docs/SECURITY.md):
-#   docker buildx imagetools inspect node:22-alpine   ->  FROM node:22-alpine@sha256:...
-ARG NODE_IMAGE=node:22-alpine
+#   docker buildx imagetools inspect node:24-alpine   ->  FROM node:24-alpine@sha256:...
+# Node 24 is the current LTS; the server bundle targets Node 22+ (docs/research/SERVER-DEPLOY.md).
+ARG NODE_IMAGE=node:24-alpine
 
-# ---- build: all dependencies, type check and bundle the client ----
+# ---- build: all dependencies, type check, client bundle (dist/) and server bundle (dist-server/) ----
 FROM ${NODE_IMAGE} AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN npm ci --no-audit --no-fund
 COPY . .
 RUN npm run build
 
-# ---- runtime: production dependencies only (ws, fflate, tsx) and no build tools ----
+# ---- runtime: plain Node and two build outputs. No node_modules, no TypeScript at runtime. ----
 FROM ${NODE_IMAGE}
 WORKDIR /app
-ENV NODE_ENV=production PORT=3000 DATA_DIR=/app/data
-COPY package.json package-lock.json ./
-RUN npm ci --omit=dev && npm cache clean --force
+# Heap limits fit the compose memory limit (docker-compose.yml); measured in docs/research/SERVER-DEPLOY.md.
+ENV NODE_ENV=production PORT=3000 DATA_DIR=/app/data \
+    NODE_OPTIONS="--max-old-space-size=384 --max-semi-space-size=16"
+# The server reads its version from package.json; dist-server/index.js bundles ws and the shared game code,
+# dist-server/genWorker.js is the chunk generation thread (CHUNK_WORKERS).
+COPY package.json ./
 COPY --from=build /app/dist ./dist
-COPY tsconfig.json ./
-COPY server ./server
-# The server shares the protocol, terrain and block code with the client.
-COPY src ./src
+COPY --from=build /app/dist-server/index.js /app/dist-server/genWorker.js ./dist-server/
 # The world (edits, players, time) lives here; the unprivileged "node" user owns it. Mount a volume to keep it.
 RUN mkdir -p /app/data && chown node:node /app/data
 VOLUME ["/app/data"]
 USER node
 EXPOSE 3000
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD wget -qO- http://127.0.0.1:3000/health >/dev/null || exit 1
 # node (not npm) is PID 1 so SIGTERM reaches the server and it saves the worlds before exiting.
-CMD ["node", "--import", "tsx", "server/index.ts"]
+CMD ["node", "dist-server/index.js"]

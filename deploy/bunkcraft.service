@@ -1,0 +1,55 @@
+# BunkCraft without Docker: a systemd service for the bundled server (docs/SERVER.md, "Zonder Docker").
+#
+#   sudo cp deploy/bunkcraft.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now bunkcraft
+#
+# Expects the code in /opt/bunkcraft after `npm ci && npm run build` (dist/ + dist-server/), Node.js 22+ in
+# /usr/bin/node, and Caddy (or nginx) on the same machine in front of 127.0.0.1:3000.
+# Settings: /etc/bunkcraft.env (KEY=value lines, see docs/SERVER.md), e.g. ADMIN_TOKEN=...
+[Unit]
+Description=BunkCraft game server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/bunkcraft
+# Heap limits as in the Docker image (docs/research/SERVER-DEPLOY.md); raise both with MemoryMax on bigger machines.
+ExecStart=/usr/bin/node --max-old-space-size=384 --max-semi-space-size=16 dist-server/index.js
+Environment=NODE_ENV=production PORT=3000 HOST=127.0.0.1 TRUST_PROXY=1 DATA_DIR=/var/lib/bunkcraft LOG_FORMAT=json
+EnvironmentFile=-/etc/bunkcraft.env
+# A throw-away user per start; the worlds live in /var/lib/bunkcraft (StateDirectory keeps them).
+DynamicUser=yes
+StateDirectory=bunkcraft
+StateDirectoryMode=0700
+# SIGTERM: the server saves every world and tells players to reconnect.
+KillSignal=SIGTERM
+TimeoutStopSec=15
+Restart=always
+RestartSec=2
+MemoryMax=640M
+TasksMax=256
+LimitNOFILE=65536
+
+# Hardening (V8 needs writable+executable memory for its JIT: no MemoryDenyWriteExecute).
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

@@ -6,8 +6,9 @@ import { CHUNK_AREA, CHUNK_HEIGHT, CHUNK_VOLUME, SEA_LEVEL, blockIndex } from '.
 import { GEN_VERSION_CURRENT, GEN_VERSION_LEGACY, normalizeGenVersion } from '../src/world/GenVersion';
 import { createGenerator } from '../src/world/WorldGenerator';
 import { fnv1a } from './helpers';
+import { GOLDEN_SEED, GOLDEN_V1, GOLDEN_V2 } from './helpers/goldenChunks';
 
-const SEED = 12345;
+const SEED = GOLDEN_SEED;
 
 function generate(seed: number, cx: number, cz: number, version = GEN_VERSION_CURRENT): { blocks: Uint8Array; biomes: Uint8Array } {
   const blocks = new Uint8Array(CHUNK_VOLUME);
@@ -16,23 +17,7 @@ function generate(seed: number, cx: number, cz: number, version = GEN_VERSION_CU
   return { blocks, biomes };
 }
 
-/**
- * Golden hashes (FNV-1a over the chunk bytes) for a fixed seed. If world generation is
- * changed on purpose, existing worlds change too: add a new generator version instead of updating
- * the hashes of an old one (version 1 hashes below must never change: they prove old worlds are intact).
- */
-const GOLDEN_V1: [number, number, number, number][] = [
-  // [cx, cz, blocks hash, biomes hash]
-  [0, 0, 0xf29319c7, 0x87f698b0],
-  [3, -2, 0x1f82108e, 0xef78e905],
-  [-7, 11, 0xc58d641b, 0x2e9aeac5],
-];
-
-const GOLDEN_V2: [number, number, number, number][] = [
-  [0, 0, 0xaa0ae40d, 0x87f698b0],
-  [3, -2, 0xd280fd9f, 0xef78e905],
-  [-7, 11, 0x1e8e8fa7, 0x2e9aeac5],
-];
+// The golden hashes live in helpers/goldenChunks.ts (the server's worker-thread generation is checked against them too).
 
 describe('TerrainGenerator version 1 (worlds created before generator versioning)', () => {
   it.each(GOLDEN_V1)('chunk (%i, %i) matches its golden hash', (cx, cz, blocksHash, biomesHash) => {

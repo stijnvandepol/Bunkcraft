@@ -1,10 +1,13 @@
 import { join, resolve } from 'node:path';
 import type { GameMode } from '../src/player/GameMode';
 import { parseGameMode } from './GameServer';
+import { chunkWorkerCount } from './chunkgen/ChunkGenPool';
 
 /** Everything the server reads from the environment, in one typed place (documented in docs/SERVER.md). */
 export interface Config {
   port: number;
+  /** Listen address (HOST); unset = every interface. 127.0.0.1 behind a reverse proxy on the same machine. */
+  host?: string;
   /** Directory with the built game. */
   staticDir: string;
   dataDir: string;
@@ -19,6 +22,8 @@ export interface Config {
   maxRooms: number;
   roomMaxPlayers: number;
   roomExpireDays: number;
+  /** Minutes an empty game stays in memory before it is saved and unloaded (default 5). */
+  roomIdleUnloadMin: number;
   roomCreateLimit: number;
   /** Bearer token for /api/admin/* and /admin; unset = admin API disabled. */
   adminToken?: string;
@@ -41,6 +46,8 @@ export interface Config {
   passwordFailLimit: number;
   /** Milliseconds clients are told to wait before reconnecting after a restart. */
   reconnectHintMs: number;
+  /** Chunk generation threads (CHUNK_WORKERS): default min(2, cores − 1), 0 = on the main thread. */
+  chunkWorkers: number;
 }
 
 const flag = (v: string | undefined, dflt: boolean): boolean => (v === undefined || v === '' ? dflt : !/^(0|off|false|no)$/i.test(v));
@@ -54,6 +61,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const guard = (env.INVENTORY_GUARD ?? 'enforce').toLowerCase();
   return {
     port: num(env.PORT, 3000),
+    host: env.HOST || undefined,
     staticDir: resolve(env.STATIC_DIR ?? 'dist'),
     dataDir: resolve(env.DATA_DIR ?? 'data'),
     trustProxy: flag(env.TRUST_PROXY, false),
@@ -67,6 +75,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     maxRooms: num(env.MAX_ROOMS, 200),
     roomMaxPlayers: num(env.ROOM_MAX_PLAYERS, 8),
     roomExpireDays: num(env.ROOM_EXPIRE_DAYS, 60),
+    roomIdleUnloadMin: Math.max(0.1, num(env.ROOM_IDLE_UNLOAD_MIN, 5)),
     roomCreateLimit: num(env.ROOM_CREATE_LIMIT, 6),
     adminToken: env.ADMIN_TOKEN || undefined,
     metricsToken: env.METRICS_TOKEN || undefined,
@@ -81,6 +90,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     listMax: num(env.LIST_MAX, 50),
     passwordFailLimit: num(env.PASSWORD_FAIL_LIMIT, 5),
     reconnectHintMs: num(env.RECONNECT_HINT_MS, 8000),
+    chunkWorkers: chunkWorkerCount(env.CHUNK_WORKERS),
   };
 }
 

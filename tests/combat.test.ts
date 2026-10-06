@@ -55,8 +55,11 @@ describe('weapon table', () => {
       if (w.falloffEnd > w.range) expect(damageAt(w, mid), w.id).toBeCloseTo(w.damage * (1 + w.minDamage) / 2, 6);
     }
     const rifle = weaponDef('rifle')!;
-    expect(damageAt(rifle, 40)).toBe(20);
-    expect(damageAt(rifle, 65)).toBeCloseTo(20 * (1 - 0.5 * 0.4), 6);
+    expect(damageAt(rifle, 32)).toBe(20);
+    expect(damageAt(rifle, 56)).toBeCloseTo(20 * (1 - 0.5 * 0.45), 6);
+    // The suppressor shortens both falloff distances by 20%.
+    expect(damageAt(rifle, 32, 0.8)).toBeLessThan(20);
+    expect(damageAt(rifle, 25.6, 0.8)).toBe(20);
   });
 
   it('damage never increases with distance and stays between minDamage and full damage', () => {

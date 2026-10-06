@@ -13,7 +13,10 @@ import { GameServer } from './GameServer';
 import { log } from './Log';
 import { type Gauges, metrics } from './Metrics';
 import { Rooms } from './Rooms';
+import { gameTypeDef, parseGameType } from '../src/modes/GameTypes';
+import { parseListingKind } from '../src/modes/Realms';
 import { RateLimiter, bearer, hashPassword, hashToken, newToken, safeEqual } from './Security';
+import { ChunkGenPool } from './chunkgen/ChunkGenPool';
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -28,6 +31,8 @@ const MIME: Record<string, string> = {
   '.md': 'text/markdown; charset=utf-8',
   '.ico': 'image/x-icon',
 };
+
+const round2 = (v: number): number => Math.round(v * 100) / 100;
 
 export function serverVersion(): string {
   try {
@@ -69,7 +74,12 @@ export async function startServer(config: Config): Promise<RunningServer> {
   const version = serverVersion();
   const backupDir = backupDirOf(config);
   const failLimiter = new RateLimiter(config.passwordFailLimit, 600_000);
-  const guard = { inventoryGuard: config.inventoryGuard, binary: config.binary };
+  // One pool of chunk generation threads for every game (docs/research/SERVER-DEPLOY.md, A); 0 = the main thread does it.
+  const genPool = config.chunkWorkers > 0
+    ? new ChunkGenPool({ size: config.chunkWorkers, onError: (message) => log.error('chunk generation', { error: message }) })
+    : null;
+  metrics.chunkGen = genPool ? () => genPool.getStats() : null;
+  const guard = { inventoryGuard: config.inventoryGuard, binary: config.binary, genPool };
 
   const main = config.mainWorld
     ? new GameServer({
@@ -95,7 +105,7 @@ export async function startServer(config: Config): Promise<RunningServer> {
       maxRooms: config.maxRooms,
       maxPlayers: config.roomMaxPlayers,
       motd: config.motd === 'Welcome to BunkCraft!' ? 'Welcome to BunkCraft! Share the game code with your friends.' : config.motd,
-      idleUnloadMs: 5 * 60_000,
+      idleUnloadMs: config.roomIdleUnloadMin * 60_000,
       expireDays: config.roomExpireDays,
       adminToken: config.adminToken,
       failLimiter,
@@ -109,11 +119,13 @@ export async function startServer(config: Config): Promise<RunningServer> {
   const createLimit = new RateLimiter(config.roomCreateLimit, 3_600_000);
   const lookupLimit = new RateLimiter(40, 60_000);
   const listLimit = new RateLimiter(30, 60_000);
+  // Realms quick play: asking is cheap (it mostly joins an existing lobby); opening a new lobby also takes from createLimit.
+  const quickLimit = new RateLimiter(20, 60_000);
   const ipBans = new IpBans(config.dataDir);
   const adminFailures = newAuthLimiter();
   const timers: NodeJS.Timeout[] = [];
   const every = (ms: number, fn: () => void) => { const t = setInterval(fn, ms); t.unref(); timers.push(t); };
-  every(600_000, () => { createLimit.prune(); lookupLimit.prune(); listLimit.prune(); failLimiter.prune(); adminFailures.prune(); });
+  every(600_000, () => { createLimit.prune(); lookupLimit.prune(); listLimit.prune(); quickLimit.prune(); failLimiter.prune(); adminFailures.prune(); });
   every(5000, () => metrics.rollWindow());
   if (config.backupKeep > 0) {
     const run = () => backupAll(config.dataDir, backupDir, config.backupKeep);
@@ -175,7 +187,7 @@ export async function startServer(config: Config): Promise<RunningServer> {
       return json(res, 200, {
         rooms: !!rooms, main: !!main, players: gauges().players,
         // What this server can do beyond the basics; clients hide features an older server lacks.
-        features: { passwords: true, browse: !!rooms, binary: config.binary },
+        features: { passwords: true, browse: !!rooms, binary: config.binary, realms: !!rooms },
       });
     }
     if (!rooms) return json(res, 404, { error: 'Games are disabled on this server' });
@@ -196,7 +208,7 @@ export async function startServer(config: Config): Promise<RunningServer> {
       const passwordHash = password ? await hashPassword(password) : undefined;
       const code = rooms.create(String(body.name ?? ''), typeof body.gameMode === 'string' ? body.gameMode : undefined,
         typeof body.seed === 'string' ? body.seed : undefined,
-        { gameType: body.gameType, scoreLimit: body.scoreLimit, timeLimitSec: body.timeLimitSec, mapId: body.mapId },
+        { gameType: body.gameType, scoreLimit: body.scoreLimit, timeLimitSec: body.timeLimitSec, mapId: body.mapId, maxPlayers: body.maxPlayers },
         { ownerHash: hashToken(ownerToken), passwordHash, listed: body.listed === true });
       // The owner token is shown exactly once: only its hash is stored.
       return code ? json(res, 201, { code, ownerToken, locked: !!passwordHash }) : json(res, 503, { error: 'This server has reached its game limit' });
@@ -207,7 +219,39 @@ export async function startServer(config: Config): Promise<RunningServer> {
         metrics.rateLimited('room_list');
         return json(res, 429, { error: 'Too many requests' });
       }
-      return json(res, 200, { rooms: rooms.listPublic() }, { 'cache-control': 'public, max-age=5' });
+      return json(res, 200, { rooms: rooms.listPublic(parseListingKind(url.searchParams.get('kind'))) }, { 'cache-control': 'public, max-age=5' });
+    }
+    if (path === '/api/realms' && req.method === 'GET') {
+      if (!listLimit.take(ip)) {
+        metrics.rateLimited('room_list');
+        return json(res, 429, { error: 'Too many requests' });
+      }
+      return json(res, 200, { modes: rooms.modeStats() }, { 'cache-control': 'no-store' });
+    }
+    if (path === '/api/quickplay' && req.method === 'POST') {
+      if (!quickLimit.take(ip)) {
+        metrics.rateLimited('quickplay');
+        return json(res, 429, { error: 'Too many requests, try again in a minute' });
+      }
+      let body: Record<string, unknown>;
+      try {
+        body = JSON.parse(await readBody(req)) as Record<string, unknown>;
+      } catch {
+        return json(res, 400, { error: 'Bad request' });
+      }
+      const mode = parseGameType(body.gameType);
+      if (!gameTypeDef(mode).arcade) return json(res, 400, { error: 'Quick play is for Realms game modes' });
+      const result = rooms.quickPlay(mode, () => {
+        if (createLimit.take(ip)) return true;
+        metrics.rateLimited('room_create');
+        return false;
+      });
+      if ('error' in result) {
+        return result.error === 'limited'
+          ? json(res, 429, { error: 'Too many games created, try again later' })
+          : json(res, 503, { error: 'This server has reached its game limit' });
+      }
+      return json(res, result.created ? 201 : 200, result);
     }
     const m = /^\/api\/rooms\/([^/]+)$/.exec(path);
     if (m && req.method === 'GET') {
@@ -250,6 +294,9 @@ export async function startServer(config: Config): Promise<RunningServer> {
       return json(res, draining ? 503 : 200, {
         ok: !draining, version, uptime: Math.round((Date.now() - metrics.startedAt) / 1000),
         players: gauges().players, rooms: rooms?.count ?? 0,
+        // Enough for an uptime check or a quick `curl` to tell a healthy server from an overloaded one.
+        roomsLoaded: gauges().roomsLoaded, tickP99Ms: round2(metrics.tickWindow.p99),
+        loopLagP99Ms: round2(metrics.loopLag.p99), rssMB: Math.round(process.memoryUsage.rss() / 1048576),
       });
     }
     if (url.pathname === '/metrics') {
@@ -409,12 +456,13 @@ export async function startServer(config: Config): Promise<RunningServer> {
 
   await new Promise<void>((resolve, reject) => {
     http.once('error', reject);
-    http.listen(config.port, () => resolve());
+    http.listen(config.port, config.host, () => resolve());
   });
   const port = (http.address() as AddressInfo).port;
   log.info('server started', {
     version, port, static: config.staticDir, mainWorld: !!main, games: !!rooms, admin: !!config.adminToken,
     originCheck: config.allowedOrigins.length > 0, backups: config.backupKeep, inventoryGuard: config.inventoryGuard, binary: config.binary,
+    chunkWorkers: genPool?.size ?? 0,
   });
 
   let closing: Promise<void> | null = null;
@@ -434,6 +482,8 @@ export async function startServer(config: Config): Promise<RunningServer> {
           http.close(() => resolve());
           http.closeAllConnections();
         });
+        // The worlds are saved; the generation threads go last.
+        await genPool?.close();
       })();
       return closing;
     },

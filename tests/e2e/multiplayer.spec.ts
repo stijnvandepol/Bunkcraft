@@ -11,10 +11,22 @@ async function secondPlayer(browser: Browser, errors: string[]): Promise<Page> {
   return page;
 }
 
-/** Opens an invite link (?join=CODE), types a name and joins. */
-async function joinByLink(page: Page, code: string, name: string): Promise<void> {
+/**
+ * Opens an invite link (?join=CODE), types a name and joins. A Minecraft game opens Multiplayer with the code filled in;
+ * an arcade lobby opens BunkCraft Realms, which asks for the name once and then joins by itself.
+ */
+async function joinByLink(page: Page, code: string, name: string, realms = false): Promise<void> {
   await openTitle(page, `/?join=${code}`);
+  if (realms) {
+    await expect(page.getByRole('heading', { name: 'Choose a Name' })).toBeVisible();
+    await page.locator('input.mc-input:visible').first().fill(name);
+    await page.keyboard.press('Enter');
+    await waitForWorld(page);
+    await forcePlaying(page);
+    return;
+  }
   const nameInput = page.locator('input.mc-input:visible').first();
+  await expect(page.getByRole('button', { name: 'Join Game' })).toBeVisible();
   await nameInput.fill(name);
   await clickButton(page, 'Join Game');
   await waitForWorld(page);
@@ -45,7 +57,10 @@ test('multiplayer: create a game, join by link, chat and see each other\'s block
   await page.evaluate(() => (window as any).game.chat.onSend('hello from alice'));
   await expect.poll(async () => { await b.bringToFront(); return b.evaluate(() => (window as any).game.chat.log.textContent as string); }, { timeout: 15_000 }).toContain('hello from alice');
 
-  // A block placed by A shows up for B (and survives B's view of the world).
+  // A block placed by A shows up for B (and survives B's view of the world). Survival places must be backed by an
+  // item (the server refuses blocks out of nothing), so A switches to creative first (A is the game's operator).
+  await page.evaluate(() => (window as any).game.chat.onSend('/gamemode creative'));
+  await expect.poll(() => page.evaluate(() => (window as any).game.mode), { timeout: 15_000 }).toBe('creative');
   const spot = await page.evaluate(async () => {
     const g = (window as any).game;
     const { BLOCK } = await import('/src/world/BlockRegistry.ts' as string);
@@ -68,9 +83,9 @@ for (const type of ['tdm', 'ctf', 'hardpoint'] as const) {
     const res = await page.request.post('/api/rooms', { data: { name: `E2E ${type}`, gameType: type, scoreLimit: 10, timeLimitSec: 300 } });
     expect(res.status()).toBe(201);
     const { code } = (await res.json()) as { code: string };
-    await joinByLink(page, code, `red_${type}`);
+    await joinByLink(page, code, `red_${type}`, true);
     const b = await secondPlayer(browser, consoleErrors);
-    await joinByLink(b, code, `blue_${type}`);
+    await joinByLink(b, code, `blue_${type}`, true);
 
     const info = await page.evaluate(() => { const g = (window as any).game; return { arcade: !!g.arcade, type: g.meta?.gameType ?? g.arcade?.info?.type }; });
     expect(info.arcade).toBe(true);

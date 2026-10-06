@@ -41,6 +41,19 @@ async function room(name: string, extra: Record<string, unknown> = {}, friends =
   return { code: r.code, token: r.ownerToken, owner, friends: others, spawn: s };
 }
 
+/**
+ * Placing a block costs the item in survival (InventoryGuard.authorizeEdit). Gives the bots an inventory the honest
+ * way an op can: a game mode switch makes each player's next state the trusted baseline.
+ */
+async function stock(owner: Bot, bots: Bot[], rows: number[][]): Promise<void> {
+  owner.chat('/gamemode creative');
+  await sleep(1100);
+  owner.chat('/gamemode survival');
+  await sleep(1100);
+  for (const b of bots) b.send({ t: 'state', inventory: rows, stats: [20, 20, 5, 300] });
+  await sleep(200);
+}
+
 // ---------------------------------------------------------------- rooms, passwords, server list
 
 async function rooms(): Promise<void> {
@@ -203,6 +216,7 @@ async function mod(): Promise<void> {
 
 async function edits(): Promise<void> {
   const { owner, friends: [friend], spawn, code } = await room('Edits');
+  await stock(owner, [owner, friend], [[BLOCK.COBBLESTONE, 64, 0], [BLOCK.STONE, 64, 0], [BLOCK.STONE, 64, 0], [BLOCK.GLASS, 64, 0]]);
   const x = Math.floor(spawn.x) + 2, y = Math.floor(spawn.y) + 1, z = Math.floor(spawn.z);
   let t = performance.now();
   owner.block(x, y, z, BLOCK.COBBLESTONE);
@@ -251,6 +265,7 @@ async function edits(): Promise<void> {
 
 async function drops(): Promise<void> {
   const { owner, friends: [friend], spawn } = await room('Drops');
+  await stock(owner, [owner, friend], [[BLOCK.STONE, 2, 0]]);
   const x = Math.floor(spawn.x) + 2, y = Math.floor(spawn.y) + 1, z = Math.floor(spawn.z);
   owner.block(x, y - 1, z, BLOCK.STONE); // a table so the drop does not roll into the ravine next to spawn
   owner.block(x, y, z, BLOCK.STONE);
@@ -297,7 +312,7 @@ async function drops(): Promise<void> {
 
 // ---------------------------------------------------------------- inventory guard (survival)
 
-/** Places a block (no inventory needed by the server), breaks it and drops `count` of `item` like the client would. */
+/** Places a block (from the stock the bot was given, see `stock`), breaks it and drops `count` of `item` like the client would. */
 async function breakAndDrop(b: Bot, other: Bot, x: number, y: number, z: number, block: number, meta: number, item: number, count: number): Promise<boolean> {
   b.block(x, y, z, block, meta);
   await sleep(60);
@@ -331,6 +346,9 @@ function variantBlock(): { id: number; meta: number; item: number; name: string 
 
 async function guard(): Promise<void> {
   const { owner, friends: [friend], spawn } = await room('Guard');
+  const v0 = variantBlock();
+  // Everything the honest rounds place (but no diamond ore: that is the exploit of round 4).
+  await stock(owner, [owner], [[BLOCK.STONE, 1, 0], [CUBE_ID.lapis_ore, 12, 0], [BLOCK.OAK_LEAVES, 6, 0], [v0.item, 1, 0]]);
   const x = Math.floor(spawn.x) + 2, y = Math.floor(spawn.y) + 2, z = Math.floor(spawn.z);
   owner.pos(spawn.x, spawn.y, spawn.z);
   owner.block(x, y - 1, z, BLOCK.STONE); // table for the drops
@@ -487,6 +505,7 @@ async function mobs(): Promise<void> {
 
 async function tnt(): Promise<void> {
   const { owner, friends: [friend], spawn, code } = await room('Tnt');
+  await stock(owner, [owner], [[BLOCK.STONE, 64, 0], [BLOCK.TNT, 1, 0], [ITEM.FLINT_AND_STEEL, 1, 0]]);
   const x = Math.floor(spawn.x) + 3, y = Math.floor(spawn.y) - 1, z = Math.floor(spawn.z);
   // A stone floor: primed TNT falls, and next to this spawn is a ravine (TNT in water breaks nothing).
   for (let dx = -2; dx <= 2; dx++) for (let dz = -2; dz <= 2; dz++) owner.block(x + dx, y - 1, z + dz, BLOCK.STONE);
@@ -551,6 +570,7 @@ async function persist(): Promise<void> {
   // Survival: a legitimately picked-up item survives a reconnect and is not "corrected" afterwards.
   const g = await room('PersistSurv');
   const p = g.owner;
+  await stock(p, [p], [[BLOCK.STONE, 3, 0]]);
   const x = Math.floor(g.spawn.x) + 2, y = Math.floor(g.spawn.y) + 1, z = Math.floor(g.spawn.z);
   p.block(x, y - 1, z, BLOCK.STONE);
   p.block(x, y, z, BLOCK.STONE);
@@ -585,6 +605,7 @@ async function persist(): Promise<void> {
 async function restart(): Promise<void> {
   const g = await room('Restart');
   const [friend] = g.friends;
+  await stock(g.owner, [g.owner], [[BLOCK.GLASS, 1, 0]]);
   const x = Math.floor(g.spawn.x) + 2, y = Math.floor(g.spawn.y) + 1, z = Math.floor(g.spawn.z);
   g.owner.block(x, y, z, BLOCK.GLASS);
   g.owner.chat(`/op ${friend.name}`);
@@ -616,7 +637,7 @@ async function pwlimit(): Promise<void> {
   check('password: after 5 wrong tries even the right password is refused for a while', !res.ok && /Too many/.test(res.kick.reason), !res.ok ? res.kick.reason : 'let in');
   const other = await createRoom(base(), { name: 'Other', gameMode: 'survival', password: 'x' });
   const res2 = await tryJoin(new Bot('Innocent'), base(), other.code, { password: 'x' });
-  info('password: the limit is per address over ALL games', res2.ok ? 'another game still works' : `another game with the right password is also refused: "${res2.kick.reason}" (a friend typo-ing 5× locks the whole household out of every locked game for 10 min)`);
+  check('password: the limit is per game (another game still works)', res2.ok, res2.ok ? '' : `another game with the right password is also refused: "${res2.kick.reason}"`);
 }
 
 // ---------------------------------------------------------------- shared chests
@@ -626,13 +647,14 @@ async function chest(): Promise<void> {
   const x = Math.floor(spawn.x) + 2, y = Math.floor(spawn.y) + 1, z = Math.floor(spawn.z);
   const empty = Array.from({ length: 36 }, () => [0, 0, 0]);
   const inv = (...s: number[][]) => [...s, ...empty.slice(s.length)];
+  await stock(owner, [owner, friend], inv([BLOCK.STONE, 5, 0], [BLOCK.CHEST, 1, 0]));
   // The owner gets 3 cobblestone the legal way (mine + pick up).
   owner.block(x + 1, y - 1, z, BLOCK.STONE);
   for (let i = 0; i < 3; i++) await breakAndDrop(owner, friend, x + 1, y, z, BLOCK.STONE, 0, BLOCK.COBBLESTONE, 1);
   owner.pos(spawn.x, spawn.y, spawn.z); friend.pos(spawn.x, spawn.y, spawn.z + 1);
   await sleep(200);
   let t = performance.now();
-  owner.send({ t: 'state', inventory: inv([BLOCK.COBBLESTONE, 3, 0]), stats: [20, 20, 5, 300] });
+  owner.send({ t: 'state', inventory: inv([BLOCK.COBBLESTONE, 3, 0], [BLOCK.STONE, 1, 0], [BLOCK.CHEST, 1, 0]), stats: [20, 20, 5, 300] });
   await sleep(300);
   check('chest: legally mined cobblestone is accepted', owner.of('state', t).length === 0);
   owner.block(x, y - 1, z, BLOCK.STONE);

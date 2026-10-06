@@ -18,7 +18,8 @@
 	}
 
 	# Caddy sets X-Forwarded-For itself (the client address); the backend only trusts it with TRUST_PROXY=1.
-	reverse_proxy bunkcraft:3000 {
+	# UPSTREAM: the game server; bunkcraft:3000 in docker compose, 127.0.0.1:3000 without Docker (deploy/).
+	reverse_proxy {$UPSTREAM:bunkcraft:3000} {
 		header_up X-Forwarded-For {remote_host}
 	}
 }

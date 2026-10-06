@@ -2,12 +2,16 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, s
 import { join } from 'node:path';
 import { randomInt } from 'node:crypto';
 import { type GameType, gameTypeDef, parseGameType } from '../src/modes/GameTypes';
-import { DEFAULT_MAP, type MapSetting, mapFor, parseMapId, parseMapSetting } from '../src/modes/maps';
-import { CODE_ALPHABET, CODE_LENGTH, normalizeCode } from '../src/net/protocol';
+import { DEFAULT_MAP, MAP_IDS, type MapSetting, getMap, mapFor, parseMapId, parseMapSetting } from '../src/modes/maps';
+import { CODE_ALPHABET, CODE_LENGTH, type MatchPhase, normalizeCode } from '../src/net/protocol';
+import {
+  LOBBY_SIZE_RANGE, type LobbyCandidate, type ListingKind, type ModeStats, REALMS_MODES, filterRooms, pickLobby, quickPlayName,
+} from '../src/modes/Realms';
 import { GAME_MODES, type GameMode } from '../src/player/GameMode';
 import { GameServer, parseGameMode } from './GameServer';
 import { log } from './Log';
 import { RateLimiter } from './Security';
+import type { ChunkGenPool } from './chunkgen/ChunkGenPool';
 
 export { RateLimiter };
 
@@ -28,6 +32,8 @@ export interface RoomOptions {
   backupDir?: string;
   inventoryGuard?: 'enforce' | 'warn' | 'off';
   binary?: boolean;
+  /** Chunk generation threads shared by all games (see ChunkGenPool). */
+  genPool?: ChunkGenPool | null;
   /** Most games the public list shows (default 50). */
   listMax?: number;
 }
@@ -49,7 +55,14 @@ export interface ListedRoom {
   maxPlayers: number;
   locked: boolean;
   map?: MapSetting;
+  /** Arcade lobbies with players: the match phase, seconds left in it and the map being played now. */
+  phase?: MatchPhase;
+  timeLeft?: number;
+  currentMap?: string;
 }
+
+/** Answer of quick play: the lobby to join, and whether it was just opened. */
+export type QuickPlayResult = { code: string; created: boolean } | { error: 'full' | 'limited' };
 
 export interface AdminRoom {
   code: string; name: string; loaded: boolean; players: number; listed: boolean; locked: boolean; gameType: GameType; gameMode: GameMode;
@@ -80,6 +93,10 @@ export interface MatchRequest {
   timeLimitSec?: unknown;
   /** A map id or "rotate"; anything else becomes the default map. */
   mapId?: unknown;
+  /** Arcade lobbies: players the game takes (clamped to 2..the server's limit). */
+  maxPlayers?: unknown;
+  /** Rotating arcade lobbies: the map of the first match (server-side only, quick play). */
+  startMap?: unknown;
 }
 
 export const SCORE_LIMIT_RANGE = { min: 5, max: 100 };
@@ -134,13 +151,13 @@ export class Rooms {
   }
 
   /** Creates a new room and returns its code, or null when the server is full of rooms. */
-  create(name: string, gameMode: string | undefined, seed: string | undefined, match: MatchRequest = {}, security: RoomSecurity = {}): string | null {
+  create(name: string | ((code: string) => string), gameMode: string | undefined, seed: string | undefined, match: MatchRequest = {}, security: RoomSecurity = {}): string | null {
     if (this.onDisk >= this.opts.maxRooms) return null;
     let code = '';
     do {
       code = Array.from({ length: CODE_LENGTH }, () => CODE_ALPHABET[randomInt(CODE_ALPHABET.length)]).join('');
     } while (existsSync(join(this.opts.dataDir, code)));
-    const cleanName = name.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 32) || 'BunkCraft Game';
+    const cleanName = (typeof name === 'function' ? name(code) : name).replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 32) || 'BunkCraft Game';
     const mode = GAME_MODES.includes(gameMode as GameMode) ? parseGameMode(gameMode) : 'survival';
     const cleanSeed = seed?.trim().slice(0, 32) || undefined;
     // Arcade game types ignore the Minecraft game mode and bring their own match settings.
@@ -157,6 +174,10 @@ export class Rooms {
           : clampSetting(match.scoreLimit, rangeFor(SCORE_LIMIT_RANGE, type.options?.score), type.scoreLimit),
         timeLimitSec: clampSetting(match.timeLimitSec, rangeFor(TIME_LIMIT_RANGE, type.options?.time), type.timeLimitSec),
         mapId: mapSettingFor(parseMapSetting(match.mapId) ?? DEFAULT_MAP, type.requires),
+        ...(parseMapId(match.startMap) ? { startMap: parseMapId(match.startMap)! } : {}),
+        ...(match.maxPlayers !== undefined ? {
+          lobbySize: clampSetting(match.maxPlayers, { min: LOBBY_SIZE_RANGE.min, max: Math.min(LOBBY_SIZE_RANGE.max, this.opts.maxPlayers) }, this.opts.maxPlayers),
+        } : {}),
       } : {}),
     });
     this.loaded.set(code, { server, lastActive: Date.now() });
@@ -201,6 +222,7 @@ export class Rooms {
       backupDir: this.opts.backupDir ? join(this.opts.backupDir, code) : undefined,
       inventoryGuard: this.opts.inventoryGuard,
       binary: this.opts.binary,
+      genPool: this.opts.genPool,
       onMetaChange: () => { const r = this.loaded.get(code); if (r) this.writeMeta(code, r.server); },
     };
   }
@@ -222,22 +244,78 @@ export class Rooms {
     this.listCache = null;
   }
 
-  /** The public server list: only games that opted in, most players first, capped and cached for a few seconds. */
-  listPublic(): ListedRoom[] {
+  /**
+   * The public server list: only games that opted in, most players first, capped and cached for a few seconds.
+   * `kind` keeps Minecraft games (Multiplayer) or arcade lobbies (Realms); null = both (older clients).
+   */
+  listPublic(kind: ListingKind | null = null): ListedRoom[] {
     const now = Date.now();
-    if (this.listCache && now - this.listCache.at < 5000) return this.listCache.rooms;
-    const rooms: ListedRoom[] = [];
+    if (!this.listCache || now - this.listCache.at >= 5000) {
+      const rooms: ListedRoom[] = [];
+      for (const [code, m] of this.listedMeta) {
+        const live = this.loaded.get(code);
+        const players = live?.server.playerCount ?? 0;
+        const status = players > 0 ? live!.server.lobbyStatus() : null;
+        rooms.push({
+          code, name: m.name, gameType: m.gameType, gameMode: m.gameMode, players,
+          maxPlayers: m.maxPlayers, locked: m.locked, ...(m.map ? { map: m.map } : {}),
+          ...(status ? { phase: status.phase, timeLeft: status.timeLeft, currentMap: status.map } : {}),
+        });
+      }
+      rooms.sort((a, b) => b.players - a.players || a.name.localeCompare(b.name));
+      this.listCache = { at: now, rooms };
+    }
+    return filterRooms(this.listCache.rooms, kind).slice(0, this.opts.listMax ?? 50);
+  }
+
+  /** What matchmaking knows about every public lobby of a mode (live state for the loaded ones). */
+  lobbies(mode: GameType): LobbyCandidate[] {
+    const out: LobbyCandidate[] = [];
     for (const [code, m] of this.listedMeta) {
+      if (m.gameType !== mode) continue;
       const live = this.loaded.get(code);
-      rooms.push({
-        code, name: m.name, gameType: m.gameType, gameMode: m.gameMode, players: live?.server.playerCount ?? 0,
-        maxPlayers: m.maxPlayers, locked: m.locked, ...(m.map ? { map: m.map } : {}),
+      const status = live?.server.lobbyStatus() ?? null;
+      out.push({
+        code, gameType: m.gameType, players: live?.server.playerCount ?? 0, maxPlayers: live?.server.maxPlayers ?? m.maxPlayers,
+        open: m.listed && !m.locked,
+        ...(status && live!.server.playerCount > 0 ? { phase: status.phase, timeLeft: status.timeLeft, progress: status.progress } : {}),
       });
     }
-    rooms.sort((a, b) => b.players - a.players || a.name.localeCompare(b.name));
-    const capped = rooms.slice(0, this.opts.listMax ?? 50);
-    this.listCache = { at: now, rooms: capped };
-    return capped;
+    return out;
+  }
+
+  /**
+   * Realms quick play: the fullest public lobby of the mode that has room and is not about to end, else a new
+   * public lobby on rotating maps. `mayCreate` is asked only when a lobby has to be opened (room creation limit).
+   */
+  quickPlay(mode: GameType, mayCreate: () => boolean): QuickPlayResult {
+    const def = gameTypeDef(mode);
+    if (!def.arcade) return { error: 'full' };
+    const pick = pickLobby(this.lobbies(mode), mode);
+    if (pick) return { code: pick.code, created: false };
+    if (!mayCreate()) return { error: 'limited' };
+    // Named after its code so lobbies of one mode can be told apart in the list.
+    // Every new lobby starts on a random map the mode can use, so not every lobby opens on the same arena.
+    const maps = MAP_IDS.filter((id) => getMap(id).supports(def.requires));
+    const startMap = maps[randomInt(maps.length)];
+    const code = this.create((c) => quickPlayName(mode, c), undefined, undefined, { gameType: mode, mapId: 'rotate', startMap }, { listed: true });
+    if (!code) return { error: 'full' };
+    return { code, created: true };
+  }
+
+  /** Players and public lobbies with players per arcade mode (the Realms playlist). */
+  modeStats(): ModeStats[] {
+    const stats = new Map<GameType, ModeStats>(REALMS_MODES.map((g) => [g, { gameType: g, players: 0, lobbies: 0 }]));
+    for (const [code, r] of this.loaded) {
+      const n = r.server.playerCount;
+      if (n === 0) continue;
+      const st = stats.get(r.server.info().gameType);
+      if (!st) continue;
+      st.players += n;
+      const m = this.listedMeta.get(code);
+      if (m && !m.locked) st.lobbies++;
+    }
+    return [...stats.values()];
   }
 
   /** Every game for the admin page: loaded ones with players, plus the ones only on disk. */

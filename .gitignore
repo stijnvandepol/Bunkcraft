@@ -17,3 +17,7 @@ playwright-report
 docs/screenshots/ui/matrix/
 docs/screenshots/ui/_check/
 vite.shots.config.ts
+dist-server
+
+# Server settings and secrets (scripts/install.sh)
+.env

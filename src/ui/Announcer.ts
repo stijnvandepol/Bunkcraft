@@ -16,11 +16,14 @@ function ensure(): HTMLDivElement {
  * Tell screen readers something happened ("Game paused", "You died"). The text lives in a visually
  * hidden polite live region; with `visible` it is also shown as a short on-screen note.
  */
+let pending = 0;
+
 export function announce(text: string, visible = false): void {
   const r = ensure();
   // Clearing first makes screen readers repeat identical messages.
   r.textContent = '';
-  window.setTimeout(() => { r.textContent = text; }, 30);
+  window.clearTimeout(pending);
+  pending = window.setTimeout(() => { r.textContent = text; }, 30);
   if (!visible) return;
   if (!toastEl) {
     toastEl = h('div', { class: 'notice', 'aria-hidden': 'true' });
@@ -30,4 +33,10 @@ export function announce(text: string, visible = false): void {
   toastEl.classList.add('show');
   window.clearTimeout(toastTimer);
   toastTimer = window.setTimeout(() => toastEl?.classList.remove('show'), 3000);
+}
+
+/** Empties the live region, so an old message ("You died. ...") does not linger next to the next screen. */
+export function clearAnnouncement(): void {
+  window.clearTimeout(pending);
+  if (region) region.textContent = '';
 }

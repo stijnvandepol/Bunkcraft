@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { Mob } from '../entities/Mob';
 import { MOB_TYPES } from '../entities/MobTypes';
 import { type Team, TEAM_COLORS } from '../modes/GameTypes';
-import { RESPAWN_SECONDS } from '../modes/Weapons';
+import { type OpticId, RESPAWN_SECONDS } from '../modes/Weapons';
 import { createWeaponMaterial, weaponGeometry } from '../rendering/WeaponModels';
 import { h } from '../ui/dom';
 import { type RayHit, createRayHit, raycast } from '../world/Raycast';
@@ -10,6 +10,12 @@ import { SNAP_FLAG_STALE, type SnapshotEntry } from './protocol';
 
 /** Render other players this far in the past so there are always two snapshots to blend (20 Hz default; arcade sets its own). */
 const INTERPOLATION_DELAY = 0.1;
+/** Past the newest snapshot a player keeps moving at its last velocity for at most this long (a late packet), then holds. */
+const MAX_EXTRAPOLATE = 0.1;
+/** Snapshot clock: how much of each arrival-time error is corrected (the rest is jitter of the page's event loop). */
+const CLOCK_GAIN = 0.1;
+/** A gap this long (or a clock this far off) restarts the snapshot clock at the arrival time. */
+const CLOCK_RESET = 0.5;
 /** Arcade culling: a player marked stale (out of view) is hidden this long after the mark... */
 const STALE_HIDE = 0.3;
 /** ...or when no snapshot mentioned it for this long. */
@@ -90,6 +96,14 @@ export class RemotePlayers {
   private spectated = 0;
   /** Seconds in the past other players are drawn (two snapshot intervals). */
   interpDelay = INTERPOLATION_DELAY;
+  /**
+   * Snapshot clock: the server sends snapshots at a steady tick, but the page handles a message only when its event
+   * loop gets to it (up to a frame late). Stamping samples with the raw arrival time turns that into speed jitter, so
+   * each snapshot is stamped on a steady clock (last stamp + whole tick intervals) that drifts slowly towards arrival.
+   */
+  private clock = -1;
+  private tick = 0.05;
+  private lastArrival = -1;
 
   constructor() {
     this.el = h('div', { class: 'nametags' });
@@ -158,12 +172,13 @@ export class RemotePlayers {
     if (i >= 0) this.mobs[i] = mob;
   }
 
-  /** Arcade: the weapon this player holds (a weapon id); unknown ids leave the hands empty. */
-  setWeapon(id: number, weaponId: string): void {
+  /** Arcade: the weapon this player holds (a weapon id, its optic, a suppressor); unknown ids leave the hands empty. */
+  setWeapon(id: number, weaponId: string, optic: OpticId = 'iron', sup = false): void {
     const r = this.players.get(id);
-    if (!r || r.weaponId === weaponId) return;
-    r.weaponId = weaponId;
-    const geo = weaponGeometry(weaponId);
+    const key = `${weaponId}|${optic}|${sup ? 1 : 0}`;
+    if (!r || r.weaponId === key) return;
+    r.weaponId = key;
+    const geo = weaponGeometry(weaponId, optic, sup);
     if (geo) r.weapon.geometry = geo;
     r.mob.holding = geo !== null;
   }
@@ -210,6 +225,12 @@ export class RemotePlayers {
     return !!r && r.buffer.length > 0 && r.deadAt < 0 && !r.hidden && !r.culled;
   }
 
+  /** Arcade: the newest snapshot flags of a player (SNAP_FLAG_*), 0 when unknown. */
+  flagsOf(id: number): number {
+    const r = this.players.get(id);
+    return r && r.buffer.length > 0 ? r.buffer[r.buffer.length - 1].flags : 0;
+  }
+
   /** Arcade: interpolated pose of a player (eye at y + 1.62 is up to the caller); false when unknown. */
   pose(id: number, out: { x: number; y: number; z: number; yaw: number; pitch: number }): boolean {
     const r = this.players.get(id);
@@ -236,7 +257,22 @@ export class RemotePlayers {
     return this.players.size;
   }
 
+  /** The time stamp for a snapshot that arrived at `now` (see `clock`). */
+  private stamp(now: number): number {
+    const gap = now - this.lastArrival;
+    this.lastArrival = now;
+    if (this.clock < 0 || gap > CLOCK_RESET) return (this.clock = now);
+    // The tick interval is the long-run average gap (one snapshot per server tick; arcade servers tick faster).
+    if (gap < 3 * this.tick) this.tick = Math.min(0.2, Math.max(0.004, this.tick + (gap - this.tick) * 0.02));
+    // Each snapshot is one tick after the last, however late the page handled it. Far off (the server stalled or
+    // skipped, a culled arcade player came back): start again from the arrival time, like the server's own clock.
+    const expected = this.clock + this.tick;
+    this.clock = Math.abs(now - expected) > 2 * this.tick ? now : expected + (now - expected) * CLOCK_GAIN;
+    return this.clock;
+  }
+
   snapshot(entries: SnapshotEntry[], selfId: number, now: number): void {
+    now = this.stamp(now);
     for (const [id, x, y, z, yaw, pitch, flags] of entries) {
       if (id === selfId) continue;
       const r = this.players.get(id);
@@ -267,13 +303,23 @@ export class RemotePlayers {
       // Arcade culling: hide players the server no longer shows us.
       const culled = this.occluder !== null && ((r.staleAt >= 0 && now - r.staleAt >= STALE_HIDE) || now - r.lastSeen > ABSENT_HIDE);
       if (culled !== r.culled) { r.culled = culled; this.syncListed(r); }
-      // Find the two snapshots around renderTime; hold the newest if we run out.
+      // Find the two snapshots around renderTime. Past the newest one (a late packet) keep going along the last two
+      // for a moment instead of freezing, then hold; before the oldest, hold the oldest.
       let a = b[0], c = b[b.length - 1];
-      for (let i = 0; i < b.length - 1; i++) {
-        if (b[i].t <= renderTime && b[i + 1].t >= renderTime) { a = b[i]; c = b[i + 1]; break; }
+      let f = 1;
+      if (b.length >= 2 && renderTime > c.t) {
+        a = b[b.length - 2];
+        const span = c.t - a.t;
+        f = span > 0 ? 1 + Math.min(renderTime - c.t, MAX_EXTRAPOLATE) / span : 1;
+        // Not across a teleport or respawn.
+        if (Math.abs(c.x - a.x) + Math.abs(c.z - a.z) > 8) f = 1;
+      } else {
+        for (let i = 0; i < b.length - 1; i++) {
+          if (b[i].t <= renderTime && b[i + 1].t >= renderTime) { a = b[i]; c = b[i + 1]; break; }
+        }
+        const span = c.t - a.t;
+        f = span > 0 ? Math.min(1, Math.max(0, (renderTime - a.t) / span)) : 1;
       }
-      const span = c.t - a.t;
-      const f = span > 0 ? Math.min(1, Math.max(0, (renderTime - a.t) / span)) : 1;
       // Arcade: a shot player lies down, is hidden after a moment and returns at the respawn.
       if (r.deadAt >= 0) {
         const since = now - r.deadAt;

@@ -1,0 +1,78 @@
+/* ---------------------------------------------------------------- BunkCraft Realms (menus) */
+
+.realms-header { flex-direction: column; gap: calc(var(--s) * 3); flex-basis: calc(var(--s) * 46) !important; }
+.realms-name { display: flex; align-items: center; gap: calc(var(--s) * 4); }
+.mc-btn.realms-small { width: auto; height: calc(var(--s) * 14); padding: 0 calc(var(--s) * 5); }
+
+.realms-list .world-item { position: relative; }
+.realms-list .world-text { flex: 1 1 auto; }
+.realms-list .world-item[data-code] .world-text { padding-right: calc(var(--s) * 30); }
+.realms-stats { color: #a0a0a0; }
+.realms-stats.busy { color: #55ff55; }
+.realms-status { min-height: var(--fs); margin-top: calc(var(--s) * 4); }
+
+/* Player count on the right of a lobby row, like the server list's "3/8". */
+.realms-count {
+  position: absolute;
+  right: calc(var(--s) * 4);
+  top: calc(var(--s) * 3);
+  color: #a0a0a0;
+}
+.realms-count.full { color: #ff5555; }
+
+.realms-code { letter-spacing: calc(var(--s) * 1); color: #ffff55; }
+
+/* ---------------------------------------------------------------- pre-match lobby (in the arena) */
+
+.mlobby {
+  position: absolute;
+  right: calc(var(--s) * 8);
+  top: calc(var(--s) * 70);
+  width: calc(var(--s) * 170);
+  padding: calc(var(--s) * 4) calc(var(--s) * 5);
+  background: rgba(0, 0, 0, 0.6);
+  border: var(--s) solid #000;
+  box-shadow: inset 0 0 0 var(--s) rgba(255, 255, 255, 0.12);
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--s) * 2);
+}
+.mlobby-mode { color: #ffff55; }
+.mlobby-map { color: #a0a0a0; }
+.mlobby-status { color: #fff; margin-bottom: calc(var(--s) * 2); }
+.mlobby-teams.two { display: grid; grid-template-columns: 1fr 1fr; gap: calc(var(--s) * 3); }
+.mlobby-team { min-width: 0; display: flex; flex-direction: column; gap: calc(var(--s) * 1); margin-top: calc(var(--s) * 2); }
+.mlobby-team-title { padding: calc(var(--s) * 1) calc(var(--s) * 3); color: #fff; }
+.mlobby-team-title.red { background: rgba(224, 70, 60, 0.55); }
+.mlobby-team-title.blue { background: rgba(60, 122, 224, 0.55); }
+.mlobby-team-title.all { background: rgba(255, 255, 255, 0.15); }
+.mlobby-player { padding: 0 calc(var(--s) * 3); color: #e0e0e0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mlobby-player.self { color: #ffff55; }
+.mlobby-player.none { color: #808080; }
+.mlobby-hint { color: #808080; margin-top: calc(var(--s) * 2); }
+
+/* Map vote under the match result. */
+.mvote { display: flex; flex-direction: column; align-items: center; gap: calc(var(--s) * 4); }
+.mvote-title { color: #fff; }
+.mvote-cards { display: flex; gap: calc(var(--s) * 4); }
+.mvote-card {
+  width: calc(var(--s) * 88);
+  padding: calc(var(--s) * 4);
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--s) * 2);
+  background: rgba(0, 0, 0, 0.55);
+  border: var(--s) solid #000;
+  box-shadow: inset 0 0 0 var(--s) rgba(255, 255, 255, 0.12);
+  pointer-events: auto;
+  cursor: pointer;
+}
+.mvote-card.mine { box-shadow: inset 0 0 0 var(--s) #ffff55; }
+.mvote-card.leading .mvote-name { color: #55ff55; }
+.mvote-key { color: #a0a0a0; }
+.mvote-name { color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mvote-bar { height: calc(var(--s) * 3); background: rgba(255, 255, 255, 0.12); }
+.mvote-bar > i { display: block; height: 100%; width: 0; background: #55ff55; }
+.mvote-count { color: #a0a0a0; }
+.mvote-mine { color: #ffff55; min-height: var(--fs); }
+.mvote-hint { color: #a0a0a0; }

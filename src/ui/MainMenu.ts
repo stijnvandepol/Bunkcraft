@@ -5,8 +5,11 @@ import type { WorldTransfer } from '../save/WorldTransfer';
 import { type ShareParams } from '../save/share';
 import { NAME_PATTERN, formatCode, normalizeCode } from '../net/protocol';
 import { type RoomInfo, browseRooms, createRoom, forgetGame, lookupRoom, ownerToken, recentGames, roomPassword, serverInfo, setRoomPassword } from '../net/RoomApi';
-import { GAME_TYPES, type GameType, gameTypeDef } from '../modes/GameTypes';
-import { MAP_SETTINGS, MENU_DEFAULT_MAP, type MapSetting, getMap, mapName } from '../modes/maps';
+import { gameTypeDef } from '../modes/GameTypes';
+import { getMap } from '../modes/maps';
+import { isArcade } from '../modes/Realms';
+import { RealmsMenu } from './RealmsMenu';
+import { savePlayerName, savedPlayerName } from './playerName';
 import { installButton } from '../pwa/Pwa';
 import { button, dirtBackground, h, menuScreen, screen } from './dom';
 import { cheatsAllowed } from '../save/SaveSystem';
@@ -15,6 +18,7 @@ import { difficultyButton, gameRulesScreen } from './GameRulesScreen';
 import { DEFAULT_DIFFICULTY, type Difficulty } from '../world/Difficulty';
 import { GameRules } from '../world/GameRules';
 import { pickFile } from './download';
+import { announce } from './Announcer';
 import type { ScreenStack } from './Screens';
 
 export interface MenuActions {
@@ -42,11 +46,6 @@ export const VERSION = 'BunkCraft 1.0';
 
 /** `npm run build:static`: hosted without a game server (itch.io, GitHub Pages ...). */
 const STATIC_BUILD = import.meta.env.VITE_STATIC === '1';
-
-/** Short tag for lists: "TDM", "CTF"; nothing for the Minecraft sandbox. */
-const GAME_TYPE_TAGS: Record<GameType, string> = {
-  minecraft: '', tdm: 'TDM', ffa: 'FFA', gungame: 'GUN', elimination: 'ELIM', hardpoint: 'HP', domination: 'DOM', ctf: 'CTF',
-};
 
 /** "Team Deathmatch · first to 30 · 10 min · 3/12 players", shown before joining. */
 export function describeRoom(info: RoomInfo): string {
@@ -99,7 +98,29 @@ const COLUMN = 'display: flex; flex-direction: column; align-items: center; gap:
 
 /** Title screen, world selection and world creation, laid out like Minecraft 1.21. */
 export class MainMenu {
-  constructor(private readonly stack: ScreenStack, private readonly actions: MenuActions) {}
+  /** BunkCraft Realms: the arcade minigames hub (Multiplayer is the Minecraft sandbox only). */
+  readonly realms: RealmsMenu;
+
+  constructor(private readonly stack: ScreenStack, private readonly actions: MenuActions) {
+    this.realms = new RealmsMenu(stack, { joinCode: (name, code, onError) => this.joinByCode(name, code, onError, undefined, false) });
+  }
+
+  /** The Realms playlist (also where a player returns to after leaving a Realms match). */
+  showRealms(): Promise<void> {
+    return this.realms.show();
+  }
+
+  /** An invite link (?join=CODE): a Realms lobby opens in Realms, anything else in Multiplayer with the code filled in. */
+  async openInvite(code: string): Promise<void> {
+    let info: RoomInfo | null = null;
+    try {
+      info = await lookupRoom(code);
+    } catch {
+      // Unknown or unreachable: Multiplayer shows the error when joining.
+    }
+    if (info && isArcade(info.gameType)) this.realms.openLobby(code, info);
+    else await this.showMultiplayer(code);
+  }
 
   showTitle(): void {
     this.stack.clear();
@@ -116,7 +137,7 @@ export class MainMenu {
       h('div', { class: 'title-buttons' },
         button(t('title.singleplayer'), () => void this.showWorlds()),
         button(t('title.multiplayer'), () => void this.showMultiplayer()),
-        button(t('title.realms'), () => undefined, { disabled: true }),
+        button(t('title.realms'), () => void this.realms.show()),
         h('div', { class: 'gap' }),
         h('div', { class: 'row' },
           this.actions.openLanguage ? this.iconButton('icon-lang', t('title.language'), () => this.actions.openLanguage!()) : null,
@@ -145,7 +166,7 @@ export class MainMenu {
   async showMultiplayer(prefillCode = ''): Promise<void> {
     const info = await serverInfo();
     if (!info) return this.showDirectConnect();
-    const name = h('input', { class: 'mc-input', value: load('bunkcraft.name', ''), maxLength: 16, placeholder: 'Your name (3–16 letters)' });
+    const name = h('input', { class: 'mc-input', value: savedPlayerName(), maxLength: 16, placeholder: 'Your name (3–16 letters)' });
     const code = h('input', { class: 'mc-input', value: prefillCode, maxLength: 80, placeholder: 'Game code or invite link' });
     const error = h('div', { class: 'error' });
     const roomInfo = h('div', { class: 'hint' });
@@ -156,7 +177,7 @@ export class MainMenu {
         name.focus();
         return null;
       }
-      store('bunkcraft.name', n);
+      savePlayerName(n);
       error.textContent = '';
       return n;
     };
@@ -185,10 +206,9 @@ export class MainMenu {
     };
     code.addEventListener('input', previewCode);
 
-    const recent = recentGames().map((g) => {
-      const tag = GAME_TYPE_TAGS[g.gameType ?? 'minecraft'];
-      return button(`${tag ? `[${tag}] ` : ''}${g.name}  (${formatCode(g.code)})`, () => void joinCode(g.code), { cls: 'w150' });
-    });
+    // Realms lobbies are rejoined from Realms; Multiplayer lists the Minecraft games.
+    const recent = recentGames().filter((g) => !isArcade(g.gameType)).map((g) =>
+      button(`${g.name}  (${formatCode(g.code)})`, () => void joinCode(g.code), { cls: 'w150' }));
     const column = 'display: flex; flex-direction: column; align-items: center; gap: calc(var(--s) * 4);';
     const body = h('div', { style: column },
       h('div', { class: 'field-label', text: 'Player Name' }), name,
@@ -211,8 +231,13 @@ export class MainMenu {
     if (prefillCode) previewCode();
   }
 
-  /** Looks a game up and joins it; asks for the password first when the game has one. */
-  private async joinByCode(playerName: string, code: string, onError: (msg: string) => void, onInfo: (text: string) => void = () => undefined): Promise<void> {
+  /**
+   * Looks a game up and joins it; asks for the password first when the game has one. A Realms lobby reached from
+   * Multiplayer (`viaMultiplayer`) is handed to the Realms flow, which joins it from there.
+   */
+  private async joinByCode(
+    playerName: string, code: string, onError: (msg: string) => void, onInfo: (text: string) => void = () => undefined, viaMultiplayer = true,
+  ): Promise<void> {
     let info: RoomInfo;
     try {
       info = await lookupRoom(code);
@@ -220,6 +245,10 @@ export class MainMenu {
     } catch (e) {
       onError(e instanceof Error ? e.message : String(e));
       forgetGame(code);
+      return;
+    }
+    if (viaMultiplayer && isArcade(info.gameType)) {
+      this.realms.openLobby(code, info);
       return;
     }
     // The creator is let in with the owner token, and a password typed earlier this session is remembered.
@@ -256,12 +285,11 @@ export class MainMenu {
       list.replaceChildren();
       error.textContent = '';
       try {
-        const rooms = await browseRooms();
+        const rooms = await browseRooms('minecraft');
         if (rooms.length === 0) list.append(h('div', { class: 'hint', text: 'No public games right now. Create one and tick "Show in Server List".' }));
         for (const r of rooms) {
-          const tag = GAME_TYPE_TAGS[r.gameType ?? 'minecraft'];
           list.append(
-            button(`${tag ? `[${tag}] ` : ''}${r.name}`, () => void this.joinByCode(playerName, r.code, (m) => { error.textContent = m; }), { cls: 'w150' }),
+            button(r.name, () => void this.joinByCode(playerName, r.code, (m) => { error.textContent = m; }), { cls: 'w150' }),
             h('div', { class: 'hint', text: describeRoom(r) }),
           );
         }
@@ -277,7 +305,7 @@ export class MainMenu {
     await render();
   }
 
-  /** Name, game type and settings for a new game; the server answers with its share code. */
+  /** Name, game mode, seed and visibility for a new Minecraft game; the server answers with its share code. Arcade lobbies are made under Realms. */
   private showCreateGame(playerName: string): void {
     const name = h('input', { class: 'mc-input', value: `${playerName}'s Game`.slice(0, 32), maxLength: 32 });
     const seed = h('input', { class: 'mc-input', placeholder: 'Leave blank for a random seed', maxLength: 32 });
@@ -290,79 +318,13 @@ export class MainMenu {
       listedHint.textContent = listed ? 'Anyone can see this game under Browse Games and join it.' : 'Private: only people with the code or link can find this game.';
     });
     const error = h('div', { class: 'error' });
-    let type: GameType = 'minecraft';
     let mode: GameMode = 'survival';
-    let scoreLimit = gameTypeDef('tdm').scoreLimit;
-    let timeLimit = gameTypeDef('tdm').timeLimitSec;
-    let map: MapSetting = MENU_DEFAULT_MAP;
-
-    const typeHint = h('div', { class: 'hint' });
-    const typeButton = h('button', { class: 'mc-btn' });
     const modeHint = h('div', { class: 'hint', text: GAME_MODE_HINTS[mode] });
     const modeButton = button(`Game Mode: ${GAME_MODE_NAMES[mode]}`, () => {
       mode = GAME_MODES[(GAME_MODES.indexOf(mode) + 1) % GAME_MODES.length];
       modeButton.textContent = `Game Mode: ${GAME_MODE_NAMES[mode]}`;
       modeHint.textContent = GAME_MODE_HINTS[mode];
     });
-    const scoreButton = h('button', { class: 'mc-btn' });
-    const timeButton = h('button', { class: 'mc-btn' });
-    // The choices, labels and units come from the game type (src/modes/GameTypes.ts).
-    const renderLimits = () => {
-      const def = gameTypeDef(type);
-      const o = def.options;
-      scoreButton.classList.toggle('hidden', !o || o.score.length === 0);
-      scoreButton.textContent = `${o?.scoreLabel ?? 'Score Limit'}: ${scoreLimit}${def.scoreUnit && def.scoreUnit !== 'rounds' && def.scoreUnit !== 'captures' ? ` ${def.scoreUnit}` : ''}`;
-      timeButton.textContent = `${o?.timeLabel ?? 'Time Limit'}: ${timeLimit >= 120 && timeLimit % 60 === 0 ? `${timeLimit / 60} min` : `${timeLimit} s`}`;
-    };
-    const nextChoice = (list: number[], cur: number) => list[(Math.max(0, list.indexOf(cur)) + 1) % list.length];
-    scoreButton.addEventListener('click', () => {
-      const list = gameTypeDef(type).options?.score ?? [];
-      if (list.length) scoreLimit = nextChoice(list, scoreLimit);
-      renderLimits();
-    });
-    timeButton.addEventListener('click', () => {
-      const list = gameTypeDef(type).options?.time ?? [];
-      if (list.length) timeLimit = nextChoice(list, timeLimit);
-      renderLimits();
-    });
-    const mapHint = h('div', { class: 'hint' });
-    // Only maps that have what the game type needs (zones, flags) are offered.
-    const mapChoices = (): MapSetting[] => MAP_SETTINGS.filter((m) => m === 'rotate' || getMap(m).supports(gameTypeDef(type).requires));
-    const renderMap = () => {
-      if (!mapChoices().includes(map)) map = mapChoices()[0] ?? MENU_DEFAULT_MAP;
-      mapButton.textContent = `Map: ${mapName(map)}`;
-      mapHint.textContent = map === 'rotate' ? 'Every match is played on the next map.' : getMap(map).description;
-    };
-    const mapButton = button('', () => {
-      const list = mapChoices();
-      map = list[(Math.max(0, list.indexOf(map)) + 1) % list.length];
-      renderMap();
-    });
-    renderMap();
-    const sandboxFields = h('div', { style: COLUMN },
-      modeButton, modeHint,
-      h('div', { class: 'field-label', text: 'Seed for the World Generator' }), seed,
-    );
-    const arcadeFields = h('div', { style: COLUMN }, mapButton, mapHint, scoreButton, timeButton);
-    const renderType = () => {
-      const def = gameTypeDef(type);
-      typeButton.textContent = `Game Type: ${def.name}`;
-      typeHint.textContent = def.description;
-      sandboxFields.classList.toggle('hidden', def.arcade);
-      arcadeFields.classList.toggle('hidden', !def.arcade);
-      if (def.arcade) {
-        // Offer the type's own defaults when switching to it.
-        scoreLimit = def.scoreLimit;
-        timeLimit = def.timeLimitSec;
-        renderMap();
-        renderLimits();
-      }
-    };
-    typeButton.addEventListener('click', () => {
-      type = GAME_TYPES[(GAME_TYPES.findIndex((g) => g.id === type) + 1) % GAME_TYPES.length].id;
-      renderType();
-    });
-    renderType();
 
     let busy = false;
     const create = async () => {
@@ -370,10 +332,8 @@ export class MainMenu {
       busy = true;
       error.textContent = '';
       try {
-        const arcade = gameTypeDef(type).arcade;
-        const code = await createRoom(name.value.trim() || 'BunkCraft Game', mode, arcade ? '' : seed.value.trim(), {
-          gameType: type, scoreLimit: arcade ? scoreLimit : 0, timeLimitSec: arcade ? timeLimit : 0, mapId: arcade ? map : undefined,
-          password: password.value || undefined, listed,
+        const code = await createRoom(name.value.trim() || 'BunkCraft Game', mode, seed.value.trim(), {
+          gameType: 'minecraft', scoreLimit: 0, timeLimitSec: 0, password: password.value || undefined, listed,
         });
         this.actions.joinServer(playerName, '', code);
       } catch (e) {
@@ -385,8 +345,8 @@ export class MainMenu {
     this.stack.push(menuScreen('Create Game', [
       h('div', { style: COLUMN },
         h('div', { class: 'field-label', text: 'Game Name' }), name,
-        typeButton, typeHint,
-        sandboxFields, arcadeFields,
+        modeButton, modeHint,
+        h('div', { class: 'field-label', text: 'Seed for the World Generator' }), seed,
         h('div', { class: 'field-label', text: 'Password' }), password,
         listedButton, listedHint,
         h('div', { class: 'hint', text: 'You get a code and a link to share. Friends can join any time while the game exists.' }),
@@ -401,7 +361,7 @@ export class MainMenu {
 
   /** Join any BunkCraft server by address (the page's own server when left empty). */
   showDirectConnect(): void {
-    const name = h('input', { class: 'mc-input', value: load('bunkcraft.name', ''), maxLength: 16, placeholder: 'Your name (3–16 letters)' });
+    const name = h('input', { class: 'mc-input', value: savedPlayerName(), maxLength: 16, placeholder: 'Your name (3–16 letters)' });
     const address = h('input', { class: 'mc-input', value: load('bunkcraft.server', ''), maxLength: 120, placeholder: STATIC_BUILD ? 'play.example.com' : location.host });
     const error = h('div', { class: 'error' });
     const join = () => {
@@ -414,7 +374,7 @@ export class MainMenu {
         error.textContent = 'Enter the address of a BunkCraft server';
         return;
       }
-      store('bunkcraft.name', n);
+      savePlayerName(n);
       store('bunkcraft.server', address.value.trim());
       this.actions.joinServer(n, address.value.trim());
     };
@@ -437,6 +397,8 @@ export class MainMenu {
   /** "Connection Lost" / failed to connect screen. */
   showDisconnected(reason: string): void {
     this.stack.clear();
+    // Replaces whatever the live region still held (an old death message read out next to the reconnect notice).
+    announce(reason);
     this.stack.push(menuScreen(t('disconnected.title'), [
       h('div', { class: 'hint', text: reason }),
     ], [button(t('disconnected.back'), () => this.showTitle())]));

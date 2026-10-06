@@ -10,12 +10,15 @@ The user is Stijn and writes in **Dutch**, so reply in Dutch. Code, comments and
 npm install            # node_modules is not committed
 npm run dev            # Vite on :5173 (proxies /ws → :3000)
 npm run server         # multiplayer server on :3000 (tsx watch)
-npm run build          # tsc --noEmit + vite build → dist/
-npm start              # production: serves dist/ + WebSocket on :3000 (run build first)
+npm run build          # tsc --noEmit + vite build → dist/ + server bundle → dist-server/index.js + genWorker.js (esbuild)
+npm start              # production: node dist-server/index.js, serves dist/ + WebSocket on :3000 (run build first)
+npm run load -- --steps survival:10x8,tdm:4x12   # bot load test (scripts/load/), needs build:server
 npm run typecheck
 ```
 
 Docker: `docker build -t bunkcraft . && docker run -p 3000:3000 -v bunkcraft-data:/app/data bunkcraft`.
+Linux server: `sudo ./scripts/install.sh --domain …` (Docker + Caddy, backups, `bunkcraft update`); systemd unit in `deploy/`.
+The production server is the esbuild bundle (no tsx at runtime); dev keeps `npm run server` (tsx watch).
 Server configuration uses environment variables (`PORT`, `DATA_DIR`, `SEED`, `GAMEMODE`, `WORLD_NAME`, `MOTD`, `MAX_PLAYERS`); see `docs/SERVER.md`.
 
 ## Architecture (where things live)
@@ -42,6 +45,7 @@ Server configuration uses environment variables (`PORT`, `DATA_DIR`, `SEED`, `GA
 - `src/items/`: items and tools (ids ≥ 256), `Inventory` (36 slots), `Recipes` (recipe-book crafting, stations within 4 blocks).
 - `src/player/`: `Player` (AABB physics), `PlayerStats` (health, hunger, air, Minecraft numbers at 20 ticks/s), `GameMode`.
 - `src/net/` + `server/`: JSON protocol (`src/net/protocol.ts`, shared). The server owns the edits, time and player records (`data/world.json`) and validates reach, ids, rates and speed. Clients apply edits optimistically and roll back on reject. Multiplayer v1 is peaceful (no server-side mobs yet).
+  Server terrain is generated on worker threads (`server/chunkgen/`, `CHUNK_WORKERS`); not-yet-arrived chunks read as UNLOADED, `ServerWorld.ensureChunk` generates one synchronously when it cannot wait.
 - `src/ui/`: Minecraft 1.21-style menus, integer GUI scale (`--s`), OFL pixel font (`public/fonts`), HUD, inventories, chat and the F3 overlay.
 
 Docs:

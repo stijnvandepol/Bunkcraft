@@ -223,10 +223,12 @@ Volgende stappen:
 6. **Observability en beheer: Gedaan.** JSON-logs, `/metrics`, `/health`, back-ups, verbindingslimieten, `ALLOWED_ORIGINS`,
    gracieus afsluiten met reconnect-hint. Open: Grafana-dashboard als voorbeeld, rate limits per game in `/admin`, alerting.
 7. **Weer in multiplayer: Gedaan** (regen, onweer en bliksem op de server; `/weather` werkt). Kisten en ovens zijn klaar, zie `docs/MULTIPLAYER.md`.
-8. **Uit de QA-ronde (`docs/qa/MULTIPLAYER.md`), open:** plaatsen zonder het blok te hebben maakt items uit het niets
-   (afboeken bij plaatsen), andere spelers bewegen schokkerig (`pos` en de 20 Hz-tick lopen niet in fase: tijdstempel in `pos`),
-   de nacht is drie keer zo zwaar als vrienden bij elkaar staan (extra mobcap alleen voor spelers die ver uit elkaar staan),
-   en de wachtwoordlimiet per adres geldt over alle games.
+8. **Uit de QA-ronde (`docs/qa/MULTIPLAYER.md`): Gedaan.** Plaatsen kost nu het item (`InventoryGuard.authorizeEdit`,
+   ook net gecraft), andere spelers lopen vloeiend (server bemonstert posities op een vaste klok, client stempelt
+   snapshots per tick), de mobcap telt chunks rond spelers één keer (zoals Minecraft), de wachtwoordlimiet geldt per game en
+   de oude doodsmelding blijft niet meer hangen. Open: zaadjes planten bestaat nog niet (dus ook niet in de guard),
+   aansteker/vuur alleen via TNT, en een correctie van de inventory na een geweigerde plaatsing (nu alleen terugdraaien
+   van het blok).
 
 ## 7b. Arcade-game types (Krunker-stijl)
 
@@ -262,31 +264,57 @@ regenereert, respawns en een scoreboard. Beschrijving, besturing en wapentabel: 
   binaire snapshots (v2). Tests: client-physics-replay over alle kaarten, `scripts/cheat-bots.ts`.
 - **Vier nieuwe vrije kaarten in BO2-stijl: Gedaan.** Skyline Villa (villa met zwembad), Riptide (jacht), Sundown (dorp) en
   Terminus (station), puntsymmetrisch met per helft een eigen palet; alle met zones en vlaggen (zie `docs/GAMEMODES.md`).
+- **BunkCraft Realms: Gedaan.** Multiplayer is alleen Minecraft; de arcade-modes zitten onder *BunkCraft Realms*: playlist
+  met live spelersaantallen, **Snel spelen** (server-side matchmaking `POST /api/quickplay`: volste open lobby die niet bijna
+  klaar is, anders een nieuwe), *Lobby's bekijken* (fase, tijd, kaart), *Privélobby* (mode, kaart, limieten, max. spelers,
+  zichtbaar of privé, code + link), lobbypaneel in de warm-up en een **kaartstemming** tussen drie kaarten na elk potje.
+  Naam één keer invoeren, gedeeld met Multiplayer. Tests: `tests/realms.test.ts`, `tests/integration/realms.it.test.ts`,
+  `tests/e2e/realms.spec.ts`. Details in [`GAMEMODES.md`](GAMEMODES.md#bunkcraft-realms-de-minigames-hub).
 - **Wapenherziening: Gedaan.** Shotgun 10 × 13 (one-shot dichtbij), SMG 15, nieuwe DMR, burst rifle en revolver, klassen in het
   loadoutmenu.
+- **Shooter-afwerking: Gedaan (oktober 2026).** Create-a-Class (primair + optiek + secundair + perk, presets als quick picks,
+  `localStorage`, servervalidatie met terugval op de standaard, klassewissel direct binnen 3 s na spawn), nieuwe wapens (LMG,
+  semi-auto sniper, machine pistol; de sniper is nu bolt-action), optieken (red dot, holo met reticle in het viewmodel; scope met
+  overlay, sway, adem inhouden met Shift, glinstering voor vijanden), terugslagpatronen die het richtpunt verplaatsen, ADS-tijd per
+  wapen, perks (Extended Mags, Quickdraw, Ninja, Suppressor), balansmodel `src/modes/Balance.ts` met nichetests, en een
+  geluidsronde (gelaagde schoten met binnen/buiten-staart, gedempte en verre varianten, herlaadsequenties, grendel, voetstappen van
+  vijanden per ondergrond, hitmarker/headshot/kill, medailles, stingers). Details en wapentabel: [`GAMEMODES.md`](GAMEMODES.md).
+  Meting 16 spelers (15 bots + Chromium `--use-angle=metal`, M1 Pro, classic): 120 fps (vsync) vóór en na, frame p99 10,3 → 10,4 ms,
+  JS-tijd per frame 0,57 → 0,58 ms, zonder vsync-cap 650 → 637 fps (−2%); server (`bench-arena.ts 16 30`): tick 0,074 → 0,085 ms,
+  0,84 → 0,93% van een core. Audio worst case 0,26 ms/frame (budget 0,3).
 
 **Open:**
 
 1. **Integratie met de serverbranch** verifiëren: zie de checklist in de overdracht (arena-wereld via `worldType`,
    snelheidscontrole voor 1,3× sprint, `damaged.dx/dz`-richting, `holds` bij joinen).
-2. **Meer kaarten en varianten:** per kaart meerdere dekkingsindelingen via de seed (nu alleen Classic), een stemronde voor de
-   volgende kaart in plaats van vast `rotate`, en bij een kaartwissel de wereld ter plekke herbouwen (nu een korte
-   herverbinding met laadscherm).
+2. **Meer kaarten en varianten:** per kaart meerdere dekkingsindelingen via de seed (nu alleen Classic), en bij een
+   kaartwissel de wereld ter plekke herbouwen (nu een korte herverbinding met laadscherm, ook na de kaartstemming).
 3. **Meer modes:** Infected en Block Hunt (onderzoek §2.4), Search & Destroy op een asymmetrische kaart (Foundry), en
    Domination/Hardpoint-varianten per kaart (meer zones op kleine kaarten, spawnkeuze weg van de actieve heuvel).
 4. **Objective-afwerking:** dragerpijl met interval voor de vijand, MVP-punten (dragerkill, terugbrengen), overtime bij een
    gelijkspel in ctf, rondes met zijwissel, granaten voor elimination, de vlag als echt derde-persoonsmodel op de rug.
-5. **Meer wapens en perks**, scorestreaks, kill cam, headshot-statistieken, teamchat.
+5. **Na Create-a-Class:** meerdere opgeslagen custom-klassen (nu één), attachments per slot (grip, laser) en een
+   tweede perk; scorestreaks (UAV, die de medailles al voorbereiden), kill cam, headshot-statistieken, teamchat; een
+   variabele zoom op de bolt-action; een granaat/launcher pas als de server projectielen kan (nu alles hitscan); de
+   glinstering ook in de dev-preview (de nep-bots sturen nog geen ADS-vlag); een echte TTS- of ingesproken announcer als
+   iemand stemmen opneemt (nu muzikale cues + tekst).
 6. **Anti-cheat vervolg:** server-side invoersimulatie (de client stuurt invoer + tijd, de server speelt `Player.step` na)
    zodat ook kleine speedhacks en lage zweefhacks opvallen; drempels van de verdenkingsscore kalibreren met echte
    spelersdata; tracers alleen naar wie de schutter mag zien; delta-snapshots (alleen wat veranderde) voor de overige
    bytes (ammo/tracers zijn nu groter dan de snapshots); client-side tracer-voorspelling tegen spelers.
-7. **Bots** voor lege servers, en een snelle "Quick Play"-knop die een open arcade-game zoekt.
+7. **Bots** voor lege Realms-lobby's (Snel spelen zet je nu bij echte spelers of in een lege lobby die wacht).
 8. **Mobiel:** touchbediening voor schieten en richten (hoort bij de touch-taak in 6).
+9. **Realms vervolg:** party's (samen met vrienden in één lobby via Snel spelen), skill-based matchmaking (K/D per naam),
+   een playlist-rotatie met tijdelijke modes (bijv. "Gun Game weekend"), de match-HUD vertalen (die is nog Engels; het
+   lobbypaneel en de stemming zijn al NL/EN), lege open lobby's na een dag opruimen (nu na `ROOM_EXPIRE_DAYS`), en de
+   lobbylijst pagineren als er meer dan `LIST_MAX` zijn.
 
 ## 8. Distributie
 
-- **Eigen server:** Docker of Node; zie `docs/SERVER.md`.
+- **Eigen server: klaar (oktober 2026).** `sudo ./scripts/install.sh --domain …` op Ubuntu/Debian (Docker + Caddy, back-ups,
+  `bunkcraft update`), systemd-variant in `deploy/`. Server draait als gebundelde JS (`dist-server/`). Metingen en keuzes:
+  `docs/research/SERVER-DEPLOY.md`. Chunkgeneratie draait op worker threads (`CHUNK_WORKERS`, voorstel A, gedaan). **Open voorstellen (beslissing Stijn):** B delta-`ent`-frames (~90 % van het survival-verkeer), D meerdere processen boven ~150-200
+  spelers, E multi-arch images op GHCR via CI (kleine VPS hoeft niet zelf te bouwen). uWebSockets.js: advies nee.
 - **PWA (S): klaar.** Manifest, handgeschreven service worker (versioned precache, runtime-cache voor texturepacks, `index.html` network-first, update-toast), installknoppen, iOS-meta, offline singleplayer getest met Playwright. Zie `docs/DISTRIBUTION.md`.
 - **itch.io (S): klaar.** `npm run build:static` geeft `dist-static/` + `bunkcraft-static.zip` (relatieve base, werkt onder een submap, multiplayer vraagt om serveradres).
 - **CrazyGames en Poki (M–L):** pas na touchbediening. Verberg daarvoor de Minecraft-jar-import en zwak de 1-op-1 Minecraft-styling af (risico op IP-problemen).

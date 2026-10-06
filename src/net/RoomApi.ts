@@ -1,6 +1,7 @@
 import { type GameType, parseGameType } from '../modes/GameTypes';
 import { type MapSetting } from '../modes/maps';
-import { formatCode } from './protocol';
+import { type MatchPhase, formatCode } from './protocol';
+import { type ListingKind, type ModeStats, filterRooms } from '../modes/Realms';
 
 export interface RoomInfo {
   code: string;
@@ -21,6 +22,10 @@ export interface RoomInfo {
 /** One row of the public server list. */
 export interface ListedRoom extends RoomInfo {
   code: string;
+  /** Arcade lobbies with players (newer servers): match phase, seconds left in it, the map played right now. */
+  phase?: MatchPhase;
+  timeLeft?: number;
+  currentMap?: string;
 }
 
 /** Match settings sent when creating an arcade game (ignored for Minecraft games). */
@@ -34,6 +39,8 @@ export interface RoomOptions {
   timeLimitSec: number;
   /** Arcade games: a map id or "rotate" (older servers ignore it). */
   mapId?: MapSetting;
+  /** Realms lobbies: how many players the game takes (the server clamps it; older servers ignore it). */
+  maxPlayers?: number;
 }
 
 export interface ServerInfo {
@@ -42,7 +49,7 @@ export interface ServerInfo {
   /** The always-on main world is open. */
   main: boolean;
   /** Features of newer servers; absent on older ones. */
-  features?: { passwords?: boolean; browse?: boolean; binary?: boolean };
+  features?: { passwords?: boolean; browse?: boolean; binary?: boolean; realms?: boolean };
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -78,6 +85,7 @@ export async function createRoom(name: string, gameMode: string, seed: string, o
       scoreLimit: options?.scoreLimit ?? 0,
       timeLimitSec: options?.timeLimitSec ?? 0,
       ...(options?.mapId ? { mapId: options.mapId } : {}),
+      ...(options?.maxPlayers ? { maxPlayers: options.maxPlayers } : {}),
       ...(options?.password ? { password: options.password } : {}),
       ...(options?.listed ? { listed: true } : {}),
     }),
@@ -90,10 +98,33 @@ export async function createRoom(name: string, gameMode: string, seed: string, o
   return code;
 }
 
-/** The public server list; empty on servers that do not have it. */
-export async function browseRooms(): Promise<ListedRoom[]> {
-  const { rooms } = await request<{ rooms: ListedRoom[] }>('/api/rooms?public=1');
-  return (Array.isArray(rooms) ? rooms : []).map((r) => ({ ...r, gameType: parseGameType(r.gameType) }));
+/**
+ * The public server list; empty on servers that do not have it. `kind` keeps Minecraft games (Multiplayer) or
+ * arcade lobbies (Realms); filtered here as well because older servers ignore the parameter.
+ */
+export async function browseRooms(kind?: ListingKind): Promise<ListedRoom[]> {
+  const { rooms } = await request<{ rooms: ListedRoom[] }>(`/api/rooms?public=1${kind ? `&kind=${kind}` : ''}`);
+  const list = (Array.isArray(rooms) ? rooms : []).map((r) => ({ ...r, gameType: parseGameType(r.gameType) }));
+  return filterRooms(list, kind ?? null);
+}
+
+/** Realms quick play: the code of a lobby of this mode to join (an existing one, or a new one the server opened). */
+export async function quickPlay(gameType: GameType): Promise<{ code: string; created: boolean }> {
+  return request<{ code: string; created: boolean }>('/api/quickplay', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ gameType }),
+  });
+}
+
+/** Players and lobbies per Realms mode; empty when the server cannot tell. */
+export async function realmsStats(): Promise<ModeStats[]> {
+  try {
+    const { modes } = await request<{ modes: ModeStats[] }>('/api/realms');
+    return Array.isArray(modes) ? modes : [];
+  } catch {
+    return [];
+  }
 }
 
 // ---------------------------------------------------------------- secrets kept in this browser
