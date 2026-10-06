@@ -147,7 +147,7 @@ limieten per bezoeker werken in plaats van per proxy.
 | `MAIN_WORLD` | `on` | De hoofdwereld op `/ws` (knop *Join Public Server*) |
 | `ROOMS` | `on` | Spelers kunnen zelf games aanmaken (`off` = alleen de hoofdwereld) |
 | `MAX_ROOMS` | `200` | Maximum aantal games op de server |
-| `ROOM_MAX_PLAYERS` | `8` | Spelers per game |
+| `ROOM_MAX_PLAYERS` | `12` | Spelers per game |
 | `ROOM_CREATE_LIMIT` | `6` | Games die één bezoeker per uur mag aanmaken |
 | `ROOM_EXPIRE_DAYS` | `60` | Games zonder bezoek worden na zoveel dagen verwijderd (`0` = nooit) |
 | `ROOM_IDLE_UNLOAD_MIN` | `5` | Minuten dat een lege game in het geheugen blijft voordat hij wordt opgeslagen en uitgeladen |
