@@ -1,5 +1,6 @@
 {
   "ciFactor": 3,
   "mesh": { "meanMs": 9, "p95Ms": 16 },
-  "arena": { "tickMeanMs": 0.5, "tickP95Ms": 1.5, "handleMeanMs": 0.6, "outKiBps": 30 }
+  "arena": { "tickMeanMs": 0.5, "tickP95Ms": 1.5, "handleMeanMs": 0.6, "outKiBps": 30 },
+  "mobs": { "obstacleTickMeanMs": 0.5, "obstacleTickP95Ms": 1, "roomTickMeanMs": 1, "roomTickP95Ms": 2, "roomMobsMeanMs": 0.6 }
 }

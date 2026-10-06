@@ -9,7 +9,6 @@ import { chunkKey } from '../src/world/constants';
 import { type EntityPlayer, ServerEntities } from '../server/ServerEntities';
 import { ServerWorld } from '../server/ServerWorld';
 import { useSeededRandom } from './helpers/seededRandom';
-import { TIME_SLACK } from './helpers/timing';
 
 /**
  * The server's mob hot path (see docs/research/SERVER-DEPLOY.md §2.7): per-tick path-finding allowance, the shortcuts
@@ -126,25 +125,29 @@ describe('shortcuts give the same answers', () => {
   });
 });
 
-describe('CPU budget of a survival room at night', () => {
-  // Measured 0.4 ms (mobs 0.3 ms) on an M1 Pro; the limits leave room for slower machines but catch a hot path that
-  // starts scanning all pairs or searching paths without limit.
-  it('4 players far apart with the full hostile cap tick in under 1 ms (mobs under 0.6 ms)', () => {
+describe('work of a survival room at night', () => {
+  // Counted, not timed: the unit suite runs on loaded machines. The millisecond budget of the same room is in
+  // `npm run test:perf` (scripts/bench-mobs.ts).
+  it('4 players far apart with the full hostile cap: bounded world reads and path nodes per tick', () => {
     const { ents } = room();
     const ps = players(4, 80);
     // Chunks load, mobs spawn up to the cap (hostiles at midnight, herds with the chunks).
     for (let i = 0; i < 400; i++) { ents.tick(ps); land(ents, ps); }
     expect(ents.mobCount).toBeGreaterThan(50);
-    // Best of several batches: other processes on the machine only ever make a batch slower.
-    let best = Infinity, bestMobs = Infinity;
-    for (let b = 0; b < 6; b++) {
-      let mobs = 0;
-      const t0 = performance.now();
-      for (let i = 0; i < 40; i++) { ents.tick(ps); mobs += ents.phaseMs.mobs; }
-      best = Math.min(best, (performance.now() - t0) / 40);
-      bestMobs = Math.min(bestMobs, mobs / 40);
+    let reads = 0;
+    const w = ents.world;
+    const getBlock = w.getBlock.bind(w);
+    w.getBlock = (x, y, z) => { reads++; return getBlock(x, y, z); };
+    let maxReads = 0, maxNodes = 0;
+    for (let t = 0; t < 200; t++) {
+      const r0 = reads, n0 = pathStats.nodes;
+      ents.tick(ps);
+      maxReads = Math.max(maxReads, reads - r0);
+      maxNodes = Math.max(maxNodes, pathStats.nodes - n0);
     }
-    expect(bestMobs).toBeLessThan(0.6 * TIME_SLACK);
-    expect(best).toBeLessThan(1 * TIME_SLACK);
-  }, 120_000);
+    // Measured ~1900 reads per tick on average and ~3300 at most with ~65 mobs (mobs, spawning, random ticks).
+    expect(reads / 200).toBeLessThan(3500);
+    expect(maxReads).toBeLessThan(7000);
+    expect(maxNodes).toBeLessThanOrEqual(EntityManager.PATH_NODES_PER_TICK);
+  });
 });

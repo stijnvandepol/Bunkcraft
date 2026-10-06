@@ -7,7 +7,6 @@ import { isBreedFood, tagItems } from '../src/entities/Breeding';
 import { ITEM, itemId } from '../src/items/ItemRegistry';
 import { BLOCK } from '../src/world/BlockRegistry';
 import { useSeededRandom } from './helpers/seededRandom';
-import { TIME_SLACK } from './helpers/timing';
 
 // Goals roll dice (panic directions, strolls, look-arounds): seed them so every run is the same.
 useSeededRandom();
@@ -243,20 +242,29 @@ describe('breeding food tags', () => {
 });
 
 describe('path budget', () => {
-  it('40 mobs behind obstacles stay under 1 ms per tick on average', () => {
+  // Work counters instead of milliseconds: a loaded machine slows the clock, not the amount of work. The time budget of
+  // the same scene lives in `npm run test:perf` (scripts/bench-mobs.ts).
+  it('40 mobs behind obstacles stay within the per-tick path allowance and a bounded number of world reads', () => {
     const s = setup();
     for (let x = -30; x <= 30; x += 6) for (let z = -30; z <= 30; z++) if (Math.abs(z) > 1) s.world.set(x, 63, z, BLOCK.STONE), s.world.set(x, 64, z, BLOCK.STONE);
     for (let i = 0; i < 40; i++) s.em.spawnMob(i % 2 ? 'zombie' : 'pig', -25 + (i % 10) * 5 + 0.5, 63, -20 + Math.floor(i / 10) * 10 + 0.5);
     s.tick(40);
-    // Best of several batches: other processes on the machine only ever make a batch slower.
-    let best = Infinity;
+    let reads = 0;
+    const getBlock = s.world.getBlock.bind(s.world);
+    s.world.getBlock = (x, y, z) => { reads++; return getBlock(x, y, z); };
     const searches0 = pathStats.searches;
-    for (let b = 0; b < 6; b++) {
-      const t0 = performance.now();
-      s.tick(40);
-      best = Math.min(best, (performance.now() - t0) / 40);
+    let maxNodes = 0, maxReads = 0;
+    for (let t = 0; t < 240; t++) {
+      const n0 = pathStats.nodes, r0 = reads;
+      s.tick();
+      maxNodes = Math.max(maxNodes, pathStats.nodes - n0);
+      maxReads = Math.max(maxReads, reads - r0);
     }
     expect((pathStats.searches - searches0) / 240).toBeLessThanOrEqual(EntityManager.PATHS_PER_TICK);
-    expect(best).toBeLessThan(1 * TIME_SLACK);
+    expect(maxNodes).toBeLessThanOrEqual(EntityManager.PATH_NODES_PER_TICK);
+    // Measured ~1200 reads per tick on average, ~2300 at most (40 mobs: physics, goals and the path searches, whose
+    // block cache reads each cell once). Uncapped searches or an all-pairs scan land far above these ceilings.
+    expect(reads / 240).toBeLessThan(2000);
+    expect(maxReads).toBeLessThan(4000);
   });
 });

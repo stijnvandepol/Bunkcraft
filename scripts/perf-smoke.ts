@@ -1,5 +1,5 @@
 /**
- * Performance smoke test (CI): runs the mesh and arena benchmarks and fails on large regressions against
+ * Performance smoke test (CI): runs the mesh, arena and mob benchmarks and fails on large regressions against
  * scripts/perf-budget.json. The budgets are generous ceilings (a shared CI runner is several times slower than a
  * laptop), so only real regressions (an accidental O(n^2), a lost cache) trip them, not noise.
  *
@@ -14,6 +14,7 @@ interface Budget {
   ciFactor: number;
   mesh: { meanMs: number; p95Ms: number };
   arena: { tickMeanMs: number; tickP95Ms: number; handleMeanMs: number; outKiBps: number };
+  mobs: { obstacleTickMeanMs: number; obstacleTickP95Ms: number; roomTickMeanMs: number; roomTickP95Ms: number; roomMobsMeanMs: number };
 }
 
 const root = process.cwd();
@@ -39,6 +40,14 @@ results.push({ name: 'arena tick p95', value: num(/tick\(\):\s+mean [\d.]+ ms, p
 results.push({ name: 'arena handling mean', value: num(/message handling\/tick: mean ([\d.]+) ms/, arena, 'handling mean'), limit: budget.arena.handleMeanMs * factor, unit: 'ms' });
 // Bandwidth does not depend on the machine: no CI factor.
 results.push({ name: 'arena outgoing/player', value: num(/outgoing per player: ([\d.]+) KiB\/s/, arena, 'outgoing'), limit: budget.arena.outKiBps, unit: 'KiB/s' });
+
+// Mob AI, path finding and spawning in CPU time (the unit tests count the work, this guards the milliseconds).
+const mobs = run('bench-mobs.ts', []);
+results.push({ name: 'mobs obstacles mean', value: num(/obstacles.*tick mean ([\d.]+) ms/, mobs, 'obstacles mean'), limit: budget.mobs.obstacleTickMeanMs * factor, unit: 'ms' });
+results.push({ name: 'mobs obstacles p95', value: num(/obstacles.*p95 ([\d.]+) ms/, mobs, 'obstacles p95'), limit: budget.mobs.obstacleTickP95Ms * factor, unit: 'ms' });
+results.push({ name: 'mobs room tick mean', value: num(/room.*tick mean ([\d.]+) ms/, mobs, 'room mean'), limit: budget.mobs.roomTickMeanMs * factor, unit: 'ms' });
+results.push({ name: 'mobs room tick p95', value: num(/room.*p95 ([\d.]+) ms/, mobs, 'room p95'), limit: budget.mobs.roomTickP95Ms * factor, unit: 'ms' });
+results.push({ name: 'mobs room AI mean', value: num(/room.*mobs mean ([\d.]+) ms/, mobs, 'room mobs'), limit: budget.mobs.roomMobsMeanMs * factor, unit: 'ms' });
 
 let failed = false;
 for (const r of results) {
