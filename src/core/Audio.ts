@@ -7,7 +7,7 @@ import type { MusicMode } from './audio/musicTheory';
 import { SOUND_PROFILES, pickVariant, profileFor, type BlockSound, type BlockSoundKind } from './audio/profiles';
 import { MAX_HEAR_DISTANCE, distanceCutoff, distanceGain, occlusionCutoff, occlusionGain, panFor } from './audio/spatial';
 import { type NoiseOpts, Synth, type ToneOpts, type UiSoundName } from './audio/synth';
-import { Priority, VoiceLimiter } from './audio/voiceLimiter';
+import { Priority, VoiceLimiter, remoteStepPriority } from './audio/voiceLimiter';
 import {
   type AnnounceKind, FAR_LEVEL, type MechKind, SUPPRESSED_GAIN, type StingerKind, gunEarshot, gunSound, outdoorShare, reloadSteps,
 } from './audio/weaponSounds';
@@ -846,7 +846,8 @@ export class AudioEngine {
   /** Another player's footstep: positional, per surface; Ninja (`quiet`) footsteps carry only a few blocks. */
   playPlayerStep(surface: BlockSound | string, at: Vec3, quiet: boolean): void {
     this.emitAt('player.remote.step', at, quiet ? 0.15 : 0.4);
-    this.placed(at, quiet ? 7 : 26, Priority.Ambient, () => {
+    // Nearby steps compete with gunshots for voices (see remoteStepPriority).
+    this.placed(at, quiet ? 7 : 26, remoteStepPriority(at.x - this.listener.x, at.z - this.listener.z), () => {
       this.synth.block('step', surface, quiet ? 0.35 : 0.85, this.pitchFor(surface) * 0.95);
       // Gear rattle on a running soldier.
       if (!quiet) this.noiseBurst(3200 + Math.random() * 800, 2, 0.03, 0.05, 'bandpass', 0.02);

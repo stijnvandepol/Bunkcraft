@@ -69,6 +69,16 @@ describe('burst rifle', () => {
     expect(times.length).toBe(6);
     expect(times[3] - times[0]).toBeGreaterThanOrEqual(0.38 - 0.01);
   });
+
+  it('a burst cut short by an empty magazine does not finish by itself later', () => {
+    const w = weaponDef('burst')!;
+    const fc = new FireControl();
+    expect(fc.tryBurst(0, fireInterval(w), 3, w.burstCycleSec!, true)).toBe(true); // shot 1 of 3, then the magazine is empty
+    fc.cancelBurst(); // what the session does while the magazine is empty
+    let shots = 0;
+    for (let t = 0.01; t < 3; t += 0.01) if (fc.tryBurst(t, fireInterval(w), 3, w.burstCycleSec!, false)) shots++;
+    expect(shots).toBe(0); // no click after the reload: nothing goes off
+  });
 });
 
 describe('loadout presets and new weapons', () => {

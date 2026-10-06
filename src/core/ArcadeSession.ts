@@ -4,7 +4,7 @@ import {
   cycleSlot, cycleTarget, impactNormal, reloadProgress, spectateCandidates, spreadPixels, swayOffset,
 } from '../modes/ArcadeLogic';
 import { type GameTypeDef, type Team, TEAM_COLORS, gameTypeDef } from '../modes/GameTypes';
-import { carriesFlag, eventView, phaseBanner } from '../modes/ModeView';
+import { carriesFlag, eventView, localizeServerText, phaseBanner } from '../modes/ModeView';
 import {
   type ClassSpec, DEFAULT_CLASS, LAST_CLASS_STORAGE_KEY, LOADOUT_PRESETS, loadSavedClass, saveClass, validateClass,
 } from '../modes/Loadouts';
@@ -28,7 +28,8 @@ import { BLOCK } from '../world/BlockRegistry';
 import { type RayHit, createRayHit, raycast } from '../world/Raycast';
 import type { AudioEngine } from './Audio';
 import { type SurfaceLookup, surfaceLookup } from './audio/playerSounds';
-import { BOLT_DELAY, MEDAL_TEXT, MULTI_KILL_WINDOW, type MechKind, gunEarshot, medalFor, reloadSteps } from './audio/weaponSounds';
+import { BOLT_DELAY, MULTI_KILL_WINDOW, type MechKind, gunEarshot, medalFor, medalText, reloadSteps } from './audio/weaponSounds';
+import { t } from '../ui/i18n';
 import type { CameraController } from './Camera';
 import type { Input } from './Input';
 import { KB } from './Keybinds';
@@ -384,8 +385,9 @@ export class ArcadeSession {
     const medal = medalFor(this.multi, this.streak);
     if (!medal) return;
     this.d.audio.playAnnouncer(medal);
-    this.hud.showMedal(MEDAL_TEXT[medal], medal.startsWith('streak') ? '#ff9f2a' : '#ffd23f', now);
-    this.d.feedback?.caption(MEDAL_TEXT[medal].toLowerCase().replace(/^./, (c) => c.toUpperCase()), this.d.player.x, this.d.player.z);
+    const text = medalText(medal);
+    this.hud.showMedal(text, medal.startsWith('streak') ? '#ff9f2a' : '#ffd23f', now);
+    this.d.feedback?.caption(text.toLowerCase().replace(/^./, (c) => c.toUpperCase()), this.d.player.x, this.d.player.z);
   }
 
   /** Another player's hands: weapon model with optic and suppressor; Ninja and scope for footsteps and glints. */
@@ -411,10 +413,10 @@ export class ArcadeSession {
     }
     if (msg.phase === 'live' && this.phase !== 'live' && this.phase !== 'ended') {
       this.d.audio.playStinger('start');
-      this.d.feedback?.caption('Match starts', this.d.player.x, this.d.player.z);
+      this.d.feedback?.caption(t('arc.cap.matchStarts'), this.d.player.x, this.d.player.z);
     }
     this.phase = msg.phase;
-    this.matchText = msg.text ?? '';
+    this.matchText = localizeServerText(msg.text ?? '');
     this.timeLeft = msg.timeLeft;
     this.timeStamp = now;
     this.scores = msg.scores;
@@ -438,7 +440,7 @@ export class ArcadeSession {
       if (!best || (p.pts ?? 0) > (best.pts ?? 0) || ((p.pts ?? 0) === (best.pts ?? 0) && p.kills > best.kills)) best = p;
       if (p.id === this.d.selfId) { this.selfKills = p.kills; this.selfPts = p.pts ?? 0; }
     }
-    this.leader = best ? `Leader: ${best.name}${this.def.ladder ? ` (level ${(best.pts ?? 0) + 1})` : ''}` : '';
+    this.leader = !best ? '' : this.def.ladder ? t('arc.leaderLevel', best.name, (best.pts ?? 0) + 1) : t('arc.leader', best.name);
     for (const p of players) {
       this.players.set(p.id, { name: p.name, team: p.team });
       if (p.id === this.d.selfId) this.setTeam(p.team);
@@ -512,7 +514,7 @@ export class ArcadeSession {
   }
 
   private onEvent(msg: Extract<ServerMessage, { t: 'event' }>, now: number): void {
-    const who = msg.id ? (msg.id === this.d.selfId ? 'You' : this.nameOf(msg.id)) : '';
+    const who = msg.id ? (msg.id === this.d.selfId ? t('arc.you') : this.nameOf(msg.id)) : '';
     const v = eventView(msg.kind, msg.team ?? '', this.team, msg.text ?? '', who, msg.id === this.d.selfId);
     const color = msg.team ? TEAM_COLORS[msg.team] : '#ffff55';
     // Ladder steps of other players are not worth a banner.
@@ -590,7 +592,7 @@ export class ArcadeSession {
     this.watchId = 0;
     this.killerId = 0;
     this.d.remote.setSpectated(0);
-    this.hud.setSpectating('', '');
+    this.hud.setSpectating('', false);
   }
 
   /** Per frame while dead: keeps a valid target, handles the cycle clicks and updates the HUD line. */
@@ -619,10 +621,10 @@ export class ArcadeSession {
     const watching = this.watchId !== 0 && remote.pose(this.watchId, this.watchPose);
     remote.setSpectated(watching ? this.watchId : 0);
     if (!watching) {
-      this.hud.setSpectating('', '');
+      this.hud.setSpectating('', false);
       return;
     }
-    this.hud.setSpectating(this.nameOf(this.watchId), this.candidates.length > 1 ? 'Left click: next player   Right click: previous' : '');
+    this.hud.setSpectating(this.nameOf(this.watchId), this.candidates.length > 1);
   }
 
   /**
@@ -648,13 +650,13 @@ export class ArcadeSession {
     this.matchDirty = true;
     this.phase = 'ended';
     this.endAt = now + msg.restartIn;
-    let title = 'Draw';
+    let title = t('arc.end.draw');
     let color = '#ffffff';
     if (msg.winnerTeam) {
-      title = `${msg.winnerTeam === 'red' ? 'Red' : 'Blue'} team wins!`;
+      title = msg.winnerTeam === 'red' ? t('arc.end.redWins') : t('arc.end.blueWins');
       color = TEAM_COLORS[msg.winnerTeam];
     } else if (msg.winnerId) {
-      title = msg.winnerId === this.d.selfId ? 'You win!' : `${this.nameOf(msg.winnerId)} wins!`;
+      title = msg.winnerId === this.d.selfId ? t('arc.end.youWin') : t('arc.end.wins', this.nameOf(msg.winnerId));
       color = msg.winnerId === this.d.selfId ? '#ffd23f' : '#ffffff';
     }
     // The final kill may have been yours: the end screen replaces the death screen and spectating.
@@ -664,7 +666,7 @@ export class ArcadeSession {
     const won = msg.winnerTeam ? msg.winnerTeam === this.team : msg.winnerId === this.d.selfId;
     const draw = !msg.winnerTeam && !msg.winnerId;
     this.d.audio.playStinger(draw ? 'draw' : won ? 'win' : 'lose');
-    this.d.feedback?.caption(draw ? 'Match ends in a draw' : won ? 'Victory' : 'Defeat', this.d.player.x, this.d.player.z);
+    this.d.feedback?.caption(draw ? t('arc.cap.draw') : won ? t('arc.cap.victory') : t('arc.cap.defeat'), this.d.player.x, this.d.player.z);
     this.hud.setMatchEnd({ title, color, roster: this.roster, ctx: this.boardContext() });
   }
 
@@ -677,7 +679,7 @@ export class ArcadeSession {
     const sup = msg.sup === 1;
     this.d.audio.playGun(msg.weapon, 1, gunAt, sup);
     if (dist < gunEarshot(msg.weapon, sup) * 0.8) {
-      this.d.feedback?.caption(msg.weapon === 'knife' ? 'Knife swings' : sup ? 'Suppressed shot' : dist > 45 ? 'Distant gunfire' : 'Gunshot', msg.ox, msg.oz);
+      this.d.feedback?.caption(t(msg.weapon === 'knife' ? 'arc.cap.knife' : sup ? 'arc.cap.suppressed' : dist > 45 ? 'arc.cap.distant' : 'arc.cap.gunshot'), msg.ox, msg.oz);
     }
     if (msg.weapon === 'knife') return;
     // Muzzle of the shooter: ahead of the eye, a bit to the right and down.
@@ -801,7 +803,7 @@ export class ArcadeSession {
     this.viewmodel.fire();
     this.kick = Math.min(0.12, this.kick + (w.recoil * Math.PI) / 180 * 0.8);
     // The aim climbs along the weapon's pattern (after the shot went out with the old aim).
-    const r = this.recoil.kick(now, w.recoil, w.recoilX, w.pattern, this.ads, AIM_CLIMB);
+    const r = this.recoil.kick(now, w.recoil, w.recoilX, w.pattern, this.ads, AIM_CLIMB, w.auto ? fireInterval(w) : 0);
     p.pitch = Math.min(Math.PI / 2 - 0.001, p.pitch + r.pitch * DEG);
     p.yaw -= r.yaw * DEG;
     if (w.bolt) { this.boltAt = now + BOLT_DELAY; this.boltStage = 0; }
@@ -880,6 +882,7 @@ export class ArcadeSession {
       } else if (!ammo.reloading) {
         const mag = ammo.mag - this.pending;
         if (mag <= 0) {
+          this.trigger.cancelBurst();
           if (input.leftClicked) this.d.audio.playEmpty();
           if (input.leftDown) this.requestReload(now);
         } else if (w.burst && w.burstCycleSec) {
@@ -1062,7 +1065,7 @@ export class ArcadeSession {
         const at = this.stepAt;
         at.x = pose.x; at.y = pose.y; at.z = pose.z;
         this.d.audio.playPlayerStep(surface, at, g.quiet);
-        if (!g.quiet && Math.hypot(dx, dz) < 18) this.d.feedback?.caption('Footsteps', pose.x, pose.z);
+        if (!g.quiet && Math.hypot(dx, dz) < 18) this.d.feedback?.caption(t('arc.cap.footsteps'), pose.x, pose.z);
       }
     } else g.acc = 0;
     // Scope glint: an enemy aiming through a scope roughly at us shines.

@@ -75,8 +75,11 @@ class Bot {
   }
 }
 
-/** Two floor points 10-20 blocks apart with a clear line of sight at eye height. */
-function findDuelSpots(seed: number): [[number, number], [number, number]] {
+/**
+ * Two floor points 14 blocks apart with a clear line of sight at eye height that `reachable` accepts (both bots can walk
+ * there: on maps like station the first clear line can lie on a closed-off track).
+ */
+function findDuelSpots(seed: number, reachable: (a: [number, number], b: [number, number]) => boolean): [[number, number], [number, number]] {
   const map = getMap(mapId);
   const v = map.variantFor(seed);
   const arenaBlockAt = (_v: number, x: number, y: number, z: number) => map.blockAt(v, x, y, z);
@@ -86,14 +89,19 @@ function findDuelSpots(seed: number): [[number, number], [number, number]] {
     arenaBlockAt(v, Math.floor(x), ARENA_FLOOR_Y, Math.floor(z)) !== 0
     && arenaBlockAt(v, Math.floor(x), ARENA_FLOOR_Y + 1, Math.floor(z)) === 0
     && arenaBlockAt(v, Math.floor(x), ARENA_FLOOR_Y + 2, Math.floor(z)) === 0;
-  for (let z = ARENA_BOUNDS.minZ + 4; z < ARENA_BOUNDS.maxZ - 4; z += 2) {
-    for (let x = ARENA_BOUNDS.minX + 4; x < ARENA_BOUNDS.maxX - 20; x += 2) {
-      const a: [number, number] = [x + 0.5, z + 0.5], b: [number, number] = [x + 14.5, z + 0.5];
-      if (!free(a[0], a[1]) || !free(b[0], b[1])) continue;
-      const dx = b[0] - a[0], dist = Math.abs(dx);
-      const e = ARENA_FLOOR_Y + 1 + 1.62;
-      // A line at eye height and one at the body (both ways are clear when the walls are).
-      if (traceBlocks(world, a[0], e, a[1], 1, 0, 0, dist) >= dist && traceBlocks(world, a[0], e - 0.7, a[1], 1, 0, 0, dist) >= dist) return [a, b];
+  const e = ARENA_FLOOR_Y + 1 + 1.62;
+  // Lines along x and along z; either bot may take either end.
+  for (const [ax, az] of [[1, 0], [0, 1]]) {
+    for (let z = ARENA_BOUNDS.minZ + 4; z < ARENA_BOUNDS.maxZ - 4 - 14 * az; z += 2) {
+      for (let x = ARENA_BOUNDS.minX + 4; x < ARENA_BOUNDS.maxX - 4 - 14 * ax; x += 2) {
+        const a: [number, number] = [x + 0.5, z + 0.5], b: [number, number] = [x + 0.5 + 14 * ax, z + 0.5 + 14 * az];
+        if (!free(a[0], a[1]) || !free(b[0], b[1])) continue;
+        const dist = 14;
+        // A line at eye height and one at the body (both ways are clear when the walls are).
+        if (traceBlocks(world, a[0], e, a[1], ax, 0, az, dist) < dist || traceBlocks(world, a[0], e - 0.7, a[1], ax, 0, az, dist) < dist) continue;
+        if (reachable(a, b)) return [a, b];
+        if (reachable(b, a)) return [b, a];
+      }
     }
   }
   throw new Error('no duel spot found');
@@ -135,12 +143,13 @@ async function main(): Promise<void> {
   // Building is not allowed.
   alice.send({ t: 'block', seq: 1, x: Math.floor(alice.x), y: ARENA_FLOOR_Y, z: Math.floor(alice.z), id: 0 });
 
-  const [spotA, spotB] = findDuelSpots(welcome.seed);
   console.log(`waiting for the match to go live (warm-up 10 s)...`);
   for (let i = 0; i < 300 && !(alice.phase === 'live' && bob.phase === 'live'); i++) await sleep(100);
   check('the match goes live after the warm-up', alice.phase === 'live' && bob.phase === 'live');
   // Everybody respawned at the start: walk to the duel spots (spawn protection lasts 2 s).
   const map = getMap(mapId), variant = map.variantFor(welcome.seed);
+  const [spotA, spotB] = findDuelSpots(welcome.seed, (a, b) =>
+    !!arenaPath(map, variant, [alice.x, alice.z], a) && !!arenaPath(map, variant, [bob.x, bob.z], b));
   const routeA = arenaPath(map, variant, [alice.x, alice.z], spotA), routeB = arenaPath(map, variant, [bob.x, bob.z], spotB);
   check('there are walking paths to the duel spots', !!routeA && !!routeB);
   alice.route = routeA ?? []; bob.route = routeB ?? [];

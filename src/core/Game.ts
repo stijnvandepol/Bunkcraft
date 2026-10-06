@@ -1187,6 +1187,7 @@ export class Game {
     this.hand.visible = false;
     this.interaction!.arcade = true;
     this.hud.setArcade(true);
+    this.subtitles.el.classList.add('arcade');
     this.cam.sprintFov = false;
     const def = gameTypeDef(welcome.gameType);
     const info = welcome.match ?? { type: welcome.gameType, scoreLimit: def.scoreLimit, timeLimitSec: def.timeLimitSec };
@@ -1234,6 +1235,7 @@ export class Game {
     session.hud.el.remove();
     session.hud.loadoutEl.remove();
     this.hud.setArcade(false);
+    this.subtitles.el.classList.remove('arcade');
     this.hand.visible = this.mode !== 'spectator';
     this.cam.sprintFov = true;
     if (this.interaction) this.interaction.arcade = false;

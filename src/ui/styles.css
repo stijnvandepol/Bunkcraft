@@ -1061,12 +1061,15 @@ html, body {
 .arc-death-weapons span.sel { border-color: #fff; }
 
 .arc-end { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: calc(var(--s) * 8); background: rgba(0, 0, 0, 0.65); }
+.arc-hud.end-open > :not(.arc-end) { visibility: hidden; }
 .arc-end-title { font-size: calc(var(--fs) * 3); }
 .arc-end-board { width: min(calc(var(--s) * 300), 94vw); max-height: 55vh; overflow: hidden; }
 .arc-end-count { font-size: calc(var(--fs) * 1.5); color: #ffff55; }
 
 /* Loadout menu (clickable, above the HUD). */
-.arc-loadout { position: absolute; inset: 0; z-index: 11; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.55); text-shadow: var(--shadow); }
+.arc-loadout { position: absolute; inset: 0; z-index: 11; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.7); text-shadow: var(--shadow); }
+/* Create-a-Class is a full-screen menu: hide the match HUD under it (its title sat on the score bar). */
+.arc-hud.class-open, .arc-hud.class-open * { visibility: hidden !important; }
 .arc-loadout-panel { display: flex; flex-direction: column; align-items: center; gap: calc(var(--s) * 6); }
 .arc-loadout-title { font-size: calc(var(--fs) * 2); }
 .arc-loadout-cards { display: flex; gap: calc(var(--s) * 5); flex-wrap: wrap; justify-content: center; max-width: 94vw; }
@@ -1203,6 +1206,8 @@ html, body {
   pointer-events: none;
 }
 .subtitle { padding: var(--s) calc(var(--s) * 4); background: rgba(0, 0, 0, 0.65); color: #fff; }
+/* Arcade: above the weapon slots and the ammo counter (the captions covered them). */
+.subtitles.arcade { bottom: calc(var(--s) * 72); }
 .touch-ui .subtitles { right: auto; bottom: auto; left: calc(var(--s) * 4); top: calc(var(--s) * 4); align-items: flex-start; }
 
 .notice {

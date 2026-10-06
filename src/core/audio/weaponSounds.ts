@@ -11,6 +11,8 @@
  * pop and a muffled boom), and the spatial chain low-passes it further with distance and walls.
  */
 
+import { t } from '../../ui/i18n';
+
 export interface GunSound {
   /** Transient: band-pass centre (Hz), Q, seconds, gain. */
   crack: readonly [number, number, number, number];
@@ -130,6 +132,11 @@ export const MEDAL_TEXT: Record<AnnounceKind, string> = {
   double: 'DOUBLE KILL', triple: 'TRIPLE KILL', multi: 'MULTI KILL',
   streak3: 'KILLSTREAK 3', streak5: 'KILLSTREAK 5: RAMPAGE', streak10: 'KILLSTREAK 10: UNSTOPPABLE', headshot: 'HEADSHOT',
 };
+
+/** The medal banner text in the current language (MEDAL_TEXT is the English source). */
+export function medalText(kind: AnnounceKind): string {
+  return t(`arc.medal.${kind}`, MEDAL_TEXT[kind]);
+}
 
 /** Match start / end cues. */
 export type StingerKind = 'start' | 'win' | 'lose' | 'draw';

@@ -8,6 +8,7 @@ import {
 } from '../modes/ModeView';
 import { weaponDef } from '../modes/Weapons';
 import { h } from './dom';
+import { t } from './i18n';
 
 const MAX_MARKERS = 6;
 const TOAST_SECONDS = 2.6;
@@ -24,9 +25,17 @@ interface Marker {
   active: boolean;
   /** Player id when it marks a carried flag (follows the carrier), else 0. */
   carrier: number;
+  /** Half the marker's width in px (measured once after its caption changes; -1 = measure again). */
+  halfW: number;
 }
 
 const tmp = new THREE.Vector3();
+
+function setCaption(m: Marker, text: string): void {
+  if (m.caption.textContent === text) return;
+  m.caption.textContent = text;
+  m.halfW = -1;
+}
 const placed = { x: 0, y: 0, edge: false };
 
 /**
@@ -58,7 +67,7 @@ export class ModeHud {
       const dist = h('div', { class: 'mm-dist' });
       const el = h('div', { class: 'mode-marker hidden' }, icon, caption, dist);
       this.markerLayer.append(el);
-      this.markers.push({ el, icon, caption, dist, px: -1, py: -1, shown: false, key: '', meters: -1, x: 0, y: 0, z: 0, active: false, carrier: 0 });
+      this.markers.push({ el, icon, caption, dist, px: -1, py: -1, shown: false, key: '', meters: -1, x: 0, y: 0, z: 0, active: false, carrier: 0, halfW: -1 });
     }
     this.barRed = h('div', { class: 'mode-bar-fill red' });
     this.barBlue = h('div', { class: 'mode-bar-fill blue' });
@@ -97,9 +106,9 @@ export class ModeHud {
     const steps = h('div', { class: 'mode-ladder-steps' });
     for (let i = 0; i < ladder.length; i++) steps.append(h('i', { class: i < level ? 'done' : i === level ? 'now' : '' }));
     this.panel.replaceChildren(h('div', { class: 'mode-ladder' },
-      h('div', { class: 'mode-ladder-level', text: `LEVEL ${Math.min(level + 1, ladder.length)} / ${ladder.length}` }),
+      h('div', { class: 'mode-ladder-level', text: t('mode.ladder.level', Math.min(level + 1, ladder.length), ladder.length) }),
       h('div', { class: 'mode-ladder-weapon', text: name(cur) }),
-      h('div', { class: 'mode-ladder-next', text: next ? `Next: ${name(next)}` : 'Last weapon: get a kill to win' }),
+      h('div', { class: 'mode-ladder-next', text: next ? t('mode.ladder.next', name(next)) : t('mode.ladder.last') }),
       steps,
       leader ? h('div', { class: 'mode-ladder-next', text: leader }) : null,
     ));
@@ -141,7 +150,10 @@ export class ModeHud {
       const behind = tmp.z > 1;
       // Edge markers keep clear of the score bar on top and of the health/ammo panels at the bottom
       // (an objective under your feet would otherwise sit on top of the ammo counter).
-      placeMarker(tmp.x, tmp.y, behind, width, height, 40, placed, Math.min(height * 0.3, 150), Math.min(height * 0.32, 230));
+      // The side margin covers half the caption, so a wide one ("CONTESTED", "KILL CARRIER") is not cut off at the edge.
+      // (Measured while visible: a hidden marker has no width.)
+      if (m.halfW < 0 && m.shown) m.halfW = m.el.offsetWidth / 2;
+      placeMarker(tmp.x, tmp.y, behind, width, height, Math.max(40, m.halfW + 6), placed, Math.min(height * 0.3, 150), Math.min(height * 0.32, 230));
       const px = Math.round(placed.x), py = Math.round(placed.y);
       if (px !== m.px || py !== m.py) {
         m.px = px; m.py = py;
@@ -167,7 +179,7 @@ export class ModeHud {
         const show = st.variant === 'domination' || z.active || (st.gap && i === this.nextHill(st.zones));
         if (show) this.setZoneMarker(this.markers[i], z, i, st, self.team);
       });
-      this.panel.replaceChildren(...(st.variant === 'hardpoint' ? [h('div', { class: 'mode-line', text: st.gap ? `Next hill in ${Math.ceil(st.rotateIn)}` : `Hill moves in ${Math.ceil(st.rotateIn)}` })] : []));
+      this.panel.replaceChildren(...(st.variant === 'hardpoint' ? [h('div', { class: 'mode-line', text: t(st.gap ? 'mode.hill.next' : 'mode.hill.moves', Math.ceil(st.rotateIn)) })] : []));
     } else if (st.kind === 'ctf') {
       st.flags.forEach((f, i) => this.setFlagMarker(this.markers[i], f, self));
       this.panel.replaceChildren(...st.flags.map((f) => h('div', { class: 'mode-line', style: `color:${TEAM_COLORS[f.team]}`, text: flagLine(f, nameOf) })));
@@ -206,7 +218,7 @@ export class ModeHud {
     m.icon.className = `mm-icon zone${z.contested ? ' contested' : ''}${!z.active ? ' dim' : ''}`;
     m.icon.style.borderColor = color;
     m.icon.style.background = `conic-gradient(${ring.color} ${Math.round(ring.fill * 360)}deg, rgba(0,0,0,0.55) 0deg)`;
-    m.caption.textContent = z.active ? zoneStatus(z, self, st.variant) : `NEXT: ${z.name}`;
+    setCaption(m, z.active ? zoneStatus(z, self, st.variant) : t('mode.zone.next', z.name));
     m.caption.style.color = color;
   }
 
@@ -221,7 +233,7 @@ export class ModeHud {
     m.icon.className = `mm-icon flag ${f.status}`;
     m.icon.style.borderColor = TEAM_COLORS[f.team];
     m.icon.style.background = TEAM_COLORS[f.team];
-    m.caption.textContent = flagAction(f, self.team, self.id);
+    setCaption(m, flagAction(f, self.team, self.id));
     m.caption.style.color = TEAM_COLORS[f.team];
   }
 

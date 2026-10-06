@@ -219,6 +219,9 @@ describe('two players in a Minecraft room', () => {
       const third = await Client.join(`${lim.ws}/ws/${code}`, 'pl_three');
       local.push(third);
       expect(third.of('kick')[0]?.reason).toMatch(/full/);
+      // Realms reads the cap to offer only lobby sizes the server allows.
+      const s = await api<{ roomMaxPlayers?: number }>(lim, 'GET', '/api/server');
+      expect(s.body.roomMaxPlayers).toBe(2);
     } finally { local.forEach((c) => c.close()); await lim.dispose(); }
   });
 

@@ -11,6 +11,18 @@ export const Priority = {
   Ui: 3,
 } as const;
 
+/** Other players' footsteps closer than this (blocks, horizontal) compete with gunshots for voices. */
+export const NEAR_STEP_DISTANCE = 12;
+
+/**
+ * Voice priority of another player's footstep: a nearby enemy's steps are information, not ambience. In a
+ * 16-player firefight the limit is full of gunshots (QA: 64/64 voices, ~40 drops/s) and ambient-priority steps
+ * right behind you were all dropped; far steps still yield.
+ */
+export function remoteStepPriority(dx: number, dz: number): number {
+  return dx * dx + dz * dz < NEAR_STEP_DISTANCE * NEAR_STEP_DISTANCE ? Priority.Normal : Priority.Ambient;
+}
+
 interface Voice {
   /** Time (s) when the voice ends by itself. */
   end: number;

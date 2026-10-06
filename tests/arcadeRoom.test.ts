@@ -92,6 +92,19 @@ describe('arcade rooms', () => {
     expect(a.of('ent')).toHaveLength(0);
   });
 
+  it('a loadout with non-string fields falls back to the default class and does not drop the player', () => {
+    const server = arcade();
+    const a = connect(server, 'alice');
+    let closed = false;
+    (a as unknown as { close: () => void }).close = () => { closed = true; };
+    // {"toString":1} cannot be turned into a string: String() on it threw and the server closed the socket (QA round 2).
+    a.say({ t: 'loadout', primary: { toString: 1, valueOf: 1 }, secondary: ['x'], optic: 7, perk: { toString: 1 } } as unknown as ClientMessage);
+    expect(closed).toBe(false);
+    expect(a.of('gear').at(-1)).toMatchObject({ primary: 'rifle', secondary: 'pistol', optic: 'iron', perk: 'none' });
+    a.say({ t: 'loadout', primary: 'lmg', secondary: 'mpistol', optic: 'holo', perk: 'extmag' });
+    expect(a.of('gear').at(-1)).toMatchObject({ primary: 'lmg', secondary: 'mpistol', optic: 'holo', perk: 'extmag' });
+  });
+
   it('ignores positions outside the arena and positions from before a spawn', () => {
     const server = arcade();
     const a = connect(server, 'alice');

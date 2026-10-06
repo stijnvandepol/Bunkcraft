@@ -29,7 +29,10 @@ bots_cwd = os.environ.get('QA_BOTS_CWD', '.')
 
 
 def metrics():
-    with urllib.request.urlopen(server + '/metrics') as r:
+    # A server with ADMIN_TOKEN or METRICS_TOKEN wants it as a bearer token (QA_METRICS_TOKEN).
+    token = os.environ.get('QA_METRICS_TOKEN', '')
+    req = urllib.request.Request(server + '/metrics', headers={'authorization': f'Bearer {token}'} if token else {})
+    with urllib.request.urlopen(req) as r:
         out = {}
         for line in r.read().decode().splitlines():
             if line.startswith('#') or ' ' not in line:
