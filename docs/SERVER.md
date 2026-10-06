@@ -39,7 +39,7 @@ naar ~375 MB bij 160 spelers.
 |---|---|---|
 | 1 vCPU / 1 GB (kleinste VPS bij de meeste aanbieders) | ~€2-5/mnd | ~40-60 survival-spelers (5-8 games), arcade ~100 |
 | **2 vCPU / 4 GB (Hetzner CAX11 ARM of CX22)** — aanbevolen | ~€4-5/mnd | ~120-150 survival-spelers (arcade 200+); bouwen gaat zonder swap |
-| 4 vCPU / 8 GB | ~€8-15/mnd | ~150-200: de gamelogica van één Node-proces draait op één core; meer pas met workers of meerdere processen |
+| 4 vCPU / 8 GB | ~€8-15/mnd | ~150-200: de gamelogica van één Node-proces draait op één core (terrein al op aparte threads, `CHUNK_WORKERS`); meer pas met meerdere processen |
 
 **Zonder Docker** (systemd): zie [Zonder Docker](#zonder-docker-systemd).
 
@@ -135,7 +135,7 @@ limieten per bezoeker werken in plaats van per proxy.
 | `ROOM_CREATE_LIMIT` | `6` | Games die één bezoeker per uur mag aanmaken |
 | `ROOM_EXPIRE_DAYS` | `60` | Games zonder bezoek worden na zoveel dagen verwijderd (`0` = nooit) |
 | `ROOM_IDLE_UNLOAD_MIN` | `5` | Minuten dat een lege game in het geheugen blijft voordat hij wordt opgeslagen en uitgeladen |
-| `CHUNK_WORKERS` | `min(2, cores − 1)` | Threads die nieuw terrein genereren voor alle survival-games samen, zodat verkennende spelers de ticks niet ophouden. `0` = op de main thread (het oude pad, ook de standaard met één core). Cores = die van de machine, of minder als Docker een CPU-limiet zet (`BUNKCRAFT_CPUS`). Elke thread kost ~10-15 MB RSS. Meer dan 2 helpt pas bij honderden verkennende spelers. |
+| `CHUNK_WORKERS` | `min(2, cores − 1)` | Threads die nieuw terrein genereren voor alle survival-games samen, zodat verkennende spelers de ticks niet ophouden. `0` = op de main thread (het oude pad, ook de standaard met één core). Cores = die van de machine, of minder als Docker een CPU-limiet zet (`BUNKCRAFT_CPUS`). Elke thread kost ~20-25 MB RSS. Meer dan 2 helpt pas bij honderden verkennende spelers. |
 | `ADMIN_TOKEN` | niet gezet | Geheim voor `/admin` en `/api/admin/*`. Leeg = beheer staat uit. Minstens 16 willekeurige tekens (`openssl rand -hex 24`). Wie dit token als `owner` meestuurt, is ook operator in elke game. |
 | `METRICS_TOKEN` | niet gezet | Bearer-token voor `/metrics`. Zonder `METRICS_TOKEN` en `ADMIN_TOKEN` is `/metrics` alleen bereikbaar vanaf deze machine (niet via een reverse proxy). |
 | `OPS` | leeg | Komma-gescheiden namen die operator zijn in de **hoofdwereld** (games hebben hun eigen eigenaar). |

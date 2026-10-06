@@ -155,6 +155,11 @@ export interface StepResult {
   serverWarnings: Record<string, number>;
   /** Machine load average (1 min) at the start and end of the window: other work on the machine skews latencies. */
   machineLoad: [number, number];
+  /**
+   * Chunk work per second: generated on worker threads (CHUNK_WORKERS) and on the main thread, with the time spent
+   * (ms per second), plus the main-thread time to put chunks into the world. Zero on servers without these metrics.
+   */
+  chunks: { workerPerSec: number; workerMsPerSec: number; mainPerSec: number; mainMsPerSec: number; installMsPerSec: number };
   profile?: string;
 }
 
@@ -238,6 +243,13 @@ async function runStep(kind: StepKind, roomCount: number, BOTS: number): Promise
       botLoopP99: round(maxOf(reports.map((r) => r.loopP99))), botLoopMax: round(maxOf(reports.map((r) => r.loopMax))),
       serverWarnings: {},
       machineLoad: [round(load0), round(loadavg()[0])],
+      chunks: {
+        workerPerSec: round(d('bunkcraft_chunkgen_chunks_total{result="generated"}') / secs),
+        workerMsPerSec: round((d('bunkcraft_chunkgen_seconds_total') * 1000) / secs),
+        mainPerSec: round(d('bunkcraft_chunks_main_thread_total{phase="generate"}') / secs),
+        mainMsPerSec: round((d('bunkcraft_chunk_main_thread_seconds_total{phase="generate"}') * 1000) / secs),
+        installMsPerSec: round((d('bunkcraft_chunk_main_thread_seconds_total{phase="install"}') * 1000) / secs),
+      },
     };
     await sleep(800);
     proc.kill('SIGINT');
@@ -269,6 +281,8 @@ function print(r: StepResult): void {
   console.log(`  server: tick p50 ${r.tick.p50} p99 ${r.tick.p99} max ${r.tick.max} ms | loop lag p50 ${r.loopLag.p50} p99 ${r.loopLag.p99} max ${r.loopLag.max} ms`);
   console.log(`          GC ${r.gc.perSec}/s, ${r.gc.msPerSec} ms/s, longest ${r.gc.max} ms | heap ${r.heapMB} MB | start-up ${r.startMs} ms`);
   console.log(`          CPU ${r.cpuPct} % of a core (main thread ${r.mainCpuPct} %) | RSS ${r.rssMB} MB | out ${r.outKBps} KiB/s (${r.outKBpsPerPlayer}/player), in ${r.inKBps} KiB/s | ${r.msgOutPs} msg/s out, ${r.msgInPs} in`);
+  const k = r.chunks;
+  console.log(`          chunks: ${k.workerPerSec}/s on workers (${k.workerMsPerSec} ms/s), ${k.mainPerSec}/s on the main thread (${k.mainMsPerSec} ms/s), installing ${k.installMsPerSec} ms/s`);
   console.log(`  bots:   rtt p50 ${l.rtt.p50} p99 ${l.rtt.p99} max ${l.rtt.max} | chat p99 ${l.chat.p99} | take p99 ${l.take.p99} | fire p99 ${l.fire.p99} | edit p99 ${l.edit.p99} | snap gap p50 ${l.snapGap.p50} p99 ${l.snapGap.p99} max ${l.snapGap.max} ms`);
   console.log(`          errors: connectFail ${c.connectFail}, kicked ${c.kicked}, closed ${c.closedUnexpected}, wsError ${c.wsError}, reject ${c.reject}, stateCorrection ${c.stateCorrection}, teleport ${c.teleport}`);
   console.log(`          actions: broken ${c.blocksBroken}, placed ${c.blocksPlaced}, taken ${c.taken}/${c.takes}, attacks ${c.attacks}, chats ${c.chats}, fires ${c.fires}, hits ${c.hits}, kills ${c.kills}, mobs/ent ${(c.mobsSeen / Math.max(1, c.entFrames)).toFixed(1)}`);

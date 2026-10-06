@@ -13,6 +13,7 @@ import { CHUNK_HEIGHT, CHUNK_VOLUME, blockIndex, chunkKey } from '../src/world/c
 import { GEN_VERSION_CURRENT } from '../src/world/GenVersion';
 import { type WorldGenerator, type WorldType, createGenerator } from '../src/world/WorldGenerator';
 import type { ChunkGenPool, GenClient } from './chunkgen/ChunkGenPool';
+import { metrics } from './Metrics';
 import { type GenSpec, type GeneratedChunk, generateChunk, topOf } from './chunkgen/genChunk';
 
 /** Chunks kept loaded around each player (mobs only live where terrain exists). */
@@ -523,11 +524,16 @@ export class ServerWorld implements EntityWorld, GenClient {
 
   /** Generates a chunk on this thread (no pool, arenas, ensureChunk). */
   private generate(cx: number, cz: number, key: number): void {
-    this.install(cx, cz, key, generateChunk(this.generator, cx, cz));
+    const t0 = performance.now();
+    const g = generateChunk(this.generator, cx, cz);
+    metrics.chunksMainGenerated++;
+    metrics.chunkMainGenMs += performance.now() - t0;
+    this.install(cx, cz, key, g);
   }
 
   /** Puts a generated chunk into the world: the saved edits on top, then its light data patched to match. */
   private install(cx: number, cz: number, key: number, g: GeneratedChunk): void {
+    const t0 = performance.now();
     const { blocks, tops } = g;
     let meta = g.meta;
     const edits = this.editsByChunk.get(key);
@@ -562,6 +568,8 @@ export class ServerWorld implements EntityWorld, GenClient {
       }
     }
     this.onChunkReady?.(chunk);
+    metrics.chunksInstalled++;
+    metrics.chunkInstallMs += performance.now() - t0;
   }
 }
 

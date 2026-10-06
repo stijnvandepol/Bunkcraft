@@ -92,6 +92,44 @@ boven de ruis van deze machine; 192 MB gaf eerder langere pauzes. De heap gebrui
 `--max-old-space-size=384 --max-semi-space-size=16` als **vangrail** (een lek of overbelasting wordt eerst trage GC en een
 nette fout in de log in plaats van de OOM-killer), niet als snelheidswinst. Containerlimiet 640 MB.
 
+### 2.6 Chunkgeneratie op worker threads (voorstel A, gedaan)
+
+Opzet (`server/chunkgen/`): één pool van `worker_threads` voor alle games (`CHUNK_WORKERS`, standaard min(2, cores − 1),
+cores ook begrensd door een Docker-CPU-limiet; `0` = het oude pad op de main thread). De worker draait dezelfde generator
+als de client (`createGenerator`) en rekent meteen de lichtdata uit die de server bijhoudt (hoogste lichtblokkerende blok
+per kolom, lijst van lichtbronnen); de buffers gaan als transferable terug. De main thread legt alleen nog de opgeslagen
+edits erop (0,06 ms per chunk). Verzoeken krijgen als prioriteit de ring-afstand tot de dichtstbijzijnde speler, worden
+per wereld en chunk ontdubbeld (een dichterbij gekomen speler schuift een verzoek naar voren), en de wachtrij is begrensd
+(4096; nieuwe dichtbije chunks duwen de verste eruit). Een chunk die nog niet binnen is leest als UNLOADED, zoals eerst ook
+al voor chunks die nog aan de beurt moesten komen. Synchroon blijft: arena's (36 chunks bij het laden van een kaart, nodig
+voor hitscan en anticheat) en `ensureChunk` bij een blokwijziging binnen reikwijdte in een chunk die nog niet binnen is, zodat
+de inventory-controle het echte blok ziet. Uitkomst byte voor byte gelijk aan het synchrone pad: getest tegen de golden
+hashes van generatorversie 1, 2 en 3, 54 losse chunks over drie seeds, alle arena-kaarten, en een complete `ServerWorld`
+met edits en licht (`tests/chunkGenPool.test.ts`).
+
+**Metingen** (zelfde bundle, `CHUNK_WORKERS=0` tegen `2`, elk drie keer, machine load 2-5). Het meetvenster begint direct
+nadat alle bots gejoind zijn (`--warmup 0 --measure 30`), dus terwijl de 9×9 chunks rond iedereen nog binnenkomen:
+
+| Join-fase | Spelers | Tick p50 / p99 / max ms | Lag p99 / max ms | Main thread CPU % | Proces CPU % | RSS MB | Chunks in venster |
+|---|---|---|---|---|---|---|---|
+| main thread (0) | 80 | 0,6-1,0 / **5,9-6,0** / 8-27 | 5,1-6,4 / 9-37 | 17-26 | 20-29 | 204-209 | 5,7-5,9/s, 12-13 ms/s main |
+| workers (2) | 80 | 0,8-0,9 / **3,6-4,1** / 7-9 | 4,3-5,7 / 8-13 | 21-24 | 27-29 | 251-261 | 5,8-7,4/s op workers |
+| main thread (0) | 160 | 0,5-0,6 / **5,0-5,7** / 12-31 | 5,3-7,5 / **10-52** | 31-35 | 36-40 | 298-345 | 14-28/s, 29-58 ms/s main |
+| workers (2) | 160 | 0,5-0,6 / **1,5-2,4** / 3-7 | 2,2-2,8 / **7-8** | 29-30 | 36-37 | 367-381 | 9-10/s op workers |
+
+Met een draaiende wereld (20 s warm-up, 45 s meten, twee rondes plus de oude bundle als referentie) genereren de bots nog maar
+~0,8 chunk/s (2-3 ms/s CPU): daar is geen verschil boven de ruis (tick p99 1,5-8 ms, lag-max 15-75 ms in alle drie de
+varianten). De resterende pieken in die fase komen dus niet van terrein; volgende kandidaat volgens het profiel: mobs (§2.4).
+
+- **Winst:** zolang er terrein gegenereerd wordt (spelers die joinen, verkennen, teleporteren) is tick p99 2-3× lager en
+  verdwijnen de lagpieken van 30-50 ms bij 160 spelers. De main thread wint ~2-4 procentpunt in de join-fase; het
+  genereren zelf (~2,3 ms per chunk) gebeurt op de andere cores.
+- **Kosten:** ~20-25 MB RSS per worker (eigen V8-isolate met de generatorcode), dus ~+45 MB met twee. Op een machine met één
+  core staat de pool standaard uit.
+- `/metrics` heeft nu `bunkcraft_chunkgen_*` (workers, wachtrij, gegenereerd/gedropt/mislukt, worker-tijd) en
+  `bunkcraft_chunk_main_thread_seconds_total{phase="generate"|"install"}`; `npm run load` toont per stap waar de chunks
+  gegenereerd werden.
+
 ## 3. Opties
 
 | Optie | Oordeel | Waarom |
@@ -100,7 +138,7 @@ nette fout in de log in plaats van de OOM-killer), niet als snelheidswinst. Cont
 | **Node 24 LTS** (was 22) | **gedaan** (Docker) | Huidige LTS, nieuwere V8; `process.threadCpuUsage` voor de main-thread-metric. Bundle draait op 22+. |
 | `ws` met permessage-deflate | **uit laten** (is al uit) | Snapshots zijn al binair en klein; deflate kost per verbinding een zlib-context (honderden KB met context takeover) en CPU op de hete paden. Caddy kan WebSocket-frames niet comprimeren. |
 | uWebSockets.js i.p.v. `ws` | **niet nu** (voorstel C) | Verzenden is ~7 % van de CPU; uWS wint daar hooguit de helft van. Niet op npm, native binary per platform (Alpine/ARM), andere API. |
-| Chunkgeneratie in `worker_threads` | **voorstel A** | 19 % van de main thread en de oorzaak van lagpieken bij verkennen. De generator is deterministisch en draait in de client al in workers. Vergt dat `ServerWorld` chunks asynchroon krijgt. Grootste winst voor speelgevoel bij veel survival-spelers. |
+| Chunkgeneratie in `worker_threads` | **gedaan** (§2.6) | Tick p99 2-3× lager en geen lagpieken meer zolang er terrein gegenereerd wordt; ~+20-25 MB per worker. `CHUNK_WORKERS=0` zet het uit. |
 | Delta/interest-managed `ent`-frames | **voorstel B** | ~90 % van het survival-verkeer. Alleen gewijzigde mobs sturen, verre mobs minder vaak: geschat −50-70 % bandbreedte en minder allocaties (GC). Protocolwijziging (binaire versie omhoog, client + server). |
 | Eén proces per game / meerdere processen | **voorstel D, later** | Eén proces haalt ~150-200 spelers per core (§4). Pas daarboven nodig. Kost ~70 MB per proces plus routering op gamecode en een gedeelde serverlijst. |
 | Lege games/chunks eerder uitladen | **instelbaar gemaakt** | Gemeten winst klein (§2.3); `ROOM_IDLE_UNLOAD_MIN` voor kleine machines. |
@@ -120,7 +158,7 @@ survival-spelers ≈ 35 % main thread op een M1-core; op een VPS-vCPU (1,5-2× t
 |---|---|---|---|---|
 | 1 vCPU / 1 GB | €2-5/mnd | ~40-60 | ~100 | Caddy, Docker en GC delen de ene core; image bouwen alleen met swap (het script regelt dat). |
 | **2 vCPU / 4 GB (Hetzner CAX11 ARM of CX22)** | ~€4-5/mnd | **~120-150** | ~200+ | **Aanbevolen.** Tweede core voor Caddy/TLS, GC-threads en het OS; bouwen zonder swap. ARM werkt (alles is pure JS, image is multi-arch). |
-| 4 vCPU / 8 GB | €8-15/mnd | ~150-200 | ~300 | Meer cores helpen één proces nauwelijks; pas zinvol met voorstel A (workers) of D (meerdere processen). |
+| 4 vCPU / 8 GB | €8-15/mnd | ~150-200 | ~300 | Terreingeneratie gebruikt nu de extra cores (§2.6); voor de gamelogica zelf pas meer met voorstel D (meerdere processen). |
 
 Verkeer: 150 survival-spelers continu = ~19 Mbit/s, ~6 TB/maand bij 24/7 vol; Hetzner geeft 20 TB inbegrepen.
 Realistischer (paar uur per avond) is < 1 TB.
@@ -138,6 +176,7 @@ Realistischer (paar uur per avond) is < 1 TB.
   herstart met opslaan → health-check, rollback-commando bij falen), `scripts/backup.sh` (dagelijks via systemd-timer of cron,
   14 bewaard), `bunkcraft`-commando, `deploy/bunkcraft.service` + `HOST`-instelling voor de systemd-variant.
 - Laadtest en idle-meting als scripts, zodat elke volgende wijziging opnieuw gemeten kan worden.
+- Voorstel A: chunkgeneratie op worker threads (§2.6), `CHUNK_WORKERS`; de bundle heeft `dist-server/genWorker.js` erbij.
 
 ### Getest
 
@@ -153,8 +192,8 @@ Realistischer (paar uur per avond) is < 1 TB.
 
 ## 6. Open beslissingen voor Stijn
 
-- **A. Chunkgeneratie naar een worker thread?** Grootste winst voor soepel spel bij veel survival-spelers (lagpieken weg,
-  ~19 % main thread vrij). Middelgroot werk in `ServerWorld`/`ServerEntities`.
+- **A. Chunkgeneratie naar een worker thread:** gedaan (§2.6). Het "19 %" uit het profiel bleek vooral de join-fase te zijn; in
+  een draaiende wereld met deze bots is terrein < 1 % van de CPU. Daar is de winst dus vooral soepelheid bij joinen en verkennen.
 - **B. Delta-`ent`-frames?** Halveert tot derdeelt het survival-verkeer per speler. Protocolwijziging.
 - **C. uWebSockets.js?** Advies: nee, tenzij verzenden later > 20 % van de CPU wordt.
 - **D. Meerdere processen per server?** Pas nodig boven ~150-200 gelijktijdige spelers per machine.

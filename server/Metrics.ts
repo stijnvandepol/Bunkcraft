@@ -55,6 +55,11 @@ export class Metrics {
   private gcObserver: PerformanceObserver | null = null;
   /** The chunk generation threads, when the server has them (set by App). */
   chunkGen: (() => ChunkGenStats) | null = null;
+  /** Chunk work on the main thread: generating (no pool, arenas, ensureChunk) and installing (edits, light, mob spawns). */
+  chunksMainGenerated = 0;
+  chunkMainGenMs = 0;
+  chunksInstalled = 0;
+  chunkInstallMs = 0;
 
   constructor() {
     this.loop.enable();
@@ -184,6 +189,11 @@ export class Metrics {
       const main = threadCpu.call(process);
       metric('process_main_thread_cpu_seconds_total', 'counter', 'CPU time of the main (event loop) thread.', [`process_main_thread_cpu_seconds_total ${num((main.user + main.system) / 1e6)}`]);
     }
+    metric('bunkcraft_chunks_main_thread_total', 'counter', 'Chunks generated on the main thread / put into a world.', [
+      `bunkcraft_chunks_main_thread_total{phase="generate"} ${this.chunksMainGenerated}`, `bunkcraft_chunks_main_thread_total{phase="install"} ${this.chunksInstalled}`]);
+    metric('bunkcraft_chunk_main_thread_seconds_total', 'counter', 'Main-thread time spent generating chunks / putting them into a world.', [
+      `bunkcraft_chunk_main_thread_seconds_total{phase="generate"} ${num(this.chunkMainGenMs / 1000)}`,
+      `bunkcraft_chunk_main_thread_seconds_total{phase="install"} ${num(this.chunkInstallMs / 1000)}`]);
     const gen = this.chunkGen?.();
     if (gen) {
       metric('bunkcraft_chunkgen_workers', 'gauge', 'Chunk generation threads running.', [`bunkcraft_chunkgen_workers ${gen.workers}`]);
