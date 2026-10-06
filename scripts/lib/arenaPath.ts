@@ -52,6 +52,15 @@ export function follow(pos: { x: number; z: number }, route: [number, number][],
   }
 }
 
+/**
+ * The `step` field of a position report: the client's physics clock in 60 Hz steps. Bots move by real
+ * time, so their clock is real time (rounded down: never ahead of it). The server times the jump curve
+ * and the speed budget with it instead of arrival times, which bunch up when the machine is loaded.
+ */
+export function clientStep(): number {
+  return Math.floor(performance.now() * 0.06);
+}
+
 /** Unit aim vector from (ox, oy, oz) to (tx, ty, tz): the server only accepts unit directions. */
 export function aimAt(ox: number, oy: number, oz: number, tx: number, ty: number, tz: number): { dx: number; dy: number; dz: number } {
   const dx = tx - ox, dy = ty - oy, dz = tz - oz, d = Math.hypot(dx, dy, dz) || 1;

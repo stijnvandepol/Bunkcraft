@@ -226,6 +226,73 @@ describe('movement validator: rules', () => {
     expect(caught).toBeLessThan(15);
   });
 
+  it('client clock: a server stall of a second, then the backlog at once, is no violation of any kind', () => {
+    const { v } = flat(undefined, SPEED);
+    let x = -25, step = 0;
+    v.reset(x, 64, 0.5, 0);
+    // 30 Hz reports at full speed; reports 30..60 are held back and arrive together at 2.0 s.
+    for (let i = 1; i <= 90; i++) {
+      x += SPEED * 2 / 60; step += 2;
+      const arrive = i > 30 && i <= 60 ? 2.0 : i / 30;
+      expect(rule(v.check(x, 64, 0.5, arrive, step))).toBe('ok');
+    }
+  });
+
+  it('client clock: a speed hack with an honest clock is caught at once, one with a fast clock within a second', () => {
+    const honest = flat(undefined, SPEED).v;
+    let x = -25, caughtAt = -1;
+    honest.reset(x, 64, 0.5, 0);
+    honest.check(x, 64, 0.5, 0, 0);
+    for (let i = 1; i <= 60 && caughtAt < 0; i++) { x += SPEED * 2 * 2 / 60; if (!honest.check(x, 64, 0.5, i / 30, i * 2).ok) caughtAt = i / 30; }
+    expect(caughtAt).toBeGreaterThan(0);
+    expect(caughtAt).toBeLessThan(0.4);
+    // The clock runs three times as fast as real time, so every report looks like legal pace.
+    const fast = flat(undefined, SPEED).v;
+    x = -25; caughtAt = -1;
+    fast.reset(x, 64, 0.5, 0);
+    fast.check(x, 64, 0.5, 0, 0);
+    let r: Verdict = { ok: true };
+    for (let i = 1; i <= 90 && caughtAt < 0; i++) { x += SPEED * 3 * 2 / 60; r = fast.check(x, 64, 0.5, i / 30, i * 6); if (!r.ok) caughtAt = i / 30; }
+    expect(rule(r)).toBe('clock');
+    expect(caughtAt).toBeLessThan(MOVE.CLOCK_SECONDS / 2 + 0.2);
+  });
+
+  it('client clock: a clock that runs backwards (replayed reports) is caught, a report without it moves no time', () => {
+    const { v } = flat(undefined, SPEED);
+    v.check(0.5, 64, 0.5, 0, 100);
+    expect(v.check(0.7, 64, 0.5, 0.033, 102).ok).toBe(true);
+    expect(rule(v.check(0.9, 64, 0.5, 0.066, 90))).toBe('clock');
+    // Once the client sends its clock, leaving it out does not fall back on arrival times.
+    const w = flat(undefined, SPEED).v;
+    w.check(0.5, 64, 0.5, 0, 0);
+    let x = 0.5, caught = false;
+    for (let i = 1; i <= 30 && !caught; i++) { x += SPEED / 30; caught = !w.check(x, 64, 0.5, i / 30).ok; }
+    expect(caught).toBe(true);
+  });
+
+  it('client clock: the first report after a rubber band may come late and mid-jump', () => {
+    const { v } = flat(undefined, SPEED);
+    v.check(0.5, 64, 0.5, 0, 0);
+    v.reset(0.5, 64, 0.5, 1);
+    // The client got the teleport 0.8 s later, jumped and reports from 1.1 blocks up.
+    expect(v.check(0.8, 65.1, 0.5, 1.8, 500).ok).toBe(true);
+    expect(v.check(1.0, 65.2, 0.5, 1.833, 502).ok).toBe(true);
+    expect(v.check(1.2, 65.1, 0.5, 1.866, 504).ok).toBe(true);
+  });
+
+  it('a flag carrier slowed while a backlog of full-speed reports is still on its way is not caught', () => {
+    const { v } = flat(undefined, SPEED);
+    let x = -25, step = 0;
+    v.reset(x, 64, 0.5, 0);
+    v.check(x, 64, 0.5, 0, 0);
+    // The server sets the carrier limit at 1 s; the client hears of it 1.5 s later (a loaded machine).
+    for (let i = 1; i <= 90; i++) {
+      if (i === 30) v.setMaxSpeed(SPEED * 0.9, 1);
+      x += (i < 75 ? SPEED : SPEED * 0.9) * 2 / 60; step += 2;
+      expect(rule(v.check(x, 64, 0.5, i / 30, step))).toBe('ok');
+    }
+  });
+
   it('rejects positions outside the bounds and ignores nothing after reset (server teleport)', () => {
     const w = new TestWorld().fill(-30, 63, -30, 30, 63, 30, BLOCK.STONE);
     const v = new MovementValidator({ getBlock: w.get }, { maxSpeed: SPEED, inBounds: (x, z) => Math.abs(x) < 10 && Math.abs(z) < 10 });
@@ -250,7 +317,7 @@ interface Totals { reports: number; violations: Verdict[]; lagForgiven: number; 
 
 function replay(
   getBlock: (x: number, y: number, z: number) => number, getMeta: ((x: number, y: number, z: number) => number) | undefined,
-  reports: Report[], maxSpeed: number, canFly: boolean, inBounds?: (x: number, z: number) => boolean,
+  reports: Report[], maxSpeed: number, canFly: boolean, inBounds?: (x: number, z: number) => boolean, clientClock = false,
 ): Totals {
   const v = new MovementValidator({ getBlock, getMeta }, { maxSpeed, canFly, inBounds });
   const tot: Totals = { reports: reports.length, violations: [], lagForgiven: 0, maxSpeedRatio: 0, context: '' };
@@ -261,7 +328,7 @@ function replay(
       tot.maxSpeedRatio = Math.max(tot.maxSpeedRatio, s / maxSpeed);
     }
     prev = r;
-    const verdict = v.check(r.x, r.y, r.z, r.arrive);
+    const verdict = v.check(r.x, r.y, r.z, r.arrive, clientClock ? r.step : undefined);
     if (verdict.ok) continue;
     if (verdict.weight === 0) tot.lagForgiven++;
     else {
@@ -282,6 +349,19 @@ const NETS = [
   { name: 'LAN', latency: 0.01, jitter: 0.004, burstChance: 0, burst: 0 },
   { name: 'ADSL', latency: 0.04, jitter: 0.06, burstChance: 0.01, burst: 0.2 },
   { name: 'bursts of 4', latency: 0.03, jitter: 0.02, burstChance: 0.05, burst: 0.2 },
+];
+
+/** A loaded machine (QA with a dozen bots and two browsers): server stalls and backlogs up to a second. */
+const LOAD = [
+  { name: 'stalls', latency: 0.02, jitter: 0.03, burstChance: 0.01, burst: 1.0 },
+  { name: 'backlog', latency: 0.02, jitter: 0.03, burstChance: 0, burst: 0, backlogChance: 0.02, backlog: 1.0 },
+  { name: 'stalls+backlog', latency: 0.04, jitter: 0.06, burstChance: 0.01, burst: 0.6, backlogChance: 0.01, backlog: 0.8 },
+];
+
+/** The yacht carrier route of the QA report: dock, gangway, over the bow (hot tub, slab), the deck, the stern, the far dock. */
+const YACHT_ROUTE: [number, number][] = [
+  [-34.5, -17.5], [-36.5, -11], [-37.5, -0.5], [-35, -0.5], [-31, 3.5], [-27, 3.5], [-20, 3.5], [-14, 5],
+  [14, 5], [27, -4], [35, -0.5], [37.5, 0.5], [36.5, 11], [34.5, 17.5],
 ];
 
 describe('movement validator: the real client physics never trips it', () => {
@@ -318,6 +398,60 @@ describe('movement validator: the real client physics never trips it', () => {
       expect(forgiven).toBeLessThan(total * 0.002);
     });
   }
+
+  // Capture the flag under load: the carrier runs 10 % slower, bunny hops, and the machine stutters (frame
+  // hitches on the client, stalls and backlogs on the server). With the client clock nothing may be
+  // corrected, not even as forgiven lag (a forgiven correction still rubber-bands the player).
+  const CARRY = 0.9;
+  const carrierRun = (id: (typeof MAP_IDS)[number], seed: number, route: [number, number][] | undefined, start: { x: number; y: number; z: number }) => {
+    const map = getMap(id);
+    const variant = map.variantFor(7);
+    const getBlock = (x: number, y: number, z: number) => map.blockAt(variant, x, y, z);
+    const getMeta = () => 0;
+    const w = WEAPONS[seed % WEAPONS.length];
+    const reports = recordClient(getBlock, getMeta, seed, {
+      speedMultiplier: ARCADE_SPEED_MULT * w.moveSpeed * CARRY, airAccel: ARCADE_AIR_ACCEL, canFly: false, seconds: route ? 60 : 30,
+      interval: seed % 2 ? [0.033, 0.05] : [0.05, 0.067], bunnyHop: seed % 3 !== 0, start, hitches: 0.04, route,
+    });
+    const net = LOAD[seed % LOAD.length];
+    const tot = replay(getBlock, getMeta, throughNetwork(reports, seed, net), arcadeMaxSpeed(w.moveSpeed) * CARRY, false, (x, z) => map.inBounds(x, z), true);
+    return { tot, label: `${id} ${w.id} seed ${seed} ${net.name}${route ? ' (route)' : ''}` };
+  };
+  const failures = (tot: Totals, label: string) =>
+    [...tot.violations.slice(0, 2).map((v) => `${label}: ${(v as { rule: string }).rule} (${tot.violations.length})`),
+      ...(tot.lagForgiven ? [`${label}: ${tot.lagForgiven} forgiven lag corrections`] : [])];
+
+  for (const id of MAP_IDS.filter((m) => getMap(m).flags.length === 2)) {
+    it(`flag carrier under load on map ${id}: runs from both flags, with the client clock, never corrected`, () => {
+      const map = getMap(id);
+      const bad: string[] = [];
+      let total = 0;
+      for (const [i, seed] of seeds.slice(0, 12).entries()) {
+        const [own, enemy] = i % 2 ? [map.flags[0], map.flags[1]] : [map.flags[1], map.flags[0]];
+        const start = { x: enemy.x, y: enemy.y, z: enemy.z };
+        // Straight for home (bumping into whatever is in the way) or wandering around the flag.
+        const route: [number, number][] | undefined = i % 3 === 2 ? undefined : [[enemy.x, enemy.z], [0.5, 0.5], [own.x, own.z]];
+        const { tot, label } = carrierRun(id, seed, route, start);
+        total += tot.reports;
+        bad.push(...failures(tot, label));
+      }
+      expect(bad).toEqual([]);
+      expect(total).toBeGreaterThan(2000);
+    });
+  }
+
+  it('flag carrier on the yacht deck route of the QA report (dock, bow, hot tub, deck, stern), both ways, under load', () => {
+    const bad: string[] = [];
+    let total = 0;
+    for (const seed of seeds) {
+      const route = seed % 2 ? YACHT_ROUTE.slice() : YACHT_ROUTE.slice().reverse();
+      const { tot, label } = carrierRun('yacht', seed, route, { x: route[0][0], y: ARENA_FLOOR_Y + 1, z: route[0][1] });
+      total += tot.reports;
+      bad.push(...failures(tot, label));
+    }
+    expect(bad).toEqual([]);
+    expect(total).toBeGreaterThan(5000);
+  });
 
   it('Minecraft physics (walking, sprint-jumping, flying) over stairs, slabs, ladders and water', () => {
     const w = new TestWorld().fill(-24, 63, -24, 24, 63, 24, BLOCK.STONE)
@@ -370,5 +504,26 @@ describe('movement validator: the real client physics never trips it', () => {
     const wall = mk();
     expect(wall.check(b.maxX + 3, sp.y, sp.z, 1).ok).toBe(false);
     void ARENA_FLOOR_Y; void JUMP_APEX;
+  });
+
+  it('the same cheats with the client clock (honest or replayed clock values) are caught too', () => {
+    const map = getMap('classic');
+    const variant = map.variantFor(7);
+    const getBlock = (x: number, y: number, z: number) => map.blockAt(variant, x, y, z);
+    const sp = map.spawns.ffa[0];
+    const mk = () => { const v = new MovementValidator({ getBlock }, { maxSpeed: SPEED, inBounds: (x, z) => map.inBounds(x, z) }); v.reset(sp.x, sp.y, sp.z, 0); v.check(sp.x, sp.y, sp.z, 0, 0); return v; };
+    const fly = mk(); let flyCaught = false;
+    for (let i = 1; i <= 60 && !flyCaught; i++) flyCaught = !fly.check(sp.x, sp.y + Math.min(3, i * 0.3), sp.z, i / 30, i * 2).ok;
+    expect(flyCaught).toBe(true);
+    // Hovering 1 block up (the curve's anchor can only move with a real take-off).
+    const hover = mk(); let hoverCaught = false;
+    for (let i = 1; i <= 90 && !hoverCaught; i++) hoverCaught = !hover.check(sp.x, sp.y + (i < 5 ? i * 0.25 : 1 + (i % 2) * 0.02), sp.z, i / 30, i * 2).ok;
+    expect(hoverCaught).toBe(true);
+    const sp2 = mk(); let sCaught = false; let x = sp.x;
+    for (let i = 1; i <= 90 && !sCaught; i++) { x += SPEED * 2 / 30; sCaught = !sp2.check(x, sp.y, sp.z, i / 30, i * 2).ok; }
+    expect(sCaught).toBe(true);
+    const b = map.bounds;
+    expect(mk().check(b.maxX + 3, sp.y, sp.z, 1, 60).ok).toBe(false);
+    expect(mk().check(sp.x + 25, sp.y, sp.z, 1, 60).ok).toBe(false);
   });
 });

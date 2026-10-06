@@ -13,6 +13,7 @@ import { WebSocket } from 'ws';
 import { GUN_GAME_LADDER, type GameType } from '../src/modes/GameTypes';
 import { ARENA_FLOOR_Y, type ArenaMap, getMap } from '../src/modes/maps';
 import { PROTOCOL_VERSION, type ClientMessage, type ModeState, type ServerMessage } from '../src/net/protocol';
+import { clientStep } from './lib/arenaPath';
 
 const args = process.argv.slice(2);
 const base = args.find((a) => a.startsWith('--url='))?.slice(6) ?? 'http://localhost:3000';
@@ -96,7 +97,7 @@ class Bot {
             if (dist <= step) { this.x = tx; this.z = tz; this.route.shift(); step -= dist; } else { this.x += (dx / dist) * step; this.z += (dz / dist) * step; step = 0; }
           }
         }
-        this.send({ t: 'pos', x: this.x, y: this.y, z: this.z, yaw: 0, pitch: 0, flags: 4, held: 0 });
+        this.send({ t: 'pos', x: this.x, y: this.y, z: this.z, yaw: 0, pitch: 0, flags: 4, held: 0, step: clientStep() });
       }, 100);
     });
   }

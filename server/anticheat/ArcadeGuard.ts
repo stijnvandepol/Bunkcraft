@@ -88,11 +88,11 @@ export class ArcadeGuard {
     return this.players.get(id)?.violations ?? 0;
   }
 
-  /** Checks a position report; on failure the caller rubber-bands to `lastValid`. */
-  move(id: number, x: number, y: number, z: number, now: number): MoveResult {
+  /** Checks a position report (`step`: the client's physics clock, when sent); on failure the caller rubber-bands to `lastValid`. */
+  move(id: number, x: number, y: number, z: number, now: number, step?: number): MoveResult {
     const p = this.players.get(id);
     if (!p) return { ok: true };
-    const v = p.validator.check(x, y, z, now);
+    const v = p.validator.check(x, y, z, now, step);
     if (v.ok) return v;
     return this.strike(p, v.rule, v.weight, v.lag, now);
   }

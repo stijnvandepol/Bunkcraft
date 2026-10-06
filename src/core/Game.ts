@@ -2137,7 +2137,8 @@ export class Game {
 
     if (this.net) {
       const flags = (p.sprinting ? 1 : 0) | (p.flying ? 2 : 0) | (p.onGround ? 4 : 0) | (this.arcade ? this.arcade.aimFlags : 0);
-      this.net.update(dt, p.x, p.y, p.z, p.yaw, p.pitch, flags, this.arcade ? 0 : this.hotbar.selectedBlock);
+      // The physics clock (steps) lets the server time the movement checks without trusting arrival times.
+      this.net.update(dt, p.x, p.y, p.z, p.yaw, p.pitch, flags, this.arcade ? 0 : this.hotbar.selectedBlock, this.stepCount);
     }
     if (this.net || this.previewServer) this.remote.update(performance.now() / 1000, this.cam.camera, window.innerWidth, window.innerHeight);
     // Arcade: after dying the camera follows another player (with fresh interpolated poses).

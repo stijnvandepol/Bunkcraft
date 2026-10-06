@@ -12,7 +12,7 @@ import { WebSocket } from 'ws';
 import { ARENA_FLOOR_Y, MAP_IDS, getMap, parseMapId } from '../src/modes/maps';
 import { PROTOCOL_VERSION, type ClientMessage, type ServerMessage } from '../src/net/protocol';
 import { traceBlocks } from '../server/Combat';
-import { BOT_SPEED, aimAt, arenaPath, follow } from './lib/arenaPath';
+import { BOT_SPEED, aimAt, arenaPath, clientStep, follow } from './lib/arenaPath';
 
 const type = process.argv[2] === 'ffa' ? 'ffa' : 'tdm';
 const mapArg = process.argv[3];
@@ -56,7 +56,7 @@ class Bot {
         if (!this.id) return;
         if (this.fresh) this.fresh = false;
         else follow(this, this.route, BOT_SPEED / 10); // honest pace on a path: the server validates movement
-        this.send({ t: 'pos', x: this.x, y: this.y, z: this.z, yaw: 0, pitch: 0, flags: 4, held: 0 });
+        this.send({ t: 'pos', x: this.x, y: this.y, z: this.z, yaw: 0, pitch: 0, flags: 4, held: 0, step: clientStep() });
       }, 100);
     });
   }

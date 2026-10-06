@@ -45,6 +45,10 @@ class Bot {
   private ws!: WebSocket;
   private timer: NodeJS.Timeout | null = null;
   readonly sentPos: ClientMessage[] = [];
+  /** The physics clock sent with every report (60 Hz steps); a cheater can run it faster than real time. */
+  clockRate = 1;
+  private clock = 0;
+  private clockAt = performance.now();
 
   constructor(readonly name: string) {}
 
@@ -73,7 +77,10 @@ class Bot {
   }
 
   pos(x = this.x, y = this.y, z = this.z): void {
-    const m: ClientMessage = { t: 'pos', x, y, z, yaw: this.yaw, pitch: 0, flags: 4, held: 0 };
+    const now = performance.now();
+    this.clock += (now - this.clockAt) * 0.06 * this.clockRate;
+    this.clockAt = now;
+    const m: ClientMessage = { t: 'pos', x, y, z, yaw: this.yaw, pitch: 0, flags: 4, held: 0, step: Math.floor(this.clock) };
     this.sentPos.push(m);
     this.send(m);
   }
@@ -219,6 +226,19 @@ async function movementCheats(): Promise<void> {
   c.auto = true;
   check('a 3x speed burst is rubber-banded within 1.5 s', await corrected(c, n, 1500));
   c.speed = BOT_SPEED;
+  c.route = [];
+  await sleep(2500);
+  // The same with a physics clock that runs three times as fast (so every report looks like legal pace).
+  await fresh('clockspeeder');
+  const far2 = c.map.spawns.ffa.map((s) => [s.x, s.z] as [number, number]).sort((p, q) => Math.hypot(q[0] - c.x, q[1] - c.z) - Math.hypot(p[0] - c.x, p[1] - c.z))[0];
+  c.route = arenaPath(c.map, c.variant, [c.x, c.z], far2) ?? [];
+  n = c.of('teleport').length;
+  c.speed = BOT_SPEED * 3;
+  c.clockRate = 3;
+  c.auto = true;
+  check('a 3x speed burst with a 3x clock is rubber-banded within 1.5 s', await corrected(c, n, 1500));
+  c.speed = BOT_SPEED;
+  c.clockRate = 1;
   c.route = [];
   await sleep(2500);
   // Teleport: 25 blocks in one report.

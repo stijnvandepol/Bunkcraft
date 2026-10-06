@@ -10,7 +10,7 @@ import { traceBlocks } from '../../server/Combat';
 import { LOADOUT_PRESETS } from '../../src/modes/Loadouts';
 import { getMap, parseMapId } from '../../src/modes/maps';
 import { fireInterval, weaponDef } from '../../src/modes/Weapons';
-import { BOT_SPEED, aimAt, arenaPath, follow } from '../lib/arenaPath';
+import { BOT_SPEED, aimAt, arenaPath, clientStep, follow } from '../lib/arenaPath';
 import { Bot, sleep } from './lib';
 
 const [base = 'http://localhost:3488', code = '', n = '15', secs = '90', mapArg = 'classic'] = process.argv.slice(2);
@@ -98,7 +98,7 @@ async function main(): Promise<void> {
           b.pitch = Math.asin(a.dy);
         }
       }
-      b.send({ t: 'pos', x: b.x, y: b.y, z: b.z, yaw: b.yaw, pitch: b.pitch, flags: 4 | (best ? 16 : 0), held: 0 });
+      b.send({ t: 'pos', x: b.x, y: b.y, z: b.z, yaw: b.yaw, pitch: b.pitch, flags: 4 | (best ? 16 : 0), held: 0, step: clientStep() });
       if (best) seen++;
       const w = weaponDef(r.weapon);
       if (best && w && now >= r.nextFire) {

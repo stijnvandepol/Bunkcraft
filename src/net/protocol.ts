@@ -185,7 +185,11 @@ export type ClientMessage =
    */
   /** `binv`: highest binary format understood (2 = quantised arcade snapshots, see binary.ts); absent = 1. */
   | { t: 'hello'; v: number; name: string; key?: string; owner?: string; password?: string; bin?: boolean; binv?: number }
-  | { t: 'pos'; x: number; y: number; z: number; yaw: number; pitch: number; flags: number; held: number }
+  /**
+   * `step` (optional, older clients leave it out): the client's physics clock, 60 Hz steps simulated so far. The
+   * arcade movement validator times the jump curve and the speed budget with it (arrival times bunch up under load).
+   */
+  | { t: 'pos'; x: number; y: number; z: number; yaw: number; pitch: number; flags: number; held: number; step?: number }
   /** `meta` is the block state byte (see BlockStates); absent = 0. */
   /**
    * `prev` (optional, older clients leave it out) is the block id this client saw there before its edit. When the

@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { WebSocket } from 'ws';
 import { decodeBinary } from '../../src/net/binary';
 import { type ClientMessage, PROTOCOL_VERSION, type ServerMessage } from '../../src/net/protocol';
+import { clientStep } from '../lib/arenaPath';
 
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -147,7 +148,7 @@ export class Bot {
 
   pos(x = this.x, y = this.y, z = this.z, held = this.held): void {
     this.x = x; this.y = y; this.z = z; this.held = held;
-    this.send({ t: 'pos', x, y, z, yaw: this.yaw, pitch: this.pitch, flags: 4, held });
+    this.send({ t: 'pos', x, y, z, yaw: this.yaw, pitch: this.pitch, flags: 4, held, step: clientStep() });
   }
 
   /** Re-sends the position every `ms` (keeps the server's view fresh, like a client at 20 Hz). */
