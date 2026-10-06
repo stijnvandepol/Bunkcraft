@@ -1,4 +1,5 @@
-import { findSpawnColumn } from '../src/world/Spawn';
+import { findSpawnColumn, spreadSpawn } from '../src/world/Spawn';
+import { SEA_LEVEL } from '../src/world/constants';
 import { enchantsOf } from '../src/items/EnchantRules';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -766,7 +767,10 @@ export class GameServer {
     const op = who.owner || (who.verified && this.world.ops!.includes(lc(name)));
 
     const record = this.match ? null : this.playerRecord(name);
-    const start = record ?? this.world.spawn;
+    // A newcomer appears somewhere within the spawn radius (Minecraft's spawnRadius), not inside the last one.
+    const gen = this.entities?.world.generator;
+    const start = record ?? (this.match || !gen ? this.world.spawn
+      : spreadSpawn(this.world.spawn, name, (x, z) => gen.heightAt(x, z) >= SEA_LEVEL + 1));
     const initial = parseInventory(record?.inventory);
     const session: Session = {
       id: this.nextId++, name, ws, ip, op, owner: who.owner, verified: who.verified, keyHash,
@@ -795,7 +799,7 @@ export class GameServer {
     this.send(session, {
       t: 'welcome', id: session.id, worldName: this.world.name, seed: this.world.seed, genVersion: this.match ? undefined : this.world.genVersion, gameMode: this.world.gameMode,
       gameType: this.match?.info.type ?? 'minecraft', worldType: this.match ? 'arena' : 'terrain', match: this.match?.info,
-      time: this.world.time, day: this.world.day ?? 0, spawn: joined ? { x: joined.x, y: joined.y, z: joined.z } : this.world.spawn, edits, player: record,
+      time: this.world.time, day: this.world.day ?? 0, spawn: joined ? { x: joined.x, y: joined.y, z: joined.z } : record ? this.world.spawn : start, edits, player: record,
       players: [...this.sessions.values()].map((s) => ({ id: s.id, name: s.name, team: this.match?.players.get(s.id)?.team || undefined })),
       motd: this.opts.motd,
       ...(op ? { op: true } : {}),

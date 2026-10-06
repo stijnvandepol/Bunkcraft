@@ -1,6 +1,13 @@
 import { spawnRank } from './Biomes';
+import { BLOCK, SOLID, getBlockDef } from './BlockRegistry';
+import { hashString } from './Noise';
 import type { WorldGenerator } from './WorldGenerator';
-import { SEA_LEVEL } from './constants';
+import { CHUNK_HEIGHT, SEA_LEVEL } from './constants';
+
+/** Minecraft's `spawnRadius` default: new players appear within this many blocks of the world spawn. */
+export const SPAWN_RADIUS = 10;
+/** How far `findStandingSpot` looks around the target column for real ground. */
+export const STANDING_SEARCH_RADIUS = 8;
 
 /**
  * First spawn point of a terrain world: a spiral search around (0, 0) for a dry column that is not carved away.
@@ -32,4 +39,64 @@ export function findSpawnColumn(gen: WorldGenerator, genVersion: number, require
     }
   }
   return fallback;
+}
+
+/**
+ * A new multiplayer player's first position: a dry spot within `SPAWN_RADIUS` of the world spawn, picked from the
+ * player's name (stable for a name, different between players), so two newcomers do not stand inside each other.
+ * Falls back to the world spawn itself when no candidate is dry.
+ */
+export function spreadSpawn<T extends { x: number; z: number }>(
+  spawn: T, name: string, isDry: (x: number, z: number) => boolean, radius = SPAWN_RADIUS,
+): T {
+  const key = hashString(name.toLowerCase());
+  for (let i = 0; i < 8; i++) {
+    const h = hashString(`${key}:${i}`);
+    // Uniform over the ring between 2 blocks (the world spawn itself stays free) and `radius`.
+    const r = 2 + Math.sqrt((h & 0xffff) / 0xffff) * (radius - 2);
+    const a = ((h >>> 16) / 0x10000) * Math.PI * 2;
+    const x = Math.floor(spawn.x + Math.cos(a) * r) + 0.5;
+    const z = Math.floor(spawn.z + Math.sin(a) * r) + 0.5;
+    if (isDry(Math.floor(x), Math.floor(z))) return { ...spawn, x, z };
+  }
+  return spawn;
+}
+
+/** Top blocks a spawn must not stand on: leaves and logs (a tree canopy), water and lava. */
+const NOT_GROUND = new Uint8Array(256);
+for (let id = 1; id < 256; id++) {
+  const name = getBlockDef(id)?.name ?? '';
+  if (name.endsWith('_leaves') || name.endsWith('_log') || id === BLOCK.WATER || id === BLOCK.LAVA) NOT_GROUND[id] = 1;
+}
+
+/**
+ * Where a player placed at column (x, z) should stand: on the highest solid block of the nearest column (within
+ * `radius`) whose top is real ground, not a tree canopy or a liquid; plants above the ground do not count. Returns
+ * the feet position (block coordinates), or null when no such column exists (the caller keeps its old rule).
+ */
+export function findStandingSpot(
+  getBlock: (x: number, y: number, z: number) => number, x: number, z: number, radius = STANDING_SEARCH_RADIUS,
+): { x: number; y: number; z: number } | null {
+  for (let r = 0; r <= radius; r++) {
+    // Ring r of a square spiral; the nearest column of the ring wins.
+    let best: { x: number; y: number; z: number } | null = null, bestD = Infinity;
+    for (let dz = -r; dz <= r; dz++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue;
+        const d = dx * dx + dz * dz;
+        if (d >= bestD) continue;
+        const cx = x + dx, cz = z + dz;
+        let y = CHUNK_HEIGHT - 1;
+        for (; y > 0; y--) {
+          const id = getBlock(cx, y, cz);
+          if (SOLID[id] || id === BLOCK.WATER || id === BLOCK.LAVA) break;
+        }
+        if (y <= 0 || NOT_GROUND[getBlock(cx, y, cz)]) continue;
+        best = { x: cx, y: y + 1, z: cz };
+        bestD = d;
+      }
+    }
+    if (best) return best;
+  }
+  return null;
 }
