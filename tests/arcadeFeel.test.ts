@@ -5,7 +5,7 @@ import {
   GUN_SOUNDS, MECH_KINDS, MULTI_KILL_WINDOW, RELOAD_STEPS, SUPPRESSED_EARSHOT, gunEarshot, medalFor, outdoorShare, reloadSteps,
 } from '../src/core/audio/weaponSounds';
 import { buildCatalog } from '../src/core/audio/catalog';
-import { OPTIC_MODELS, WEAPON_MODELS, sightYFor, weaponGeometry } from '../src/rendering/WeaponModels';
+import { OPTIC_MODELS, WEAPON_MODELS, adsCutZ, sightYFor, weaponFrontGeometry, weaponGeometry } from '../src/rendering/WeaponModels';
 
 describe('scope breath and sway', () => {
   it('holding Shift steadies the scope until the breath runs out, then it sways harder for a while', () => {
@@ -133,5 +133,23 @@ describe('weapon models with optics', () => {
     expect(a).toBe(b);
     expect(a).not.toBe(c);
     expect(weaponGeometry('rifle', 'reddot', false)!.getAttribute('position').count).toBeLessThan(a!.getAttribute('position').count);
+  });
+
+  it('aiming through a red dot or holo shows nothing between the eye and the optic window (no receiver back in view)', () => {
+    for (const w of WEAPONS) {
+      for (const o of w.optics) {
+        if (o !== 'reddot' && o !== 'holo') continue;
+        const geo = weaponFrontGeometry(w.id, o, false)!;
+        const pos = geo.getAttribute('position');
+        let maxZ = -Infinity;
+        for (let i = 0; i < pos.count; i++) maxZ = Math.max(maxZ, pos.getZ(i));
+        // +z is towards the eye: the closest part is the optic housing, not the receiver behind it.
+        const window = WEAPON_MODELS[w.id].rail[1] + OPTIC_MODELS[o].windowZ;
+        expect(maxZ, `${w.id}/${o}`).toBeLessThanOrEqual(adsCutZ(w.id, o) + 1e-6);
+        expect(adsCutZ(w.id, o) - window, `${w.id}/${o}`).toBeLessThan(0.02);
+        // The rest of the gun is still there in front of the window.
+        expect(pos.count, `${w.id}/${o}`).toBeGreaterThan(24 * 4);
+      }
+    }
   });
 });

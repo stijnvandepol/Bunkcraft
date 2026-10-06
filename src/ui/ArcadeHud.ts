@@ -557,6 +557,8 @@ export class ArcadeHud {
   /** Opens Create-a-Class with `selected` (the class of the next life) highlighted. */
   showLoadout(selected: ClassSpec, nextLife: boolean): void {
     this.loadoutEl.classList.remove('hidden');
+    // A full-screen menu: the match HUD under it (score bar, banners, lobby panel, markers) would show through the title.
+    this.el.classList.add('class-open');
     this.markClass(selected);
     this.loadoutNote.textContent = nextLife ? 'Applies at once right after spawning, else from your next life' : 'Applies when you respawn';
   }
@@ -572,6 +574,7 @@ export class ArcadeHud {
 
   hideLoadout(): void {
     this.loadoutEl.classList.add('hidden');
+    this.el.classList.remove('class-open');
   }
 
   get loadoutOpen(): boolean {

@@ -14,7 +14,7 @@ import { BOT_SPEED, aimAt, arenaPath, follow } from '../lib/arenaPath';
 import { Bot, sleep } from './lib';
 
 const [base = 'http://localhost:3488', code = '', n = '15', secs = '90', mapArg = 'classic'] = process.argv.slice(2);
-const map = getMap(parseMapId(mapArg) ?? 'classic');
+let map = getMap(parseMapId(mapArg) ?? 'classic');
 const BOTS = Number(n), SECONDS = Number(secs);
 const HZ = 20;
 
@@ -29,11 +29,23 @@ interface Runner {
 }
 
 async function main(): Promise<void> {
-  const variant = 0;
+  let variant = 0;
   const runners: Runner[] = [];
   for (let i = 0; i < BOTS; i++) {
     const bot = new Bot(`perf${i}`);
-    await bot.connect(base, code || null);
+    try {
+      await bot.connect(base, code || null);
+    } catch (e) {
+      // A full lobby (or a kick) ends the fleet here; run with the bots that got in.
+      console.error(`bot ${i} could not join: ${(e as Error).message}`);
+      break;
+    }
+    if (i === 0 && bot.welcome) {
+      // The map the room plays now and its cover variant (classic changes its crates per seed): walking through a
+      // variant crate the bot does not know about is noclip for the anti-cheat, and it kicks the bot.
+      map = getMap(parseMapId(bot.welcome.match?.map ?? '') ?? map.id);
+      variant = map.variantFor(bot.welcome.seed);
+    }
     const preset = LOADOUT_PRESETS[i % LOADOUT_PRESETS.length];
     bot.send({ t: 'loadout', primary: preset.primary, secondary: preset.secondary, optic: preset.optic, perk: preset.perk });
     runners.push({ bot, route: [], team: '', weapon: preset.primary, nextFire: 0, mag: weaponDef(preset.primary)!.magazine, others: new Map() });
