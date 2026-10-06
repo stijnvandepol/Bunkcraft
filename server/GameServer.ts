@@ -952,7 +952,7 @@ export class GameServer {
       case 'weapon': return void (s.actions.take() && match.switchWeapon(s.id, Number(msg.slot)));
       case 'vote': return void (s.actions.take() && match.castVote(s.id, Number(msg.map)));
       case 'loadout': return void (s.actions.take() && match.setLoadout(
-        s.id, String(msg.primary), optStr(msg.secondary), optStr(msg.optic), optStr(msg.perk),
+        s.id, optStr(msg.primary) ?? '', optStr(msg.secondary), optStr(msg.optic), optStr(msg.perk),
       ));
       case 'block':
         // Nobody builds in an arcade game: roll the client's guess back.
@@ -1506,5 +1506,5 @@ function enchantData(raw: unknown): Record<string, number> | undefined {
 
 /** An optional string field of a client message (anything else is treated as absent). */
 function optStr(v: unknown): string | undefined {
-  return v === undefined || v === null ? undefined : String(v).slice(0, 32);
+  return typeof v === 'string' ? v.slice(0, 32) : undefined;
 }

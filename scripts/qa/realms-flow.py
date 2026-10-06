@@ -14,7 +14,8 @@ Parts (default: all):
              listed, a bad code gives an error.
   vote       A private rotating TDM lobby (score 10) with 14 bots: the match ends, both browsers vote with the
              number keys, the voted map is the next one and both clients follow it.
-Screenshots go to QA_SHOTS (default /tmp/bunkqa-shots/realms).
+Screenshots go to QA_SHOTS (default /tmp/bunkqa-shots/realms). With QA_SERVER_LOG=<server.log> every part also checks that no
+honest bot or player was corrected or kicked by the anti-cheat (WARN cheat lines).
 """
 import os
 import subprocess
@@ -30,8 +31,6 @@ SERVER = os.environ.get('QA_SERVER', 'http://localhost:3523')
 SHOTS = os.environ.get('QA_SHOTS', '/tmp/bunkqa-shots/realms')
 os.makedirs(SHOTS, exist_ok=True)
 MODES = ['tdm', 'ffa', 'gungame', 'elimination', 'hardpoint', 'domination', 'ctf']
-MODE_NAMES = {'tdm': 'Team Deathmatch', 'ffa': 'Free For All', 'gungame': 'Gun Game', 'elimination': 'Team Elimination',
-              'hardpoint': 'Hardpoint', 'domination': 'Domination', 'ctf': 'Capture the Flag'}
 results = []
 bots = []
 
@@ -53,6 +52,21 @@ def spawn_bots(code, n, seconds, map_id='classic'):
     return p
 
 
+SERVER_LOG = os.environ.get('QA_SERVER_LOG', '')
+_log_seen = [0]
+
+
+def server_kicks():
+    """New anti-cheat lines ('WARN cheat') in the server log since the last call (QA_SERVER_LOG; empty = not checked)."""
+    if not SERVER_LOG or not os.path.exists(SERVER_LOG):
+        return []
+    with open(SERVER_LOG) as f:
+        lines = f.read().splitlines()
+    new = lines[_log_seen[0]:]
+    _log_seen[0] = len(lines)
+    return [ln[ln.find('{'):] for ln in new if 'WARN cheat' in ln]
+
+
 def stop_bots():
     for p in bots:
         if p.poll() is None:
@@ -69,7 +83,8 @@ class P:
         self.page = self.ctx.new_page()
         self.errors = []
         self.page.on('pageerror', lambda e: self.errors.append(f'pageerror: {e}'))
-        self.page.on('console', lambda m: self.errors.append(f'console: {m.text}') if m.type == 'error' else None)
+        # A 404 for a code lookup that is meant to fail (unknown code) is the browser's own log line, not a bug.
+        self.page.on('console', lambda m: self.errors.append(f'console: {m.text}') if m.type == 'error' and 'status of 404' not in m.text else None)
 
     def js(self, code, arg=None):
         return self.page.evaluate(code, arg)
@@ -200,7 +215,9 @@ def part_quickplay(br):
         a.shot(f'qp-{mode}-{info_a["map"]}')
         roster = a.arcade()['roster']
         check(f'{mode}: roster has {fill + 2}', roster == fill + 2, str(roster))
-        if mode == 'tdm':
+        kicked = server_kicks()
+        check(f'{mode}: no honest bot was corrected or kicked by the anti-cheat', not kicked, '; '.join(kicked[-4:]))
+        if mode == 'tdm' and roster == 16:
             # The lobby is full (16): quick play must open a new lobby for a third player instead.
             c = P(br, 'qa_charlie')
             c.title(); c.realms()
@@ -230,7 +247,8 @@ def part_browse(br):
     code = a.code()
     b.title(); b.realms()
     b.btn('Browse Lobbies')
-    b.page.wait_for_selector('.realms-screen .realms-item, .world-empty', timeout=10000)
+    b.page.get_by_role('button', name='Join Lobby').wait_for(timeout=10000)
+    time.sleep(1.0)
     # Filter until Domination.
     for _ in range(9):
         if 'Domination' in b.page.get_by_role('button', name='Mode:', exact=False).first.text_content():

@@ -17,6 +17,8 @@ scripts/qa/route-server.ts. See docs/qa/ARCADE.md.
   python3 scripts/qa/play-modes.py out.json [mode,mode ...] [map,map ...]
 """
 import json
+import os
+import subprocess
 import sys
 import time
 import urllib.request
@@ -26,8 +28,10 @@ from playwright.sync_api import sync_playwright
 sys.path.insert(0, 'scripts/qa')
 import qa_common as q  # noqa: E402
 
-ROUTES = 'http://localhost:5418'
-METRICS = 'http://localhost:3417/metrics'
+ROUTES = os.environ.get('QA_ROUTES', 'http://localhost:5418')
+METRICS = os.environ.get('QA_SERVER', 'http://localhost:3417') + '/metrics'
+# QA_FILL_BOTS=n: n protocol bots (scripts/qa/arcade-perf-bots.ts) join every room too, so the two browsers play under load.
+FILL_BOTS = int(os.environ.get('QA_FILL_BOTS', '0'))
 MODES = ['tdm', 'ffa', 'gungame', 'elimination', 'hardpoint', 'domination', 'ctf']
 ALL_MAPS = ['classic', 'suburb', 'quarter', 'dockyard', 'desert', 'atomic', 'bunker', 'villa', 'yacht', 'town', 'station']
 SCORE = {'tdm': 10, 'ffa': 10, 'gungame': 10, 'elimination': 2, 'hardpoint': 100, 'domination': 50, 'ctf': 1}
@@ -109,7 +113,9 @@ def get(url):
 
 def cheat_counts():
     out = {}
-    with urllib.request.urlopen(METRICS) as r:
+    token = os.environ.get('QA_METRICS_TOKEN', '')
+    req = urllib.request.Request(METRICS, headers={'authorization': f'Bearer {token}'} if token else {})
+    with urllib.request.urlopen(req) as r:
         for line in r.read().decode().splitlines():
             if line.startswith('bunkcraft_cheat_events_total{'):
                 k, v = line.rsplit(' ', 1)
@@ -182,6 +188,19 @@ def run_combo(browser, mode, map_id, shots_taken):
         q.join_room(page, code, name)
         page.evaluate(DRIVER)
         pages.append(page)
+    bots = None
+    if FILL_BOTS:
+        bots = subprocess.Popen(['npx', 'tsx', 'scripts/qa/arcade-perf-bots.ts', os.environ.get('QA_SERVER', 'http://localhost:3417'),
+                                 code, str(FILL_BOTS), '400', map_id], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        res['notes'].append(f'{FILL_BOTS} fill bots')
+    try:
+        return play_combo(res, pages, mode, map_id, shots_taken, ctx_a, ctx_b, logs)
+    finally:
+        if bots and bots.poll() is None:
+            bots.terminate()
+
+
+def play_combo(res, pages, mode, map_id, shots_taken, ctx_a, ctx_b, logs):
     a, b = pages
     seed = a.evaluate('() => game.meta.seed')
     sa, sb = state(a), state(b)

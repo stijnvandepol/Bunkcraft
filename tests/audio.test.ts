@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { BLOCK_DEFS } from '../src/world/BlockRegistry';
 import { SOUND_PROFILES, isBlockSound, pickVariant, profileFor, stepSurface } from '../src/core/audio/profiles';
 import { StepCadence, STEP_DISTANCE, landingKind, landingVolume, moveMode, splashVolume } from '../src/core/audio/cadence';
-import { Priority, VoiceLimiter } from '../src/core/audio/voiceLimiter';
+import { NEAR_STEP_DISTANCE, Priority, VoiceLimiter, remoteStepPriority } from '../src/core/audio/voiceLimiter';
 import { countSolidAlong, distanceGain, occlusionCutoff, occlusionGain, panFor } from '../src/core/audio/spatial';
 import { caveFactor, cricketFactor, createEnvironment, estimateEnclosure, birdFactor, windFactor } from '../src/core/audio/environment';
 import { SCALES, chooseMood, generatePhrase, mulberry32, pulseAt, scaleNote, midiToHz, type PulseEvent } from '../src/core/audio/musicTheory';
@@ -127,6 +127,16 @@ describe('voice limiter', () => {
     expect(stoppedQuiet).toBe(true);
     expect(stoppedLoud).toBe(false);
     expect(lim.stolen).toBe(1);
+  });
+
+  it('a nearby enemy footstep gets a voice in a full firefight; a far one yields', () => {
+    const lim = new VoiceLimiter(4);
+    for (let i = 0; i < 4; i++) lim.request(0, Priority.Normal, 0.15, 10, () => undefined); // distant gunshots fill every voice
+    expect(remoteStepPriority(30, 5)).toBe(Priority.Ambient);
+    expect(lim.request(0, remoteStepPriority(30, 5), 0.4, 10, null)).toBe(false);
+    expect(remoteStepPriority(4, -6)).toBe(Priority.Normal);
+    expect(lim.request(0, remoteStepPriority(4, -6), 0.4, 10, null)).toBe(true); // louder than a far shot: steals its voice
+    expect(remoteStepPriority(NEAR_STEP_DISTANCE, 0)).toBe(Priority.Ambient);
   });
 
   it('priority beats loudness', () => {
