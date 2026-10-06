@@ -8,6 +8,7 @@ import {
 } from '../modes/ModeView';
 import { weaponDef } from '../modes/Weapons';
 import { h } from './dom';
+import { t } from './i18n';
 
 const MAX_MARKERS = 6;
 const TOAST_SECONDS = 2.6;
@@ -97,9 +98,9 @@ export class ModeHud {
     const steps = h('div', { class: 'mode-ladder-steps' });
     for (let i = 0; i < ladder.length; i++) steps.append(h('i', { class: i < level ? 'done' : i === level ? 'now' : '' }));
     this.panel.replaceChildren(h('div', { class: 'mode-ladder' },
-      h('div', { class: 'mode-ladder-level', text: `LEVEL ${Math.min(level + 1, ladder.length)} / ${ladder.length}` }),
+      h('div', { class: 'mode-ladder-level', text: t('mode.ladder.level', Math.min(level + 1, ladder.length), ladder.length) }),
       h('div', { class: 'mode-ladder-weapon', text: name(cur) }),
-      h('div', { class: 'mode-ladder-next', text: next ? `Next: ${name(next)}` : 'Last weapon: get a kill to win' }),
+      h('div', { class: 'mode-ladder-next', text: next ? t('mode.ladder.next', name(next)) : t('mode.ladder.last') }),
       steps,
       leader ? h('div', { class: 'mode-ladder-next', text: leader }) : null,
     ));
@@ -167,7 +168,7 @@ export class ModeHud {
         const show = st.variant === 'domination' || z.active || (st.gap && i === this.nextHill(st.zones));
         if (show) this.setZoneMarker(this.markers[i], z, i, st, self.team);
       });
-      this.panel.replaceChildren(...(st.variant === 'hardpoint' ? [h('div', { class: 'mode-line', text: st.gap ? `Next hill in ${Math.ceil(st.rotateIn)}` : `Hill moves in ${Math.ceil(st.rotateIn)}` })] : []));
+      this.panel.replaceChildren(...(st.variant === 'hardpoint' ? [h('div', { class: 'mode-line', text: t(st.gap ? 'mode.hill.next' : 'mode.hill.moves', Math.ceil(st.rotateIn)) })] : []));
     } else if (st.kind === 'ctf') {
       st.flags.forEach((f, i) => this.setFlagMarker(this.markers[i], f, self));
       this.panel.replaceChildren(...st.flags.map((f) => h('div', { class: 'mode-line', style: `color:${TEAM_COLORS[f.team]}`, text: flagLine(f, nameOf) })));
@@ -206,7 +207,7 @@ export class ModeHud {
     m.icon.className = `mm-icon zone${z.contested ? ' contested' : ''}${!z.active ? ' dim' : ''}`;
     m.icon.style.borderColor = color;
     m.icon.style.background = `conic-gradient(${ring.color} ${Math.round(ring.fill * 360)}deg, rgba(0,0,0,0.55) 0deg)`;
-    m.caption.textContent = z.active ? zoneStatus(z, self, st.variant) : `NEXT: ${z.name}`;
+    m.caption.textContent = z.active ? zoneStatus(z, self, st.variant) : t('mode.zone.next', z.name);
     m.caption.style.color = color;
   }
 

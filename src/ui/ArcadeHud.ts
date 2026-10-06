@@ -7,6 +7,7 @@ import {
 } from '../modes/Weapons';
 import type { MatchPhase, RosterEntry } from '../net/protocol';
 import { h } from './dom';
+import { t } from './i18n';
 
 const MAX_DAMAGE_MARKERS = 6;
 const DAMAGE_LIFETIME = 1.6;
@@ -39,6 +40,16 @@ function teamColor(team: Team | ''): string {
 function weaponTag(id: string): string {
   const def = weaponDef(id);
   return (def ? def.name.replace('Assault ', '').replace(' Rifle', '') : id).toUpperCase();
+}
+
+/** Perk name for labels: perk names are product names, "No Perk" is a label. */
+function perkName(p: PerkId): string {
+  return p === 'none' ? t('arc.noPerk') : PERKS[p].name;
+}
+
+/** Scoreboard header of the mode's objective column (the data value stays English). */
+function scoreColumnLabel(col: string): string {
+  return col === 'Level' ? t('arc.board.level') : col === 'Caps' ? t('arc.board.caps') : col;
 }
 
 /**
@@ -124,7 +135,7 @@ export class ArcadeHud {
     this.healthNum = h('span', { class: 'arc-health-num', text: String(PLAYER_MAX_HEALTH) });
     this.healthFill = h('div', { class: 'arc-health-fill' });
     this.healthBox = h('div', { class: 'arc-health' },
-      h('div', { class: 'arc-health-row' }, h('span', { class: 'arc-health-label', text: 'HEALTH' }), this.healthNum),
+      h('div', { class: 'arc-health-row' }, h('span', { class: 'arc-health-label', text: t('arc.health') }), this.healthNum),
       h('div', { class: 'arc-health-bar' }, this.healthFill),
     );
 
@@ -171,7 +182,7 @@ export class ArcadeHud {
     this.protect = h('div', { class: 'arc-protect hidden' });
     this.scopeBreathFill = h('div', { class: 'arc-breath-fill' });
     this.scopeBreath = h('div', { class: 'arc-breath' }, this.scopeBreathFill);
-    this.scopeHint = h('div', { class: 'arc-scope-hint', text: 'Hold Shift to steady' });
+    this.scopeHint = h('div', { class: 'arc-scope-hint', text: t('arc.scope.steady') });
     // Scope: black surround, the lens edge, a duplex reticle with mil-dots and a centre gap, the breath meter.
     const dots = h('div', { class: 'arc-scope-dots' });
     for (let i = -4; i <= 4; i++) if (i !== 0) dots.append(h('b', { style: `--i:${i}` }), h('b', { class: 'dv', style: `--i:${i}` }));
@@ -205,14 +216,14 @@ export class ArcadeHud {
     this.loadoutNote = h('div', { class: 'arc-loadout-note' });
     const presets = h('div', { class: 'arc-loadout-cards presets' });
     LOADOUT_PRESETS.forEach((pr, i) => {
-      const card = h('div', { class: 'arc-chip', title: `${classLine(pr)} · ${PERKS[pr.perk].name}: ${pr.description}` },
+      const card = h('div', { class: 'arc-chip', title: `${classLine(pr)} · ${perkName(pr.perk)}: ${t(`arc.class.${pr.id}`, pr.description)}` },
         h('b', { text: String(i + 1) }), ` ${pr.name}`);
       card.addEventListener('click', () => this.onClass?.(pr, false));
       this.presetCards.set(pr.id, card);
       presets.append(card);
     });
     this.customDesc = h('div', { class: 'arc-class-line' });
-    this.customCard = h('div', { class: 'arc-chip custom' }, h('b', { text: String(LOADOUT_PRESETS.length + 1) }), ' Custom');
+    this.customCard = h('div', { class: 'arc-chip custom' }, h('b', { text: String(LOADOUT_PRESETS.length + 1) }), ` ${t('arc.custom')}`);
     this.customCard.addEventListener('click', () => this.onClass?.(this.custom, true));
     presets.append(this.customCard);
 
@@ -228,25 +239,25 @@ export class ArcadeHud {
     };
     const wItem = (id: string) => {
       const w = weaponDef(id)!;
-      return { id, label: w.name, tag: fireMode(w).toUpperCase(), desc: w.role };
+      return { id, label: w.name, tag: fireMode(w).toUpperCase(), desc: t(`arc.role.${id}`, w.role) };
     };
     this.statsEl = h('div', { class: 'arc-cac-stats' });
     const editor = h('div', { class: 'arc-cac' },
-      column('Primary', 'primary', PRIMARY_WEAPONS.map(wItem)),
-      column('Optic', 'optic', (Object.keys(OPTICS) as OpticId[]).map((o) => ({ id: o, label: OPTICS[o].name, desc: OPTICS[o].desc }))),
-      column('Secondary', 'secondary', SECONDARY_WEAPONS.map(wItem)),
-      column('Perk', 'perk', PERK_IDS.map((p) => ({ id: p, label: PERKS[p].name, desc: PERKS[p].desc }))),
+      column(t('arc.cac.primary'), 'primary', PRIMARY_WEAPONS.map(wItem)),
+      column(t('arc.cac.optic'), 'optic', (Object.keys(OPTICS) as OpticId[]).map((o) => ({ id: o, label: OPTICS[o].name, desc: t(`arc.optic.${o}`, OPTICS[o].desc) }))),
+      column(t('arc.cac.secondary'), 'secondary', SECONDARY_WEAPONS.map(wItem)),
+      column(t('arc.cac.perk'), 'perk', PERK_IDS.map((p) => ({ id: p, label: perkName(p), desc: t(`arc.perk.${p}`, PERKS[p].desc) }))),
       this.statsEl,
     );
     this.loadoutEl = h('div', { class: 'arc-loadout hidden' },
       h('div', { class: 'arc-loadout-panel' },
-        h('div', { class: 'arc-loadout-title', text: 'Create-a-Class' }),
+        h('div', { class: 'arc-loadout-title', text: t('arc.cac.title') }),
         presets,
         this.customDesc,
         editor,
-        h('div', { class: 'arc-card-desc', text: 'Editing makes it your Custom class (saved in this browser)' }),
+        h('div', { class: 'arc-card-desc', text: t('arc.cac.note') }),
         this.loadoutNote,
-        h('button', { class: 'mc-btn w150', text: 'Done', onclick: () => this.onLoadoutClose?.() }),
+        h('button', { class: 'mc-btn w150', text: t('common.done'), onclick: () => this.onLoadoutClose?.() }),
       ),
     );
     this.renderCustom();
@@ -281,7 +292,7 @@ export class ArcadeHud {
     this.statsEl.replaceChildren(
       h('div', { class: 'arc-card-name', text: w.name }),
       ...statRows(w, c.optic, c.perk),
-      h('div', { class: 'arc-card-desc role', text: w.role }),
+      h('div', { class: 'arc-card-desc role', text: t(`arc.role.${w.id}`, w.role) }),
     );
   }
 
@@ -358,7 +369,7 @@ export class ArcadeHud {
     this.lastBreath = key;
     this.scopeBreath.classList.toggle('hidden', q < 0);
     this.scopeHint.classList.toggle('hidden', q < 0 || holding);
-    this.scopeHint.textContent = spent ? 'Out of breath' : 'Hold Shift to steady';
+    this.scopeHint.textContent = spent ? t('arc.scope.breath') : t('arc.scope.steady');
     this.scopeBreath.classList.toggle('spent', spent);
     if (q >= 0) this.scopeBreathFill.style.width = `${q * 2}%`;
   }
@@ -379,7 +390,7 @@ export class ArcadeHud {
     if (q === this.lastProtect) return;
     this.lastProtect = q;
     this.protect.classList.toggle('hidden', q === 0);
-    if (q > 0) this.protect.textContent = `SPAWN PROTECTION ${(q / 10).toFixed(1)}`;
+    if (q > 0) this.protect.textContent = t('arc.protection', (q / 10).toFixed(1));
   }
 
   // ---------------------------------------------------------------- feedback
@@ -450,14 +461,14 @@ export class ArcadeHud {
     phase: MatchPhase, timeLeft: number,
     ctx: ScoreboardContext & { scoreLimit: number; selfKills: number; leader: string; text?: string; selfScore?: string },
   ): void {
-    this.clock.textContent = phase === 'warmup' ? 'WARM-UP' : phase === 'intermission' || phase === 'countdown' ? 'NEXT ROUND' : formatClock(timeLeft);
+    this.clock.textContent = phase === 'warmup' ? t('arc.warmup') : phase === 'intermission' || phase === 'countdown' ? t('arc.nextRound') : formatClock(timeLeft);
     this.rightScore.classList.toggle('hidden', !ctx.teams);
     if (ctx.teams) {
       this.leftScore.textContent = String(ctx.scores.red);
       this.leftScore.style.background = TEAM_COLORS.red;
       this.rightScore.textContent = String(ctx.scores.blue);
       this.rightScore.style.background = TEAM_COLORS.blue;
-      this.subline.textContent = ctx.text || `First to ${ctx.scoreLimit}`;
+      this.subline.textContent = ctx.text || t('arc.firstTo', ctx.scoreLimit);
     } else {
       this.leftScore.textContent = ctx.selfScore ?? `${ctx.selfKills}/${ctx.scoreLimit}`;
       this.leftScore.style.background = '#3a3a3a';
@@ -486,26 +497,26 @@ export class ArcadeHud {
   /** Shows the elimination screen; `killer` is empty when unknown. Null hides it. */
   setDeath(info: { killer: string; weapon: string; head: boolean; killerTeam: Team | '' } | null): void {
     this.death.classList.toggle('hidden', info === null);
-    if (info === null) this.setSpectating('', '');
+    if (info === null) this.setSpectating('', false);
     this.lastCount = -1;
     this.lastRespawnPending = '\0';
     if (!info) return;
-    this.deathTitle.textContent = info.killer ? `You were eliminated by ${info.killer}` : 'You were eliminated';
+    this.deathTitle.textContent = info.killer ? t('arc.death.by', info.killer) : t('arc.death.title');
     this.deathTitle.style.color = info.killerTeam ? TEAM_COLORS[info.killerTeam] : '#fff';
-    this.deathDetail.textContent = info.killer ? `${weaponTag(info.weapon)}${info.head ? '  -  HEADSHOT' : ''}` : '';
+    this.deathDetail.textContent = info.killer ? `${weaponTag(info.weapon)}${info.head ? `  -  ${t('arc.headshot')}` : ''}` : '';
   }
 
   /**
    * Spectating after death: who the camera follows ('' = nobody, the death screen is shown in full)
-   * and what the mouse buttons do. Only writes the DOM when something changed.
+   * and whether the mouse buttons cycle between several players. Only writes the DOM when something changed.
    */
-  setSpectating(name: string, hint: string): void {
-    const key = name ? `${name}|${hint}` : '';
+  setSpectating(name: string, cycle: boolean): void {
+    const key = name ? `${name}|${cycle}` : '';
     if (key === this.lastWatch) return;
     this.lastWatch = key;
     this.death.classList.toggle('watching', name !== '');
     this.deathWatch.classList.toggle('hidden', name === '');
-    this.deathWatch.replaceChildren(h('div', { class: 'arc-watch-name', text: `Spectating ${name}` }), h('div', { class: 'arc-death-hint', text: hint }));
+    this.deathWatch.replaceChildren(h('div', { class: 'arc-watch-name', text: t('arc.spectating', name) }), h('div', { class: 'arc-death-hint', text: cycle ? t('arc.spectateHint') : '' }));
   }
 
   /**
@@ -522,18 +533,18 @@ export class ArcadeHud {
     if (n === this.lastCount && key === this.lastRespawnPending) return;
     this.lastCount = n;
     this.lastRespawnPending = key;
-    this.deathCount.textContent = n < 0 ? 'Eliminated: you are back next round' : `Respawning in ${n}`;
+    this.deathCount.textContent = n < 0 ? t('arc.death.round') : t('arc.death.respawn', n);
     if (!choice || !next) {
       this.deathLoadout.replaceChildren();
       return;
     }
     const cur = presetFor(next);
     const keys = LOADOUT_PRESETS.length + 1;
-    this.deathLoadout.replaceChildren(h('div', { class: 'arc-death-hint', text: `Next class (keys 1-${keys}, or B for Create-a-Class)` }),
+    this.deathLoadout.replaceChildren(h('div', { class: 'arc-death-hint', text: t('arc.death.nextClass', keys) }),
       h('div', { class: 'arc-death-weapons' },
         ...LOADOUT_PRESETS.map((pr, i) => h('span', { class: pr === cur ? 'sel' : '', text: `${i + 1} ${pr.name}` })),
-        h('span', { class: custom ? 'sel' : '', text: `${keys} Custom` })),
-      h('div', { class: 'arc-death-hint', text: `${classLine(next)} · ${PERKS[next.perk].name}` }));
+        h('span', { class: custom ? 'sel' : '', text: `${keys} ${t('arc.custom')}` })),
+      h('div', { class: 'arc-death-hint', text: `${classLine(next)} · ${perkName(next.perk)}` }));
   }
 
   setMatchEnd(info: { title: string; color: string; roster: readonly RosterEntry[]; ctx: ScoreboardContext } | null): void {
@@ -551,7 +562,7 @@ export class ArcadeHud {
     const n = Math.max(0, Math.ceil(seconds));
     if (n === this.lastEndCount) return;
     this.lastEndCount = n;
-    this.endCount.textContent = `Next match in ${n}`;
+    this.endCount.textContent = t('lobby.nextMatch', n);
   }
 
   /** Opens Create-a-Class with `selected` (the class of the next life) highlighted. */
@@ -560,7 +571,7 @@ export class ArcadeHud {
     // A full-screen menu: the match HUD under it (score bar, banners, lobby panel, markers) would show through the title.
     this.el.classList.add('class-open');
     this.markClass(selected);
-    this.loadoutNote.textContent = nextLife ? 'Applies at once right after spawning, else from your next life' : 'Applies when you respawn';
+    this.loadoutNote.textContent = nextLife ? t('arc.cac.applyNow') : t('arc.cac.applyRespawn');
   }
 
   /** Highlights the chosen class: its preset card, or the custom card. */
@@ -568,8 +579,8 @@ export class ArcadeHud {
     const cur = presetFor(selected);
     for (const [id, card] of this.presetCards) card.classList.toggle('selected', id === cur?.id);
     this.customCard.classList.toggle('selected', !cur && sameClass(selected, this.custom));
-    const label = cur ? cur.name : sameClass(selected, this.custom) ? 'Custom' : 'Class';
-    this.customDesc.textContent = `${label}: ${classLine(selected)} · ${PERKS[selected.perk].name}`;
+    const label = cur ? cur.name : sameClass(selected, this.custom) ? t('arc.custom') : t('arc.class');
+    this.customDesc.textContent = `${label}: ${classLine(selected)} · ${perkName(selected.perk)}`;
   }
 
   hideLoadout(): void {
@@ -615,12 +626,12 @@ function statRows(def: WeaponDef, optic: OpticId = 'iron', perk: PerkId = 'none'
     h('span', { text: `${label}  ${value}` }), h('div', { class: 'arc-stat-bar' }, h('i', { style: `width:${Math.round(Math.min(1, Math.max(0.05, frac)) * 100)}%` })));
   const mag = perk === 'extmag' ? Math.round(def.magazine * 1.4) : def.magazine;
   return [
-    bar('Damage', (def.damage * def.pellets * 0.6) / 100, String(def.damage * def.pellets)),
-    bar('Fire rate', def.rpm / 1000, `${def.rpm}`),
-    bar('Range', def.range / 100, `${Math.round(def.range * (perk === 'suppressor' ? 0.8 : 1))}`),
-    bar('Magazine', mag / 75, String(mag)),
-    bar('Mobility', (def.moveSpeed - 0.8) / 0.3, `${Math.round(def.moveSpeed * 100)}%`),
-    bar('Aim speed', (0.5 - def.adsTime) / 0.4, `${def.adsTime.toFixed(2)}s`),
+    bar(t('arc.stat.damage'), (def.damage * def.pellets * 0.6) / 100, String(def.damage * def.pellets)),
+    bar(t('arc.stat.fireRate'), def.rpm / 1000, `${def.rpm}`),
+    bar(t('arc.stat.range'), def.range / 100, `${Math.round(def.range * (perk === 'suppressor' ? 0.8 : 1))}`),
+    bar(t('arc.stat.magazine'), mag / 75, String(mag)),
+    bar(t('arc.stat.mobility'), (def.moveSpeed - 0.8) / 0.3, `${Math.round(def.moveSpeed * 100)}%`),
+    bar(t('arc.stat.aimSpeed'), (0.5 - def.adsTime) / 0.4, `${def.adsTime.toFixed(2)}s`),
     h('div', { class: 'arc-card-desc', text: `${fireMode(def).toUpperCase()} · zoom ${(1 / opticZoom(def, optic)).toFixed(1)}x` }),
   ];
 }
@@ -630,9 +641,9 @@ function renderBoard(host: HTMLElement, roster: readonly RosterEntry[], ctx: Sco
   const rows: HTMLElement[] = [];
   const cols = ctx.scoreColumn ? ' pts' : '';
   const header = h('div', { class: `arc-row head${cols}` },
-    h('span', { class: 'rank', text: '#' }), h('span', { class: 'name', text: 'Player' }),
-    ctx.scoreColumn ? h('span', { text: ctx.scoreColumn }) : null,
-    h('span', { text: 'Kills' }), h('span', { text: 'Deaths' }), h('span', { text: 'K/D' }), h('span', { text: 'Ping' }));
+    h('span', { class: 'rank', text: '#' }), h('span', { class: 'name', text: t('arc.board.player') }),
+    ctx.scoreColumn ? h('span', { text: scoreColumnLabel(ctx.scoreColumn) }) : null,
+    h('span', { text: t('arc.board.kills') }), h('span', { text: t('arc.board.deaths') }), h('span', { text: 'K/D' }), h('span', { text: 'Ping' }));
   rows.push(header);
   sortRoster(roster).forEach((p, i) => {
     rows.push(h('div', { class: `arc-row${cols}${p.id === ctx.selfId ? ' self' : ''}` },
@@ -645,9 +656,9 @@ function renderBoard(host: HTMLElement, roster: readonly RosterEntry[], ctx: Sco
   const children: HTMLElement[] = [];
   if (ctx.teams) {
     children.push(h('div', { class: 'arc-board-scores' },
-      h('span', { style: `color:${TEAM_COLORS.red}`, text: `RED ${ctx.scores.red}` }),
+      h('span', { style: `color:${TEAM_COLORS.red}`, text: `${t('arc.board.red')} ${ctx.scores.red}` }),
       h('span', { class: 'sep', text: ' - ' }),
-      h('span', { style: `color:${TEAM_COLORS.blue}`, text: `${ctx.scores.blue} BLUE` })));
+      h('span', { style: `color:${TEAM_COLORS.blue}`, text: `${ctx.scores.blue} ${t('arc.board.blue')}` })));
   }
   children.push(...rows);
   host.replaceChildren(...children);
