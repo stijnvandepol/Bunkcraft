@@ -44,7 +44,7 @@ describe('HTTP API', () => {
     expect(code).toMatch(/^[A-HJKMNP-Z2-9]{6}$/);
     const info = await api<Record<string, unknown>>(srv, 'GET', `/api/rooms/${code}`);
     expect(info.status).toBe(200);
-    expect(info.body).toMatchObject({ code, name: 'My game', gameMode: 'creative', gameType: 'minecraft', players: 0, maxPlayers: 8 });
+    expect(info.body).toMatchObject({ code, name: 'My game', gameMode: 'creative', gameType: 'minecraft', players: 0, maxPlayers: 12 });
     expect((await api(srv, 'GET', '/api/rooms/ZZZZZZ')).status).toBe(404);
     expect((await api(srv, 'GET', '/api/rooms/not-a-code')).status).toBe(404);
     expect((await api(srv, 'GET', '/api/nope')).status).toBe(404);
