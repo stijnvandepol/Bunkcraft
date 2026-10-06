@@ -19,7 +19,7 @@ import { PROTOCOL_VERSION, type ClientMessage, type ServerMessage } from '../src
 import { GameServer } from '../server/GameServer';
 import { metrics } from '../server/Metrics';
 import { traceBlocks } from '../server/Combat';
-import { BOT_SPEED, aimAt, arenaPath, follow } from './lib/arenaPath';
+import { BOT_SPEED, type RoutePoint, aimAt, arenaPath, follow } from './lib/arenaPath';
 
 const pos = process.argv.slice(2).filter((a) => !a.startsWith('--'));
 const opt = (k: string, d: string) => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
@@ -58,7 +58,7 @@ class Sink extends EventEmitter {
   messages = 0;
   me = { id: 0, x: 0, y: 65, z: 0 };
   fresh = false;
-  route: [number, number][] = [];
+  route: RoutePoint[] = [];
   others = new Map<number, [number, number, number]>();
   teleports = 0;
   send(data: string | ArrayBuffer): void {
@@ -115,7 +115,7 @@ for (let step = 0; step < steps; step++) {
   for (const b of bots) {
     if (b.fresh) b.fresh = false; // the first report after a spawn or correction is that position
     else {
-      if (b.route.length === 0) b.route = arenaPath(map, variant, [b.me.x, b.me.z], randomCell(rnd)) ?? [];
+      if (b.route.length === 0) b.route = arenaPath(map, variant, [b.me.x, b.me.z, b.me.y], randomCell(rnd)) ?? [];
       follow(b.me, b.route, BOT_SPEED * dt);
     }
     b.say({ t: 'pos', x: b.me.x, y: b.me.y, z: b.me.z, yaw: 0, pitch: 0, flags: 4, held: 0 });

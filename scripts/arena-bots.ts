@@ -12,7 +12,7 @@ import { WebSocket } from 'ws';
 import { ARENA_FLOOR_Y, MAP_IDS, getMap, parseMapId } from '../src/modes/maps';
 import { PROTOCOL_VERSION, type ClientMessage, type ServerMessage } from '../src/net/protocol';
 import { traceBlocks } from '../server/Combat';
-import { BOT_SPEED, aimAt, arenaPath, clientStep, follow } from './lib/arenaPath';
+import { BOT_SPEED, type RoutePoint, aimAt, arenaPath, clientStep, follow } from './lib/arenaPath';
 
 const type = process.argv[2] === 'ffa' ? 'ffa' : 'tdm';
 const mapArg = process.argv[3];
@@ -30,7 +30,7 @@ class Bot {
   readonly log: ServerMessage[] = [];
   id = 0;
   x = 0; y = ARENA_FLOOR_Y + 1; z = 0;
-  route: [number, number][] = [];
+  route: RoutePoint[] = [];
   fresh = false;
   phase = '';
   private ws!: WebSocket;
@@ -149,8 +149,8 @@ async function main(): Promise<void> {
   // Everybody respawned at the start: walk to the duel spots (spawn protection lasts 2 s).
   const map = getMap(mapId), variant = map.variantFor(welcome.seed);
   const [spotA, spotB] = findDuelSpots(welcome.seed, (a, b) =>
-    !!arenaPath(map, variant, [alice.x, alice.z], a) && !!arenaPath(map, variant, [bob.x, bob.z], b));
-  const routeA = arenaPath(map, variant, [alice.x, alice.z], spotA), routeB = arenaPath(map, variant, [bob.x, bob.z], spotB);
+    !!arenaPath(map, variant, [alice.x, alice.z, alice.y], a) && !!arenaPath(map, variant, [bob.x, bob.z, bob.y], b));
+  const routeA = arenaPath(map, variant, [alice.x, alice.z, alice.y], spotA), routeB = arenaPath(map, variant, [bob.x, bob.z, bob.y], spotB);
   check('there are walking paths to the duel spots', !!routeA && !!routeB);
   alice.route = routeA ?? []; bob.route = routeB ?? [];
   for (let i = 0; i < 400 && (alice.route.length || bob.route.length); i++) await sleep(100);

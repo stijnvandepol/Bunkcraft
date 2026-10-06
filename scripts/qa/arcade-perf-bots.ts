@@ -10,7 +10,7 @@ import { traceBlocks } from '../../server/Combat';
 import { LOADOUT_PRESETS } from '../../src/modes/Loadouts';
 import { getMap, parseMapId } from '../../src/modes/maps';
 import { fireInterval, weaponDef } from '../../src/modes/Weapons';
-import { BOT_SPEED, aimAt, arenaPath, clientStep, follow } from '../lib/arenaPath';
+import { BOT_SPEED, type RoutePoint, aimAt, arenaPath, clientStep, follow } from '../lib/arenaPath';
 import { Bot, sleep } from './lib';
 
 const [base = 'http://localhost:3488', code = '', n = '15', secs = '90', mapArg = 'classic'] = process.argv.slice(2);
@@ -20,7 +20,7 @@ const HZ = 20;
 
 interface Runner {
   bot: Bot;
-  route: [number, number][];
+  route: RoutePoint[];
   team: string;
   weapon: string;
   nextFire: number;
@@ -78,7 +78,7 @@ async function main(): Promise<void> {
       }
       if (b.fresh) b.fresh = false;
       else {
-        if (r.route.length === 0) r.route = arenaPath(map, variant, [b.x, b.z], randomCell()) ?? [];
+        if (r.route.length === 0) r.route = arenaPath(map, variant, [b.x, b.z, b.y], randomCell()) ?? [];
         follow(b, r.route, BOT_SPEED / HZ);
       }
       const myTeam = teams.get(b.id) ?? '';

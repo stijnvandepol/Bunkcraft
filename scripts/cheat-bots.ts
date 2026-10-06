@@ -12,7 +12,7 @@ import { WebSocket } from 'ws';
 import { ARENA_FLOOR_Y, type ArenaMap, getMap } from '../src/modes/maps';
 import { PROTOCOL_VERSION, type ClientMessage, type ServerMessage } from '../src/net/protocol';
 import { traceBlocks } from '../server/Combat';
-import { BOT_SPEED, aimAt, arenaPath, follow } from './lib/arenaPath';
+import { BOT_SPEED, type RoutePoint, aimAt, arenaPath, follow } from './lib/arenaPath';
 
 const args = process.argv.slice(2);
 const base = args.find((a) => a.startsWith('--url='))?.slice(6) ?? 'http://localhost:3000';
@@ -33,7 +33,7 @@ class Bot {
   id = 0;
   x = 0; y = ARENA_FLOOR_Y + 1; z = 0;
   yaw = 0;
-  route: [number, number][] = [];
+  route: RoutePoint[] = [];
   /** Honest bots move by themselves; cheaters are driven by the test. */
   auto = true;
   speed = BOT_SPEED;
@@ -95,7 +95,7 @@ class Bot {
 
   /** Walks to (x, z) on a floor path; true when there. */
   async walk(to: [number, number], timeoutMs = 30000): Promise<boolean> {
-    this.route = arenaPath(this.map, this.variant, [this.x, this.z], to) ?? [];
+    this.route = arenaPath(this.map, this.variant, [this.x, this.z, this.y], to) ?? [];
     for (let t = 0; t < timeoutMs && this.route.length; t += 100) await sleep(100);
     return Math.hypot(this.x - to[0], this.z - to[1]) < 0.6;
   }
@@ -141,7 +141,7 @@ function wallCell(b: Bot): [number, number] | null {
     for (let x = bd.minX + 2; x < bd.maxX - 3; x++) {
       if (!open(x, z) || !solid(x + 1, z) || !open(x + 2, z)) continue;
       const d = Math.hypot(x - b.x, z - b.z);
-      if (d < bestD && arenaPath(m, v, [b.x, b.z], [x + 0.5, z + 0.5])) { bestD = d; best = [x, z]; }
+      if (d < bestD && arenaPath(m, v, [b.x, b.z, b.y], [x + 0.5, z + 0.5])) { bestD = d; best = [x, z]; }
     }
   }
   return best;
@@ -162,14 +162,14 @@ async function legit(): Promise<void> {
     const bd = bot.map.bounds;
     for (;;) {
       const x = Math.floor(bd.minX + 3 + r() * (bd.maxX - bd.minX - 6)), z = Math.floor(bd.minZ + 3 + r() * (bd.maxZ - bd.minZ - 6));
-      if (arenaPath(bot.map, bot.variant, [bot.x, bot.z], [x + 0.5, z + 0.5])) return [x + 0.5, z + 0.5];
+      if (arenaPath(bot.map, bot.variant, [bot.x, bot.z, bot.y], [x + 0.5, z + 0.5])) return [x + 0.5, z + 0.5];
     }
   };
   let shots = 0;
   const end = Date.now() + LEGIT_SECONDS * 1000;
   while (Date.now() < end && !a.kicked && !b.kicked) {
     for (const [me, other] of [[a, b], [b, a]] as const) {
-      if (me.route.length === 0) me.route = arenaPath(me.map, me.variant, [me.x, me.z], target(me)) ?? [];
+      if (me.route.length === 0) me.route = arenaPath(me.map, me.variant, [me.x, me.z, me.y], target(me)) ?? [];
       // Shoot when the other one is in plain sight (a real player does not fire into walls).
       const ox = me.x, oy = me.y + 1.62, oz = me.z;
       const aim = aimAt(ox, oy, oz, other.x, other.y + 1.2, other.z), d = Math.hypot(other.x - ox, other.y + 1.2 - oy, other.z - oz);
@@ -220,7 +220,7 @@ async function movementCheats(): Promise<void> {
   // Speed: three times the run speed along a path.
   await fresh('speeder');
   const far = c.map.spawns.ffa.map((s) => [s.x, s.z] as [number, number]).sort((p, q) => Math.hypot(q[0] - c.x, q[1] - c.z) - Math.hypot(p[0] - c.x, p[1] - c.z))[0];
-  c.route = arenaPath(c.map, c.variant, [c.x, c.z], far) ?? [];
+  c.route = arenaPath(c.map, c.variant, [c.x, c.z, c.y], far) ?? [];
   n = c.of('teleport').length;
   c.speed = BOT_SPEED * 3;
   c.auto = true;
@@ -231,7 +231,7 @@ async function movementCheats(): Promise<void> {
   // The same with a physics clock that runs three times as fast (so every report looks like legal pace).
   await fresh('clockspeeder');
   const far2 = c.map.spawns.ffa.map((s) => [s.x, s.z] as [number, number]).sort((p, q) => Math.hypot(q[0] - c.x, q[1] - c.z) - Math.hypot(p[0] - c.x, p[1] - c.z))[0];
-  c.route = arenaPath(c.map, c.variant, [c.x, c.z], far2) ?? [];
+  c.route = arenaPath(c.map, c.variant, [c.x, c.z, c.y], far2) ?? [];
   n = c.of('teleport').length;
   c.speed = BOT_SPEED * 3;
   c.clockRate = 3;
@@ -253,7 +253,7 @@ async function movementCheats(): Promise<void> {
   // Replay: two seconds of honest walking, then the same reports again at once.
   await fresh('replayer');
   const away2 = c.map.spawns.ffa.map((p) => [p.x, p.z] as [number, number]).sort((p, q) => Math.hypot(q[0] - c.x, q[1] - c.z) - Math.hypot(p[0] - c.x, p[1] - c.z))[0];
-  c.route = arenaPath(c.map, c.variant, [c.x, c.z], away2) ?? [];
+  c.route = arenaPath(c.map, c.variant, [c.x, c.z, c.y], away2) ?? [];
   const from = c.sentPos.length;
   await sleep(2000);
   c.auto = false;
@@ -321,7 +321,7 @@ async function shotCheats(): Promise<void> {
     // Victims that died walk back to their spots.
     if (spots) {
       for (const [v, spot] of [[v1, spots[0]], [v2, spots[1]]] as const) {
-        if (v.route.length === 0 && Math.hypot(v.x - spot[0], v.z - spot[1]) > 0.6) v.route = arenaPath(v.map, v.variant, [v.x, v.z], spot) ?? [];
+        if (v.route.length === 0 && Math.hypot(v.x - spot[0], v.z - spot[1]) > 0.6) v.route = arenaPath(v.map, v.variant, [v.x, v.z, v.y], spot) ?? [];
       }
     }
     const t = [i % 2 ? v1 : v2, i % 2 ? v2 : v1].find((v) => !v.dead && visible(v));
@@ -352,7 +352,7 @@ function aimbotSpots(s: Bot): [[number, number], [number, number]] | null {
     if (d < 6 || d > 10) continue;
     const x = Math.floor(s.x) + dx, z = Math.floor(s.z) + dz;
     const to: [number, number] = [x + 0.5, z + 0.5];
-    if (!arenaPath(m, v, [s.x, s.z], to)) continue;
+    if (!arenaPath(m, v, [s.x, s.z, s.y], to)) continue;
     const ox = s.x, oy = s.y + 1.62, oz = s.z;
     const a = aimAt(ox, oy, oz, to[0], s.y + 1.6, to[1]), dist = Math.hypot(to[0] - ox, s.y + 1.6 - oy, to[1] - oz);
     if (traceBlocks(s.blocks(), ox, oy, oz, a.dx, a.dy, a.dz, dist) < dist) continue;
