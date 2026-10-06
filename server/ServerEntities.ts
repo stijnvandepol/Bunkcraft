@@ -16,6 +16,7 @@ import { BLOCK, getBlockDef } from '../src/world/BlockRegistry';
 import { boneMealTarget, useBoneMeal } from '../src/world/Growth';
 import { ServerWorld } from './ServerWorld';
 import { useOnMob } from '../src/entities/MobInteraction';
+import type { ChunkGenPool } from './chunkgen/ChunkGenPool';
 import { arrowEffect, meleeEffect, witchPotion } from '../src/entities/MobEffects';
 
 /** Entities are sent to a player when they are this close (blocks). */
@@ -101,8 +102,9 @@ export class ServerEntities {
     private readonly host: EntityHost,
     private readonly getTime: () => number,
     genVersion?: number,
+    genPool: ChunkGenPool | null = null,
   ) {
-    this.world = new ServerWorld(seed, edits, 'terrain', genVersion);
+    this.world = new ServerWorld(seed, edits, 'terrain', genVersion, genPool);
     this.world.onEdit = (x, y, z, id, meta) => host.recordEdit(x, y, z, id, meta);
     this.world.liquids.onDestroyed = (x, y, z, id) => {
       // Plants and torches washed away drop themselves, like in survival Minecraft.

@@ -38,6 +38,7 @@ import { ORIGIN_TOLERANCE, isUnitVector, originError, viewDir } from './antichea
 import { AimStats, SUSPICION } from './anticheat/Suspicion';
 import { Send, type Viewer, Visibility } from './anticheat/Visibility';
 import type { ShotReport } from './Match';
+import type { ChunkGenPool } from './chunkgen/ChunkGenPool';
 import { type RateLimiter, hashIp, newToken, safeEqual, tokenMatches, verifyPassword, hashToken } from './Security';
 
 const TICK_MS = 50; // 20 ticks per second, like Minecraft
@@ -216,6 +217,8 @@ export interface ServerOptions {
   inventoryGuard?: 'enforce' | 'warn' | 'off';
   /** Send snap/ent as binary frames to clients that ask for it (default on). */
   binary?: boolean;
+  /** Chunk generation threads shared by all games (CHUNK_WORKERS); absent = generate on the main thread. */
+  genPool?: ChunkGenPool | null;
   /** Called when something changed that the room list shows (name, listing, password). */
   onMetaChange?: () => void;
   /** Arcade: server tick rate in Hz (default 30; env ARCADE_TICK_HZ, clamped to 10-60). */
@@ -319,7 +322,7 @@ export class GameServer {
       },
       recordEdit: (x, y, z, id, meta) => { this.world.edits[`${x},${y},${z}`] = packState(id, meta); this.dirty = true; },
       skyDarkness: () => this.weather.skyDarkness,
-    }, () => this.world.time, this.world.genVersion);
+    }, () => this.world.time, this.world.genVersion, opts.genPool ?? null);
     if (this.entities) {
       const ents = this.entities;
       this.survival = new ServerSurvival({
@@ -478,6 +481,8 @@ export class GameServer {
     this.closed = true;
     this.dirty = true;
     this.save();
+    // Chunks still being generated for this game are no longer needed.
+    this.entities?.world.dispose();
     for (const s of this.sessions.values()) {
       this.send(s, reconnectMs ? { t: 'kick', reason: 'Server restarting', reconnect: reconnectMs } : { t: 'kick', reason });
       try { s.ws.close(reconnectMs ? 1012 : 1001, 'Server closed'); } catch { /* already closed */ }
@@ -1116,11 +1121,14 @@ export class GameServer {
     if (y < 1 || y > 127) return reject();
     if (id !== 0 && (!getBlockDef(id) || id === BLOCK.BEDROCK || id === BLOCK.UNLOADED)) return reject();
     if (!isValidMeta(id, meta)) return reject();
-    // Saplings, sugar cane and cactus only where they can stand (the client checks the same rule).
-    if (this.entities && needsSupport(id) && !plantCanStand(id, (a, b, c) => this.entities!.world.getBlock(a, b, c), x, y, z)) return reject();
     // Reach: distance from the player's eyes to the block centre.
     const d = Math.hypot(x + 0.5 - s.x, y + 0.5 - (s.y + 1.62), z + 0.5 - s.z);
     if (!s.hasPos || d > REACH) return reject();
+    // Within reach, so next to the player: if the worker pool has not delivered that chunk yet, make it here, so the
+    // checks below and the inventory credit see the real block instead of UNLOADED.
+    this.entities?.world.ensureChunk(x, z);
+    // Saplings, sugar cane and cactus only where they can stand (the client checks the same rule).
+    if (this.entities && needsSupport(id) && !plantCanStand(id, (a, b, c) => this.entities!.world.getBlock(a, b, c), x, y, z)) return reject();
     // Two players changed this block at the same moment: the one whose view is stale loses, and gets the server's
     // block back right after the reject (otherwise his screen keeps the other player's edit overwritten by his own).
     if (this.entities && typeof m.prev === 'number') {

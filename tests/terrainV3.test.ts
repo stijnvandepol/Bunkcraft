@@ -11,8 +11,9 @@ import { STRUCTURE_FEATURES, type StructureContext, desertWell, placeStructures 
 import { TerrainGenerator } from '../src/world/TerrainGenerator';
 import { createGenerator } from '../src/world/WorldGenerator';
 import { fnv1a } from './helpers';
+import { GOLDEN_SEED, GOLDEN_V3 } from './helpers/goldenChunks';
 
-const SEED = 12345;
+const SEED = GOLDEN_SEED;
 
 interface Chunk { blocks: Uint8Array; biomes: Uint8Array; meta: Uint8Array | null }
 
@@ -23,16 +24,7 @@ function gen3(seed: number, cx: number, cz: number, g = new TerrainGenerator(see
   return { blocks, biomes, meta };
 }
 
-/**
- * Golden hashes of generator version 3 (blocks, biomes). Version 3 is what new worlds use: if its output changes,
- * existing v3 worlds change. Make a version 4 instead of updating these.
- */
-const GOLDEN_V3: [number, number, number, number][] = [
-  [0, 0, 0xdb58e1ac, 0xf440a294],
-  [3, -2, 0xdf39a289, 0xdc43da71],
-  [-7, 11, 0xa5436239, 0x2e9aeac5],
-  [40, -25, 0xccd7c155, 0x40ebc2c5],
-];
+// Golden hashes of generator version 3: helpers/goldenChunks.ts.
 
 describe('TerrainGenerator version 3', () => {
   it.each(GOLDEN_V3)('chunk (%i, %i) matches its golden hash', (cx, cz, blocksHash, biomesHash) => {

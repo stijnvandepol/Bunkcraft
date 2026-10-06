@@ -16,6 +16,7 @@ import { Rooms } from './Rooms';
 import { gameTypeDef, parseGameType } from '../src/modes/GameTypes';
 import { parseListingKind } from '../src/modes/Realms';
 import { RateLimiter, bearer, hashPassword, hashToken, newToken, safeEqual } from './Security';
+import { ChunkGenPool } from './chunkgen/ChunkGenPool';
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -73,7 +74,12 @@ export async function startServer(config: Config): Promise<RunningServer> {
   const version = serverVersion();
   const backupDir = backupDirOf(config);
   const failLimiter = new RateLimiter(config.passwordFailLimit, 600_000);
-  const guard = { inventoryGuard: config.inventoryGuard, binary: config.binary };
+  // One pool of chunk generation threads for every game (docs/research/SERVER-DEPLOY.md, A); 0 = the main thread does it.
+  const genPool = config.chunkWorkers > 0
+    ? new ChunkGenPool({ size: config.chunkWorkers, onError: (message) => log.error('chunk generation', { error: message }) })
+    : null;
+  metrics.chunkGen = genPool ? () => genPool.getStats() : null;
+  const guard = { inventoryGuard: config.inventoryGuard, binary: config.binary, genPool };
 
   const main = config.mainWorld
     ? new GameServer({
@@ -456,6 +462,7 @@ export async function startServer(config: Config): Promise<RunningServer> {
   log.info('server started', {
     version, port, static: config.staticDir, mainWorld: !!main, games: !!rooms, admin: !!config.adminToken,
     originCheck: config.allowedOrigins.length > 0, backups: config.backupKeep, inventoryGuard: config.inventoryGuard, binary: config.binary,
+    chunkWorkers: genPool?.size ?? 0,
   });
 
   let closing: Promise<void> | null = null;
@@ -475,6 +482,8 @@ export async function startServer(config: Config): Promise<RunningServer> {
           http.close(() => resolve());
           http.closeAllConnections();
         });
+        // The worlds are saved; the generation threads go last.
+        await genPool?.close();
       })();
       return closing;
     },

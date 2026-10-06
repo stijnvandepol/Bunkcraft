@@ -1,6 +1,7 @@
 import { join, resolve } from 'node:path';
 import type { GameMode } from '../src/player/GameMode';
 import { parseGameMode } from './GameServer';
+import { chunkWorkerCount } from './chunkgen/ChunkGenPool';
 
 /** Everything the server reads from the environment, in one typed place (documented in docs/SERVER.md). */
 export interface Config {
@@ -45,6 +46,8 @@ export interface Config {
   passwordFailLimit: number;
   /** Milliseconds clients are told to wait before reconnecting after a restart. */
   reconnectHintMs: number;
+  /** Chunk generation threads (CHUNK_WORKERS): default min(2, cores − 1), 0 = on the main thread. */
+  chunkWorkers: number;
 }
 
 const flag = (v: string | undefined, dflt: boolean): boolean => (v === undefined || v === '' ? dflt : !/^(0|off|false|no)$/i.test(v));
@@ -87,6 +90,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     listMax: num(env.LIST_MAX, 50),
     passwordFailLimit: num(env.PASSWORD_FAIL_LIMIT, 5),
     reconnectHintMs: num(env.RECONNECT_HINT_MS, 8000),
+    chunkWorkers: chunkWorkerCount(env.CHUNK_WORKERS),
   };
 }
 

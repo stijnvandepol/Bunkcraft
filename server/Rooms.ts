@@ -11,6 +11,7 @@ import { GAME_MODES, type GameMode } from '../src/player/GameMode';
 import { GameServer, parseGameMode } from './GameServer';
 import { log } from './Log';
 import { RateLimiter } from './Security';
+import type { ChunkGenPool } from './chunkgen/ChunkGenPool';
 
 export { RateLimiter };
 
@@ -31,6 +32,8 @@ export interface RoomOptions {
   backupDir?: string;
   inventoryGuard?: 'enforce' | 'warn' | 'off';
   binary?: boolean;
+  /** Chunk generation threads shared by all games (see ChunkGenPool). */
+  genPool?: ChunkGenPool | null;
   /** Most games the public list shows (default 50). */
   listMax?: number;
 }
@@ -219,6 +222,7 @@ export class Rooms {
       backupDir: this.opts.backupDir ? join(this.opts.backupDir, code) : undefined,
       inventoryGuard: this.opts.inventoryGuard,
       binary: this.opts.binary,
+      genPool: this.opts.genPool,
       onMetaChange: () => { const r = this.loaded.get(code); if (r) this.writeMeta(code, r.server); },
     };
   }

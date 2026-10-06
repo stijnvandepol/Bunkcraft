@@ -12,12 +12,16 @@ import { type RandomTicker, noteRandomTickable } from '../src/world/RandomTicks'
 import { CHUNK_HEIGHT, CHUNK_VOLUME, blockIndex, chunkKey } from '../src/world/constants';
 import { GEN_VERSION_CURRENT } from '../src/world/GenVersion';
 import { type WorldGenerator, type WorldType, createGenerator } from '../src/world/WorldGenerator';
+import type { ChunkGenPool, GenClient } from './chunkgen/ChunkGenPool';
+import { type GenSpec, type GeneratedChunk, generateChunk, topOf } from './chunkgen/genChunk';
 
 /** Chunks kept loaded around each player (mobs only live where terrain exists). */
 const LOAD_RADIUS = 4;
 const UNLOAD_RADIUS = 6;
-/** Chunk generations per update, so a joining player never stalls the 20 Hz tick. */
+/** Chunk generations per update on the main thread (no worker pool), so a joining player never stalls the 20 Hz tick. */
 const MAX_GEN_PER_UPDATE = 2;
+/** Chunks from the worker pool put into the world per update (applying edits, mob spawning: cheap, but bounded). */
+const MAX_INSTALL_PER_UPDATE = 8;
 /** Light emitters affect blocks up to this far away (torch 14 → needs ≤ 14, mobs only care about 0). */
 const EMIT_RADIUS = 14;
 /** Random ticks run in the chunks this close to a player (inside the loaded area, so trees and leaves see their neighbours). */
@@ -44,8 +48,20 @@ interface ServerChunk extends ChunkLike {
  * players' edits, loaded around the players only. Sky light is "open to the sky or not" and
  * block light comes from emitters within reach, which is all the spawn and burn rules need.
  */
-export class ServerWorld implements EntityWorld {
+export class ServerWorld implements EntityWorld, GenClient {
   readonly generator: WorldGenerator;
+  readonly genSpec: GenSpec;
+  /**
+   * Chunks asked from the worker pool and not yet in the world: queued, being generated, or arrived (in `arrived`)
+   * and waiting for the next update to install them. Until then they read as UNLOADED, like any chunk out of reach.
+   */
+  private readonly requested = new Set<number>();
+  private readonly arrived: { cx: number; cz: number; key: number; chunk: GeneratedChunk }[] = [];
+  /** The pool refused or dropped a request (full queue, failed worker): the next update scans again. */
+  private genRetry = false;
+  /** Chunks a worker failed on: generated on the main thread instead. */
+  private readonly mainOnly = new Set<number>();
+  private readonly scanned = new Set<number>();
   private readonly chunks = new Map<number, ServerChunk>();
   /** Edits per chunk: block index → packed state (id | meta << 8). */
   private readonly editsByChunk = new Map<number, Map<number, number>>();
@@ -89,8 +105,16 @@ export class ServerWorld implements EntityWorld {
     },
   });
 
-  constructor(readonly seed: number, edits: Record<string, number>, readonly worldType: WorldType = 'terrain', readonly genVersion: number = GEN_VERSION_CURRENT) {
+  /**
+   * `pool`: generate chunks on worker threads (null = on the main thread, a couple per update: the old path, and what
+   * the unit tests use). Output is identical either way (tests/chunkGenPool.test.ts).
+   */
+  constructor(
+    readonly seed: number, edits: Record<string, number>, readonly worldType: WorldType = 'terrain', readonly genVersion: number = GEN_VERSION_CURRENT,
+    private readonly pool: ChunkGenPool | null = null,
+  ) {
     this.generator = createGenerator(worldType, seed, genVersion);
+    this.genSpec = { worldType, seed, genVersion };
     this.liquids = new LiquidSim({
       getBlock: (x, y, z) => this.getBlock(x, y, z),
       getMeta: (x, y, z) => this.getMeta(x, y, z),
@@ -362,39 +386,68 @@ export class ServerWorld implements EntityWorld {
   }
 
   /**
-   * Loads the chunks around the players (a couple per call) and unloads the ones nobody
-   * is near any more. `centers` are player positions in blocks.
+   * Loads the chunks around the players and unloads the ones nobody is near any more. `centers` are player
+   * positions in blocks. With a worker pool every missing chunk in reach is requested (nearest ring first) and the
+   * ones that arrived since the last call are put in; without one a couple are generated here, nearest first.
    */
   update(centers: { x: number; z: number }[]): void {
-    // Runs every tick: when no player changed chunk and everything around them is loaded, nothing would change.
-    let same = this.lastComplete && centers.length * 2 === this.lastCenters.length;
+    const pool = this.pool?.usable ? this.pool : null;
+    if (!pool && this.requested.size > 0) {
+      // The pool closed or gave up: what it still owed is generated here from now on.
+      this.requested.clear();
+      this.arrived.length = 0;
+      this.lastComplete = false;
+    }
+    this.installArrived();
+    // Runs every tick: when no player changed chunk and everything around them is loaded (or requested), nothing would change.
+    let same = this.lastComplete && !this.genRetry && centers.length * 2 === this.lastCenters.length;
     for (let k = 0; k < centers.length && same; k++) {
       same = this.lastCenters[k * 2] === Math.floor(centers[k].x) >> 4 && this.lastCenters[k * 2 + 1] === Math.floor(centers[k].z) >> 4;
     }
     if (same) return;
+    this.genRetry = false;
     this.lastCenters.length = 0;
     for (const p of centers) this.lastCenters.push(Math.floor(p.x) >> 4, Math.floor(p.z) >> 4);
     this.wanted.clear();
+    for (const p of centers) {
+      const pcx = Math.floor(p.x) >> 4, pcz = Math.floor(p.z) >> 4;
+      for (let dz = -UNLOAD_RADIUS; dz <= UNLOAD_RADIUS; dz++) {
+        for (let dx = -UNLOAD_RADIUS; dx <= UNLOAD_RADIUS; dx++) this.wanted.add(chunkKey(pcx + dx, pcz + dz));
+      }
+    }
     let generated = 0;
+    this.scanned.clear();
     // Nearest-first so the area around a player is ready before the outskirts.
-    for (let ring = 0; ring <= LOAD_RADIUS && generated < MAX_GEN_PER_UPDATE; ring++) {
+    for (let ring = 0; ring <= LOAD_RADIUS && (pool || generated < MAX_GEN_PER_UPDATE); ring++) {
       for (const p of centers) {
         const pcx = Math.floor(p.x) >> 4, pcz = Math.floor(p.z) >> 4;
         for (let dz = -ring; dz <= ring; dz++) {
           for (let dx = -ring; dx <= ring; dx++) {
             if (Math.max(Math.abs(dx), Math.abs(dz)) !== ring) continue;
             const key = chunkKey(pcx + dx, pcz + dz);
-            if (this.chunks.has(key) || generated >= MAX_GEN_PER_UPDATE) continue;
-            this.generate(pcx + dx, pcz + dz, key);
-            generated++;
+            if (this.chunks.has(key)) continue;
+            if (pool && !this.mainOnly.has(key)) {
+              this.scanned.add(key);
+              // Arrived, goes in at the next update.
+              if (this.requested.has(key) && !pool.pending(this, key)) continue;
+              // Asked again every scan: a nearer player moves a queued chunk up (the pool keeps one request).
+              if (pool.request(this, pcx + dx, pcz + dz, key, ring)) this.requested.add(key);
+              else this.genRetry = true;
+            } else if (generated < MAX_GEN_PER_UPDATE) {
+              this.mainOnly.delete(key);
+              this.generate(pcx + dx, pcz + dz, key);
+              generated++;
+            } else this.genRetry = true;
           }
         }
       }
     }
-    for (const p of centers) {
-      const pcx = Math.floor(p.x) >> 4, pcz = Math.floor(p.z) >> 4;
-      for (let dz = -UNLOAD_RADIUS; dz <= UNLOAD_RADIUS; dz++) {
-        for (let dx = -UNLOAD_RADIUS; dx <= UNLOAD_RADIUS; dx++) this.wanted.add(chunkKey(pcx + dx, pcz + dz));
+    // Requests for chunks nobody is near any more.
+    if (this.requested.size > 0) {
+      for (const key of this.requested) {
+        if (this.scanned.has(key)) continue;
+        this.requested.delete(key);
+        this.pool?.cancel(this, key);
       }
     }
     for (const key of this.chunks.keys()) {
@@ -404,26 +457,99 @@ export class ServerWorld implements EntityWorld {
       this.cacheCx = NaN;
       this.onChunkUnloaded?.(key);
     }
-    // Below the budget means the ring loop ran to the end: every chunk in reach is loaded.
+    // Below the budget means the ring loop ran to the end: every chunk in reach is loaded or requested.
     this.lastComplete = generated < MAX_GEN_PER_UPDATE;
   }
 
-  private generate(cx: number, cz: number, key: number): void {
-    const blocks = new Uint8Array(CHUNK_VOLUME);
-    let meta: Uint8Array | null = this.generator.generate(cx, cz, blocks) ?? null;
-    const edits = this.editsByChunk.get(key);
-    if (edits) {
-      for (const [i, state] of edits) {
-        blocks[i] = stateId(state);
-        const m = stateMeta(state);
-        if (m !== 0) { meta ??= new Uint8Array(CHUNK_VOLUME); meta[i] = m; }
+  /** The worker pool delivers a chunk (between ticks); it goes into the world at the next update. */
+  chunkGenerated(cx: number, cz: number, key: number, chunk: GeneratedChunk): void {
+    if (this.requested.has(key)) this.arrived.push({ cx, cz, key, chunk });
+  }
+
+  /** The pool dropped a request (queue full of nearer chunks) or a worker failed on it (then the main thread does it). */
+  chunkDropped(_cx: number, _cz: number, key: number, failed: boolean): void {
+    if (!this.requested.delete(key)) return;
+    if (failed) this.mainOnly.add(key);
+    this.genRetry = true;
+  }
+
+  private installArrived(): void {
+    let n = 0;
+    while (n < this.arrived.length && n < MAX_INSTALL_PER_UPDATE) {
+      const a = this.arrived[n++];
+      // Cancelled after it was generated (the players moved away) or already made on the main thread (ensureChunk).
+      if (!this.requested.delete(a.key) || this.chunks.has(a.key)) continue;
+      this.install(a.cx, a.cz, a.key, a.chunk);
+    }
+    if (n > 0) this.arrived.splice(0, n);
+  }
+
+  /**
+   * Makes sure the chunk at block column x, z is in the world now, generating it on the main thread if needed: for the
+   * rare request that cannot wait for a worker (a block edit in a chunk that has not arrived yet).
+   */
+  ensureChunk(x: number, z: number): void {
+    const cx = x >> 4, cz = z >> 4, key = chunkKey(cx, cz);
+    if (this.chunks.has(key)) return;
+    if (this.requested.delete(key)) {
+      this.pool?.cancel(this, key);
+      const i = this.arrived.findIndex((a) => a.key === key);
+      if (i >= 0) {
+        const a = this.arrived[i];
+        this.arrived.splice(i, 1);
+        this.install(cx, cz, key, a.chunk);
+        return;
       }
     }
-    const tops = new Int16Array(256);
-    for (let col = 0; col < 256; col++) tops[col] = topOf(blocks, col);
-    const emitters = new Set<number>();
-    for (let i = 0; i < CHUNK_VOLUME; i++) if (LIGHT_EMIT[blocks[i]] > 0) emitters.add(i);
-    const chunk: ServerChunk = { key, cx, cz, blocks, meta, tops, emitters, emitSorted: null };
+    this.generate(cx, cz, key);
+  }
+
+  /** Whether a chunk is loaded (tests and the spawn checks). */
+  hasChunk(cx: number, cz: number): boolean {
+    return this.chunks.has(chunkKey(cx, cz));
+  }
+
+  /** Requests still out with the worker pool (tests, metrics). */
+  get pendingChunks(): number {
+    return this.requested.size;
+  }
+
+  /** The world goes away (game shut down or unloaded): drops its outstanding pool requests. */
+  dispose(): void {
+    this.pool?.cancelAll(this);
+    this.requested.clear();
+    this.arrived.length = 0;
+  }
+
+  /** Generates a chunk on this thread (no pool, arenas, ensureChunk). */
+  private generate(cx: number, cz: number, key: number): void {
+    this.install(cx, cz, key, generateChunk(this.generator, cx, cz));
+  }
+
+  /** Puts a generated chunk into the world: the saved edits on top, then its light data patched to match. */
+  private install(cx: number, cz: number, key: number, g: GeneratedChunk): void {
+    const { blocks, tops } = g;
+    let meta = g.meta;
+    const edits = this.editsByChunk.get(key);
+    let emitters: Set<number>;
+    let emitSorted: Int32Array | null = g.emitters;
+    if (edits) {
+      emitters = new Set(g.emitters);
+      const touched = new Uint8Array(256);
+      for (const [i, state] of edits) {
+        const id = stateId(state);
+        blocks[i] = id;
+        const m = stateMeta(state);
+        // A state-0 edit keeps the generated state byte (as it always has: both paths must stay identical).
+        if (m !== 0) { meta ??= new Uint8Array(CHUNK_VOLUME); meta[i] = m; }
+        touched[i & 255] = 1;
+        if (LIGHT_EMIT[id] > 0) {
+          if (!emitters.has(i)) { emitters.add(i); emitSorted = null; }
+        } else if (emitters.delete(i)) emitSorted = null;
+      }
+      for (let col = 0; col < 256; col++) if (touched[col]) tops[col] = topOf(blocks, col);
+    } else emitters = new Set(g.emitters);
+    const chunk: ServerChunk = { key, cx, cz, blocks, meta, tops, emitters, emitSorted };
     this.chunks.set(key, chunk);
     this.cacheCx = NaN;
     // Liquid that was still flowing when the chunk went away carries on.
@@ -447,10 +573,4 @@ function lowerBound(list: Int32Array, v: number): number {
     if (list[mid] < v) lo = mid + 1; else hi = mid;
   }
   return lo;
-}
-
-/** Highest light-blocking block in a column of a chunk, −1 if none. */
-function topOf(blocks: Uint8Array, col: number): number {
-  for (let y = CHUNK_HEIGHT - 1; y >= 0; y--) if (OPAQUE[blocks[col | (y << 8)]]) return y;
-  return -1;
 }

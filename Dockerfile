@@ -19,10 +19,11 @@ WORKDIR /app
 # Heap limits fit the compose memory limit (docker-compose.yml); measured in docs/research/SERVER-DEPLOY.md.
 ENV NODE_ENV=production PORT=3000 DATA_DIR=/app/data \
     NODE_OPTIONS="--max-old-space-size=384 --max-semi-space-size=16"
-# The server reads its version from package.json; dist-server/index.js bundles ws and the shared game code.
+# The server reads its version from package.json; dist-server/index.js bundles ws and the shared game code,
+# dist-server/genWorker.js is the chunk generation thread (CHUNK_WORKERS).
 COPY package.json ./
 COPY --from=build /app/dist ./dist
-COPY --from=build /app/dist-server/index.js ./dist-server/index.js
+COPY --from=build /app/dist-server/index.js /app/dist-server/genWorker.js ./dist-server/
 # The world (edits, players, time) lives here; the unprivileged "node" user owns it. Mount a volume to keep it.
 RUN mkdir -p /app/data && chown node:node /app/data
 VOLUME ["/app/data"]
