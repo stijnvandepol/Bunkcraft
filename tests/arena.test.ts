@@ -160,6 +160,31 @@ describe('arena maps', () => {
     }
   }
 
+  it('no sunken slab floor sits next to a one-block step (1.5 blocks up from the slab: too high to jump)', () => {
+    // QA round 2: villa's sunken stone path ended at a curb and ran along a car; from grass the step is one block (a
+    // jump), from the slab path 1.5, which felt like an invisible wall.
+    const slab = (id: number) => /_slab$/.test(BLOCK_DEFS[id]?.name ?? '');
+    const f = ARENA_FLOOR_Y;
+    for (const map of MAPS) {
+      const b = map.bounds;
+      const ledges: string[] = [];
+      for (let v = 0; v < map.variants; v++) {
+        const at = (x: number, y: number, z: number) => map.blockAt(v, x, y, z);
+        for (let x = b.minX; x < b.maxX; x++) {
+          for (let z = b.minZ; z < b.maxZ; z++) {
+            if (!slab(at(x, f, z)) || at(x, f + 1, z) !== 0 || at(x, f + 2, z) !== 0) continue;
+            for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+              const id = at(x + dx, f + 1, z + dz);
+              if (id === 0 || slab(id) || at(x + dx, f + 2, z + dz) !== 0 || at(x + dx, f + 3, z + dz) !== 0) continue;
+              ledges.push(`v${v} (${x},${z}) -> (${x + dx},${z + dz})`);
+            }
+          }
+        }
+      }
+      expect(ledges, map.id).toEqual([]);
+    }
+  });
+
   it('the TEAM placeholder is not a real block id', () => {
     expect(BLOCK_DEFS.some((d) => d.id === TEAM)).toBe(false);
     expect(Object.values(BLOCK)).not.toContain(TEAM);
