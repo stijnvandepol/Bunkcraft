@@ -236,6 +236,27 @@ describe('Rooms quick play', () => {
     expect(c.sent.some((m) => m.t === 'welcome')).toBe(true);
   });
 
+  it('wires the map vote through the game server: rotating lobbies vote, fixed maps do not', () => {
+    const r = rooms();
+    const { code } = r.quickPlay('tdm', () => true) as { code: string };
+    const a = enter(r, code, 'alice');
+    const b = enter(r, code, 'bob');
+    const server = r.get(code)!.server as unknown as { match: Match };
+    server.match.endMatch();
+    const offer = a.sent.filter((m) => m.t === 'vote').at(-1) as Extract<ServerMessage, { t: 'vote' }>;
+    expect(offer.options).toHaveLength(3);
+    for (const id of offer.options) expect(getMap(id).supports(undefined)).toBe(true);
+    b.say({ t: 'vote', map: 1 });
+    expect(a.sent.filter((m) => m.t === 'vote').at(-1)).toMatchObject({ counts: [0, 1, 0] });
+    expect(b.sent.filter((m) => m.t === 'vote').at(-1)).toMatchObject({ mine: 1 });
+
+    const fixed = r.create('Fixed', undefined, undefined, { gameType: 'tdm', mapId: 'atomic' }, { listed: true })!;
+    const c = enter(r, fixed, 'carol');
+    enter(r, fixed, 'dave');
+    (r.get(fixed)!.server as unknown as { match: Match }).match.endMatch();
+    expect(c.sent.some((m) => m.t === 'vote')).toBe(false);
+  });
+
   it('keeps a private lobby size, clamped to the server limit, across a restart', () => {
     const r = rooms(8);
     const small = r.create('Duel', undefined, undefined, { gameType: 'ffa', maxPlayers: 2 })!;
