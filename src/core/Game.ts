@@ -28,6 +28,7 @@ import { inviteLink, inviteText, rememberGame } from '../net/RoomApi';
 import { RemotePlayers } from '../net/RemotePlayers';
 import { Chat } from '../ui/Chat';
 import { PlayerInventory } from '../items/Inventory';
+import { facingFromCameraYaw } from './Facing';
 import { ITEM, type ItemStack, blockDrop, decodeData, encodeData, getItemDef } from '../items/ItemRegistry';
 import type { Station } from '../items/Recipes';
 import { type GameMode, GAME_MODE_NAMES, canFly, hasSurvivalRules } from '../player/GameMode';
@@ -48,7 +49,7 @@ import { HUD } from '../ui/HUD';
 import { Hotbar } from '../ui/Hotbar';
 import { Inventory } from '../ui/Inventory';
 import { createLogo } from '../ui/Logo';
-import { AdvancementTracker } from '../player/Advancements';
+import { AdvancementTracker, showsToast } from '../player/Advancements';
 import { AdvancementToasts } from '../ui/AdvancementToasts';
 import { advancementsScreen } from '../ui/AdvancementsScreen';
 import { statisticsScreen } from '../ui/StatisticsScreen';
@@ -96,7 +97,7 @@ import { DynamicResolution, MIN_ADAPTIVE_DISTANCE, suggestPreset } from './Adapt
 import { MAX_FPS_UNLIMITED, type Settings, SettingsStore } from './Settings';
 import { applyAccessibilityDocument, effectiveParticles, limitFlash, mobSoundLabel, paletteFor } from './Accessibility';
 import { GamepadController, type PadContext, cleanName } from './Gamepad';
-import { needsAutoJump } from './InputMath';
+import { latchPress, needsAutoJump } from './InputMath';
 import { TouchControls, type TouchContext } from './TouchControls';
 import { announce, clearAnnouncement } from '../ui/Announcer';
 import { MenuNav } from '../ui/MenuNav';
@@ -114,7 +115,6 @@ const DEFAULT_HOTBAR = [
 ];
 const MENU_SEED = hashString('BunkCraft');
 const AUTOSAVE_INTERVAL = 30;
-const FACING = ['south (Towards positive Z)', 'west (Towards negative X)', 'north (Towards negative Z)', 'east (Towards positive X)'];
 /** Physics runs at 60 Hz; game logic (entities, health) every 3rd step = 20 ticks/s like Minecraft. */
 const STEPS_PER_TICK = 3;
 
@@ -260,6 +260,7 @@ export class Game {
     this.hud = new HUD(this.hotbar);
     this.toasts = new AdvancementToasts(this.icons);
     this.advancements.onAward = (def) => {
+      if (!showsToast(def)) return;
       this.toasts.push(def);
       this.audio.playAdvancement();
     };
@@ -289,6 +290,8 @@ export class Game {
       awardXp: (amount) => this.onFurnaceXp?.(amount),
     });
     this.playerInventory.onAdd = (id) => this.advancements.onItemGained(id);
+    // A tool or armor piece wore out: without a cue it silently vanishes from the hand (Minecraft: item break sound).
+    this.playerInventory.onBreak = () => this.audio.play('break', 'wood');
     this.playerInventory.onChange = () => {
       this.hotbar.refresh();
       this.survivalInventory.refresh();
@@ -2053,7 +2056,7 @@ export class Game {
       move.forward = control ? Math.max(-1, Math.min(1, keyFwd + input.axisForward)) : 0;
       move.strafe = control ? Math.max(-1, Math.min(1, keyStrafe + input.axisStrafe)) : 0;
       move.jump = control && input.actionDown(KB.JUMP);
-      move.jumpPressed = control && input.actionPressed(KB.JUMP);
+      move.jumpPressed = latchPress(move.jumpPressed, control, input.actionPressed(KB.JUMP));
       // Arcade: always sprinting at the weapon's pace, bunny hop friendly air control, no sneaking.
       move.sprint = control && (arcade !== null || input.actionDown(KB.SPRINT) || input.sprintAxis);
       // A toggled sprint ends when the player stops walking forward.
@@ -2190,7 +2193,7 @@ export class Game {
     const r = this.renderer.stats;
     const bx = Math.floor(p.x), by = Math.floor(p.y), bz = Math.floor(p.z);
     const yawDeg = ((((-p.yaw * 180) / Math.PI) % 360) + 360) % 360;
-    const facing = FACING[Math.round(yawDeg / 90) % 4];
+    const facing = facingFromCameraYaw(p.yaw);
     const light = world.getLight(bx, by, bz);
     const mem = (performance as Performance & { memory?: { usedJSHeapSize: number; totalJSHeapSize: number } }).memory;
     const worldBlocks = stats.loaded * CHUNK_VOLUME;

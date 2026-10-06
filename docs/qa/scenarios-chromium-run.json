@@ -1,0 +1,213 @@
+[
+ {
+  "name": "browser",
+  "ok": null,
+  "setup": "",
+  "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M1 Pro, Unspecified Version)",
+  "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/145.0.7632.6 Safari/537.36"
+ },
+ {
+  "name": "frame time on a flat spot",
+  "ok": null,
+  "setup": "",
+  "fps": 120,
+  "cpu_ms": 1.55,
+  "worst_ms": 10.100000000000364
+ },
+ {
+  "name": "eat raw beef (hold right mouse)",
+  "ok": true,
+  "setup": "beef given, hunger set to 12",
+  "secs": 1.69,
+  "hunger": [
+   12,
+   15
+  ],
+  "sat": 1.8,
+  "minecraft": "1.6 s, +3 hunger, +1.8 saturation"
+ },
+ {
+  "name": "kill a cow with a stone sword",
+  "ok": true,
+  "setup": "cow spawned 2 blocks in front",
+  "swings": 2,
+  "hp_trace": [
+   10,
+   5,
+   5,
+   5,
+   5
+  ],
+  "secs": 3.9,
+  "dead": true,
+  "drops": [
+   [
+    "Raw Beef",
+    4
+   ],
+   [
+    "Leather",
+    1
+   ]
+  ],
+  "xp": [
+   0,
+   3
+  ],
+  "minecraft": "stone sword 5 dmg, cow 10 hp: 2 hits; 1-3 beef, 0-2 leather, 1-3 xp"
+ },
+ {
+  "name": "breed two cows with wheat",
+  "ok": true,
+  "setup": "two cows spawned in front, 4 wheat given",
+  "fed": 2,
+  "babies": 1
+ },
+ {
+  "name": "wear iron armor with a right click while looking at the sky",
+  "ok": true,
+  "setup": "four iron pieces given",
+  "worn": [
+   "iron_chestplate",
+   "iron_helmet",
+   "iron_leggings",
+   "iron_boots"
+  ],
+  "armor": 15,
+  "minecraft": "15 armor points"
+ },
+ {
+  "name": "zombie damage per hit: full iron vs none",
+  "ok": null,
+  "setup": "night, zombie spawned 1.5 blocks away",
+  "difficulty": "normal",
+  "iron": [
+   1.38,
+   1.38,
+   1.38
+  ],
+  "none": [
+   3,
+   3,
+   3
+  ],
+  "minecraft": "Normal: 3 per hit; full iron (15 points): 3 × (1 − 13.5/25) = 1.38"
+ },
+ {
+  "name": "bed: day message, monsters nearby, sleep through the night",
+  "ok": true,
+  "setup": "bed given, clock moved, zombie spawned",
+  "messages": [
+   [
+    "day",
+    "You can only sleep at night"
+   ],
+   [
+    "night+zombie",
+    "You may not rest now, there are monsters nearby"
+   ],
+   [
+    "night",
+    "Respawn point set"
+   ]
+  ],
+  "clock": [
+   "20:56",
+   "06:31"
+  ],
+  "day": 2,
+  "spawn": {
+   "x": 10,
+   "y": 73,
+   "z": -3
+  }
+ },
+ {
+  "name": "lever next to a door opens it",
+  "ok": true,
+  "setup": "lever + oak door given",
+  "lever": [
+   8,
+   73,
+   -6
+  ],
+  "door_meta": [
+   8,
+   24
+  ]
+ },
+ {
+  "name": "lever → 2 redstone dust → lamp lights up",
+  "ok": false,
+  "setup": "lever, dust and lamp given",
+  "wire": [
+   66,
+   88
+  ],
+  "lever": 88,
+  "lamp_lit": false,
+  "block_light_above": 0
+ },
+ {
+  "name": "fall from 24 blocks",
+  "ok": true,
+  "setup": "player moved 24 blocks up",
+  "message": "Player fell from a high place",
+  "items_on_ground": 41,
+  "minecraft": "21 damage → dead, \"Player fell from a high place\""
+ },
+ {
+  "name": "respawn and pick the items up again",
+  "ok": true,
+  "setup": "",
+  "respawn": [
+   9.5,
+   73,
+   -3.5
+  ],
+  "hp": 20,
+  "items": [
+   [
+    "Iron Ingot",
+    3
+   ],
+   [
+    "Cobblestone",
+    20
+   ],
+   [
+    "Stone Sword",
+    1
+   ]
+  ]
+ },
+ {
+  "name": "creative: double jump toggles flying",
+  "ok": false,
+  "setup": "mode switched to creative",
+  "rose": 1.1
+ },
+ {
+  "name": "frames over the whole scenario run",
+  "ok": null,
+  "setup": "",
+  "samples": 296,
+  "fps_min": 108,
+  "fps_p10": 120,
+  "fps_median": 120,
+  "cpu_ms_avg": 1.97,
+  "worst_frame_ms": 26.2,
+  "console": [
+   "[warning] [.WebGL-0x13400420e00] GL_INVALID_OPERATION: glDrawElements: Vertex buffer is not big enough for the draw call.",
+   "[warning] [.WebGL-0x13400420e00] GL_INVALID_OPERATION: glDrawElements: Vertex buffer is not big enough for the draw call.",
+   "[warning] [.WebGL-0x13400420e00] GL_INVALID_OPERATION: glDrawElements: Vertex buffer is not big enough for the draw call.",
+   "[warning] [.WebGL-0x13400420e00] GL_INVALID_OPERATION: glDrawElements: Vertex buffer is not big enough for the draw call.",
+   "[warning] [.WebGL-0x13400420e00] GL_INVALID_OPERATION: glDrawElements: Vertex buffer is not big enough for the draw call.",
+   "[warning] [.WebGL-0x13400420e00] GL_INVALID_OPERATION: glDrawElements: Vertex buffer is not big enough for the draw call.",
+   "[warning] [.WebGL-0x13400420e00] GL_INVALID_OPERATION: glDrawElements: Vertex buffer is not big enough for the draw call.",
+   "[warning] [.WebGL-0x13400420e00] GL_INVALID_OPERATION: glDrawElements: Vertex buffer is not big enough for the draw call.",
+   "[warning] [.WebGL-0x13400420e00] GL_INVALID_OPERATION: glDrawElements: Vertex buffer is not big enough for the draw call.",
+   "[warning] [.WebGL-0x13400420e00] GL_INVALID_OPERATION: glDrawElements: Vertex buffer is not big enough for the draw call."
+  ]
+ }
+]

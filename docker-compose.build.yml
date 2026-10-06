@@ -1,0 +1,12 @@
+# Build the BunkCraft image from this checkout instead of pulling it from GHCR.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+#   or once in .env:  COMPOSE_FILE=docker-compose.yml:docker-compose.build.yml   (install.sh --build does this)
+#
+# Building (TypeScript + Vite) needs ~1.5 GB of memory; on a 1 GB server add swap first, or use the image.
+services:
+  bunkcraft:
+    image: bunkcraft:local
+    build: .
+    # Never look for bunkcraft:local in a registry; 'up --build' or 'compose build' makes it.
+    pull_policy: never

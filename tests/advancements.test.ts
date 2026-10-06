@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ADVANCEMENTS, AdvancementTracker, getAdvancement } from '../src/player/Advancements';
+import { ADVANCEMENTS, AdvancementTracker, getAdvancement, showsToast } from '../src/player/Advancements';
 import { ITEM } from '../src/items/ItemRegistry';
 import { BLOCK } from '../src/world/BlockRegistry';
 
@@ -68,5 +68,14 @@ describe('AdvancementTracker', () => {
     expect(u.progress()).toEqual({ done: 3, total: ADVANCEMENTS.length });
     u.onItemGained(BLOCK.COBBLESTONE);
     expect(toasts).toBe(0);
+  });
+});
+
+// QA (docs/qa/SURVIVAL.md): two toasts ("Minecraft", "Adventure") popped up the moment a new world loaded.
+describe('advancement toasts', () => {
+  it('tab roots are silent like vanilla (show_toast false), real advancements toast', () => {
+    for (const a of ADVANCEMENTS) expect(showsToast(a)).toBe(a.parent !== null);
+    expect(showsToast(ADVANCEMENTS.find((a) => a.id === 'story/root')!)).toBe(false);
+    expect(showsToast(ADVANCEMENTS.find((a) => a.id === 'story/mine_stone')!)).toBe(true);
   });
 });

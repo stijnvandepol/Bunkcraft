@@ -231,3 +231,12 @@ export function repeatStep(heldMs: number, prevHeldMs: number, delayMs: number, 
   const pn = prevHeldMs < delayMs ? -1 : Math.floor((prevHeldMs - delayMs) / rateMs);
   return n > pn;
 }
+
+/**
+ * A one-frame press (jump) for the fixed 60 Hz physics. At 120+ Hz most frames run no physics step, so a press seen
+ * on such a frame was overwritten by the next frame and lost (a quick double tap to fly failed about half the time).
+ * The press stays latched until a physics step consumed it (the step loop clears it).
+ */
+export function latchPress(latched: boolean, control: boolean, pressedThisFrame: boolean): boolean {
+  return control && (latched || pressedThisFrame);
+}

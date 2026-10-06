@@ -11,19 +11,35 @@ curl -fsSL https://raw.githubusercontent.com/stijnvandepol/Bunkcraft/main/script
 ```
 
 Of vanuit een clone: `sudo ./scripts/install.sh --domain play.example.com [--admin-token GEHEIM]`.
-Het script installeert wat ontbreekt (Docker Engine + compose uit de officiële apt-repository, git, een swapfile
-op machines met minder dan 2 GB), zet de code in `/opt/bunkcraft`, schrijft `.env` (domein, gegenereerde
-`ADMIN_TOKEN` en `METRICS_TOKEN`, CPU- en geheugenlimieten passend bij de machine), opent poort 80/443 in `ufw` als
-die actief is, start de game achter Caddy (automatisch HTTPS, HTTP/3) en zet een dagelijkse back-up klaar.
+Het script installeert wat ontbreekt (Docker Engine + compose uit de officiële apt-repository, git), zet de code in
+`/opt/bunkcraft`, schrijft `.env` (domein, gegenereerde `ADMIN_TOKEN` en `METRICS_TOKEN`, CPU- en geheugenlimieten
+passend bij de machine), opent poort 80/443 in `ufw` als die actief is, haalt de kant-en-klare image op, start de game
+achter Caddy (automatisch HTTPS, HTTP/3) en zet een dagelijkse back-up klaar.
 Opnieuw draaien is veilig: bestaande instellingen en werelden blijven staan. `--dry-run` laat zien wat het zou doen.
+
+**De image komt kant-en-klaar van GHCR** (`ghcr.io/stijnvandepol/bunkcraft`, amd64 en arm64, gebouwd door CI na elke
+groene push naar `main`). Op de server wordt niets gebouwd: installeren en updaten kost seconden en een VPS met 1 GB
+heeft geen swap nodig. De versie kies je met `BUNKCRAFT_TAG` in `.env` (of `--tag` bij install/update):
+
+| `BUNKCRAFT_TAG` | Wat |
+|---|---|
+| `latest` (standaard) | nieuwste versie van `main` |
+| `sha-1a2b3c4` | één bepaalde commit |
+| `1.2.0`, `1.2`, `1` | een release (git-tag `v1.2.0`) |
+| `latest@sha256:…` | precies één build, vastgepind op digest (staat in de samenvatting van de CI-run) |
+
+Zelf bouwen kan nog: `sudo ./scripts/install.sh --build …` of later `bunkcraft update --build`. Dat zet
+`COMPOSE_FILE=docker-compose.yml:docker-compose.build.yml` in `.env` (alle `docker compose`-commando's bouwen dan) en maakt
+op machines met minder dan 2 GB een swapfile. `bunkcraft update --pull` gaat terug naar de kant-en-klare image.
 
 Daarna open je `https://play.example.com`. Beheer gaat met één commando:
 
 | Commando | Wat |
 |---|---|
-| `bunkcraft status` | containers en `/health` (spelers, games, tick p99, geheugen) |
+| `bunkcraft status` | containers, draaiende image (id/digest) en `/health` (spelers, games, tick p99, geheugen) |
 | `bunkcraft logs` | serverlog volgen |
-| `bunkcraft update` | back-up, `git pull`, nieuwe image bouwen terwijl de oude draait, herstart (werelden worden eerst opgeslagen), wachten tot hij gezond is |
+| `bunkcraft update` | `git pull`, nieuwe image ophalen terwijl de oude draait, back-up, herstart (werelden worden eerst opgeslagen), wachten tot hij gezond is. **Niet gezond binnen 2 minuten: automatisch terug naar de vorige image en commit.** Opties: `--tag`, `--build`, `--pull`, `--force`, `--dry-run` |
+| `bunkcraft rollback` | terug naar de image van vóór de laatste update (nog een keer: weer vooruit) |
 | `bunkcraft backup` | back-up nu, naar `/var/backups/bunkcraft` (de dagelijkse timer bewaart er 14) |
 | `bunkcraft restart` | herstart na een wijziging in `/opt/bunkcraft/.env` |
 
@@ -38,7 +54,7 @@ naar ~375 MB bij 160 spelers.
 | VPS | Prijs (indicatie) | Verwachte capaciteit |
 |---|---|---|
 | 1 vCPU / 1 GB (kleinste VPS bij de meeste aanbieders) | ~€2-5/mnd | ~40-60 survival-spelers (5-8 games), arcade ~100 |
-| **2 vCPU / 4 GB (Hetzner CAX11 ARM of CX22)** — aanbevolen | ~€4-5/mnd | ~120-150 survival-spelers (arcade 200+); bouwen gaat zonder swap |
+| **2 vCPU / 4 GB (Hetzner CAX11 ARM of CX22)** — aanbevolen | ~€4-5/mnd | ~120-150 survival-spelers (arcade 200+) |
 | 4 vCPU / 8 GB | ~€8-15/mnd | ~150-200: de gamelogica van één Node-proces draait op één core (terrein al op aparte threads, `CHUNK_WORKERS`); meer pas met meerdere processen |
 
 **Zonder Docker** (systemd): zie [Zonder Docker](#zonder-docker-systemd).
@@ -333,9 +349,17 @@ hebben 0,0001 rad resolutie en posities zijn `float32` (< 1 cm fout tot 100 000 
 ## Docker
 
 ```bash
-docker build -t bunkcraft .
-docker run -d -p 3000:3000 -v bunkcraft-data:/app/data -e GAMEMODE=survival --name bunkcraft bunkcraft
+docker run -d -p 3000:3000 -v bunkcraft-data:/app/data -e GAMEMODE=survival --name bunkcraft \
+  ghcr.io/stijnvandepol/bunkcraft:latest
+# of zelf bouwen:
+docker build -t bunkcraft . && docker run -d -p 3000:3000 -v bunkcraft-data:/app/data --name bunkcraft bunkcraft
 ```
+
+CI (`.github/workflows/ci.yml`, job `image`) publiceert na elke groene push naar `main` en bij elke `v*`-tag een
+multi-arch image (linux/amd64 + linux/arm64): tags `latest` (alleen `main`), `sha-<commit>` en bij releases
+`1.2.0`/`1.2`/`1`, met OCI-labels, SBOM en provenance. De build-stage draait op het platform van de builder (de uitvoer is
+platformonafhankelijke JS) en de runtime-stage heeft geen `RUN`, dus arm64 bouwt zonder emulatie. Vóór het publiceren
+start de job de amd64-image en controleert hij `/health`.
 
 De wereld staat in het volume `bunkcraft-data` en overleeft herstarts en updates. De image bevat alleen Node, `dist/`,
 `dist-server/index.js` en `dist-server/genWorker.js` (de terreingeneratie-thread; geen `node_modules`, geen TypeScript tijdens het draaien). Standaard

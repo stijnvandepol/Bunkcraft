@@ -14,6 +14,8 @@ export class PlayerInventory {
   onChange: (() => void) | null = null;
   /** Fired with the item id whenever `add` stored something (pickup, crafting, smelting). */
   onAdd: ((id: number) => void) | null = null;
+  /** Fired with the item id when a tool or a worn armor piece wears out (Minecraft's item-break sound). */
+  onBreak: ((id: number) => void) | null = null;
 
   static maxStack(id: number): number {
     return getItemDef(id)?.maxStack ?? 64;
@@ -79,6 +81,7 @@ export class PlayerInventory {
       if (s.damage >= max) {
         this.armor[k] = { id: 0, count: 0 };
         broke++;
+        this.onBreak?.(s.id);
       }
     }
     this.onChange?.();
@@ -173,6 +176,7 @@ export class PlayerInventory {
     const broke = s.damage >= max;
     if (broke) this.slots[i] = { id: 0, count: 0 };
     this.onChange?.();
+    if (broke) this.onBreak?.(s.id);
     return broke;
   }
 
