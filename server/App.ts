@@ -29,6 +29,8 @@ const MIME: Record<string, string> = {
   '.ico': 'image/x-icon',
 };
 
+const round2 = (v: number): number => Math.round(v * 100) / 100;
+
 export function serverVersion(): string {
   try {
     const pkg = JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8')) as { version?: string };
@@ -250,6 +252,9 @@ export async function startServer(config: Config): Promise<RunningServer> {
       return json(res, draining ? 503 : 200, {
         ok: !draining, version, uptime: Math.round((Date.now() - metrics.startedAt) / 1000),
         players: gauges().players, rooms: rooms?.count ?? 0,
+        // Enough for an uptime check or a quick `curl` to tell a healthy server from an overloaded one.
+        roomsLoaded: gauges().roomsLoaded, tickP99Ms: round2(metrics.tickWindow.p99),
+        loopLagP99Ms: round2(metrics.loopLag.p99), rssMB: Math.round(process.memoryUsage.rss() / 1048576),
       });
     }
     if (url.pathname === '/metrics') {
