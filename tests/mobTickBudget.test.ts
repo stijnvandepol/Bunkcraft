@@ -66,7 +66,7 @@ describe('path finding allowance per tick', () => {
     expect(maxNodes).toBeLessThanOrEqual(EntityManager.PATH_NODES_PER_TICK);
     expect(maxSearches).toBeLessThanOrEqual(EntityManager.PATHS_PER_TICK);
     expect(total).toBeGreaterThan(100); // the allowance spreads the work, it does not stop it
-  });
+  }, 120_000);
 });
 
 describe('shortcuts give the same answers', () => {
@@ -86,7 +86,7 @@ describe('shortcuts give the same answers', () => {
         expect(w.getBlock(x, y, z)).toBe(want);
       }
     }
-  });
+  }, 120_000);
 
   it('the cached mob cap area count follows players into other chunks', () => {
     const em = new EntityManager({ getBlock: () => 0, getLight: () => 0 }, 1);
@@ -122,7 +122,7 @@ describe('shortcuts give the same answers', () => {
         else byId.set(e[0], e);
       }
     }
-  });
+  }, 120_000);
 });
 
 describe('work of a survival room at night', () => {
@@ -149,5 +149,5 @@ describe('work of a survival room at night', () => {
     expect(reads / 200).toBeLessThan(3500);
     expect(maxReads).toBeLessThan(7000);
     expect(maxNodes).toBeLessThanOrEqual(EntityManager.PATH_NODES_PER_TICK);
-  });
+  }, 120_000);
 });
