@@ -264,6 +264,12 @@ regenereert, respawns en een scoreboard. Beschrijving, besturing en wapentabel: 
   binaire snapshots (v2). Tests: client-physics-replay over alle kaarten, `scripts/cheat-bots.ts`.
 - **Vier nieuwe vrije kaarten in BO2-stijl: Gedaan.** Skyline Villa (villa met zwembad), Riptide (jacht), Sundown (dorp) en
   Terminus (station), puntsymmetrisch met per helft een eigen palet; alle met zones en vlaggen (zie `docs/GAMEMODES.md`).
+- **BunkCraft Realms: Gedaan.** Multiplayer is alleen Minecraft; de arcade-modes zitten onder *BunkCraft Realms*: playlist
+  met live spelersaantallen, **Snel spelen** (server-side matchmaking `POST /api/quickplay`: volste open lobby die niet bijna
+  klaar is, anders een nieuwe), *Lobby's bekijken* (fase, tijd, kaart), *Privélobby* (mode, kaart, limieten, max. spelers,
+  zichtbaar of privé, code + link), lobbypaneel in de warm-up en een **kaartstemming** tussen drie kaarten na elk potje.
+  Naam één keer invoeren, gedeeld met Multiplayer. Tests: `tests/realms.test.ts`, `tests/integration/realms.it.test.ts`,
+  `tests/e2e/realms.spec.ts`. Details in [`GAMEMODES.md`](GAMEMODES.md#bunkcraft-realms-de-minigames-hub).
 - **Wapenherziening: Gedaan.** Shotgun 10 × 13 (one-shot dichtbij), SMG 15, nieuwe DMR, burst rifle en revolver, klassen in het
   loadoutmenu.
 - **Shooter-afwerking: Gedaan (oktober 2026).** Create-a-Class (primair + optiek + secundair + perk, presets als quick picks,
@@ -281,9 +287,8 @@ regenereert, respawns en een scoreboard. Beschrijving, besturing en wapentabel: 
 
 1. **Integratie met de serverbranch** verifiëren: zie de checklist in de overdracht (arena-wereld via `worldType`,
    snelheidscontrole voor 1,3× sprint, `damaged.dx/dz`-richting, `holds` bij joinen).
-2. **Meer kaarten en varianten:** per kaart meerdere dekkingsindelingen via de seed (nu alleen Classic), een stemronde voor de
-   volgende kaart in plaats van vast `rotate`, en bij een kaartwissel de wereld ter plekke herbouwen (nu een korte
-   herverbinding met laadscherm).
+2. **Meer kaarten en varianten:** per kaart meerdere dekkingsindelingen via de seed (nu alleen Classic), en bij een
+   kaartwissel de wereld ter plekke herbouwen (nu een korte herverbinding met laadscherm, ook na de kaartstemming).
 3. **Meer modes:** Infected en Block Hunt (onderzoek §2.4), Search & Destroy op een asymmetrische kaart (Foundry), en
    Domination/Hardpoint-varianten per kaart (meer zones op kleine kaarten, spawnkeuze weg van de actieve heuvel).
 4. **Objective-afwerking:** dragerpijl met interval voor de vijand, MVP-punten (dragerkill, terugbrengen), overtime bij een
@@ -297,8 +302,12 @@ regenereert, respawns en een scoreboard. Beschrijving, besturing en wapentabel: 
    zodat ook kleine speedhacks en lage zweefhacks opvallen; drempels van de verdenkingsscore kalibreren met echte
    spelersdata; tracers alleen naar wie de schutter mag zien; delta-snapshots (alleen wat veranderde) voor de overige
    bytes (ammo/tracers zijn nu groter dan de snapshots); client-side tracer-voorspelling tegen spelers.
-7. **Bots** voor lege servers, en een snelle "Quick Play"-knop die een open arcade-game zoekt.
+7. **Bots** voor lege Realms-lobby's (Snel spelen zet je nu bij echte spelers of in een lege lobby die wacht).
 8. **Mobiel:** touchbediening voor schieten en richten (hoort bij de touch-taak in 6).
+9. **Realms vervolg:** party's (samen met vrienden in één lobby via Snel spelen), skill-based matchmaking (K/D per naam),
+   een playlist-rotatie met tijdelijke modes (bijv. "Gun Game weekend"), de match-HUD vertalen (die is nog Engels; het
+   lobbypaneel en de stemming zijn al NL/EN), lege open lobby's na een dag opruimen (nu na `ROOM_EXPIRE_DAYS`), en de
+   lobbylijst pagineren als er meer dan `LIST_MAX` zijn.
 
 ## 8. Distributie
 

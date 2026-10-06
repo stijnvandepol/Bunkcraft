@@ -1,16 +1,51 @@
 # BunkCraft game types
 
-Naast de Minecraft-sandbox heeft multiplayer zeven **arcade-game types** in de stijl van Krunker:
-snel, wapens met hitscan en een vaste arena. Bij het aanmaken van een game kies je het type
-(*Create Game → Game Type*). Het contract staat in `src/modes/GameTypes.ts`, `src/modes/Weapons.ts`
-en het arcade-deel van `src/net/protocol.ts` (protocol v3). Dit document beschrijft de **client**;
-de server (match, hitscan, health, respawn) staat in `docs/SERVER.md`.
+Singleplayer en **Multiplayer** zijn Minecraft: Multiplayer maakt, toont en joint alleen Minecraft-games. De zeven
+**arcade-game types** (snel, wapens met hitscan, een vaste arena) zitten onder **BunkCraft Realms** op het titelscherm.
+Het contract staat in `src/modes/GameTypes.ts`, `src/modes/Weapons.ts` en het arcade-deel van `src/net/protocol.ts`.
+Dit document beschrijft de **client**; de server (match, hitscan, health, respawn) staat in `docs/SERVER.md`.
+
+## BunkCraft Realms (de minigames-hub)
+
+Opbouw zoals de wereld- en serverlijst van Minecraft 1.21 (`src/ui/RealmsMenu.ts`, stijl in `src/ui/realms.css`,
+alle teksten NL/EN in `src/ui/i18n.ts` onder `realms.*` en `lobby.*`):
+
+- **Naam:** de eerste keer vraagt Realms een spelersnaam (3-16 tekens). Die wordt in deze browser onthouden
+  (`bunkcraft.name`, `src/ui/playerName.ts`) en is dezelfde naam als bij Multiplayer. *Naam wijzigen...* staat in de kop.
+- **Playlist:** een rij per mode met een eigen 16×16-pixelicoon (`src/ui/RealmsIcons.ts`, in code getekend), naam,
+  korte uitleg en live "N spelers in M lobby's" (`GET /api/realms`, elke 5 s ververst). Dubbelklikken, Enter, het
+  play-pijltje op het icoon of **Snel spelen** start matchmaking voor de gekozen mode.
+- **Snel spelen** (`POST /api/quickplay { gameType }`): de server kiest de **volste openbare lobby** van die mode die nog
+  plek heeft en niet bijna klaar is (live met minder dan 75 s over, of de leider op 80% van de limiet; bij rondemodes telt
+  alleen de stand). Bij gelijke drukte wint een lobby in warm-up of tussen twee potjes. Is er geen, dan opent de server een
+  nieuwe openbare lobby met wisselende kaarten (start op een willekeurige kaart die de mode ondersteunt) en de standaard-
+  limieten. De regels zijn puur en getest: `src/modes/Realms.ts` (`pickLobby`, `joinable`).
+- **Lobby's bekijken:** alle openbare arcade-lobby's (mode, kaart die nu gespeeld wordt of "Wisselende maps",
+  spelers/max, fase en resterende tijd), filterbaar per mode. Lobby's met een wachtwoord tonen "Wachtwoord" en vragen het.
+- **Privélobby:** mode, kaart (alleen kaarten met de data die de mode nodig heeft, of *Wisselend (stemmen)*), score- en
+  tijdslimiet uit `GameTypeDef.options`, **Max. spelers** (2-16, de server begrenst tot `ROOM_MAX_PLAYERS`) en
+  *Tonen bij Lobby's bekijken*. Daarna verschijnt de code en de uitnodigingslink, met **Spelen**.
+- **Code invoeren:** joint elke code of link. Een code van een Realms-lobby die bij Multiplayer wordt ingetypt, of een
+  uitnodigingslink (`?join=CODE`) naar een arcade-game, gaat via Realms. Wie een Realms-match verlaat komt terug in de
+  playlist.
+
+**In de lobby** (`src/ui/MatchLobby.ts`, gestuurd door `ArcadeSession`): tijdens de warm-up (en tussen rondes) staat
+rechts een paneel met mode, kaart, "Wacht op spelers (1/2)" of "Het potje begint over N" en de spelers per team (of
+één lijst bij ffa/gun game); de grote banner onder de timer zegt hetzelfde. **Kaartstemming:** in lobby's met wisselende
+kaarten biedt de server na elk potje drie kaarten aan (de volgende uit de rotatie eerst, plus twee willekeurige die de
+mode ondersteunt). Stemmen met 1, 2, 3 (de wapentoetsen), aanpassen mag; meeste stemmen wint, gelijk = de rotatiekaart.
+De pauze tussen potjes duurt dan 12 + 10 s. Server-autoritair: `vote`-berichten (client → `{ t: 'vote', map }`,
+server → `{ t: 'vote', options, counts, mine?, endsIn }`), additief op protocol v4; oudere clients negeren ze.
+
+**Open lobby's** (door Snel spelen geopend, zonder eigenaar) bewaren geen namen: een naam is alleen bezet zolang iemand
+ermee speelt, zodat een vreemde met dezelfde naam je niet uit de lobby duwt en jij er later met een andere browser weer in
+kunt.
 
 ## De types
 
 | Type | Id | Regels |
 |---|---|---|
-| Minecraft | `minecraft` | De sandbox: bouwen, delven, mobs, survival/creative/hardcore. Seed en game mode kies je bij het aanmaken. |
+| Minecraft | `minecraft` | De sandbox (Multiplayer): bouwen, delven, mobs, survival/creative/hardcore. Seed en game mode kies je bij het aanmaken. |
 | Team Deathmatch | `tdm` | Rood tegen blauw op de arena. Elke kill telt voor je team; het eerste team op de score limit wint. |
 | Free For All | `ffa` | Iedereen voor zichzelf. De eerste speler op de score limit wint. |
 | Gun Game | `gungame` | Elke kill geeft je het volgende wapen van een ladder van 18 (begint met de rifle, eindigt met het mes); een meskill zet het slachtoffer een niveau terug. Wie het laatste niveau afmaakt wint. Geen loadoutkeuze. |
@@ -19,11 +54,11 @@ de server (match, hitscan, health, respawn) staat in `docs/SERVER.md`.
 | Domination | `domination` | Drie vaste punten: alleen in een punt staan neemt het in 6 s in (een punt van de ander eerst neutraliseren); elk eigen punt geeft 1 punt per 2 s. Eerste op 100. |
 | Capture the Flag | `ctf` | Pak de vlag van de ander door hem aan te raken, breng hem naar je eigen vlag terwijl die thuis staat. Drager is 10% trager, laat de vlag vallen bij zijn dood; je eigen team brengt een gevallen vlag direct terug, anders na 12 s. Eerste op 3 captures. |
 
-Bij een arcade-game stel je de limieten in die het type aanbiedt (uit `GameTypeDef.options`: bijvoorbeeld **Score Limit**
+Bij een privélobby (Realms) stel je de limieten in die het type aanbiedt (uit `GameTypeDef.options`: bijvoorbeeld **Score Limit**
 10–50 kills bij tdm, **Rounds to Win** en **Round Time** bij elimination, **Captures to Win** bij ctf; gun game heeft geen
 scorelimiet, de ladder is de limiet) en een **Map**. De kaartknop toont alleen kaarten met de data die het type nodig heeft
 (zones voor hardpoint/domination, vlaggen voor ctf). Wie bij het eindsignaal de meeste kills heeft wint. Het menu stuurt
-`{ name, gameMode, seed, gameType, scoreLimit, timeLimitSec, mapId }` naar `POST /api/rooms`;
+`{ name, gameMode, seed, gameType, scoreLimit, timeLimitSec, mapId, maxPlayers, listed }` naar `POST /api/rooms`;
 `GET /api/rooms/:code` geeft dezelfde velden terug (`map` voor `mapId`), zodat het joinscherm en de lijst met recente games
 het type en de kaart tonen.
 

@@ -4,7 +4,7 @@ Multiplayer QA, arcade: 4 real browsers play Team Deathmatch through the Vite de
   scripts/qa/start-servers.sh 3471 5191 /tmp/bunkqa
   python3 scripts/qa/mp_arcade_browser.py [http://localhost:5191]
 
-Ann creates a TDM game through the menu (score limit 10, 5 min, map rotation), three friends join with the
+Ann creates a private TDM lobby under BunkCraft Realms (score limit 10, 5 min, map rotation), three friends join with the
 invite link. Checks teams, HUD, warm-up → live, then a red player walks to a duel spot opposite a blue player,
 aims (yaw/pitch computed from positions) and holds the trigger: hit markers, kill feed on all four screens,
 scoreboard, death screen of the victim and respawn. Red keeps hunting until the score limit → end screen →
@@ -74,24 +74,27 @@ def main():
 
         ann.page.goto(BASE)
         ann.page.wait_for_function('() => window.game && document.querySelector(".mc-btn")', timeout=30000)
-        ann.click('Multiplayer')
-        ann.page.get_by_placeholder('Your name (3–16 letters)').fill('Ann')
-        ann.click('Create Game')
-        for _ in range(5):
-            if 'Team Deathmatch' in ann.page.inner_text('body'):
+        # Arcade games live under BunkCraft Realms (Multiplayer is Minecraft only): a private lobby with a code.
+        ann.click('BunkCraft Realms')
+        ann.page.get_by_placeholder('Your name (3-16 letters)').fill('Ann')
+        ann.page.keyboard.press('Enter')
+        ann.click('Private Lobby')
+        for _ in range(8):
+            if 'Mode: Team Deathmatch' in ann.page.inner_text('body'):
                 break
-            ann.page.get_by_role('button', name='Game Type:', exact=False).click()
+            ann.page.get_by_role('button', name='Mode:', exact=False).click()
         while 'Score Limit: 10' not in ann.page.inner_text('body'):
             ann.page.get_by_role('button', name='Score Limit:', exact=False).click()
         while 'Time Limit: 5' not in ann.page.inner_text('body'):
             ann.page.get_by_role('button', name='Time Limit:', exact=False).click()
-        for _ in range(8):
-            if 'Map: Rotate' in ann.page.inner_text('body') or 'Map: Rotation' in ann.page.inner_text('body'):
+        for _ in range(14):
+            if 'Map: Rotation' in ann.page.inner_text('body'):
                 break
             ann.page.get_by_role('button', name='Map:', exact=False).click()
         ann.shot('create')
         info('create screen', ' | '.join(l for l in ann.page.inner_text('body').split('\n') if ':' in l)[:300])
-        ann.click('Create and Play')
+        ann.click('Create Lobby')
+        ann.click('Play')
         ann.page.wait_for_function("() => ['playing', 'paused'].includes(game.state)", timeout=60000)
         ann.lock()
         code = ann.js('() => game.roomCode')
@@ -100,8 +103,9 @@ def main():
         for p in (ben, cas, dee):
             p.page.goto(f'{BASE}/?join={code}')
             p.page.wait_for_function('() => window.game && document.querySelector(".mc-btn")', timeout=30000)
-            p.page.get_by_placeholder('Your name (3–16 letters)').fill(p.name)
-            p.click('Join Game')
+            # An arcade invite opens Realms: it asks the name once and joins by itself.
+            p.page.get_by_placeholder('Your name (3-16 letters)').fill(p.name)
+            p.page.keyboard.press('Enter')
         for p in (ben, cas, dee):
             p.page.wait_for_function("() => ['playing', 'paused'].includes(game.state)", timeout=60000)
             p.lock()
@@ -188,7 +192,9 @@ def main():
         ann.shot('end')
         check('arcade: end screen with the winner', 'win' in txt.lower() or 'Next match' in txt, txt[:160].replace('\n', ' | '))
         map0 = ann.js('() => game.arenaMap')
-        end = time.time() + 25
+        # Rotating lobbies vote on the next map first (12 s result + 10 s vote); nobody votes, so the rotation's map wins.
+        check('arcade: map vote under the result', ann.js("() => !document.querySelector('.mvote').classList.contains('hidden')"))
+        end = time.time() + 35
         while time.time() < end and ann.js('() => game.arenaMap') == map0:
             pump(everyone, 1)
         pump(everyone, 4)

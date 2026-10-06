@@ -22,6 +22,7 @@ import { muzzleFor } from '../rendering/WeaponModels';
 import { WeaponViewmodel } from '../rendering/WeaponViewmodel';
 import { ArcadeHud, type ScoreboardContext } from '../ui/ArcadeHud';
 import { ModeHud } from '../ui/ModeHud';
+import { MatchLobby } from '../ui/MatchLobby';
 import { ModeVisuals } from '../rendering/ModeVisuals';
 import { BLOCK } from '../world/BlockRegistry';
 import { type RayHit, createRayHit, raycast } from '../world/Raycast';
@@ -144,6 +145,8 @@ export class ArcadeSession {
   /** Objective HUD (zones, flags, rounds, ladder) and the flags/zone rings in the world. */
   readonly modeHud: ModeHud;
   readonly modeVisuals = new ModeVisuals();
+  /** Realms pre-match lobby (warm-up panel) and the map vote after a match. */
+  readonly lobby: MatchLobby;
   private modeState: ModeState | null = null;
   private matchText = '';
   private selfPts = 0;
@@ -232,6 +235,11 @@ export class ArcadeSession {
     this.teams = this.def.teams;
     this.modeHud = new ModeHud(this.def);
     this.hud.el.append(this.modeHud.el);
+    this.lobby = new MatchLobby(this.def, d.selfId);
+    this.lobby.onVote = (map) => this.d.send({ t: 'vote', map });
+    this.hud.el.append(this.lobby.el);
+    // The vote sits under the result in the match-end overlay.
+    this.hud.el.querySelector('.arc-end')?.append(this.lobby.voteEl);
     this.players.set(d.selfId, { name: d.selfName, team: '' });
     this.surfaceAt = surfaceLookup(d.getBlock);
     this.custom = loadSavedClass(storage()) ?? { ...DEFAULT_CLASS };
@@ -363,6 +371,7 @@ export class ArcadeSession {
       case 'gear': this.onGear(msg); break;
       case 'mode': this.onMode(msg.state); break;
       case 'event': this.onEvent(msg, now); break;
+      case 'vote': this.lobby.setVote(msg); break;
       default: break;
     }
   }
@@ -940,7 +949,7 @@ export class ArcadeSession {
       c.selfScore = ladder ? `${Math.min(this.selfPts + 1, ladder.length)}/${ladder.length}` : undefined;
       hud.setMatch(this.phase, left, c);
       const round = this.modeState?.kind === 'rounds' ? this.modeState.round : 1;
-      hud.setBanner(this.phase === 'warmup' ? `Warm-up: match starts in ${Math.max(0, sec)}` : phaseBanner(this.phase, left, round));
+      hud.setBanner(this.phase === 'warmup' ? this.lobby.banner(this.roster, sec) : phaseBanner(this.phase, left, round));
       if (ladder) this.modeHud.setLadder(this.selfPts, ladder, this.leader);
       if (this.def.hud?.includes('zones') || this.def.hud?.includes('flags')) this.modeHud.setScores(this.scores.red, this.scores.blue, this.info.scoreLimit);
     }
@@ -964,6 +973,10 @@ export class ArcadeSession {
       if (!this.ended) this.updateSpectate(f, input);
     }
     if (this.ended) hud.setNextMatch(this.endAt - now);
+    this.lobby.update(this.phase, left, this.roster, this.info.map, this.ended);
+    if (this.ended && this.lobby.voting && f.controls) {
+      for (let i = 0; i < 3; i++) if (input.actionPressed(KB.WEAPON_1 + i)) this.lobby.pick(i);
+    }
   }
 
   /**
@@ -1083,6 +1096,7 @@ export class ArcadeSession {
   dispose(): void {
     this.hud.reset();
     this.modeHud.reset();
+    this.lobby.reset();
     this.modeVisuals.dispose();
     this.tracers.clear();
     for (const s of this.glintSprites) s.visible = false;
