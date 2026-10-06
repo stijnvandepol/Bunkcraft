@@ -219,6 +219,8 @@ export type ClientMessage =
   | { t: 'reload'; slot: 0 | 1 | 2 }
   /** Arcade: switch weapon slot (so everyone sees what you hold). */
   | { t: 'weapon'; slot: 0 | 1 | 2 }
+  /** Arcade (Realms): vote for the next map between two matches; `map` is an index into the offered maps. Older servers ignore it. */
+  | { t: 'vote'; map: number }
   /** Drop an item into the world (block drops, Q, death); yaw = throw direction. */
   | { t: 'drop'; id: number; count: number; damage?: number; data?: number[]; x: number; y: number; z: number; yaw?: number; delay?: number }
   | ContainerClientMessage;
@@ -331,6 +333,11 @@ export type ServerMessage =
   | { t: 'kill'; killer: number; victim: number; weapon: string; head: boolean }
   /** The match ended; a new one starts after `restartIn` seconds. winner: team, a player id or 0 for a draw. */
   | { t: 'matchend'; winnerTeam: Team | ''; winnerId: number; restartIn: number }
+  /**
+   * Map vote between two matches (rotating lobbies): the offered map ids, the votes per map, your own vote and
+   * the seconds until the next match. Empty `options` = no vote. Optional: older clients ignore it.
+   */
+  | { t: 'vote'; options: string[]; counts: number[]; mine?: number; endsIn: number }
   /** A weapon slot a remote player holds (third-person model). */
   | { t: 'holds'; id: number; weapon: string }
   /** The requested item entity is yours. */

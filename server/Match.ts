@@ -16,6 +16,10 @@ import { createLogic } from './modes';
 export const WARMUP_SECONDS = 10;
 /** The result stays on screen this long before the next match. */
 export const ENDED_SECONDS = 12;
+/** Extra seconds between matches when the players vote on the next map (rotating lobbies). */
+export const VOTE_SECONDS = 10;
+/** Maps offered in the vote. */
+export const VOTE_OPTIONS = 3;
 export const SPAWN_PROTECTION = 2;
 export const SWITCH_DELAY = 0.25;
 export const EYE_HEIGHT = 1.62;
@@ -54,7 +58,12 @@ export interface MatchHost {
    * A new match is about to start on `current`: returns the map to play next (the host swaps its
    * bullet world), or null to keep the map. `requires` is the map data the game type needs.
    */
-  nextMap?(current: string, requires?: readonly ('zones' | 'flags')[]): string | null;
+  nextMap?(current: string, requires?: readonly ('zones' | 'flags')[], preferred?: string): string | null;
+  /**
+   * The match ended: the maps the players may vote on for the next one (the first is the rotation's own pick,
+   * which wins a tie), or null when this game does not vote (a fixed map).
+   */
+  voteMaps?(current: string, requires?: readonly ('zones' | 'flags')[]): string[] | null;
 }
 
 export interface ShotReport {
@@ -144,6 +153,8 @@ export class Match {
 
   /** The arena this match is played on. */
   map: ArenaMap;
+  /** Map vote between two matches: the offered maps and each voter's choice (index); null when there is none. */
+  vote: { options: string[]; votes: Map<number, number> } | null = null;
 
   constructor(private readonly host: MatchHost, readonly info: MatchInfo) {
     this.lastTick = host.now();
@@ -209,6 +220,7 @@ export class Match {
     if (p.alive) this.sendSpawn(p);
     else this.host.send(id, { t: 'hp', health: 0 }); // joined between lives of a round: spectate until the next one
     this.host.send(id, this.matchMessage());
+    if (this.vote) this.host.send(id, this.voteMessage(id));
     this.sendMode(id);
     for (const o of this.players.values()) {
       if (o.id !== id) this.host.send(id, { t: 'holds', id: o.id, weapon: o.slots[o.slot].def.id });
@@ -221,6 +233,7 @@ export class Match {
     const p = this.players.get(id);
     if (!p) return;
     this.players.delete(id);
+    if (this.vote?.votes.delete(id)) this.broadcastVote();
     this.logic.onLeave?.(this, p, this.host.now());
     if (this.teams) this.planBalance();
     this.broadcastRoster();
@@ -232,6 +245,7 @@ export class Match {
     this.phase = 'warmup';
     this.warmupEnd = 0;
     this.phaseEnd = Infinity;
+    this.vote = null;
     this.scores.red = this.scores.blue = 0;
     for (const p of this.players.values()) { p.kills = 0; p.deaths = 0; p.pts = 0; }
     this.logic.onReset?.(this);
@@ -531,9 +545,13 @@ export class Match {
   endMatch(now: number = this.host.now(), result?: MatchResult): void {
     if (this.phase === 'ended') return;
     const r = result ?? this.logic.winner(this);
+    const options = this.host.voteMaps?.(this.map.id, this.def.requires) ?? null;
+    this.vote = options && options.length >= 2 ? { options: options.slice(0, VOTE_OPTIONS), votes: new Map() } : null;
+    const pause = ENDED_SECONDS + (this.vote ? VOTE_SECONDS : 0);
     this.phase = 'ended';
-    this.phaseEnd = now + ENDED_SECONDS;
-    this.host.broadcast({ t: 'matchend', winnerTeam: r.winnerTeam, winnerId: r.winnerId, restartIn: ENDED_SECONDS });
+    this.phaseEnd = now + pause;
+    this.host.broadcast({ t: 'matchend', winnerTeam: r.winnerTeam, winnerId: r.winnerId, restartIn: pause });
+    if (this.vote) this.broadcastVote();
     this.broadcastMatch();
     this.broadcastRoster();
     this.broadcastMode();
@@ -541,7 +559,9 @@ export class Match {
 
   /** Next match: scores reset, teams rebalanced, everyone respawns into a new warm-up. */
   private restart(now: number): void {
-    const next = this.host.nextMap?.(this.map.id, this.def.requires);
+    const chosen = this.vote ? this.vote.options[tallyVotes(this.vote.options.length, this.vote.votes.values())] : undefined;
+    this.vote = null;
+    const next = this.host.nextMap?.(this.map.id, this.def.requires, chosen);
     if (next && next !== this.map.id) this.setMap(next);
     this.phase = 'warmup';
     this.warmupEnd = 0;
@@ -568,6 +588,40 @@ export class Match {
     this.broadcastMatch();
     this.broadcastRoster();
     this.broadcastMode();
+  }
+
+  /** A player's map vote (index into the offered maps); only between matches. Returns whether it counted. */
+  castVote(id: number, choice: number): boolean {
+    const v = this.vote;
+    if (!v || this.phase !== 'ended' || !this.players.has(id)) return false;
+    if (!Number.isInteger(choice) || choice < 0 || choice >= v.options.length) return false;
+    if (v.votes.get(id) === choice) return true;
+    v.votes.set(id, choice);
+    this.broadcastVote();
+    return true;
+  }
+
+  private voteMessage(id: number): ServerMessage {
+    const v = this.vote;
+    if (!v) return { t: 'vote', options: [], counts: [], endsIn: 0 };
+    const counts = v.options.map(() => 0);
+    for (const c of v.votes.values()) counts[c]++;
+    const mine = v.votes.get(id);
+    return { t: 'vote', options: v.options, counts, endsIn: this.timeLeft(), ...(mine !== undefined ? { mine } : {}) };
+  }
+
+  /** Vote state to everyone (each player also learns their own choice). */
+  private broadcastVote(): void {
+    for (const id of this.players.keys()) this.host.send(id, this.voteMessage(id));
+  }
+
+  /** How close the match is to its score limit: the leader's share, 0..1 (quick play avoids nearly finished matches). */
+  progress(): number {
+    const limit = this.info.scoreLimit;
+    if (!(limit > 0)) return 0;
+    let top = this.teams ? Math.max(this.scores.red, this.scores.blue) : 0;
+    if (!this.teams) for (const p of this.players.values()) top = Math.max(top, this.def.scoreColumn ? p.pts : p.kills);
+    return Math.min(1, top / limit);
   }
 
   /** Number of players on a team. */
@@ -754,6 +808,15 @@ export class Match {
     this.nextRoster = this.host.now() + 3;
     this.host.broadcast({ t: 'roster', players: this.roster() });
   }
+}
+
+/** The winning option of a map vote: most votes, a tie goes to the lowest index (the rotation's pick). */
+export function tallyVotes(options: number, votes: Iterable<number>): number {
+  const counts = new Array<number>(Math.max(1, options)).fill(0);
+  for (const v of votes) if (v >= 0 && v < counts.length) counts[v]++;
+  let best = 0;
+  for (let i = 1; i < counts.length; i++) if (counts[i] > counts[best]) best = i;
+  return best;
 }
 
 function newSlot(id: string): Slot {

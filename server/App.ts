@@ -13,6 +13,8 @@ import { GameServer } from './GameServer';
 import { log } from './Log';
 import { type Gauges, metrics } from './Metrics';
 import { Rooms } from './Rooms';
+import { gameTypeDef, parseGameType } from '../src/modes/GameTypes';
+import { parseListingKind } from '../src/modes/Realms';
 import { RateLimiter, bearer, hashPassword, hashToken, newToken, safeEqual } from './Security';
 
 const MIME: Record<string, string> = {
@@ -109,11 +111,13 @@ export async function startServer(config: Config): Promise<RunningServer> {
   const createLimit = new RateLimiter(config.roomCreateLimit, 3_600_000);
   const lookupLimit = new RateLimiter(40, 60_000);
   const listLimit = new RateLimiter(30, 60_000);
+  // Realms quick play: asking is cheap (it mostly joins an existing lobby); opening a new lobby also takes from createLimit.
+  const quickLimit = new RateLimiter(20, 60_000);
   const ipBans = new IpBans(config.dataDir);
   const adminFailures = newAuthLimiter();
   const timers: NodeJS.Timeout[] = [];
   const every = (ms: number, fn: () => void) => { const t = setInterval(fn, ms); t.unref(); timers.push(t); };
-  every(600_000, () => { createLimit.prune(); lookupLimit.prune(); listLimit.prune(); failLimiter.prune(); adminFailures.prune(); });
+  every(600_000, () => { createLimit.prune(); lookupLimit.prune(); listLimit.prune(); quickLimit.prune(); failLimiter.prune(); adminFailures.prune(); });
   every(5000, () => metrics.rollWindow());
   if (config.backupKeep > 0) {
     const run = () => backupAll(config.dataDir, backupDir, config.backupKeep);
@@ -175,7 +179,7 @@ export async function startServer(config: Config): Promise<RunningServer> {
       return json(res, 200, {
         rooms: !!rooms, main: !!main, players: gauges().players,
         // What this server can do beyond the basics; clients hide features an older server lacks.
-        features: { passwords: true, browse: !!rooms, binary: config.binary },
+        features: { passwords: true, browse: !!rooms, binary: config.binary, realms: !!rooms },
       });
     }
     if (!rooms) return json(res, 404, { error: 'Games are disabled on this server' });
@@ -196,7 +200,7 @@ export async function startServer(config: Config): Promise<RunningServer> {
       const passwordHash = password ? await hashPassword(password) : undefined;
       const code = rooms.create(String(body.name ?? ''), typeof body.gameMode === 'string' ? body.gameMode : undefined,
         typeof body.seed === 'string' ? body.seed : undefined,
-        { gameType: body.gameType, scoreLimit: body.scoreLimit, timeLimitSec: body.timeLimitSec, mapId: body.mapId },
+        { gameType: body.gameType, scoreLimit: body.scoreLimit, timeLimitSec: body.timeLimitSec, mapId: body.mapId, maxPlayers: body.maxPlayers },
         { ownerHash: hashToken(ownerToken), passwordHash, listed: body.listed === true });
       // The owner token is shown exactly once: only its hash is stored.
       return code ? json(res, 201, { code, ownerToken, locked: !!passwordHash }) : json(res, 503, { error: 'This server has reached its game limit' });
@@ -207,7 +211,39 @@ export async function startServer(config: Config): Promise<RunningServer> {
         metrics.rateLimited('room_list');
         return json(res, 429, { error: 'Too many requests' });
       }
-      return json(res, 200, { rooms: rooms.listPublic() }, { 'cache-control': 'public, max-age=5' });
+      return json(res, 200, { rooms: rooms.listPublic(parseListingKind(url.searchParams.get('kind'))) }, { 'cache-control': 'public, max-age=5' });
+    }
+    if (path === '/api/realms' && req.method === 'GET') {
+      if (!listLimit.take(ip)) {
+        metrics.rateLimited('room_list');
+        return json(res, 429, { error: 'Too many requests' });
+      }
+      return json(res, 200, { modes: rooms.modeStats() }, { 'cache-control': 'no-store' });
+    }
+    if (path === '/api/quickplay' && req.method === 'POST') {
+      if (!quickLimit.take(ip)) {
+        metrics.rateLimited('quickplay');
+        return json(res, 429, { error: 'Too many requests, try again in a minute' });
+      }
+      let body: Record<string, unknown>;
+      try {
+        body = JSON.parse(await readBody(req)) as Record<string, unknown>;
+      } catch {
+        return json(res, 400, { error: 'Bad request' });
+      }
+      const mode = parseGameType(body.gameType);
+      if (!gameTypeDef(mode).arcade) return json(res, 400, { error: 'Quick play is for Realms game modes' });
+      const result = rooms.quickPlay(mode, () => {
+        if (createLimit.take(ip)) return true;
+        metrics.rateLimited('room_create');
+        return false;
+      });
+      if ('error' in result) {
+        return result.error === 'limited'
+          ? json(res, 429, { error: 'Too many games created, try again later' })
+          : json(res, 503, { error: 'This server has reached its game limit' });
+      }
+      return json(res, result.created ? 201 : 200, result);
     }
     const m = /^\/api\/rooms\/([^/]+)$/.exec(path);
     if (m && req.method === 'GET') {
