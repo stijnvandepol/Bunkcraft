@@ -166,6 +166,29 @@ export class Grid {
 
 const grid = new Grid();
 
+// A search reads every cell many times (each node is reached from up to eight neighbours, and every move looks at a
+// whole column of the body): a per-search block cache keeps that to one world lookup per cell. Direct-mapped and
+// stamped, so starting a search clears it for free; blocks cannot change while a search runs.
+const CACHE_BITS = 13;
+const cacheKey = new Int32Array(1 << CACHE_BITS);
+const cacheStamp = new Uint32Array(1 << CACHE_BITS);
+const cacheVal = new Uint16Array(1 << CACHE_BITS);
+let cacheGen = 0;
+let cacheSource: BlockGetter = () => 0;
+let cacheOx = 0, cacheOz = 0;
+
+function cachedBlock(x: number, y: number, z: number): number {
+  const rx = x - cacheOx, ry = y + 64, rz = z - cacheOz;
+  // Cells of a search lie within `range` (≤ 127) of its start; anything else (never in practice) goes straight through.
+  if ((rx & ~255) !== 0 || (rz & ~255) !== 0 || (ry & ~511) !== 0) return cacheSource(x, y, z);
+  const key = rx | (rz << 8) | (ry << 16);
+  const slot = Math.imul(key, 0x9e3779b1) >>> (32 - CACHE_BITS);
+  if (cacheStamp[slot] === cacheGen && cacheKey[slot] === key) return cacheVal[slot];
+  const b = cacheSource(x, y, z);
+  cacheStamp[slot] = cacheGen; cacheKey[slot] = key; cacheVal[slot] = b;
+  return b;
+}
+
 /** Straight walk over level ground: every cell on the line is standable at the start height. */
 export function lineWalkable(getBlock: BlockGetter, sx: number, sy: number, sz: number, tx: number, tz: number, height: number, avoidWater: boolean): boolean {
   grid.getBlock = getBlock; grid.height = height; grid.avoidWater = avoidWater;
@@ -189,6 +212,10 @@ export function lineWalkable(getBlock: BlockGetter, sx: number, sy: number, sz: 
 export function findPath(getBlock: BlockGetter, sx: number, sy: number, sz: number, tx: number, ty: number, tz: number,
   opts: PathOptions, out: Path): boolean {
   const g = grid;
+  cacheSource = getBlock;
+  cacheOx = sx - 128; cacheOz = sz - 128;
+  if (++cacheGen > 0xfffffff0) { cacheStamp.fill(0); cacheGen = 1; }
+  getBlock = cachedBlock;
   g.getBlock = getBlock; g.height = opts.height; g.avoidWater = opts.avoidWater;
   out.length = 0; out.index = 0; out.complete = false;
   stamp++;
@@ -276,6 +303,8 @@ export function findPath(getBlock: BlockGetter, sx: number, sy: number, sz: numb
   }
   pathStats.nodes += expanded;
   pathStats.lastNodes = expanded;
+  // The cache is only valid during this search: later users of the grid read the world itself.
+  g.getBlock = cacheSource;
 
   if (best === start) return false;
   // Walk back from the best node, then keep the first PATH_MAX cells from the start.
