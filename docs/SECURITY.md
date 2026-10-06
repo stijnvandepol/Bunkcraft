@@ -76,12 +76,21 @@ server-positie, 350 ms lag-compensatie). Nu geldt per arcade-kamer:
 | Regel | Wat | Drempel |
 |---|---|---|
 | `noclip` | positie in een vast blok | spelerbox 0,6 × 1,8, 0,03 marge |
-| `wall` | geen botsingsvrije route van de laatste geldige positie (verticaal/horizontaal in beide volgordes, recht of om een hoek), of buiten de kaart | monsters per 0,25 blok |
-| `speed` / `teleport` | horizontale afstand tegen een token bucket die met *echte* tijd vult | `sprint × 1,3 × moveSpeed van het wapen × 1,03`; bucket 0,5 s + 0,75 blok; > 10 blok in één keer = teleport |
+| `wall` | geen botsingsvrije route van de laatste geldige positie (verticaal/horizontaal in beide volgordes, recht of om een hoek; korte gebogen routes ≤ 3 blok via een flood fill tot 0,5 blok naast de lijn), of buiten de kaart | monsters per 0,25 blok |
+| `speed` / `teleport` | horizontale afstand tegen een token bucket die met de *fysicaklok* vult (zie onder) | `sprint × 1,3 × moveSpeed van het wapen × 1,03`; bucket 0,25 s + 0,75 blok (zonder klok: 0,5 s); > 10 blok in één keer = teleport |
 | `rise` / `fall` | verticale snelheid | sprong 8,9 b/s (+0,6 step-up), val ≤ 60 b/s |
-| `fly` | zonder ondergrond (of water/ladder) moet de speler de sprongparabool volgen: niet zweven, glijden of klimmen | apex 1,32 blok, 0,2 s timing-marge, bunny hops herkend via de grond onder de afzet |
+| `fly` | zonder ondergrond (of water/ladder) moet de speler de sprongparabool volgen: niet zweven, glijden of klimmen | apex 1,32 blok, 0,05 s timing-marge (zonder klok 0,2 s), bunny hops en kopstoten herkend via de grond (tot 1,5 blok) onder de afzet |
+| `clock` | de fysicaklok van de client loopt achteruit (replay) of sneller dan de echte tijd | klok mag maximaal 2 s voorlopen (een opgehouden lag-burst) |
 
-Wapenwissel: een seconde lang geldt de hoogste van oude en nieuwe snelheid. CTF: de vlagdrager mag 10 % langzamer
+**Tijdbasis.** Aankomsttijden zijn onder last geen klok: een server of netwerk die achterloopt levert seconden beweging
+binnen een paar ms af, en de sprongcurve en de snelheidsbucket zagen dan een onmogelijke sprong of sprint (ronde 2:
+een eerlijke vlagdrager op het jacht kreeg 7 correcties). Clients sturen daarom `step` mee in `pos`: het aantal 60 Hz
+fysica-stappen. De bewegingsregels rekenen met die klok; een tweede token bucket houdt hem binnen de echte tijd (2 s
+marge). Zonder `step` (oude clients, scripts) geldt de aankomsttijd zoals voorheen; wie `step` één keer stuurde en het
+daarna weglaat, krijgt geen tijd. Een vertraging (vlag opgepakt, langzamer wapen) geldt pas na 2 s, want de client hoort
+het een round trip later.
+
+Wapenwissel: een seconde lang (bij een vertraging twee) geldt de hoogste van oude en nieuwe snelheid. CTF: de vlagdrager mag 10 % langzamer
 (`params.carrySlow`), ook op de server. Een overtreding zet de speler terug op de laatste geldige positie
 (`teleport`; latere `pos` worden genegeerd tot hij daar is) en geeft strafpunten per regel (noclip/teleport/wall 3,
 fly/rise 2, speed 1) die met 0,2 per seconde afnemen. Bij 10 punten volgt een kick, na drie kicks binnen 30 minuten een
@@ -94,7 +103,9 @@ Logregel `cheat` (`kind: movement`, `rule`, `strikes`, `action`), `/metrics`: `b
 *Vals-positiefvrij*: `tests/anticheatMovement.test.ts` speelt willekeurige invoer (lopen, strafen, draaien, bunny hops,
 tegen muren aan) door de echte `Player.step` op alle arcade-kaarten en een Minecraft-wereld met trappen, slabs,
 ladders, water en vliegen, met 20-30 Hz `pos`, jitter tot 60 ms en bursts van 4 pakketten. Standaard 24 seeds per
-kaart; met `MOVE_SEEDS=300` (60 000 s spel) nul overtredingen. `scripts/cheat-bots.ts`: twee eerlijke bots lopen en
+kaart; met `MOVE_SEEDS=300` (60 000 s spel) nul overtredingen. Daarnaast vlagdragers onder last (framehaperingen tot
+0,4 s, serverstalls en achterstanden tot 1 s) op elke kaart met vlaggen en over de dekroute van het jacht: met de
+fysicaklok nul correcties, ook geen vergeven lag-correcties. `scripts/cheat-bots.ts`: twee eerlijke bots lopen en
 vechten 120 s, 0 correcties, 0 strafpunten.
 
 **Schoten** (`AimCheck.ts`, `LagComp.ts`, `Suspicion.ts`).

@@ -74,17 +74,25 @@ machinebelasting; de geïsoleerde meting en `room-stall.ts` laten geen haperinge
 
 1. **`ROOM_MAX_PLAYERS` staat standaard op 8.** Snel-spelen-lobby's krijgen die grootte, dus een 6v6 (BO-standaard) kan niet zonder
    de variabele. Advies: 12 voor arcade-lobby's (Docker/compose is van een andere agent).
-2. **Bots op Terminus blijven op hun eigen helft.** De botpaden (`scripts/lib/arenaPath.ts`) lopen alleen over vloerhoogte; de
-   perrons (+1) scheiden de helften. Voor tests en een toekomstige "bots in lege lobby's" (roadmap 7b-7) is pathing met stappen
-   nodig.
-3. **Yacht-spawns zijn nog steeds te zien** vanaf 215 (rood) / 71 (blauw) plekken op de andere helft, dichtstbij 42-44 m
-   (`map-audit.ts`, ongewijzigd sinds ronde 1). Met de bolt-action (one-shot headshot) een spawntrap-risico.
+2. ~~**Bots op Terminus blijven op hun eigen helft.**~~ Opgelost: `arenaPath` zoekt over alle stahoogtes (perrons, slabs,
+   traptreden) met de botsingstest van de validator; een stap omhoog of omlaag is één `pos` zodra de bot de looptijd ervoor
+   heeft gespaard. Test: `tests/arenaPath.test.ts` (rode spawn → blauwe spawn → ffa-spawns op elke kaart, door de validator).
+3. ~~**Yacht-spawns zijn nog steeds te zien**~~ Opgelost: de boeg loopt taps toe waar het vierkante achterschip de kade
+   afsluit. Kratten langs de noordrand van beide kades en twee fenders naast de boegloopplank: 0 / 0 plekken op de andere
+   helft (was 215 / 71), 587 / 567 in totaal (was 1360 / 914). Test: `tests/spawnExposure.test.ts`.
 4. **Audio worst case 0,59 ms/frame** (budget 0,3) en de 64/64 stemmen bij 16 spelers: opnieuw meten op een rustige machine; zo
    nodig minder stemmen per verre schot of een lagere `REMOTE_SHOTS_PER_FRAME`.
 5. **Dev-preview:** de nep-server bevestigt de laatste kogel van een magazijn niet (de client toont "1" en herlaadt); alleen de
    preview, de echte server telt goed (25/25 bij de SMG).
 6. **Lange frame zonder vsync** (220-270 ms, 1-2 keer per run van 30 s), zie prestaties.
-7. **Rubber-banding van eerlijke spelers onder last (open punt 1 van ronde 1): nog steeds, op yacht.** `play-modes.py` met
+7. ~~**Rubber-banding van eerlijke spelers onder last**~~ Opgelost (zie onder). Oorzaak: de validator rekende met
+   aankomsttijden; onder last komen die in klonten (server- of netwerkachterstand), en bij framehaperingen valt een
+   bunny-hop-afzet tussen twee rapporten op meer dan 1 blok onder de speler (de zoekdiepte was 1, de apex 1,32), of botst
+   het hoofd tegen een lamp. Nu: `pos` draagt de fysicaklok (`step`), de regels rekenen daarmee en een tweede bucket houdt die
+   klok binnen de echte tijd; afzetten tot 1,5 blok diep, dalende rapporten boven de oude curve, korte gebogen routes (om een
+   schuurhoek en een paal in één haperend frame) en 2 s respijt bij een vertraging (vlag opgepakt). Repro en regressie:
+   vlagdragerruns onder last op elke kaart met vlaggen en de dekroute van het jacht in `tests/anticheatMovement.test.ts`
+   (oude validator: 14 rode tests). Oorspronkelijke melding: `play-modes.py` met
    12 extra bots (`QA_FILL_BOTS=12`), load 15-20: tdm op yacht, villa, town en station 0 correcties voor de browsers, ctf op
    station 0, maar **ctf op yacht: 7 correcties voor Alpha** (de vlagdrager-route over het dek, (-32..-28, 69-70, 1-4), en de
    steiger bij (-34,5, 65, -13)); serverregels in die run: `lag` 4, `speed` 2, `fly` 1. In een eerdere run bij load 150+ ook

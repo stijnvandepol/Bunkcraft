@@ -258,7 +258,7 @@ regenereert, respawns en een scoreboard. Beschrijving, besturing en wapentabel: 
 - **Kaartobjectives: Gedaan.** Zones en/of vlaggen op Classic, Maple Court, Old Quarter, Harbor Yard en Atomic Lane, plus de
   nieuwe CTF-kaart Bunker Flag.
 - **Anti-cheat en netcode: Gedaan** (`server/anticheat/`, details in [`SECURITY.md`](SECURITY.md) §Arcade): bewegingscontrole
-  tegen de kaart met de gedeelde botsingscode (noclip, tunnelen, snelheid via real-time token bucket, vliegen, teleport;
+  tegen de kaart met de gedeelde botsingscode (noclip, tunnelen, snelheid en sprongcurve op de fysicaklok van de client (`step`, binnen de echte tijd gehouden), vliegen, teleport;
   rubber band, strafpunten, kick/ban), schotcontrole (eenheidsvector, oorsprong ≤ 0,6 blok, lag-compensatie max 250 ms,
   peeker-limiet 150 ms), verdenkingsscore in `/admin`, anti-wallhack-culling met `stale`-vlag, 30 Hz-tick en gekwantiseerde
   binaire snapshots (v2). Tests: client-physics-replay over alle kaarten, `scripts/cheat-bots.ts`.
