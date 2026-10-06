@@ -98,3 +98,11 @@ export async function command(page: Page, text: string): Promise<string> {
     return [...chat.log.children].slice(before).map((e) => e.textContent).join('\n');
   }, text);
 }
+
+/**
+ * Hides the 3D canvas (the moving panorama, different per GPU) so a menu screenshot compares the menu only.
+ * Masking the canvas instead paints over the whole viewport: the canvas is full-screen behind the menu.
+ */
+export async function hidePanorama(page: Page): Promise<void> {
+  await page.addStyleTag({ content: 'canvas#game { visibility: hidden !important; } body { background: #1e1e1e !important; }' });
+}

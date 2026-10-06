@@ -1,28 +1,34 @@
 import * as THREE from 'three';
 import {
-  ARCADE_AIR_ACCEL, ARCADE_SPEED_MULT, FireControl, KillFeed, SPAWN_PROTECTION, SPECTATE_KILLER_SECONDS, currentSpread, cycleSlot, cycleTarget,
-  impactNormal, reloadProgress, spectateCandidates, spreadPixels,
+  ARCADE_AIR_ACCEL, ARCADE_SPEED_MULT, FireControl, KillFeed, RecoilState, SPAWN_PROTECTION, SPECTATE_KILLER_SECONDS, ScopeBreath, currentSpread,
+  cycleSlot, cycleTarget, impactNormal, reloadProgress, spectateCandidates, spreadPixels, swayOffset,
 } from '../modes/ArcadeLogic';
 import { type GameTypeDef, type Team, TEAM_COLORS, gameTypeDef } from '../modes/GameTypes';
 import { carriesFlag, eventView, phaseBanner } from '../modes/ModeView';
-import { LOADOUT_PRESETS } from '../modes/Loadouts';
 import {
-  DEFAULT_PRIMARY, DEFAULT_SECONDARY, PLAYER_MAX_HEALTH, PRIMARY_WEAPONS, RESPAWN_SECONDS, SECONDARY_WEAPONS, type WeaponDef, fireInterval, weaponDef,
+  type ClassSpec, DEFAULT_CLASS, LAST_CLASS_STORAGE_KEY, LOADOUT_PRESETS, loadSavedClass, saveClass, validateClass,
+} from '../modes/Loadouts';
+import {
+  AIM_CLIMB, DEFAULT_PRIMARY, DEFAULT_SECONDARY, type OpticId, PLAYER_MAX_HEALTH, RESPAWN_SECONDS, type WeaponDef, adsTimeFor, fireInterval,
+  isPerk, opticFor, opticZoom, switchDelayFor, weaponDef,
 } from '../modes/Weapons';
-import type { ClientMessage, MatchInfo, MatchPhase, ModeState, RosterEntry, ServerMessage } from '../net/protocol';
+import { type ClientMessage, type MatchInfo, type MatchPhase, type ModeState, type RosterEntry, SNAP_FLAG_ADS, type ServerMessage } from '../net/protocol';
 import type { RemotePlayers } from '../net/RemotePlayers';
 import type { Player } from '../player/Player';
 import { PHYSICS } from '../player/Physics';
 import type { Particles } from '../rendering/Particles';
 import { Tracers } from '../rendering/Tracers';
-import { WEAPON_MODELS } from '../rendering/WeaponModels';
+import { muzzleFor } from '../rendering/WeaponModels';
 import { WeaponViewmodel } from '../rendering/WeaponViewmodel';
 import { ArcadeHud, type ScoreboardContext } from '../ui/ArcadeHud';
 import { ModeHud } from '../ui/ModeHud';
+import { MatchLobby } from '../ui/MatchLobby';
 import { ModeVisuals } from '../rendering/ModeVisuals';
 import { BLOCK } from '../world/BlockRegistry';
 import { type RayHit, createRayHit, raycast } from '../world/Raycast';
 import type { AudioEngine } from './Audio';
+import { type SurfaceLookup, surfaceLookup } from './audio/playerSounds';
+import { BOLT_DELAY, MEDAL_TEXT, MULTI_KILL_WINDOW, type MechKind, gunEarshot, medalFor, reloadSteps } from './audio/weaponSounds';
 import type { CameraController } from './Camera';
 import type { Input } from './Input';
 import { KB } from './Keybinds';
@@ -78,6 +84,42 @@ export interface ArcadeFrame {
 const SPECTATE_DISTANCE = 3.2;
 
 const tmpV = new THREE.Vector3();
+const tmpMuzzle: [number, number, number] = [0, 0, 0];
+const tmpSway = { x: 0, y: 0 };
+const DEG = Math.PI / 180;
+/** Seconds a weapon takes to come up after a switch (Quickdraw halves it). */
+const EQUIP_SEC = 0.28;
+/** Enemy footsteps: blocks of travel per footfall (running) and how far away they are tracked at all. */
+const STRIDE = 2.1;
+const STEP_TRACK_RANGE = 30;
+/** At most this many scope glints at once. */
+const MAX_GLINTS = 4;
+
+/** Per remote player: footstep bookkeeping and what the server told about their gear. */
+interface RemoteGear { x: number; z: number; y: number; acc: number; quiet: boolean; optic: OpticId; known: boolean }
+
+function storage(): Storage | null {
+  try { return window.localStorage; } catch { return null; }
+}
+
+/** Glint texture: a hot white core with a cross flare (drawn once). */
+function glintTexture(): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const ctx = c.getContext('2d')!;
+  const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 30);
+  g.addColorStop(0, 'rgba(255,255,255,1)');
+  g.addColorStop(0.2, 'rgba(255,250,210,0.8)');
+  g.addColorStop(1, 'rgba(255,230,160,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 64, 64);
+  ctx.fillStyle = 'rgba(255,255,230,0.9)';
+  ctx.fillRect(31, 0, 2, 64);
+  ctx.fillRect(0, 31, 64, 2);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.NoColorSpace;
+  return t;
+}
 const tmpAim = { x: 0, y: 0, z: 0 };
 /** Position handed to the audio engine for gunshots and impacts (read synchronously). */
 const gunAt = { x: 0, y: 0, z: 0 };
@@ -92,6 +134,9 @@ export class ArcadeSession {
   readonly hud = new ArcadeHud();
   readonly viewmodel = new WeaponViewmodel();
   readonly tracers = new Tracers();
+  /** Scope glints of enemies aiming at you through a scope (add to the scene). */
+  readonly glints = new THREE.Group();
+  private readonly glintSprites: THREE.Sprite[] = [];
 
   readonly info: MatchInfo;
   readonly teams: boolean;
@@ -100,6 +145,8 @@ export class ArcadeSession {
   /** Objective HUD (zones, flags, rounds, ladder) and the flags/zone rings in the world. */
   readonly modeHud: ModeHud;
   readonly modeVisuals = new ModeVisuals();
+  /** Realms pre-match lobby (warm-up panel) and the map vote after a match. */
+  readonly lobby: MatchLobby;
   private modeState: ModeState | null = null;
   private matchText = '';
   private selfPts = 0;
@@ -117,10 +164,10 @@ export class ArcadeSession {
 
   health = PLAYER_MAX_HEALTH;
   team: Team | '' = '';
-  private primary = DEFAULT_PRIMARY;
-  private pendingPrimary = '';
-  private secondary = DEFAULT_SECONDARY;
-  private pendingSecondary = '';
+  /** The class of this life (server's word), the one the server holds for the next life, and the saved custom class. */
+  private cls: ClassSpec = { ...DEFAULT_CLASS };
+  private nextClass: ClassSpec = { ...DEFAULT_CLASS };
+  private custom: ClassSpec = { ...DEFAULT_CLASS };
   private slot: Slot = 0;
   private prevSlot: Slot = 1;
   private readonly weaponIds: [string, string, string] = [DEFAULT_PRIMARY, DEFAULT_SECONDARY, 'knife'];
@@ -128,7 +175,29 @@ export class ArcadeSession {
   private pending = 0;
   private readonly trigger = new FireControl();
   private ads = 0;
+  private wantAds = false;
   private kick = 0;
+  private readonly recoil = new RecoilState();
+  private readonly breath = new ScopeBreath();
+  /** Scope sway applied to the view so far (radians), and its clock. */
+  private swayYaw = 0;
+  private swayPitch = 0;
+  private swayTime = 0;
+  private scoped = false;
+  /** Next reload step to play per slot, and the pending bolt cycle (time of the next stage, 0 = none). */
+  private readonly reloadStep = [0, 0, 0];
+  private boltAt = 0;
+  private boltStage = 0;
+  /** Kills this life and in the current multi-kill chain. */
+  private streak = 0;
+  private multi = 0;
+  private lastKillAt = -1e9;
+  private readonly gear = new Map<number, RemoteGear>();
+  private readonly surfaceAt: SurfaceLookup;
+  private readonly stepPose = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0 };
+  private readonly stepAt = { x: 0, y: 0, z: 0 };
+  private glintCount = 0;
+  private frameNow = 0;
   /** 0..1 camera hurt strength after taking damage, decaying. */
   hurt = 0;
   /** Side of the last hit (−1 left, 1 right) for the camera tilt. */
@@ -145,6 +214,8 @@ export class ArcadeSession {
   private nextCandidates = 0;
   private ended = false;
   private endAt = 0;
+  /** Title and colour of the end screen while it is up (redrawn when the final scores and roster arrive after `matchend`). */
+  private endTitle: { title: string; color: string } | null = null;
   private lastNow = 0;
   private readonly ray: RayHit = createRayHit();
   private loadoutOpen = false;
@@ -164,8 +235,29 @@ export class ArcadeSession {
     this.teams = this.def.teams;
     this.modeHud = new ModeHud(this.def);
     this.hud.el.append(this.modeHud.el);
+    this.lobby = new MatchLobby(this.def, d.selfId);
+    this.lobby.onVote = (map) => this.d.send({ t: 'vote', map });
+    this.hud.el.append(this.lobby.el);
+    // The vote sits under the result in the match-end overlay.
+    this.hud.el.querySelector('.arc-end')?.append(this.lobby.voteEl);
     this.players.set(d.selfId, { name: d.selfName, team: '' });
-    this.hud.onLoadout = (id, secondary) => this.selectLoadout(id, secondary);
+    this.surfaceAt = surfaceLookup(d.getBlock);
+    this.custom = loadSavedClass(storage()) ?? { ...DEFAULT_CLASS };
+    this.hud.setCustomClass(this.custom);
+    this.hud.onClass = (c, custom) => this.chooseClass(c, custom);
+    const tex = glintTexture();
+    for (let i = 0; i < MAX_GLINTS; i++) {
+      const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: false }));
+      s.visible = false;
+      s.scale.setScalar(0.05);
+      this.glintSprites.push(s);
+      this.glints.add(s);
+    }
+    // The class chosen last time (any game) goes to the server at once: it applies right after spawning.
+    if (this.def.loadout !== 'ladder') {
+      const last = loadSavedClass(storage(), LAST_CLASS_STORAGE_KEY);
+      if (last) this.sendClass(last);
+    }
     this.hud.setHealth(this.health);
     this.equipSlot(0, false);
     this.fillAmmo();
@@ -185,6 +277,16 @@ export class ArcadeSession {
 
   readonly airAccel = ARCADE_AIR_ACCEL;
 
+  /** Aiming down the sights (the `pos` flag that lets enemies see a scope glint). */
+  get aimFlags(): number {
+    return this.ads > 0.5 ? SNAP_FLAG_ADS : 0;
+  }
+
+  /** The optic on the weapon in hand (the primary carries the class optic; others their own sights). */
+  private get optic(): OpticId {
+    return this.slot === 0 ? opticFor(this.weapon, this.cls.optic) : this.weapon.optics[0];
+  }
+
   /** Look sensitivity scale: aiming through a zoom turns slower so aim stays precise. */
   get sensitivityScale(): number {
     return this.d.cam.zoom;
@@ -203,10 +305,12 @@ export class ArcadeSession {
     if (id === this.d.selfId) return;
     this.players.set(id, { name, team });
     this.d.remote.add(id, name, team);
+    if (!this.gear.has(id)) this.gear.set(id, { x: 0, y: 0, z: 0, acc: 0, quiet: false, optic: 'iron', known: false });
   }
 
   removePlayer(id: number): void {
     this.players.delete(id);
+    this.gear.delete(id);
     this.d.remote.remove(id);
   }
 
@@ -238,8 +342,7 @@ export class ArcadeSession {
       case 'ammo': {
         const a = this.ammo[msg.slot];
         if (!a) break;
-        if (msg.reloading && !a.reloading) a.since = now;
-        if (msg.reloading && !a.reloading) this.d.audio.playReload(weaponDef(this.weaponIds[msg.slot])?.reloadSec ?? 1);
+        if (msg.reloading && !a.reloading) { a.since = now; this.reloadStep[msg.slot] = 0; }
         a.mag = msg.mag;
         a.reloading = msg.reloading;
         if (msg.slot === this.slot) this.pending = 0;
@@ -248,8 +351,10 @@ export class ArcadeSession {
       case 'shot': this.onShot(msg); break;
       case 'hit':
         this.hud.showHit(msg.killed ? 'kill' : msg.head ? 'head' : 'hit');
-        if (msg.killed) this.d.audio.playKillDing();
-        else this.d.audio.playHitMarker(msg.head);
+        if (msg.killed) {
+          this.d.audio.playKillDing(msg.head);
+          this.onOwnKill(now);
+        } else this.d.audio.playHitMarker(msg.head);
         this.d.feedback?.haptic(msg.killed ? 0.4 : 0, msg.killed ? 0.6 : 0.35, msg.killed ? 120 : 45);
         break;
       case 'damaged': {
@@ -262,18 +367,41 @@ export class ArcadeSession {
       }
       case 'kill': this.onKill(msg, now); break;
       case 'matchend': this.onMatchEnd(msg, now); break;
-      case 'holds': this.d.remote.setWeapon(msg.id, msg.weapon); break;
+      case 'holds': this.onHolds(msg); break;
       case 'gear': this.onGear(msg); break;
       case 'mode': this.onMode(msg.state); break;
       case 'event': this.onEvent(msg, now); break;
+      case 'vote': this.lobby.setVote(msg); break;
       default: break;
     }
+  }
+
+  /** A kill of ours: multi-kill chain and killstreak medals (sound, banner, caption). */
+  private onOwnKill(now: number): void {
+    this.streak++;
+    this.multi = now - this.lastKillAt <= MULTI_KILL_WINDOW ? this.multi + 1 : 1;
+    this.lastKillAt = now;
+    const medal = medalFor(this.multi, this.streak);
+    if (!medal) return;
+    this.d.audio.playAnnouncer(medal);
+    this.hud.showMedal(MEDAL_TEXT[medal], medal.startsWith('streak') ? '#ff9f2a' : '#ffd23f', now);
+    this.d.feedback?.caption(MEDAL_TEXT[medal].toLowerCase().replace(/^./, (c) => c.toUpperCase()), this.d.player.x, this.d.player.z);
+  }
+
+  /** Another player's hands: weapon model with optic and suppressor; Ninja and scope for footsteps and glints. */
+  private onHolds(msg: Extract<ServerMessage, { t: 'holds' }>): void {
+    const def = weaponDef(msg.weapon);
+    const optic: OpticId = def ? opticFor(def, msg.optic) : 'iron';
+    this.d.remote.setWeapon(msg.id, msg.weapon, optic, msg.sup === 1);
+    const g = this.gear.get(msg.id);
+    if (g) { g.quiet = msg.quiet === 1; g.optic = optic; }
   }
 
   private onMatch(msg: Extract<ServerMessage, { t: 'match' }>, now: number): void {
     if (this.ended && msg.phase !== 'ended') {
       // A new match began: back to the arena view.
       this.ended = false;
+      this.endTitle = null;
       this.hud.setMatchEnd(null);
       this.d.remote.reviveAll();
     }
@@ -281,18 +409,29 @@ export class ArcadeSession {
       this.d.onMapChange?.(msg.info.map);
       return;
     }
+    if (msg.phase === 'live' && this.phase !== 'live' && this.phase !== 'ended') {
+      this.d.audio.playStinger('start');
+      this.d.feedback?.caption('Match starts', this.d.player.x, this.d.player.z);
+    }
     this.phase = msg.phase;
     this.matchText = msg.text ?? '';
     this.timeLeft = msg.timeLeft;
     this.timeStamp = now;
     this.scores = msg.scores;
     this.matchDirty = true;
+    this.refreshEnd();
+  }
+
+  /** The server sends the final `match` and `roster` right after `matchend`: show those numbers on the end screen. */
+  private refreshEnd(): void {
+    if (this.ended && this.endTitle) this.hud.setMatchEnd({ ...this.endTitle, roster: this.roster, ctx: this.boardContext() });
   }
 
   private onRoster(players: RosterEntry[]): void {
     this.roster = players;
     this.rosterVersion++;
     this.matchDirty = true;
+    this.refreshEnd();
     let best: RosterEntry | null = null;
     this.selfKills = 0;
     for (const p of players) {
@@ -324,12 +463,7 @@ export class ArcadeSession {
     this.dead = false;
     this.endSpectate();
     this.hud.setDeath(null);
-    this.primary = weaponDef(msg.primary) ? msg.primary : DEFAULT_PRIMARY;
-    this.pendingPrimary = '';
-    this.pendingSecondary = '';
-    this.secondary = msg.secondary && weaponDef(msg.secondary) ? msg.secondary : DEFAULT_SECONDARY;
-    this.weaponIds[0] = this.primary;
-    this.weaponIds[1] = this.secondary;
+    this.applyGear(msg.primary, msg.secondary, msg.optic, msg.perk);
     this.health = msg.health;
     this.hud.setHealth(this.health);
     this.protect = SPAWN_PROTECTION;
@@ -339,6 +473,10 @@ export class ArcadeSession {
     this.hurt = 0;
     this.kick = 0;
     this.trigger.reset();
+    this.recoil.reset();
+    this.breath.reset();
+    this.streak = 0;
+    this.multi = 0;
     if (this.ended && this.phase !== 'ended') {
       this.ended = false;
       this.hud.setMatchEnd(null);
@@ -349,11 +487,19 @@ export class ArcadeSession {
 
   /** The mode swapped our weapons while we live (gun game level): new primary/secondary, full magazines, primary in hand. */
   private onGear(msg: Extract<ServerMessage, { t: 'gear' }>): void {
-    if (weaponDef(msg.primary)) { this.primary = msg.primary; this.weaponIds[0] = msg.primary; }
-    if (msg.secondary && weaponDef(msg.secondary)) { this.secondary = msg.secondary; this.weaponIds[1] = msg.secondary; }
+    this.applyGear(msg.primary, msg.secondary, msg.optic, msg.perk);
     this.fillAmmo();
     this.equipSlot(0, false);
     this.d.audio.playSpawn();
+  }
+
+  /** The server's word on our weapons (spawn, gear): primary, secondary, optic and perk. */
+  private applyGear(primary: string, secondary: string | undefined, optic: string | undefined, perk: string | undefined): void {
+    const p = weaponDef(primary) ? primary : DEFAULT_PRIMARY;
+    const s = secondary && weaponDef(secondary) ? secondary : this.cls.secondary || DEFAULT_SECONDARY;
+    this.cls = { primary: p, secondary: s, optic: opticFor(weaponDef(p)!, optic), perk: isPerk(perk) ? perk : 'none' };
+    this.weaponIds[0] = p;
+    this.weaponIds[1] = s;
   }
 
   /** New objective state from the server: markers, panels, world flags and rings, the carrier slow-down. */
@@ -413,6 +559,9 @@ export class ArcadeSession {
     if (this.dead && killer === '') return;
     const first = !this.dead;
     this.dead = true;
+    this.streak = 0;
+    this.scoped = false;
+    this.hud.setScope(false);
     if (first) {
       this.deadAt = now;
       this.nextCandidates = 0;
@@ -508,6 +657,14 @@ export class ArcadeSession {
       title = msg.winnerId === this.d.selfId ? 'You win!' : `${this.nameOf(msg.winnerId)} wins!`;
       color = msg.winnerId === this.d.selfId ? '#ffd23f' : '#ffffff';
     }
+    // The final kill may have been yours: the end screen replaces the death screen and spectating.
+    this.d.remote.setSpectated(0);
+    this.hud.setDeath(null);
+    this.endTitle = { title, color };
+    const won = msg.winnerTeam ? msg.winnerTeam === this.team : msg.winnerId === this.d.selfId;
+    const draw = !msg.winnerTeam && !msg.winnerId;
+    this.d.audio.playStinger(draw ? 'draw' : won ? 'win' : 'lose');
+    this.d.feedback?.caption(draw ? 'Match ends in a draw' : won ? 'Victory' : 'Defeat', this.d.player.x, this.d.player.z);
     this.hud.setMatchEnd({ title, color, roster: this.roster, ctx: this.boardContext() });
   }
 
@@ -517,8 +674,11 @@ export class ArcadeSession {
     if (msg.id === this.d.selfId) return;
     const dist = Math.hypot(msg.ox - p.x, msg.oy - p.eyeY, msg.oz - p.z);
     gunAt.x = msg.ox; gunAt.y = msg.oy; gunAt.z = msg.oz;
-    this.d.audio.playGun(msg.weapon, 1, gunAt);
-    if (dist < 60) this.d.feedback?.caption(msg.weapon === 'knife' ? 'Knife swings' : 'Gunshot', msg.ox, msg.oz);
+    const sup = msg.sup === 1;
+    this.d.audio.playGun(msg.weapon, 1, gunAt, sup);
+    if (dist < gunEarshot(msg.weapon, sup) * 0.8) {
+      this.d.feedback?.caption(msg.weapon === 'knife' ? 'Knife swings' : sup ? 'Suppressed shot' : dist > 45 ? 'Distant gunfire' : 'Gunshot', msg.ox, msg.oz);
+    }
     if (msg.weapon === 'knife') return;
     // Muzzle of the shooter: ahead of the eye, a bit to the right and down.
     let dx = msg.ex - msg.ox, dy = msg.ey - msg.oy, dz = msg.ez - msg.oz;
@@ -560,12 +720,18 @@ export class ArcadeSession {
     if (announce) this.prevSlot = this.slot;
     this.slot = slot;
     const w = this.weapon;
-    this.viewmodel.setWeapon(w);
+    const equip = switchDelayFor(this.cls.perk, EQUIP_SEC);
+    this.viewmodel.setWeapon(w, this.optic, this.cls.perk === 'suppressor');
+    this.viewmodel.setEquipTime(equip);
     this.hud.setWeapon(w);
     this.refreshSlots();
     this.pending = 0;
-    this.trigger.delay(this.lastNow, 0.28);
-    if (announce) this.d.send({ t: 'weapon', slot });
+    this.boltAt = 0;
+    this.trigger.delay(this.lastNow, equip);
+    if (announce) {
+      this.d.send({ t: 'weapon', slot });
+      this.d.audio.playMech('switch');
+    }
   }
 
   /** Slot names for the HUD; the primary shows the weapon you carry (or will carry next life). */
@@ -573,25 +739,29 @@ export class ArcadeSession {
     return this.weaponIds.map((id) => weaponDef(id)?.name ?? id);
   }
 
-  /** Chooses the weapons for the next life: a primary, and optionally a secondary (class presets). */
-  selectLoadout(id: string, secondary?: string): void {
-    if (!PRIMARY_WEAPONS.includes(id)) return;
-    this.pendingPrimary = id;
-    if (secondary !== undefined && SECONDARY_WEAPONS.includes(secondary)) {
-      this.pendingSecondary = secondary;
-      this.d.send({ t: 'loadout', primary: id, secondary });
-    } else this.d.send({ t: 'loadout', primary: id });
-    this.hud.markLoadout(id, this.pendingSecondary || this.secondary);
+  /** Tells the server the class for the next life (it applies at once right after a spawn). */
+  private sendClass(c: ClassSpec): void {
+    this.nextClass = validateClass(c);
+    const n = this.nextClass;
+    this.d.send({ t: 'loadout', primary: n.primary, secondary: n.secondary, optic: n.optic, perk: n.perk });
+    this.hud.markClass(n);
   }
 
-  selectPrimary(id: string): void {
-    this.selectLoadout(id);
+  /** A class from the menu or the death screen; the custom class is saved too, and the choice is remembered. */
+  chooseClass(c: ClassSpec, custom: boolean): void {
+    if (this.def.loadout === 'ladder') return;
+    if (custom) {
+      this.custom = validateClass(c);
+      saveClass(storage(), this.custom);
+    }
+    this.sendClass(c);
+    saveClass(storage(), this.nextClass, LAST_CLASS_STORAGE_KEY);
   }
 
   openLoadout(): void {
     if (this.def.loadout === 'ladder') return; // gun game: the ladder chooses
     this.loadoutOpen = true;
-    this.hud.showLoadout(this.pendingPrimary || this.primary, !this.dead, this.pendingSecondary || this.secondary);
+    this.hud.showLoadout(this.nextClass, !this.dead);
   }
 
   closeLoadout(): void {
@@ -605,8 +775,8 @@ export class ArcadeSession {
     if (w.magazine === 0 || a.reloading || a.mag >= w.magazine) return;
     a.reloading = true;
     a.since = now;
+    this.reloadStep[this.slot] = 0;
     this.d.send({ t: 'reload', slot: this.slot });
-    this.d.audio.playReload(w.reloadSec);
   }
 
   /** Aim direction from the view angles, written into `out`. */
@@ -618,7 +788,7 @@ export class ArcadeSession {
     out.z = -Math.cos(p.yaw) * c;
   }
 
-  private shoot(): void {
+  private shoot(now: number): void {
     const w = this.weapon;
     const p = this.d.player;
     this.aim(tmpAim);
@@ -626,19 +796,26 @@ export class ArcadeSession {
     this.d.send({ t: 'fire', slot: this.slot, ox, oy, oz, dx: tmpAim.x, dy: tmpAim.y, dz: tmpAim.z, ads: this.ads > 0.5 });
     this.pending++;
     // Predicted effects.
-    this.d.audio.playGun(w.id, 1);
+    const sup = this.cls.perk === 'suppressor';
+    this.d.audio.playGun(w.id, 1, undefined, sup);
     this.viewmodel.fire();
     this.kick = Math.min(0.12, this.kick + (w.recoil * Math.PI) / 180 * 0.8);
+    // The aim climbs along the weapon's pattern (after the shot went out with the old aim).
+    const r = this.recoil.kick(now, w.recoil, w.recoilX, w.pattern, this.ads, AIM_CLIMB);
+    p.pitch = Math.min(Math.PI / 2 - 0.001, p.pitch + r.pitch * DEG);
+    p.yaw -= r.yaw * DEG;
+    if (w.bolt) { this.boltAt = now + BOLT_DELAY; this.boltStage = 0; }
     const spread = currentSpread(w, this.ads, Math.hypot(p.vx, p.vz) > 0.5, !p.onGround);
     const pellets = Math.min(w.pellets, 5);
     // Muzzle in the world: the weapon model's muzzle transformed by the view model's pose is close
     // enough to a fixed offset from the camera.
     const cam = this.d.cam.camera;
-    const model = WEAPON_MODELS[w.id];
     const e = this.ads * this.ads * (3 - 2 * this.ads);
     // The weapon is drawn with its own 62° camera: scale the sideways offsets to the main camera's field of view.
     const k = 0.6009 / Math.tan((cam.fov * Math.PI) / 360);
-    tmpV.set((0.18 * (1 - e) + model.muzzle[0] * 0.85) * k, (-0.18 * (1 - e) - model.sightY * e * 0.85 + model.muzzle[1] * 0.85) * k, -0.62 * (1 - e) + this.viewmodel.adsZ() * e + model.muzzle[2] * 0.85);
+    const mz = muzzleFor(w.id, sup, tmpMuzzle);
+    const sightY = this.viewmodel.sightLine;
+    tmpV.set((0.18 * (1 - e) + mz[0] * 0.85) * k, (-0.18 * (1 - e) - sightY * e * 0.85 + mz[1] * 0.85) * k, -0.62 * (1 - e) + this.viewmodel.adsZ() * e + mz[2] * 0.85);
     cam.localToWorld(tmpV);
     const sx = tmpV.x, sy = tmpV.y, sz = tmpV.z;
     for (let i = 0; i < pellets; i++) {
@@ -691,8 +868,9 @@ export class ArcadeSession {
       if (input.actionPressed(KB.QUICK_SWITCH)) this.equipSlot(this.prevSlot, true);
       if (input.actionPressed(KB.RELOAD)) this.requestReload(now);
     } else if (this.dead && f.controls && this.def.loadout !== 'ladder') {
-      // On the death screen the number keys pick the next weapon (the loadout menu is B).
-      for (let i = 0; i < LOADOUT_PRESETS.length; i++) if (input.wasPressed(`Digit${i + 1}`)) this.selectLoadout(LOADOUT_PRESETS[i].primary, LOADOUT_PRESETS[i].secondary);
+      // On the death screen the number keys pick the next class (presets, then the custom class; the menu is B).
+      for (let i = 0; i < LOADOUT_PRESETS.length; i++) if (input.wasPressed(DIGITS[i])) this.chooseClass(LOADOUT_PRESETS[i], false);
+      if (input.wasPressed(DIGITS[LOADOUT_PRESETS.length])) this.chooseClass(this.custom, true);
     }
 
     const w = this.weapon;
@@ -705,19 +883,28 @@ export class ArcadeSession {
           if (input.leftClicked) this.d.audio.playEmpty();
           if (input.leftDown) this.requestReload(now);
         } else if (w.burst && w.burstCycleSec) {
-          if (this.trigger.tryBurst(now, fireInterval(w), w.burst, w.burstCycleSec, input.leftClicked)) this.shoot();
+          if (this.trigger.tryBurst(now, fireInterval(w), w.burst, w.burstCycleSec, input.leftClicked)) this.shoot(now);
         } else if (this.trigger.tryFire(now, fireInterval(w), w.auto, input.leftDown, input.leftClicked)) {
-          this.shoot();
+          this.shoot(now);
         }
       }
     }
 
-    // Aim down the sights.
+    // Aim down the sights: linear in the weapon's aim time (optic and perk), eased for the view.
+    const optic = this.optic;
     const wantAds = canAct && input.rightDown && w.zoom < 1 && !ammo.reloading;
-    this.ads += ((wantAds ? 1 : 0) - this.ads) * Math.min(1, dt * 12);
-    if (this.ads < 0.001 && !wantAds) this.ads = 0;
+    if (wantAds !== this.wantAds) {
+      this.wantAds = wantAds;
+      this.d.audio.playMech(wantAds ? 'adsin' : 'adsout');
+    }
+    const step = dt / Math.max(0.05, adsTimeFor(w, optic, this.cls.perk));
+    this.ads = wantAds ? Math.min(1, this.ads + step) : Math.max(0, this.ads - step * 1.4);
     const cam = this.d.cam;
-    cam.zoom = 1 + (w.zoom - 1) * this.ads * this.ads * (3 - 2 * this.ads);
+    const eased = this.ads * this.ads * (3 - 2 * this.ads);
+    cam.zoom = 1 + (opticZoom(w, optic) - 1) * eased;
+    this.updateAimFeel(f, input, w, optic);
+    this.updateMechanics(now, w, ammo);
+    this.updateRemotes(f);
     this.kick *= Math.exp(-9 * dt);
     cam.kick = this.kick;
     this.hurt = Math.max(0, this.hurt - dt * 2);
@@ -738,10 +925,11 @@ export class ArcadeSession {
     const p = this.d.player;
     const now = f.now;
     hud.setAmmo(w, ammo.mag, reload);
-    const scoped = WEAPON_MODELS[w.id].scope && this.ads > 0.92;
-    hud.setScope(scoped);
+    const scoped = this.scoped;
+    hud.setScope(scoped, scoped ? this.breath.breath : -1, this.breath.holding, this.breath.spent);
     const spread = w.magazine === 0 ? 0.5 : currentSpread(w, this.ads, Math.hypot(p.vx, p.vz) > 0.5, !p.onGround);
-    hud.setCrosshair(2 + spreadPixels(spread, this.d.cam.camera.fov, window.innerHeight), !scoped && !this.dead);
+    // Aimed down the sights the sights (or the reticle) are the crosshair.
+    hud.setCrosshair(2 + spreadPixels(spread, this.d.cam.camera.fov, window.innerHeight), !scoped && !this.dead && this.ads < 0.6);
     hud.setProtection(this.protect);
     hud.frame(now, p.yaw);
     if (this.feed.prune(now)) hud.setKillFeed(this.feed.entries, this.d.selfName);
@@ -754,13 +942,14 @@ export class ArcadeSession {
       this.matchDirty = false;
       const c = this.matchCtx;
       c.selfId = this.d.selfId; c.teams = this.teams; c.scores = this.scores;
-      c.scoreLimit = this.info.scoreLimit; c.selfKills = this.selfKills; c.leader = this.leader;
+      // Gun game shows the leader in its ladder panel: not twice.
+      c.scoreLimit = this.info.scoreLimit; c.selfKills = this.selfKills; c.leader = this.def.ladder ? '' : this.leader;
       c.text = this.matchText;
       const ladder = this.def.ladder;
       c.selfScore = ladder ? `${Math.min(this.selfPts + 1, ladder.length)}/${ladder.length}` : undefined;
       hud.setMatch(this.phase, left, c);
       const round = this.modeState?.kind === 'rounds' ? this.modeState.round : 1;
-      hud.setBanner(this.phase === 'warmup' ? `Warm-up: match starts in ${Math.max(0, sec)}` : phaseBanner(this.phase, left, round));
+      hud.setBanner(this.phase === 'warmup' ? this.lobby.banner(this.roster, sec) : phaseBanner(this.phase, left, round));
       if (ladder) this.modeHud.setLadder(this.selfPts, ladder, this.leader);
       if (this.def.hud?.includes('zones') || this.def.hud?.includes('flags')) this.modeHud.setScores(this.scores.red, this.scores.blue, this.info.scoreLimit);
     }
@@ -780,11 +969,118 @@ export class ArcadeSession {
     if (this.dead) {
       const rule = this.def.respawn;
       const wait = rule?.rule === 'never' ? -1 : (rule?.seconds ?? RESPAWN_SECONDS) - (now - this.deadAt);
-      hud.setRespawn(wait, this.primary, this.pendingPrimary, this.secondary, this.pendingSecondary, this.def.loadout !== 'ladder');
+      hud.setRespawn(wait, this.nextClass, this.def.loadout !== 'ladder');
       if (!this.ended) this.updateSpectate(f, input);
     }
     if (this.ended) hud.setNextMatch(this.endAt - now);
+    this.lobby.update(this.phase, left, this.roster, this.info.map, this.ended);
+    if (this.ended && this.lobby.voting && f.controls) {
+      for (let i = 0; i < 3; i++) if (input.actionPressed(KB.WEAPON_1 + i)) this.lobby.pick(i);
+    }
   }
+
+  /**
+   * Scope sway with breath control and recoil recovery, applied to the real view (the server takes the
+   * aim from yaw and pitch, so what you see is where you shoot). Allocation-free.
+   */
+  private updateAimFeel(f: ArcadeFrame, input: Input, w: WeaponDef, optic: OpticId): void {
+    const p = this.d.player;
+    const dt = f.dt;
+    this.scoped = optic === 'scope' && this.ads > 0.92 && !this.dead;
+    const moving = Math.hypot(p.vx, p.vz) > 0.5 || !p.onGround;
+    const cue = this.breath.update(dt, f.now, this.scoped, f.controls && input.actionDown(KB.SPRINT), moving);
+    if (cue) this.d.audio.playBreath(cue === 'hold');
+    // Sway: a figure-eight around the aim while scoped, fading out when not.
+    this.swayTime += dt;
+    let tx = 0, ty = 0;
+    if (this.scoped) {
+      swayOffset(this.swayTime, this.breath.amp, tmpSway);
+      tx = tmpSway.x * DEG; ty = tmpSway.y * DEG;
+    } else {
+      tx = this.swayYaw * Math.max(0, 1 - dt * 8);
+      ty = this.swayPitch * Math.max(0, 1 - dt * 8);
+    }
+    p.yaw += tx - this.swayYaw;
+    p.pitch += ty - this.swayPitch;
+    this.swayYaw = tx;
+    this.swayPitch = ty;
+    // Recoil recovery once the trigger rests.
+    const rec = this.recoil.recover(f.now, dt);
+    if (rec !== 0) p.pitch += rec * DEG;
+    const limit = Math.PI / 2 - 0.001;
+    p.pitch = Math.max(-limit, Math.min(limit, p.pitch));
+    void w;
+  }
+
+  /** Reload steps (mag out, mag in, bolt) as the reload progresses, and the bolt of a bolt-action after a shot. */
+  private updateMechanics(now: number, w: WeaponDef, ammo: AmmoState): void {
+    const slot = this.slot;
+    if (ammo.reloading) {
+      const steps = reloadSteps(w.id);
+      const t = (now - ammo.since) / Math.max(0.1, w.reloadSec);
+      let i = this.reloadStep[slot];
+      while (i < steps.length && steps[i][0] <= t) this.d.audio.playMech(steps[i++][1] as MechKind);
+      this.reloadStep[slot] = i;
+    }
+    if (this.boltAt > 0 && now >= this.boltAt) {
+      if (this.boltStage === 0) {
+        this.d.audio.playMech('boltback');
+        this.viewmodel.cycleBolt();
+        this.boltStage = 1;
+        this.boltAt = now + 0.2;
+      } else {
+        this.d.audio.playMech('boltfwd');
+        this.boltAt = 0;
+      }
+    }
+  }
+
+  /** Enemy and teammate footsteps (per surface, positional; Ninja only up close) and scope glints. */
+  private updateRemotes(f: ArcadeFrame): void {
+    this.frameNow = f.now;
+    this.glintCount = 0;
+    this.gear.forEach(this.remoteStep);
+    for (let i = this.glintCount; i < MAX_GLINTS; i++) this.glintSprites[i].visible = false;
+  }
+
+  private readonly remoteStep = (g: RemoteGear, id: number): void => {
+    const remote = this.d.remote;
+    const pose = this.stepPose;
+    if (!remote.isAlive(id) || !remote.pose(id, pose)) { g.known = false; return; }
+    const me = this.d.player;
+    const dx = pose.x - me.x, dz = pose.z - me.z;
+    if (!g.known) { g.x = pose.x; g.y = pose.y; g.z = pose.z; g.acc = 0; g.known = true; return; }
+    const moved = Math.hypot(pose.x - g.x, pose.z - g.z);
+    const dy = pose.y - g.y;
+    g.x = pose.x; g.y = pose.y; g.z = pose.z;
+    if (moved > 3) { g.acc = 0; return; } // a teleport (spawn)
+    if (Math.abs(dy) < 0.08 && Math.abs(dx) < STEP_TRACK_RANGE && Math.abs(dz) < STEP_TRACK_RANGE) {
+      g.acc += moved;
+      if (g.acc >= STRIDE) {
+        g.acc -= STRIDE;
+        const surface = this.surfaceAt(Math.floor(pose.x), Math.floor(pose.y - 0.1), Math.floor(pose.z)) ?? 'stone';
+        const at = this.stepAt;
+        at.x = pose.x; at.y = pose.y; at.z = pose.z;
+        this.d.audio.playPlayerStep(surface, at, g.quiet);
+        if (!g.quiet && Math.hypot(dx, dz) < 18) this.d.feedback?.caption('Footsteps', pose.x, pose.z);
+      }
+    } else g.acc = 0;
+    // Scope glint: an enemy aiming through a scope roughly at us shines.
+    if (g.optic !== 'scope' || this.glintCount >= MAX_GLINTS || (remote.flagsOf(id) & SNAP_FLAG_ADS) === 0) return;
+    const info = this.players.get(id);
+    if (this.teams && info && info.team === this.team) return;
+    const dist = Math.hypot(dx, pose.y - me.y, dz);
+    if (dist < 8) return;
+    const c = Math.cos(pose.pitch);
+    const fx = -Math.sin(pose.yaw) * c, fy = Math.sin(pose.pitch), fz = -Math.cos(pose.yaw) * c;
+    const facing = (-dx * fx + (me.eyeY - pose.y - 1.62) * fy - dz * fz) / dist;
+    if (facing < 0.93) return;
+    const s = this.glintSprites[this.glintCount++];
+    const flicker = 0.75 + 0.25 * Math.sin(this.frameNow * 23 + id);
+    s.position.set(pose.x + fx * 0.55, pose.y + 1.55 + fy * 0.55, pose.z + fz * 0.55);
+    s.scale.setScalar(0.035 * flicker * (0.6 + 0.4 * (facing - 0.93) / 0.07));
+    s.visible = true;
+  };
 
   /** Draws the first-person weapon (after the world pass). */
   render(three: THREE.WebGLRenderer): void {
@@ -800,8 +1096,10 @@ export class ArcadeSession {
   dispose(): void {
     this.hud.reset();
     this.modeHud.reset();
+    this.lobby.reset();
     this.modeVisuals.dispose();
     this.tracers.clear();
+    for (const s of this.glintSprites) s.visible = false;
     this.d.cam.kick = 0;
     this.d.cam.zoom = 1;
     this.d.cam.sprintFov = true;
@@ -811,6 +1109,8 @@ export class ArcadeSession {
     this.d.remote.setTagOcclusion(null);
   }
 }
+
+const DIGITS = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8', 'Digit9'];
 
 function keyLabel(code: string): string {
   const m = /^(?:Key|Digit)(.)$/.exec(code);

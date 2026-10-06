@@ -214,7 +214,8 @@ function half(b: LayoutBuilder, s: 1 | -1, p: Side): void {
   box(-25, -25, -1, -1, 5, 5, BLOCK.SPRUCE_PLANKS);
   box(-25, -25, 0, 0, 5, 6, BLOCK.SPRUCE_PLANKS);
   box(-25, -25, 1, 1, 5, 7, BLOCK.SPRUCE_PLANKS);
-  box(-25, -24, 0, 2, 8, 8, AIR);
+  // The roof hatch also clears the first step, or the ceiling stops the jump onto the second one.
+  box(-25, -24, -1, 2, 8, 8, AIR);
   box(-25, -25, 2, 2, 5, 7, BLOCK.SPRUCE_PLANKS);
   box(-24, -24, 2, 2, 5, 5, BLOCK.WHITE_WOOL);
   box(-23, -22, -5, -4, 5, 5, p.awning);

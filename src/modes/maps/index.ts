@@ -56,3 +56,16 @@ export function mapFor(preferred: MapId, requires?: readonly ('zones' | 'flags')
 export function mapName(setting: MapSetting): string {
   return setting === 'rotate' ? 'Rotate' : getMap(setting).name;
 }
+
+/**
+ * The maps offered in the vote after a match: the rotation's next map first (it wins a tie), then others the
+ * game type can be played on, picked at random; the map just played only when there are not enough others.
+ */
+export function voteChoices(current: MapId, requires: readonly ('zones' | 'flags')[] | undefined, random: () => number, count = 3): MapId[] {
+  const first = nextMap(current, requires);
+  const out: MapId[] = [first];
+  const pool = MAP_IDS.filter((id) => id !== first && id !== current && getMap(id).supports(requires));
+  while (out.length < count && pool.length > 0) out.push(pool.splice(Math.floor(random() * pool.length), 1)[0]);
+  if (out.length < count && current !== first && getMap(current).supports(requires)) out.push(current);
+  return out;
+}

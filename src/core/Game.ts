@@ -467,7 +467,7 @@ export class Game {
     this.precompileShaders();
     // An invite link (?join=CODE) goes straight to the join screen with the code filled in.
     const invited = normalizeCode(new URLSearchParams(location.search).get('join') ?? '');
-    if (invited) void this.menu.showMultiplayer(invited);
+    if (invited) void this.menu.openInvite(invited);
     // A share link (?seed=…&mode=…) opens Create World prefilled.
     else {
       const share = parseShareParams(location.search);
@@ -1026,11 +1026,14 @@ export class Game {
 
   private async quitToTitle(): Promise<void> {
     window.clearTimeout(this.reconnectTimer);
+    // Leaving a Realms match goes back to the Realms playlist, like Minecraft returns to the server list.
+    const fromRealms = !!this.arcade && !!this.roomCode && !this.previewServer;
     await this.saveGame(true);
     this.disconnect();
     this.input.exitLock();
     this.stack.clear();
     this.enterMenu();
+    if (fromRealms) void this.menu.showRealms();
   }
 
   // ---------------------------------------------------------------- multiplayer
@@ -1201,6 +1204,8 @@ export class Game {
     this.renderer.shadowExcluded.push(session.tracers.mesh);
     this.renderer.scene.add(session.modeVisuals.group);
     this.renderer.shadowExcluded.push(session.modeVisuals.group);
+    this.renderer.scene.add(session.glints);
+    this.renderer.shadowExcluded.push(session.glints);
     this.root.append(session.hud.el, session.hud.loadoutEl);
     session.setHudVisible(false);
     for (const pl of welcome.players) session.addPlayer(pl.id, pl.name, pl.team ?? '');
@@ -1218,7 +1223,8 @@ export class Game {
     if (this.net) this.net.posInterval = 0.05;
     session.dispose();
     session.tracers.mesh.removeFromParent();
-    for (const o of [session.tracers.mesh, session.modeVisuals.group]) {
+    session.glints.removeFromParent();
+    for (const o of [session.tracers.mesh, session.modeVisuals.group, session.glints]) {
       const i = this.renderer.shadowExcluded.indexOf(o);
       if (i >= 0) this.renderer.shadowExcluded.splice(i, 1);
     }
@@ -2122,7 +2128,7 @@ export class Game {
     }
 
     if (this.net) {
-      const flags = (p.sprinting ? 1 : 0) | (p.flying ? 2 : 0) | (p.onGround ? 4 : 0);
+      const flags = (p.sprinting ? 1 : 0) | (p.flying ? 2 : 0) | (p.onGround ? 4 : 0) | (this.arcade ? this.arcade.aimFlags : 0);
       this.net.update(dt, p.x, p.y, p.z, p.yaw, p.pitch, flags, this.arcade ? 0 : this.hotbar.selectedBlock);
     }
     if (this.net || this.previewServer) this.remote.update(performance.now() / 1000, this.cam.camera, window.innerWidth, window.innerHeight);

@@ -139,7 +139,9 @@ export class ModeHud {
       if (m.carrier !== 0 && carrierPos(m.carrier, tmp)) { m.x = tmp.x; m.y = tmp.y + 2.4; m.z = tmp.z; }
       tmp.set(m.x, m.y, m.z).project(camera);
       const behind = tmp.z > 1;
-      placeMarker(tmp.x, tmp.y, behind, width, height, 40, placed, Math.min(height * 0.3, 150));
+      // Edge markers keep clear of the score bar on top and of the health/ammo panels at the bottom
+      // (an objective under your feet would otherwise sit on top of the ammo counter).
+      placeMarker(tmp.x, tmp.y, behind, width, height, 40, placed, Math.min(height * 0.3, 150), Math.min(height * 0.32, 230));
       const px = Math.round(placed.x), py = Math.round(placed.y);
       if (px !== m.px || py !== m.py) {
         m.px = px; m.py = py;

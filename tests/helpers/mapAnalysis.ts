@@ -1,6 +1,6 @@
 import { traceBlocks } from '../../server/Combat';
 import { ARENA_FLOOR_Y, type ArenaMap } from '../../src/modes/maps';
-import { BLOCK, SOLID } from '../../src/world/BlockRegistry';
+import { BLOCK, SOLID, TALL } from '../../src/world/BlockRegistry';
 
 /** Geometry helpers shared by the map tests and the scan scripts: standing spots, walking reachability, sight lines. */
 
@@ -21,7 +21,8 @@ export function reachable(map: ArenaMap, variant: number, sx: number, sz: number
   const at = blockFn(map, variant);
   const b = map.bounds;
   const air = (x: number, y: number, z: number) => at(x, y, z) === BLOCK.AIR;
-  const ok = (x: number, y: number, z: number) => SOLID[at(x, y, z)] === 1 && air(x, y + 1, z) && air(x, y + 2, z);
+  // Fences, walls and gates are 1.5 high: nobody stands on them.
+  const ok = (x: number, y: number, z: number) => SOLID[at(x, y, z)] === 1 && !TALL[at(x, y, z)] && air(x, y + 1, z) && air(x, y + 2, z);
   const seen = new Set<number>([keyOf(sx, sz, sy)]);
   const queue: [number, number, number][] = [[sx, sz, sy]];
   while (queue.length) {
@@ -32,6 +33,8 @@ export function reachable(map: ArenaMap, variant: number, sx: number, sz: number
       for (let ny = y + 1; ny >= ARENA_FLOOR_Y; ny--) {
         if (!ok(nx, ny, nz) || seen.has(keyOf(nx, nz, ny))) continue;
         if (ny <= y && !(air(nx, y + 1, nz) && air(nx, y + 2, nz))) continue;
+        // A jump up needs head room above the take-off spot (a ceiling 2 blocks up stops it).
+        if (ny > y && !air(x, y + 3, z)) continue;
         seen.add(keyOf(nx, nz, ny));
         queue.push([nx, nz, ny]);
       }

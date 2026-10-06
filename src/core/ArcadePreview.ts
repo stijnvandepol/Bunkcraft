@@ -1,6 +1,7 @@
 import { type GameType, type Team, gameTypeDef } from '../modes/GameTypes';
 import { getMap } from '../modes/maps';
-import { PLAYER_MAX_HEALTH, REGEN_DELAY, REGEN_PER_SECOND, RESPAWN_SECONDS, weaponDef } from '../modes/Weapons';
+import { PLAYER_MAX_HEALTH, REGEN_DELAY, REGEN_PER_SECOND, RESPAWN_SECONDS, magazineFor, weaponDef } from '../modes/Weapons';
+import { type ClassSpec, DEFAULT_CLASS, validateClass } from '../modes/Loadouts';
 import type { ClientMessage, MatchInfo, MatchPhase, ModeEventKind, ModeState, RosterEntry, ServerMessage, SnapshotEntry } from '../net/protocol';
 
 /**
@@ -56,7 +57,7 @@ export class ArcadePreviewServer {
   private dead = false;
   private respawnAt = 0;
   private primary = 'rifle';
-  private nextPrimary = 'rifle';
+  private cls: ClassSpec = { ...DEFAULT_CLASS };
   private slot = 0;
   private readonly mags = [0, 12, 0];
   private readonly reloadDone = [0, 0, 0];
@@ -103,7 +104,7 @@ export class ArcadePreviewServer {
 
   /** Sends the initial state, as the server would right after the welcome. */
   start(spawn: { x: number; y: number; z: number }): void {
-    for (const b of this.bots) this.host.deliver({ t: 'holds', id: b.id, weapon: b.weapon });
+    for (const b of this.bots) this.host.deliver({ t: 'holds', id: b.id, weapon: b.weapon, ...(b.weapon === 'sniper' ? { optic: 'scope' } : {}) });
     this.sendRoster();
     this.sendMatch();
     this.host.deliver({ t: 'spawn', x: spawn.x, y: spawn.y, z: spawn.z, yaw: 0, team: this.team, primary: this.primary, health: this.health });
@@ -115,7 +116,17 @@ export class ArcadePreviewServer {
 
   onClient(msg: ClientMessage, player: { x: number; y: number; z: number }): void {
     switch (msg.t) {
-      case 'loadout': this.nextPrimary = msg.primary; break;
+      case 'loadout': {
+        // The preview applies a class at once (the real server only right after a spawn).
+        this.cls = validateClass(msg);
+        this.primary = this.cls.primary;
+        this.mags[0] = magazineFor(weaponDef(this.primary)!, this.cls.perk);
+        this.mags[1] = magazineFor(weaponDef(this.cls.secondary)!, this.cls.perk);
+        this.host.deliver({ t: 'gear', primary: this.primary, secondary: this.cls.secondary, optic: this.cls.optic, perk: this.cls.perk });
+        this.sendAmmo(0);
+        this.sendAmmo(1);
+        break;
+      }
       case 'weapon': this.slot = msg.slot; break;
       case 'reload': this.startReload(msg.slot); break;
       case 'fire': this.onFire(msg); break;
@@ -124,7 +135,7 @@ export class ArcadePreviewServer {
   }
 
   private weaponOf(slot: number): string {
-    return slot === 0 ? this.primary : slot === 1 ? 'pistol' : 'knife';
+    return slot === 0 ? this.primary : slot === 1 ? this.cls.secondary : 'knife';
   }
 
   private startReload(slot: number): void {
@@ -454,14 +465,15 @@ export class ArcadePreviewServer {
   private respawn(): void {
     this.dead = false;
     this.health = PLAYER_MAX_HEALTH;
-    this.primary = this.nextPrimary;
-    this.mags[0] = weaponDef(this.primary)!.magazine;
-    this.mags[1] = 12;
+    this.primary = this.cls.primary;
+    this.mags[0] = magazineFor(weaponDef(this.primary)!, this.cls.perk);
+    this.mags[1] = magazineFor(weaponDef(this.cls.secondary)!, this.cls.perk);
     this.reloadDone[0] = this.reloadDone[1] = 0;
     this.slot = 0;
     this.host.deliver({
       t: 'spawn', x: this.centerX + (Math.random() - 0.5) * 20, y: this.floorY, z: this.centerZ + (Math.random() - 0.5) * 20,
       yaw: Math.random() * Math.PI * 2, team: this.team, primary: this.primary, health: this.health,
+      secondary: this.cls.secondary, optic: this.cls.optic, perk: this.cls.perk,
     });
     this.sendAmmo(0);
     this.sendAmmo(1);

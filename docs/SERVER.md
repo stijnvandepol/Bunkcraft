@@ -442,6 +442,21 @@ Een game aanmaken (`POST /api/rooms`) accepteert `{ name, gameMode, seed, gameTy
 | `timeLimitSec` | van het type (600; elimination 90 = rondetijd) | 120 tot 1800 seconden, verruimd met de keuzes van het type (rondetijd 60 s) |
 | `mapId` | `classic` | een id uit `MAP_IDS` (`classic`, `suburb`, `quarter`, `dockyard`, `desert`, `atomic`, `bunker`, `villa`, `yacht`, `town`, `station`) of `rotate` (onbekend = `classic`) |
 
+**Realms-endpoints:**
+
+- `POST /api/quickplay { gameType }` (alleen arcade-types): `200 { code, created: false }` voor een bestaande open lobby,
+  `201 { code, created: true }` voor een nieuwe (openbaar, `rotate`, standaardlimieten, naam "Team Deathmatch #K7Q").
+  Eigen limiet van 20 verzoeken per minuut per adres; alleen het **openen** van een lobby telt mee voor
+  `ROOM_CREATE_LIMIT` (anders `429`). Keuzeregels: `src/modes/Realms.ts`.
+- `GET /api/realms`: `{ modes: [{ gameType, players, lobbies }] }` per arcade-mode (spelers in alle geladen games van die
+  mode, openbare lobby's zonder wachtwoord met spelers). Valt onder de lijstlimiet.
+- `GET /api/rooms?public=1&kind=minecraft|arcade`: de serverlijst voor Multiplayer of Realms; zonder `kind` beide (oudere
+  clients). Arcade-lobby's met spelers hebben ook `phase`, `timeLeft` en `currentMap`.
+- `POST /api/rooms` accepteert ook `maxPlayers` (2 tot `ROOM_MAX_PLAYERS`, alleen arcade); dat staat in `world.json`.
+- Na een potje in een lobby met `rotate` stemmen de spelers over de volgende kaart (`vote`-berichten, zie `docs/GAMEMODES.md`).
+- Arcade-games zonder eigenaar (Snel spelen) bewaren geen naamclaims; een tweede speler met dezelfde naam wordt geweigerd
+  zolang de eerste speelt.
+
 `GET /api/rooms/<CODE>` geeft ook `gameType`, `scoreLimit` en `timeLimitSec` terug (0 bij Minecraft) en bij arcade-games
 `map` (de instelling: een kaart of `rotate`). De instellingen staan in `world.json` van de game (`mapId`). De spelmodus
 (`gameMode`) en de seed zijn voor een arcade-game niet van belang: de seed kiest alleen een van drie indelingen van de

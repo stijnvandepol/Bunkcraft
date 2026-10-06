@@ -76,5 +76,11 @@ describe('mode view: marker placement', () => {
     // Markers above the screen stay below the top bar.
     placeMarker(0, 3, false, 800, 600, 40, out, 150);
     expect(out.y).toBe(150);
+    // Markers below the screen (standing in the zone) stay above the health and ammo panels.
+    placeMarker(0.6, -3, false, 800, 600, 40, out, 150, 180);
+    expect(out.y).toBe(420);
+    expect(out.edge).toBe(true);
+    placeMarker(0.5, 0.1, true, 800, 600, 40, out, 150, 180);
+    expect(out.y).toBe(420);
   });
 });

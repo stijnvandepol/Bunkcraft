@@ -68,8 +68,9 @@ export interface GameTypeDef {
 
 /** The gun game weapon ladder: 16 levels, ending with the knife. Sniper and shotgun levels are never adjacent. */
 export const GUN_GAME_LADDER: string[] = [
-  'shotgun', 'smg', 'rifle', 'revolver', 'burst', 'pistol', 'dmr', 'smg',
-  'sniper', 'rifle', 'pistol', 'shotgun', 'burst', 'revolver', 'smg', 'knife',
+  // Starts with all-rounders: a shotgun first made the first kill take a minute on big open maps (docs/qa/ARCADE.md).
+  'rifle', 'smg', 'lmg', 'burst', 'revolver', 'shotgun', 'dmr', 'mpistol', 'semisniper',
+  'smg', 'sniper', 'rifle', 'pistol', 'shotgun', 'burst', 'revolver', 'smg', 'knife',
 ];
 
 const minutes = (...m: number[]) => m.map((x) => x * 60);

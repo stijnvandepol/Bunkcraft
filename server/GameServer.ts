@@ -4,9 +4,9 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameS
 import { join } from 'node:path';
 import type { WebSocket } from 'ws';
 import {
-  type ClientMessage, NAME_PATTERN, PROTOCOL_VERSION, type PlayerRecord, SNAP_FLAG_STALE, type ServerMessage, type SnapshotEntry, sanitizeChat,
+  type ClientMessage, type MatchPhase, NAME_PATTERN, PROTOCOL_VERSION, type PlayerRecord, SNAP_FLAG_STALE, type ServerMessage, type SnapshotEntry, sanitizeChat,
 } from '../src/net/protocol';
-import { ARENA_FLOOR_Y, DEFAULT_MAP, type MapId, type MapSetting, getMap, mapFor, nextMap, parseMapId, parseMapSetting } from '../src/modes/maps';
+import { ARENA_FLOOR_Y, DEFAULT_MAP, type MapId, type MapSetting, getMap, mapFor, nextMap, parseMapId, parseMapSetting, voteChoices } from '../src/modes/maps';
 import { type GameType, gameTypeDef } from '../src/modes/GameTypes';
 import { GAME_MODES, type GameMode, hasSurvivalRules } from '../src/player/GameMode';
 import { BINARY_VERSION, encodeBinary, encodeSnap, encodeSnapQ } from '../src/net/binary';
@@ -91,6 +91,8 @@ interface WorldData extends SurvivalData {
   timeLimitSec?: number;
   /** Arcade: a map id, or "rotate" for the next map after every match (absent = the default map). */
   mapId?: MapSetting;
+  /** Players this game takes (a Realms lobby size); absent = the server's limit. Never above the server's limit. */
+  maxPlayers?: number;
   /** Hash of the owner token handed out when the game was created (see Security.ts). */
   ownerHash?: string;
   /** scrypt hash of the room password; never sent to clients. */
@@ -138,6 +140,8 @@ interface Session {
   id: number;
   name: string;
   ws: WebSocket;
+  /** Hash of the identity key sent in hello (open lobbies tell two players with one name apart by it). */
+  keyHash?: string;
   x: number; y: number; z: number;
   yaw: number; pitch: number;
   flags: number; held: number;
@@ -225,6 +229,10 @@ export interface ServerOptions {
   scoreLimit?: number;
   timeLimitSec?: number;
   mapId?: MapSetting;
+  /** A rotating game: the map of its first match (not saved; after a restart rotation goes on from the default map). */
+  startMap?: MapId;
+  /** For a new game: its own player limit (a Realms lobby size), at most `maxPlayers`. */
+  lobbySize?: number;
 }
 
 /**
@@ -289,7 +297,7 @@ export class GameServer {
     const def = gameTypeDef(this.world.gameType ?? 'minecraft');
     if (def.arcade) {
       this.mapSetting = parseMapSetting(this.world.mapId) ?? DEFAULT_MAP;
-      const first: MapId = mapFor(parseMapId(this.mapSetting) ?? DEFAULT_MAP, def.requires);
+      const first: MapId = mapFor(parseMapId(this.mapSetting) ?? parseMapId(opts.startMap) ?? DEFAULT_MAP, def.requires);
       this.loadArena(first);
       this.guard = new ArcadeGuard(
         { getBlock: (x, y, z) => this.arena!.getBlock(x, y, z), getMeta: (x, y, z) => this.arena!.getMeta(x, y, z) },
@@ -398,6 +406,7 @@ export class GameServer {
     if (this.opts.ownerHash) data.ownerHash = this.opts.ownerHash;
     if (this.opts.passwordHash) data.passwordHash = this.opts.passwordHash;
     if (this.opts.listed) data.listed = true;
+    if (this.opts.lobbySize && this.opts.lobbySize < this.opts.maxPlayers) data.maxPlayers = Math.max(2, Math.floor(this.opts.lobbySize));
     if (def.arcade) {
       data.gameType = def.id;
       data.scoreLimit = this.opts.scoreLimit ?? def.scoreLimit;
@@ -527,10 +536,27 @@ export class GameServer {
     map?: MapSetting;
   } {
     return {
-      name: this.world.name, gameMode: this.world.gameMode, players: this.sessions.size, maxPlayers: this.opts.maxPlayers, locked: this.locked,
+      name: this.world.name, gameMode: this.world.gameMode, players: this.sessions.size, maxPlayers: this.maxPlayers, locked: this.locked,
       gameType: this.match?.info.type ?? 'minecraft', scoreLimit: this.match?.info.scoreLimit ?? 0, timeLimitSec: this.match?.info.timeLimitSec ?? 0,
       ...(this.match ? { map: this.mapSetting } : {}),
     };
+  }
+
+  /** An arcade game nobody owns (opened by Realms quick play): names are not claimed there. */
+  private get openLobby(): boolean {
+    return !!this.match && !this.world.ownerHash;
+  }
+
+  /** Players this game takes: its own lobby size when it has one, never more than the server allows. */
+  get maxPlayers(): number {
+    const own = this.world.maxPlayers;
+    return typeof own === 'number' && own >= 2 ? Math.min(own, this.opts.maxPlayers) : this.opts.maxPlayers;
+  }
+
+  /** Arcade: where the match stands, for Realms matchmaking and the lobby list; null in a Minecraft game. */
+  lobbyStatus(): { phase: MatchPhase; timeLeft: number; progress: number; map: string } | null {
+    const m = this.match;
+    return m ? { phase: m.phase, timeLeft: m.timeLeft(), progress: m.progress(), map: m.map.id } : null;
   }
 
   /** The match's view of this server: clock, messages, bullets' world and moving players. */
@@ -556,12 +582,14 @@ export class GameServer {
       ping: (id) => this.sessions.get(id)?.pingMs ?? 0,
       onShot: (r) => this.onShot(r),
       get interpDelay() { return arcadeInterpDelay(gs.tickHz); },
-      nextMap: (current, requires) => {
+      nextMap: (current, requires, preferred) => {
         if (this.mapSetting !== 'rotate') return null;
-        const next = nextMap(parseMapId(current) ?? DEFAULT_MAP, requires);
+        const voted = parseMapId(preferred);
+        const next = voted && getMap(voted).supports(requires) ? voted : nextMap(parseMapId(current) ?? DEFAULT_MAP, requires);
         this.loadArena(next);
         return next;
       },
+      voteMaps: (current, requires) => (this.mapSetting === 'rotate' ? voteChoices(parseMapId(current) ?? DEFAULT_MAP, requires, Math.random) : null),
     };
   }
 
@@ -660,7 +688,8 @@ export class GameServer {
       if (ban) return kick(`You are banned from this game: ${ban.reason}`, 'banned');
     }
     // A name belongs to the browser that first used it (identity key), so nobody can take over an operator.
-    const claim = this.claimOf(name);
+    // Open lobbies (Realms quick play, nobody owns them) keep no names: strangers come and go, a name is only taken while it plays.
+    const claim = this.openLobby ? undefined : this.claimOf(name);
     if (claim && !owner && !tokenMatches(key, claim)) {
       return kick('This name is already used by another player. Pick another name.', 'identity');
     }
@@ -696,6 +725,15 @@ export class GameServer {
     ws: WebSocket, ip: string, name: string, hello: Extract<ClientMessage, { t: 'hello' }>,
     who: { owner: boolean; verified: boolean; key: string | null },
   ): Session | null {
+    const keyHash = who.key ? hashToken(who.key) : undefined;
+    if (this.openLobby) {
+      for (const s of this.sessions.values()) {
+        if (s.name.toLowerCase() !== name.toLowerCase() || (keyHash && s.keyHash === keyHash)) continue;
+        ws.send(JSON.stringify({ t: 'kick', reason: 'Somebody with this name is already playing in this lobby. Pick another name.', code: 'identity' } satisfies ServerMessage));
+        ws.close(1008, 'Name in use');
+        return null;
+      }
+    }
     // Logging in again from elsewhere replaces the old session, like Minecraft.
     for (const s of this.sessions.values()) {
       if (s.name.toLowerCase() === name.toLowerCase()) {
@@ -704,14 +742,14 @@ export class GameServer {
         this.logout(s);
       }
     }
-    if (this.sessions.size >= this.opts.maxPlayers) {
+    if (this.sessions.size >= this.maxPlayers) {
       metrics.loginsFailed++;
       ws.send(JSON.stringify({ t: 'kick', reason: 'The server is full', code: 'full' } satisfies ServerMessage));
       ws.close(1008, 'The server is full');
       return null;
     }
     // First login with an identity key claims the name (bounded, so names cannot bloat world.json).
-    if (who.key && !this.claimOf(name) && Object.keys(this.world.claims!).length < MAX_CLAIMS) {
+    if (who.key && !this.openLobby && !this.claimOf(name) && Object.keys(this.world.claims!).length < MAX_CLAIMS) {
       // defineProperty: a name like "__proto__" must become an own entry, not touch the prototype.
       Object.defineProperty(this.world.claims!, lc(name), { value: hashToken(who.key), enumerable: true, writable: true, configurable: true });
       this.dirty = true;
@@ -726,7 +764,7 @@ export class GameServer {
     const start = record ?? this.world.spawn;
     const initial = parseInventory(record?.inventory);
     const session: Session = {
-      id: this.nextId++, name, ws, ip, op, owner: who.owner, verified: who.verified,
+      id: this.nextId++, name, ws, ip, op, owner: who.owner, verified: who.verified, keyHash,
       bin: hello.bin === true && this.opts.binary !== false,
       binq: hello.bin === true && this.opts.binary !== false && !!this.match && Number(hello.binv) >= BINARY_VERSION,
       guard: new InventoryGuard(initial.error ? [] : initial.slots),
@@ -907,7 +945,10 @@ export class GameServer {
       case 'fire': return void (s.fires.take() && this.onFire(s, msg, match));
       case 'reload': return void (s.actions.take() && match.reload(s.id, Number(msg.slot)));
       case 'weapon': return void (s.actions.take() && match.switchWeapon(s.id, Number(msg.slot)));
-      case 'loadout': return void (s.actions.take() && match.setLoadout(s.id, String(msg.primary), msg.secondary === undefined ? undefined : String(msg.secondary)));
+      case 'vote': return void (s.actions.take() && match.castVote(s.id, Number(msg.map)));
+      case 'loadout': return void (s.actions.take() && match.setLoadout(
+        s.id, String(msg.primary), optStr(msg.secondary), optStr(msg.optic), optStr(msg.perk),
+      ));
       case 'block':
         // Nobody builds in an arcade game: roll the client's guess back.
         return this.send(s, { t: 'reject', seq: msg.seq, x: msg.x, y: msg.y, z: msg.z, id: this.arena!.getBlock(msg.x | 0, msg.y | 0, msg.z | 0) });
@@ -1453,4 +1494,9 @@ const MAX_ITEM_DATA = 40;
 function enchantData(raw: unknown): Record<string, number> | undefined {
   if (!Array.isArray(raw)) return undefined;
   return enchantsOf(decodeData(raw.slice(0, MAX_ITEM_DATA).map(Number)));
+}
+
+/** An optional string field of a client message (anything else is treated as absent). */
+function optStr(v: unknown): string | undefined {
+  return v === undefined || v === null ? undefined : String(v).slice(0, 32);
 }

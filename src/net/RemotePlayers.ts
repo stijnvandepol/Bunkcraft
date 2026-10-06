@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { Mob } from '../entities/Mob';
 import { MOB_TYPES } from '../entities/MobTypes';
 import { type Team, TEAM_COLORS } from '../modes/GameTypes';
-import { RESPAWN_SECONDS } from '../modes/Weapons';
+import { type OpticId, RESPAWN_SECONDS } from '../modes/Weapons';
 import { createWeaponMaterial, weaponGeometry } from '../rendering/WeaponModels';
 import { h } from '../ui/dom';
 import { type RayHit, createRayHit, raycast } from '../world/Raycast';
@@ -172,12 +172,13 @@ export class RemotePlayers {
     if (i >= 0) this.mobs[i] = mob;
   }
 
-  /** Arcade: the weapon this player holds (a weapon id); unknown ids leave the hands empty. */
-  setWeapon(id: number, weaponId: string): void {
+  /** Arcade: the weapon this player holds (a weapon id, its optic, a suppressor); unknown ids leave the hands empty. */
+  setWeapon(id: number, weaponId: string, optic: OpticId = 'iron', sup = false): void {
     const r = this.players.get(id);
-    if (!r || r.weaponId === weaponId) return;
-    r.weaponId = weaponId;
-    const geo = weaponGeometry(weaponId);
+    const key = `${weaponId}|${optic}|${sup ? 1 : 0}`;
+    if (!r || r.weaponId === key) return;
+    r.weaponId = key;
+    const geo = weaponGeometry(weaponId, optic, sup);
     if (geo) r.weapon.geometry = geo;
     r.mob.holding = geo !== null;
   }
@@ -222,6 +223,12 @@ export class RemotePlayers {
   isAlive(id: number): boolean {
     const r = this.players.get(id);
     return !!r && r.buffer.length > 0 && r.deadAt < 0 && !r.hidden && !r.culled;
+  }
+
+  /** Arcade: the newest snapshot flags of a player (SNAP_FLAG_*), 0 when unknown. */
+  flagsOf(id: number): number {
+    const r = this.players.get(id);
+    return r && r.buffer.length > 0 ? r.buffer[r.buffer.length - 1].flags : 0;
   }
 
   /** Arcade: interpolated pose of a player (eye at y + 1.62 is up to the caller); false when unknown. */
