@@ -23,7 +23,7 @@ alle teksten NL/EN in `src/ui/i18n.ts` onder `realms.*` en `lobby.*`):
 - **Lobby's bekijken:** alle openbare arcade-lobby's (mode, kaart die nu gespeeld wordt of "Wisselende maps",
   spelers/max, fase en resterende tijd), filterbaar per mode. Lobby's met een wachtwoord tonen "Wachtwoord" en vragen het.
 - **Privélobby:** mode, kaart (alleen kaarten met de data die de mode nodig heeft, of *Wisselend (stemmen)*), score- en
-  tijdslimiet uit `GameTypeDef.options`, **Max. spelers** (2-16, de server begrenst tot `ROOM_MAX_PLAYERS`) en
+  tijdslimiet uit `GameTypeDef.options`, **Max. spelers** (2-16; het menu biedt alleen groottes tot `ROOM_MAX_PLAYERS`, dat `/api/server` als `roomMaxPlayers` meldt) en
   *Tonen bij Lobby's bekijken*. Daarna verschijnt de code en de uitnodigingslink, met **Spelen**.
 - **Code invoeren:** joint elke code of link. Een code van een Realms-lobby die bij Multiplayer wordt ingetypt, of een
   uitnodigingslink (`?join=CODE`) naar een arcade-game, gaat via Realms. Wie een Realms-match verlaat komt terug in de
@@ -174,6 +174,10 @@ de match loopt op de server gewoon door.
 
 ## HUD
 
+Alle teksten zijn NL/EN (`arc.*` en `mode.*` in `src/ui/i18n.ts`). De Engelse regels die de server stuurt (onder de timer,
+gebeurtenissen) vertaalt de client bij binnenkomst (`localizeServerText` in `src/modes/ModeView.ts`); wapen-, perk-, optiek-
+en kaartnamen blijven zoals ze zijn.
+
 - **Health** linksonder (getal en balk, knippert rood onder 30), **munitie** rechtsonder (`magazijn / ∞`,
   wapennaam, herlaadbalk) en de drie wapenslots.
 - **Richtkruis** dat meegroeit met de spreiding (heup groter, richten kleiner, bewegen en in de lucht groter)
@@ -215,7 +219,9 @@ Schade is uit 100 health. Zoom per optiek in de volgorde van de kolom *Optieken*
 De spreiding is de halve openingshoek van de kegel waarin een kogel kan landen. Een scope op de DMR kost 0,08 s extra ADS-tijd.
 
 **Terugslag** is een vast, leerbaar patroon per wapen (`pattern`, `recoilX`): elk schot tilt je richtpunt `recoil × 0,32`°
-op (30% minder als je richt) en duwt het zijwaarts volgens het patroon; laat je de trekker los, dan zakt ~70% terug. Het
+op (30% minder als je richt) en duwt het zijwaarts volgens het patroon; laat je de trekker los, dan zakt ~70% terug.
+Bij automatische wapens begint dat terugzakken pas na een pauze langer dan het schotinterval (×1,3, minstens 0,09 s), dus
+een vastgehouden trekker blijft klimmen, ook bij de rifle (600/min = elke 0,1 s). Het
 richtpunt zelf beweegt (yaw/pitch), dus wat je ziet is waar de server schiet. De LMG klimt het meest maar heeft 75 kogels.
 
 **Grendel:** de Bolt-Action Sniper werkt na elk schot de grendel (geluid en animatie, de kadans blijft `rpm`).
@@ -296,7 +302,9 @@ Alles procedureel (geen samples), data in `src/core/audio/weaponSounds.ts`, rece
   klikken, stoffen ritsel bij richten in/uit, wapenwissel. De stappen volgen de herlaadvoortgang, dus een afgebroken herlading
   stopt ook in het geluid.
 - **Vijanden horen aankomen:** voetstappen van andere spelers per ondergrond, positioneel (tot 26 m, Ninja 7 m) met wat
-  uitrusting-rammel; bij Subtitles een caption "Footsteps" met richting.
+  uitrusting-rammel; bij Subtitles een caption "Footsteps" met richting. Stappen binnen 12 m hebben de prioriteit van een
+  schot (`remoteStepPriority`): in een vuurgevecht met 16 spelers zit de stemmenlimiet vol en verdwenen ze anders.
+  In de arcade staan de captions boven de wapenslots en de munitie.
 - **Feedback:** hitmarker-tik, metalen headshot-*ding*, kill confirm (thunk + twee tonen), medailles voor double/triple/multi
   kill (binnen 3,5 s) en killstreaks 3/5/10 (koperachtige arpeggio's + tekst onder het richtkruis), stingers bij matchstart en
   -einde (winst, verlies, gelijkspel). Adem inhouden/uitblazen bij de scope.

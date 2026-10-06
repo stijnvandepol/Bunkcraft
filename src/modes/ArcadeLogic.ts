@@ -96,6 +96,11 @@ export class FireControl {
     return true;
   }
 
+  /** Drops the rest of a burst (the magazine ran dry mid-burst: it must not finish by itself after the reload). */
+  cancelBurst(): void {
+    this.burstLeft = 0;
+  }
+
   /** Block the trigger for a while (weapon switch, reload). */
   delay(now: number, seconds: number): void {
     this.nextAt = Math.max(this.nextAt, now + seconds);

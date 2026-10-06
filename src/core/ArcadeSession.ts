@@ -882,6 +882,7 @@ export class ArcadeSession {
       } else if (!ammo.reloading) {
         const mag = ammo.mag - this.pending;
         if (mag <= 0) {
+          this.trigger.cancelBurst();
           if (input.leftClicked) this.d.audio.playEmpty();
           if (input.leftDown) this.requestReload(now);
         } else if (w.burst && w.burstCycleSec) {
