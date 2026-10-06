@@ -1,6 +1,6 @@
 import { BINARY_VERSION, decodeBinary } from './binary';
 import { type ClientMessage, type ContainerClientMessage, PROTOCOL_VERSION, type ServerMessage } from './protocol';
-import { identityKey, ownerToken, roomPassword } from './RoomApi';
+import { forgetRoomPassword, identityKey, ownerToken, roomPassword } from './RoomApi';
 
 export type WelcomeMessage = Extract<ServerMessage, { t: 'welcome' }>;
 
@@ -89,6 +89,8 @@ export class NetClient {
             resolve(msg);
           } else if (msg.t === 'kick') {
             window.clearTimeout(timeout);
+            // A refused password must not be sent again silently (the menu would never ask for it again).
+            if (msg.code === 'password' && room) forgetRoomPassword(room);
             reject(new Error(msg.reason));
           }
           return;
@@ -131,7 +133,8 @@ export class NetClient {
     this.pending.set(seq, { x, y, z, prev, prevMeta });
     // Keep only recent edits around for rollback.
     if (this.pending.size > 256) this.pending.delete(this.pending.keys().next().value!);
-    this.send(meta ? { t: 'block', seq, x, y, z, id, meta } : { t: 'block', seq, x, y, z, id });
+    // `prev` lets the server spot a race with another player's edit of the same block (see protocol.ts).
+    this.send(meta ? { t: 'block', seq, x, y, z, id, meta, prev } : { t: 'block', seq, x, y, z, id, prev });
   }
 
   /** Sends the player position at most 20 times per second. */

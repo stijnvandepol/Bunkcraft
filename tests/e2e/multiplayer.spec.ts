@@ -45,7 +45,10 @@ test('multiplayer: create a game, join by link, chat and see each other\'s block
   await page.evaluate(() => (window as any).game.chat.onSend('hello from alice'));
   await expect.poll(async () => { await b.bringToFront(); return b.evaluate(() => (window as any).game.chat.log.textContent as string); }, { timeout: 15_000 }).toContain('hello from alice');
 
-  // A block placed by A shows up for B (and survives B's view of the world).
+  // A block placed by A shows up for B (and survives B's view of the world). Survival places must be backed by an
+  // item (the server refuses blocks out of nothing), so A switches to creative first (A is the game's operator).
+  await page.evaluate(() => (window as any).game.chat.onSend('/gamemode creative'));
+  await expect.poll(() => page.evaluate(() => (window as any).game.mode), { timeout: 15_000 }).toBe('creative');
   const spot = await page.evaluate(async () => {
     const g = (window as any).game;
     const { BLOCK } = await import('/src/world/BlockRegistry.ts' as string);

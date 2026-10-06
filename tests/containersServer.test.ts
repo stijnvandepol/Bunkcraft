@@ -46,8 +46,9 @@ describe('containers over the wire', () => {
   it('two players share a chest; transfers are checked and duplicates corrected', async () => {
     const t = await startTestServer();
     stoppers.push(t);
-    const { code } = await createRoom(t.base, { gameMode: 'survival' });
-    const a = await joinGame(t, code, 'alice', { key: KEY_A });
+    // Built in creative, then played in survival: the switch makes each player's next inventory the baseline.
+    const { code, ownerToken } = await createRoom(t.base, { gameMode: 'creative' });
+    const a = await joinGame(t, code, 'alice', { key: KEY_A, owner: ownerToken });
     const b = await joinGame(t, code, 'bob', { key: KEY_B });
     expect(a.welcome.containers).toBe(true);
     const sp = a.welcome.spawn;
@@ -63,16 +64,17 @@ describe('containers over the wire', () => {
     expect(opened.slots).toHaveLength(27);
     await open(b.client, cx, cy, cz);
 
-    // Alice gets one cobblestone the legal way: place, break, drop, pick up.
-    a.client.send({ t: 'block', seq: 2, x: px, y: py + 3, z: pz + 2, id: BLOCK.COBBLESTONE });
-    a.client.send({ t: 'block', seq: 3, x: px, y: py + 3, z: pz + 2, id: 0 });
-    a.client.send({ t: 'drop', id: BLOCK.COBBLESTONE, count: 1, x: sp.x, y: sp.y + 0.5, z: sp.z, delay: 0 });
-    const ent = await a.client.waitFor('ent', (m) => m.i.some((e) => e[1] === BLOCK.COBBLESTONE));
-    a.client.send({ t: 'take', id: ent.i.find((e) => e[1] === BLOCK.COBBLESTONE)![0] });
-    await a.client.waitFor('taken');
+    a.client.send({ t: 'chat', text: '/gamemode survival' });
+    await a.client.waitFor('gamemode');
+    // Alice holds one cobblestone and a second chest, Bob nothing.
+    a.client.send({ t: 'state', inventory: inv([BLOCK.COBBLESTONE, 1, 0], [BLOCK.CHEST, 1, 0]), stats: [20, 20, 5, 0] });
+    b.client.send({ t: 'state', inventory: inv(), stats: [20, 20, 5, 0] });
+    // Placing a block she does not have is refused (and would otherwise be mined for diamonds).
+    a.client.send({ t: 'block', seq: 2, x: px, y: py + 3, z: pz + 2, id: BLOCK.DIAMOND_ORE });
+    expect((await a.client.waitFor('reject', (m) => m.seq === 2)).id).toBe(BLOCK.DIAMOND_ORE);
 
     // Shift-click it into the chest: accepted, and Bob sees the new contents.
-    a.client.send({ t: 'container', op: 'click', seq: 1, slot: -1, from: 0, button: 0, shift: true, inv: inv([BLOCK.COBBLESTONE, 1, 0]), cursor: [] });
+    a.client.send({ t: 'container', op: 'click', seq: 1, slot: -1, from: 0, button: 0, shift: true, inv: inv([BLOCK.COBBLESTONE, 1, 0], [BLOCK.CHEST, 1, 0]), cursor: [] });
     const deposit = await waitContainer(a.client, 'result', (m) => m.seq === 1);
     expect(deposit.ok).toBe(true);
     expect(deposit.fromInv).toEqual({ slot: 0, count: 1 });
@@ -80,13 +82,14 @@ describe('containers over the wire', () => {
     expect(seen.slots[0][1]).toBe(1);
 
     // Duplicate attempt: the same click again with the stale inventory that still holds the cobblestone.
-    a.client.send({ t: 'container', op: 'click', seq: 2, slot: -1, from: 0, button: 0, shift: true, inv: inv([BLOCK.COBBLESTONE, 1, 0]), cursor: [] });
+    a.client.send({ t: 'container', op: 'click', seq: 2, slot: -1, from: 0, button: 0, shift: true, inv: inv([BLOCK.COBBLESTONE, 1, 0], [BLOCK.CHEST, 1, 0]), cursor: [] });
     const dupe = await waitContainer(a.client, 'result', (m) => m.seq === 2);
     expect(dupe.ok).toBe(false);
     const fix = await a.client.waitFor('state');
-    expect(fix.inventory.every((row) => row[0] === 0)).toBe(true);
+    expect(fix.inventory.some((row) => row[0] === BLOCK.COBBLESTONE)).toBe(false);
+    expect(fix.inventory.filter((row) => row[0] === BLOCK.CHEST)).toHaveLength(1);
     // An invented cursor stack is refused as well.
-    a.client.send({ t: 'container', op: 'click', seq: 3, slot: 5, button: 0, inv: inv(), cursor: [ITEM.DIAMOND, 64, 0] });
+    a.client.send({ t: 'container', op: 'click', seq: 3, slot: 5, button: 0, inv: inv([0, 0, 0], [BLOCK.CHEST, 1, 0]), cursor: [ITEM.DIAMOND, 64, 0] });
     expect((await waitContainer(a.client, 'result', (m) => m.seq === 3)).ok).toBe(false);
 
     // Bob takes the cobblestone: it is on his cursor, his next inventory with it passes the guard.

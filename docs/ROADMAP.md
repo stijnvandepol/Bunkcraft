@@ -222,7 +222,13 @@ Volgende stappen:
    (`pos`) en de overige berichten zijn nog JSON; delta-compressie van `snap` (alleen wat bewoog) is de volgende stap.
 6. **Observability en beheer: Gedaan.** JSON-logs, `/metrics`, `/health`, back-ups, verbindingslimieten, `ALLOWED_ORIGINS`,
    gracieus afsluiten met reconnect-hint. Open: Grafana-dashboard als voorbeeld, rate limits per game in `/admin`, alerting.
-7. **Weer in multiplayer** (`/weather` is een stub tot het weersysteem op de server draait) (kisten en ovens zijn klaar, zie `docs/MULTIPLAYER.md`).
+7. **Weer in multiplayer: Gedaan** (regen, onweer en bliksem op de server; `/weather` werkt). Kisten en ovens zijn klaar, zie `docs/MULTIPLAYER.md`.
+8. **Uit de QA-ronde (`docs/qa/MULTIPLAYER.md`): Gedaan.** Plaatsen kost nu het item (`InventoryGuard.authorizeEdit`,
+   ook net gecraft), andere spelers lopen vloeiend (server bemonstert posities op een vaste klok, client stempelt
+   snapshots per tick), de mobcap telt chunks rond spelers één keer (zoals Minecraft), de wachtwoordlimiet geldt per game en
+   de oude doodsmelding blijft niet meer hangen. Open: zaadjes planten bestaat nog niet (dus ook niet in de guard),
+   aansteker/vuur alleen via TNT, en een correctie van de inventory na een geweigerde plaatsing (nu alleen terugdraaien
+   van het blok).
 
 ## 7b. Arcade-game types (Krunker-stijl)
 

@@ -124,6 +124,11 @@ export function setRoomPassword(code: string, password: string): void {
   passwords.set(code, password);
 }
 
+/** The server refused the password (wrong or rate limited): the next join asks again instead of reusing it. */
+export function forgetRoomPassword(code: string): void {
+  passwords.delete(code);
+}
+
 export function roomPassword(code: string): string | undefined {
   return passwords.get(code);
 }

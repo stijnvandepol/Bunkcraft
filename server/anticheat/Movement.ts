@@ -134,8 +134,16 @@ export class MovementValidator {
   private started = false;
   private readonly box: AABB = { minX: 0, minY: 0, minZ: 0, maxX: 0, maxY: 0, maxZ: 0 };
 
+  /**
+   * Block states for partial shapes. Without them `boxIntersectsSolid` treats slabs, stairs and fences as
+   * full blocks, and a fence one block below the feet as overlapping; the client always collides with
+   * the real shapes, so the validator does too (meta 0 when the world has no states).
+   */
+  private readonly getMeta: BlockGetter;
+
   constructor(private readonly world: MovementWorld, private readonly opts: MovementOptions) {
     this.maxSpeed = this.prevMaxSpeed = opts.maxSpeed;
+    this.getMeta = world.getMeta ?? (() => 0);
   }
 
   get hasState(): boolean {
@@ -187,7 +195,7 @@ export class MovementValidator {
 
   /** Does the player box at (x, y, z) overlap solid blocks (with the safety margin)? */
   inSolid(x: number, y: number, z: number): boolean {
-    return boxIntersectsSolid(this.setBox(x, y, z, MOVE.MARGIN), this.world.getBlock, this.world.getMeta);
+    return boxIntersectsSolid(this.setBox(x, y, z, MOVE.MARGIN), this.world.getBlock, this.getMeta);
   }
 
   /** Is there something to stand on right below the feet? */
@@ -196,14 +204,14 @@ export class MovementValidator {
     const b = this.setBox(x, y, z, MOVE.MARGIN, -MOVE.MARGIN);
     b.minY = y - MOVE.SUPPORT_DEPTH;
     b.maxY = y + 0.1;
-    return boxIntersectsSolid(b, this.world.getBlock, this.world.getMeta);
+    return boxIntersectsSolid(b, this.world.getBlock, this.getMeta);
   }
 
   /** Height of the ground below (x, y, z) when it is within BOUNCE_GROUND, rounded up to 0.05; NaN when there is none. */
   private floorBelow(x: number, y: number, z: number): number {
     for (let d = 0.05; d <= MOVE.BOUNCE_GROUND + 1e-9; d += 0.05) {
       const b = this.setBox(x, y - d, z, MOVE.MARGIN, -MOVE.MARGIN);
-      if (boxIntersectsSolid(b, this.world.getBlock, this.world.getMeta)) return y - d + 0.05;
+      if (boxIntersectsSolid(b, this.world.getBlock, this.getMeta)) return y - d + 0.05;
     }
     return NaN;
   }

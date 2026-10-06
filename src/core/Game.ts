@@ -98,7 +98,7 @@ import { applyAccessibilityDocument, effectiveParticles, limitFlash, mobSoundLab
 import { GamepadController, type PadContext, cleanName } from './Gamepad';
 import { needsAutoJump } from './InputMath';
 import { TouchControls, type TouchContext } from './TouchControls';
-import { announce } from '../ui/Announcer';
+import { announce, clearAnnouncement } from '../ui/Announcer';
 import { MenuNav } from '../ui/MenuNav';
 import { Subtitles } from '../ui/Subtitles';
 import { setSurvivalColorBlind } from '../ui/SurvivalHud';
@@ -1458,6 +1458,7 @@ export class Game {
    */
   private respawn(): void {
     this.stats.reset();
+    clearAnnouncement();
     const t = this.worldRules.respawnTarget(this.meta?.spawn ?? { x: this.player.x, y: this.player.y, z: this.player.z });
     this.worldRules.pendingBed = t.checkBed ? this.worldRules.bed : null;
     this.player.setPosition(t.x, t.y, t.z);
