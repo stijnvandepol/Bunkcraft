@@ -41,6 +41,11 @@ export function findSpawnColumn(gen: WorldGenerator, genVersion: number, require
   return fallback;
 }
 
+/** Dry land whose surface is not carved away by a cave or ravine (the spread spawn's test). */
+export function isSpawnableColumn(gen: WorldGenerator, x: number, z: number): boolean {
+  return gen.heightAt(x, z) >= SEA_LEVEL + 1 && !gen.surfaceOpen?.(x, z);
+}
+
 /**
  * A new multiplayer player's first position: a dry spot within `SPAWN_RADIUS` of the world spawn, picked from the
  * player's name (stable for a name, different between players), so two newcomers do not stand inside each other.
@@ -50,7 +55,7 @@ export function spreadSpawn<T extends { x: number; z: number }>(
   spawn: T, name: string, isDry: (x: number, z: number) => boolean, radius = SPAWN_RADIUS,
 ): T {
   const key = hashString(name.toLowerCase());
-  for (let i = 0; i < 8; i++) {
+  for (let i = 0; i < 32; i++) {
     const h = hashString(`${key}:${i}`);
     // Uniform over the ring between 2 blocks (the world spawn itself stays free) and `radius`.
     const r = 2 + Math.sqrt((h & 0xffff) / 0xffff) * (radius - 2);

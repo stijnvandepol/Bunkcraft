@@ -12,6 +12,8 @@ import { InventoryGuard } from '../server/InventoryGuard';
 import { ITEM, itemId } from '../src/items/ItemRegistry';
 import { type ClientMessage, PROTOCOL_VERSION, type ServerMessage } from '../src/net/protocol';
 import { BLOCK } from '../src/world/BlockRegistry';
+import { SPAWN_RADIUS } from '../src/world/Spawn';
+import { SEA_LEVEL } from '../src/world/constants';
 
 class FakeSocket extends EventEmitter {
   OPEN = 1;
@@ -154,6 +156,22 @@ describe('locked game: a typo in the password (QA: the wrong password was reused
       expect(roomPassword('ABCDEF')).toBe('geheim');
     } finally {
       Object.assign(g, saved);
+    }
+  });
+});
+
+describe('newcomer spawns (survival QA: Alice and Bob both stood on 0.5, 65, 0.5)', () => {
+  it('puts two new players on different dry spots within the spawn radius', () => {
+    const server = sandbox();
+    const a = connect(server, 'alice'), b = connect(server, 'bobby');
+    const sa = a.of('welcome')[0].spawn, sb = b.of('welcome')[0].spawn;
+    const origin = (server as unknown as { world: { spawn: { x: number; z: number } } }).world.spawn;
+    expect(sa).not.toEqual(sb);
+    for (const s of [sa, sb]) {
+      const d = Math.hypot(s.x - origin.x, s.z - origin.z);
+      expect(d).toBeGreaterThan(1);
+      expect(d).toBeLessThanOrEqual(SPAWN_RADIUS + 1);
+      expect(s.y).toBeGreaterThan(SEA_LEVEL);
     }
   });
 });

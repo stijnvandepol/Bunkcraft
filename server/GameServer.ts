@@ -1,5 +1,4 @@
-import { findSpawnColumn, spreadSpawn } from '../src/world/Spawn';
-import { SEA_LEVEL } from '../src/world/constants';
+import { findSpawnColumn, isSpawnableColumn, spreadSpawn } from '../src/world/Spawn';
 import { enchantsOf } from '../src/items/EnchantRules';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -447,6 +446,15 @@ export class GameServer {
     }
   }
 
+  /** A dry spot within the spawn radius for a player without a record, at the terrain height there (+2, like `findSpawn`). */
+  private newcomerSpawn(name: string): { x: number; y: number; z: number } {
+    const gen = this.entities?.world.generator;
+    if (this.match || !gen) return this.world.spawn;
+    const at = spreadSpawn(this.world.spawn, name, (x, z) => isSpawnableColumn(gen, x, z));
+    if (at === this.world.spawn) return at;
+    return { x: at.x, y: Math.floor(gen.heightAt(Math.floor(at.x), Math.floor(at.z))) + 2, z: at.z };
+  }
+
   /** Same dry-land spawn search as the client, using the shared terrain generator. */
   private findSpawn(seed: number, genVersion: number): { x: number; y: number; z: number } {
     const gen = new TerrainGenerator(seed, genVersion);
@@ -768,9 +776,7 @@ export class GameServer {
 
     const record = this.match ? null : this.playerRecord(name);
     // A newcomer appears somewhere within the spawn radius (Minecraft's spawnRadius), not inside the last one.
-    const gen = this.entities?.world.generator;
-    const start = record ?? (this.match || !gen ? this.world.spawn
-      : spreadSpawn(this.world.spawn, name, (x, z) => gen.heightAt(x, z) >= SEA_LEVEL + 1));
+    const start = record ?? this.newcomerSpawn(name);
     const initial = parseInventory(record?.inventory);
     const session: Session = {
       id: this.nextId++, name, ws, ip, op, owner: who.owner, verified: who.verified, keyHash,
