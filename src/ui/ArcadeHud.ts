@@ -549,6 +549,8 @@ export class ArcadeHud {
 
   setMatchEnd(info: { title: string; color: string; roster: readonly RosterEntry[]; ctx: ScoreboardContext } | null): void {
     this.end.classList.toggle('hidden', info === null);
+    // A full-screen result: the score bar, kill feed and panels under it showed through its title and the map vote.
+    this.el.classList.toggle('end-open', info !== null);
     this.lastEndCount = -1;
     if (!info) return;
     this.setProtection(0); // nothing of the round shows through the end screen

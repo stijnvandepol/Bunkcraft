@@ -1061,6 +1061,7 @@ html, body {
 .arc-death-weapons span.sel { border-color: #fff; }
 
 .arc-end { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: calc(var(--s) * 8); background: rgba(0, 0, 0, 0.65); }
+.arc-hud.end-open > :not(.arc-end) { visibility: hidden; }
 .arc-end-title { font-size: calc(var(--fs) * 3); }
 .arc-end-board { width: min(calc(var(--s) * 300), 94vw); max-height: 55vh; overflow: hidden; }
 .arc-end-count { font-size: calc(var(--fs) * 1.5); color: #ffff55; }

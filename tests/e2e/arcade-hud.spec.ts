@@ -66,6 +66,16 @@ test('arcade: an objective marker at the screen edge keeps its whole caption on 
   }
 });
 
+test('arcade: the end screen hides the score bar, kill feed and panels under it', async ({ page }) => {
+  await startPreview(page, 'tdm', 'atomic');
+  await page.evaluate(() => (window as any).game.previewServer.botKill());
+  await expect(page.locator('.arc-feed-row').first()).toBeVisible();
+  await page.evaluate(() => (window as any).game.previewServer.endMatch('red'));
+  await expect(page.locator('.arc-end-title')).toBeVisible();
+  // The title sat on top of the timer and scores (QA round 2, shot r2-end-overlap.jpg).
+  for (const s of ['.arc-top', '.arc-feed-row', '.arc-ammo', '.arc-health']) await expect(page.locator(s).first(), s).toBeHidden();
+});
+
 test('arcade: sound captions sit above the weapon slots and the ammo counter', async ({ page }) => {
   await startPreview(page, 'tdm', 'atomic');
   await page.evaluate(() => {
