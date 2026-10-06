@@ -280,6 +280,7 @@ if [ "$START" = 1 ]; then
   fi
 fi
 
+if [ "$DRY" = 1 ]; then echo; say "dry run finished: nothing was changed"; exit 0; fi
 cat <<EOF
 
 BunkCraft is running.

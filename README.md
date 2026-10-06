@@ -59,8 +59,9 @@ Overige scripts:
 
 | Script | Doel |
 |---|---|
-| `npm run build` | Typecheck en productiebuild in `dist/` |
+| `npm run build` | Typecheck, productiebuild in `dist/` en de server als één JS-bestand in `dist-server/` |
 | `npm start` | Game **en** multiplayer-server op http://localhost:3000 (na `build`) |
+| `npm run load` | Laadtest met bots (`scripts/load/`, zie `docs/research/SERVER-DEPLOY.md`) |
 | `npm run server` | Alleen de multiplayer-server, voor ontwikkeling (Vite stuurt `/ws` door) |
 | `npm run preview` | De productiebuild lokaal serveren |
 | `npm run typecheck` | Alleen TypeScript controleren |
@@ -136,8 +137,8 @@ link of typen de code onder **Join Game**.
 ```bash
 npm run build
 npm start                     # http://localhost:3000 → Multiplayer → Create Game
-# Op je eigen domein met automatische HTTPS (Caddy):
-DOMAIN=play.example.com docker compose up -d
+# Op je eigen Linux-server met automatische HTTPS (Docker + Caddy), zie docs/SERVER.md:
+sudo ./scripts/install.sh --domain play.example.com
 ```
 
 - **Gedeelde wereld:** iedereen bouwt mee in dezelfde wereld. Alleen blokwijzigingen gaan over het netwerk, want het terrein komt uit de seed.

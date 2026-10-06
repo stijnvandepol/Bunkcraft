@@ -10,12 +10,15 @@ The user is Stijn and writes in **Dutch**, so reply in Dutch. Code, comments and
 npm install            # node_modules is not committed
 npm run dev            # Vite on :5173 (proxies /ws → :3000)
 npm run server         # multiplayer server on :3000 (tsx watch)
-npm run build          # tsc --noEmit + vite build → dist/
-npm start              # production: serves dist/ + WebSocket on :3000 (run build first)
+npm run build          # tsc --noEmit + vite build → dist/ + server bundle → dist-server/index.js (esbuild)
+npm start              # production: node dist-server/index.js, serves dist/ + WebSocket on :3000 (run build first)
+npm run load -- --steps survival:10x8,tdm:4x12   # bot load test (scripts/load/), needs build:server
 npm run typecheck
 ```
 
 Docker: `docker build -t bunkcraft . && docker run -p 3000:3000 -v bunkcraft-data:/app/data bunkcraft`.
+Linux server: `sudo ./scripts/install.sh --domain …` (Docker + Caddy, backups, `bunkcraft update`); systemd unit in `deploy/`.
+The production server is the esbuild bundle (no tsx at runtime); dev keeps `npm run server` (tsx watch).
 Server configuration uses environment variables (`PORT`, `DATA_DIR`, `SEED`, `GAMEMODE`, `WORLD_NAME`, `MOTD`, `MAX_PLAYERS`); see `docs/SERVER.md`.
 
 ## Architecture (where things live)

@@ -37,9 +37,9 @@ naar ~375 MB bij 160 spelers.
 
 | VPS | Prijs (indicatie) | Verwachte capaciteit |
 |---|---|---|
-| 1 vCPU / 1 GB (kleinste VPS bij de meeste aanbieders) | ~€2-5/mnd | ~40-60 spelers (5-8 survival-games) of meer in arcade |
-| **2 vCPU / 4 GB (Hetzner CAX11 ARM of CX22)** — aanbevolen | ~€4-5/mnd | ~120-160 spelers; het bouwen van de image gaat zonder swap |
-| 4 vCPU / 8 GB | ~€8-15/mnd | dezelfde ~200-250 per Node-proces (de gamelogica draait op één core); meer pas met meerdere processen |
+| 1 vCPU / 1 GB (kleinste VPS bij de meeste aanbieders) | ~€2-5/mnd | ~40-60 survival-spelers (5-8 games), arcade ~100 |
+| **2 vCPU / 4 GB (Hetzner CAX11 ARM of CX22)** — aanbevolen | ~€4-5/mnd | ~120-150 survival-spelers (arcade 200+); bouwen gaat zonder swap |
+| 4 vCPU / 8 GB | ~€8-15/mnd | ~150-200: de gamelogica van één Node-proces draait op één core; meer pas met workers of meerdere processen |
 
 **Zonder Docker** (systemd): zie [Zonder Docker](#zonder-docker-systemd).
 
