@@ -33,6 +33,7 @@ test('arcade: the end screen shows the final score that arrives right after matc
     // Like the real server after the end: the preview's own once-a-second match broadcast must not say "live" any more.
     g.previewServer.phase = 'ended';
     g.previewServer.endAt = g.previewServer.t + 60;
+    g.previewServer.scores.red = 3; g.previewServer.scores.blue = 1;
     g.onServerMessage({ t: 'matchend', winnerTeam: 'red', winnerId: 0, restartIn: 12 });
     g.onServerMessage({ t: 'match', phase: 'ended', timeLeft: 12, scores: { red: 3, blue: 1 }, info: g.previewServer.info });
   });
