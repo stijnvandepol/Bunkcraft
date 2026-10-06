@@ -105,6 +105,7 @@ export class ArcadeHud {
   private crosshairVisible = true;
   private scopeOn = false;
   private lastRespawnPending = '';
+  private lastRespawnClass: ClassSpec | null = null;
   private lastMag = -1;
   private lastAmmoDef: WeaponDef | null = null;
   private lastReloadPct = -1;
@@ -513,6 +514,9 @@ export class ArcadeHud {
    */
   setRespawn(seconds: number, next: ClassSpec | null, choice = true): void {
     const n = seconds < 0 ? -1 : Math.max(0, Math.ceil(seconds));
+    // Per frame while dead: nothing to do (and nothing to allocate) unless the second or the class object changed.
+    if (n === this.lastCount && next === this.lastRespawnClass && this.lastRespawnPending !== '\0') return;
+    this.lastRespawnClass = next;
     const custom = !!next && sameClass(next, this.custom) && !presetFor(next);
     const key = next ? `${next.primary}|${next.optic}|${next.secondary}|${next.perk}|${custom}` : '';
     if (n === this.lastCount && key === this.lastRespawnPending) return;

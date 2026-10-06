@@ -13,7 +13,7 @@ de server (match, hitscan, health, respawn) staat in `docs/SERVER.md`.
 | Minecraft | `minecraft` | De sandbox: bouwen, delven, mobs, survival/creative/hardcore. Seed en game mode kies je bij het aanmaken. |
 | Team Deathmatch | `tdm` | Rood tegen blauw op de arena. Elke kill telt voor je team; het eerste team op de score limit wint. |
 | Free For All | `ffa` | Iedereen voor zichzelf. De eerste speler op de score limit wint. |
-| Gun Game | `gungame` | Elke kill geeft je het volgende wapen van een ladder van 16 (eindigt met het mes); een meskill zet het slachtoffer een niveau terug. Wie het laatste niveau afmaakt wint. Geen loadoutkeuze. |
+| Gun Game | `gungame` | Elke kill geeft je het volgende wapen van een ladder van 18 (begint met de rifle, eindigt met het mes); een meskill zet het slachtoffer een niveau terug. Wie het laatste niveau afmaakt wint. Geen loadoutkeuze. |
 | Team Elimination | `elimination` | Rondes met één leven: wie het andere team uitschakelt wint de ronde, het eerste team op het rondelimiet wint. Doden spectaten hun team tot de volgende ronde. |
 | Hardpoint | `hardpoint` | Eén zone (de heuvel) telt: het team dat er alleen staat krijgt 1 punt per seconde, samen = betwist. De heuvel verspringt elke 60 s (met 5 s pauze). Eerste op 250 punten. |
 | Domination | `domination` | Drie vaste punten: alleen in een punt staan neemt het in 6 s in (een punt van de ander eerst neutraliseren); elk eigen punt geeft 1 punt per 2 s. Eerste op 100. |
@@ -99,7 +99,7 @@ De regels draaien op de server (`server/modes/<logic>.ts`, zie `docs/SERVER.md`)
   twee statusregels ("Red flag: taken by Ann", "Blue flag: dropped 8"). Als drager loop je 10% langzamer.
 - **Rondes:** pips per team voor de gewonnen rondes en "2 v 3" levende spelers; banners "Round 4 starts in 5" (intermission),
   "3-2-1" (countdown) en na de ronde "Red wins the round". Uitgeschakeld = "Eliminated: you are back next round" en spectaten.
-- **Ladder** (gun game): niveau, huidig wapen, volgend wapen, voortgangsblokjes en de koploper; links bovenin `7/16`.
+- **Ladder** (gun game): niveau, huidig wapen, volgend wapen, voortgangsblokjes en de koploper (alleen hier, niet ook onder de timer); links bovenin `7/18`. Het paneel wijkt als het scoreboard (Tab) openstaat.
   Het scoreboard heeft een kolom **Level** (gun game) of **Caps** (ctf).
 - **Gebeurtenissen** geven een korte banner en een geluid (`AudioEngine.playModeCue`: goed, slecht, alarm als je eigen vlag
   wordt gepakt, neutraal).
@@ -129,11 +129,12 @@ Alles is aan te passen in *Options → Controls → Key Binds* (categorie **Arca
 | Wapen kiezen | 1 primair, 2 secundair, 3 melee, of het muiswiel |
 | Vorig wapen (quick switch) | Q |
 | Scoreboard | Tab (vasthouden) |
-| Loadout-menu | B |
+| Create-a-Class (klassen) | B |
+| Scope stilhouden (adem inhouden) | Shift ingedrukt tijdens het richten door een scope |
 | Chat | T |
 | HUD verbergen | F1 |
 
-Op het doodscherm kies je met 1–4 het primaire wapen voor je volgende leven. Esc opent het pauzemenu;
+Op het doodscherm kies je met 1–8 de klasse voor je volgende leven (7 presets en je Custom-klasse). Esc opent het pauzemenu;
 de match loopt op de server gewoon door.
 
 ## HUD
@@ -141,7 +142,8 @@ de match loopt op de server gewoon door.
 - **Health** linksonder (getal en balk, knippert rood onder 30), **munitie** rechtsonder (`magazijn / ∞`,
   wapennaam, herlaadbalk) en de drie wapenslots.
 - **Richtkruis** dat meegroeit met de spreiding (heup groter, richten kleiner, bewegen en in de lucht groter)
-  en verdwijnt achter de scope van de sniper.
+  en verdwijnt bij richten (de vizieren, de rode stip of de holo-ring nemen het over) en achter de scope.
+- **Medailles** onder het richtkruis (double/triple/multi kill, killstreak 3/5/10) en de ademmeter in de scope.
 - **Hit markers:** wit tikje bij een treffer, goud bij een headshot, rood met een geluid bij een kill.
 - **Schade-indicatoren:** rode streepjes rond het richtkruis wijzen naar de schutter en draaien met je blik mee.
 - **Killfeed** rechtsboven (schutter, wapen, `HS` bij een headshot, slachtoffer; teamkleuren, jouw regels omlijnd).
@@ -158,29 +160,117 @@ de match loopt op de server gewoon door.
 
 Alle getallen komen uit `src/modes/Weapons.ts` en zijn **autoritatief op de server**. De client voorspelt
 alleen het uiterlijk (terugslag, mondingsvuur, tracer) en neemt munitie (`ammo`) en treffers (`hit`) van de server over.
-Schade is uit 100 health.
+Schade is uit 100 health. Zoom per optiek in de volgorde van de kolom *Optieken*.
 
-| Wapen | Slot | Schade | Headshot | Kogels | Schoten/min | Magazijn | Herladen | Spreiding heup / ADS | Volle schade tot / val-af tot | Zoom | Snelheid | Terugslag |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| Assault Rifle (automatisch) | primair | 20 | ×2 | 1 | 600 | 30 | 1.6 s | 2.2° / 0.4° | 40 / 90 m (min. 60%) | ×1.3 | ×1 | 0.9° |
-| SMG (automatisch) | primair | 15 | ×1.8 | 1 | 900 | 25 | 1.3 s | 2.6° / 1.2° | 16 / 50 m (min. 50%) | ×1.2 | ×1.08 | 0.6° |
-| Shotgun (semi) | primair | 13 | ×1.5 | 10 | 70 | 6 | 2.4 s | 4.5° / 3.5° | 6 / 20 m (min. 15%) | ×1.1 | ×0.97 | 4° |
-| Sniper Rifle (semi) | primair | 85 | ×1.6 | 1 | 45 | 4 | 2.2 s | 9° / 0° | 300 / 300 m (min. 100%) | ×4.0 | ×0.92 | 3° |
-| DMR (semi) | primair | 34 | ×2 | 1 | 270 | 12 | 2.0 s | 3.5° / 0.1° | 60 / 140 m (min. 70%) | ×1.8 | ×0.96 | 1.6° |
-| Burst Rifle (3 schoten per klik) | primair | 22 | ×1.6 | 1 | 900 binnen de burst, 0,38 s per cyclus | 30 | 1.7 s | 2.0° / 0.25° | 45 / 100 m (min. 60%) | ×1.25 | ×1 | 1.2° |
-| Pistol (semi) | secundair | 18 | ×2 | 1 | 400 | 12 | 1.1 s | 1.8° / 0.5° | 25 / 60 m (min. 50%) | ×1.1 | ×1.04 | 1.1° |
-| Revolver (semi) | secundair | 52 | ×2 | 1 | 150 | 6 | 2.4 s | 2.5° / 0.15° | 30 / 70 m (min. 60%) | ×1.2 | ×1 | 4.5° |
-| Knife (semi) | melee | 55 | ×1 | 1 | 120 | – | – | – | 2.6 / 2.6 m (min. 100%) | – | ×1.08 | 0° |
+| Wapen | Slot | Modus | Schade | Headshot | Schoten/min | Magazijn | Herladen | Spreiding heup / ADS | Volle schade tot / val-af tot | ADS-tijd | Zoom (per optiek) | Snelheid | Optieken |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| Assault Rifle | primair | auto | 20 | ×2 | 600 | 30 | 1.6 s | 2.2° / 0.4° | 32 / 80 m (min. 55%) | 0.24 s | 1.3× / 1.3× / 1.4× | ×1 | iron, reddot, holo |
+| SMG | primair | auto | 15 | ×1.8 | 900 | 25 | 1.3 s | 2.6° / 1.2° | 16 / 50 m (min. 50%) | 0.17 s | 1.2× / 1.2× / 1.3× | ×1.08 | iron, reddot, holo |
+| Shotgun | primair | semi | 10 × 13 | ×1.5 | 70 | 6 | 2.4 s | 4.5° / 3.5° | 7 / 22 m (min. 15%) | 0.20 s | 1.1× / 1.2× | ×0.97 | iron, reddot |
+| LMG | primair | auto | 19 | ×1.7 | 720 | 75 | 4.2 s | 3.2° / 0.55° | 38 / 95 m (min. 62%) | 0.42 s | 1.3× / 1.3× / 1.4× | ×0.88 | iron, reddot, holo |
+| Burst Rifle | primair | burst (3) | 22 | ×1.6 | 900 (cyclus 0.34 s) | 30 | 1.7 s | 2° / 0.25° | 45 / 85 m (min. 55%) | 0.25 s | 1.3× / 1.3× / 1.4× | ×1 | iron, reddot, holo |
+| DMR | primair | semi | 34 | ×2 | 270 | 12 | 2 s | 3.5° / 0.1° | 60 / 140 m (min. 70%) | 0.28 s | 1.4× / 1.5× / 1.6× / 2.2× | ×0.96 | iron, reddot, holo, scope |
+| Semi-Auto Sniper | primair | semi | 55 | ×1.7 | 125 | 6 | 2.6 s | 7° / 0.05° | 70 / 160 m (min. 80%) | 0.36 s | 3.0× | ×0.93 | scope |
+| Bolt-Action Sniper | primair | grendel | 85 | ×1.6 | 45 | 4 | 2.2 s | 9° / 0° | 300 / 300 m (min. 100%) | 0.42 s | 4.5× | ×0.92 | scope |
+| Pistol | secundair | semi | 18 | ×2 | 400 | 12 | 1.1 s | 1.8° / 0.5° | 25 / 60 m (min. 50%) | 0.15 s | 1.1× | ×1.04 | iron |
+| Machine Pistol | secundair | auto | 12 | ×1.6 | 1000 | 20 | 1.5 s | 3.2° / 1.5° | 9 / 30 m (min. 45%) | 0.14 s | 1.1× | ×1.05 | iron |
+| Revolver | secundair | semi | 52 | ×2 | 150 | 6 | 2.4 s | 2.5° / 0.15° | 30 / 70 m (min. 60%) | 0.20 s | 1.2× | ×1 | iron |
+| Knife | melee | semi | 55 | ×1 | 120 | – | – | – | 2.6 / 2.6 m | – | – | ×1.08 | – |
 
-De spreiding is de halve openingshoek van de kegel waarin een kogel kan landen. Je start elk leven met je gekozen
-primaire wapen, je secundaire wapen (standaard de pistol) en het mes.
+De spreiding is de halve openingshoek van de kegel waarin een kogel kan landen. Een scope op de DMR kost 0,08 s extra ADS-tijd.
 
-**Klassen (loadout-presets)** staan in `src/modes/Loadouts.ts` en kiezen primair en secundair in één klik
-(bericht `loadout { primary, secondary? }`; de server controleert de ids): Assault (rifle + pistol), Rusher (SMG + pistol),
-Breacher (shotgun + pistol), Marksman (DMR + revolver), Burst (burst rifle + pistol) en Sniper (sniper + pistol).
-In het loadout-menu (B) staan de klassen boven de losse primaire kaarten; op het doodscherm kies je met 1-6 een klas voor je
-volgende leven. Balans: `npx tsx scripts/ttk-matrix.ts --current` (SMG wint close-range van de rifle, de rifle op 30 m; de shotgun
-doodt in één schot tot ongeveer 4 m; de DMR wint van de rifle pas ver weg).
+**Terugslag** is een vast, leerbaar patroon per wapen (`pattern`, `recoilX`): elk schot tilt je richtpunt `recoil × 0,32`°
+op (30% minder als je richt) en duwt het zijwaarts volgens het patroon; laat je de trekker los, dan zakt ~70% terug. Het
+richtpunt zelf beweegt (yaw/pitch), dus wat je ziet is waar de server schiet. De LMG klimt het meest maar heeft 75 kogels.
+
+**Grendel:** de Bolt-Action Sniper werkt na elk schot de grendel (geluid en animatie, de kadans blijft `rpm`).
+
+### Rollen en balans (time to kill)
+
+Model in `src/modes/Balance.ts`, tabel met `npx tsx scripts/ttk-matrix.ts` (`--summary` voor alleen deze tabel). Realistische
+TTK in ms (body, richtfactor 0,75, kans dat een kogel binnen de hitbox valt door de spreiding, ADS-tijd erbij vanaf 7 m;
+**vet** = snelste primaire wapen op die afstand):
+
+| Wapen | 4 m | 10 m | 20 m | 35 m | 60 m | 90 m | Rol |
+|---|---|---|---|---|---|---|---|
+| Assault Rifle | 567 | 807 | **807** | 940 | 1073 | 1880 | Allrounder: wint op middenafstand, redt zich dichtbij en ver |
+| SMG | 556 | **726** | 814 | 1683 | >5 s | >5 s | Snelst te voet; wint dichtbij, zakt weg na 20 m |
+| Shotgun | **286** | 1629 | >5 s | >5 s | – | – | Eén schot op armlengte; nutteloos voorbij 15 m |
+| LMG | 583 | 1003 | 1003 | 1003 | 1190 | 2804 | Groot magazijn (9,4 kills per magazijn op 20 m, de rest ≤ 4,3): houdt een lane en wint multikills; traag richten en herladen |
+| Burst Rifle | 611 | 861 | 861 | **861** | 997 | 1403 | Strakke bursts van drie: beloont precisie op 30–40 m |
+| DMR | 667 | 947 | 947 | 947 | **947** | 1243 | Drie schoten; met scope voor lange lijnen |
+| Semi-Auto Sniper | 800 | 1160 | 1160 | 1160 | 1160 | **1160** | Twee snelle bodyshots op elke afstand; geen one-shot headshot (55 × 1,7 = 93) |
+| Bolt-Action Sniper | 3365 | 2642 | 2642 | 2642 | 2642 | 2642 | Eén headshot is een kill op elke afstand (85 × 1,6 = 136); traag en zwak dichtbij |
+| Pistol | 1050 | 1200 | 1200 | 1400 | 3500 | >5 s | Snelle, precieze backup |
+| Machine Pistol | 660 | 800 | 1040 | >5 s | >5 s | – | Volautomatische paniekknop voor dichtbij |
+| Revolver | 667 | 867 | 867 | 1400 | 1400 | 1933 | Twee treffers, traag herladen |
+
+Bewaakt door `tests/arcadeBalance.test.ts`: elk primair wapen heeft een niche (snelste op een afstand, meeste kills per
+magazijn, one-shot headshot of snelst te voet), geen wapen is op meer dan twee van de zes afstanden de snelste, geen wapen
+domineert een ander van zijn slot (TTK op alle afstanden, magazijn, snelheid, ADS-tijd, herladen en headshot), een secundair
+wapen is nergens sneller dan het beste primaire, en niets doodt met één bodyshot.
+
+## Klassen (Create-a-Class)
+
+Een klasse is **primair wapen + optiek + secundair wapen + één perk** (`ClassSpec` in `src/modes/Loadouts.ts`):
+
+| Optiek | Effect |
+|---|---|
+| Iron Sights | De eigen vizieren van het wapen |
+| Red Dot | Rode stip in een klein huis, iets meer zoom (×0,95 FOV) |
+| Holographic | Ring met stip, nog iets meer zoom (×0,9 FOV) |
+| Scope | Vergroting per wapen (DMR 2,2×, Semi-Auto 3×, Bolt-Action 4,5×), zwarte scope-overlay met mil-dots; het wapen verdwijnt uit beeld als je volledig richt. Sway; **Shift ingedrukt = adem inhouden** (4 s stil, daarna 2,5 s naar adem happen met meer sway). Vijanden zien een **glinstering** als je door een scope naar ze kijkt. |
+
+| Perk | Effect |
+|---|---|
+| Extended Mags | +40% magazijn op beide geweren |
+| Quickdraw | 40% sneller richten, wapenwissel twee keer zo snel (ook op de server) |
+| Ninja | Je voetstappen zijn voor anderen alleen dichtbij (≤ 7 m) te horen in plaats van tot 26 m |
+| Suppressor | Demper op het wapen: stille "thwip", tot 24 m hoorbaar, klein mondingsvuur; 20% korter schadebereik |
+
+- **Presets als quick picks:** Assault (rifle + red dot, pistol, Quickdraw), Rusher (SMG, machine pistol, Ninja), Breacher
+  (shotgun, pistol, Ninja), Support (LMG + holo, pistol, Extended Mags), Marksman (DMR + scope, revolver), Burst (burst + holo,
+  pistol, Suppressor), Sniper (bolt-action, machine pistol, Quickdraw).
+- **Menu (B):** de presets bovenaan (1–7), daaronder de **Custom**-klasse (8) met per kolom primair, optiek (optieken die het
+  wapen niet kan dragen zijn grijs), secundair en perk, plus de stats van het gekozen wapen. Elke wijziging maakt de klasse je
+  Custom-klasse en bewaart hem in `localStorage` (`bunkcraft.arcadeClass`); de laatst gekozen klasse (`bunkcraft.arcadeClass.last`)
+  gaat bij het joinen meteen naar de server. Op het doodscherm kies je met 1–8.
+- **Server:** bericht `loadout { primary, secondary?, optic?, perk? }`. Elk veld wordt gecontroleerd (`validateClass`): onbekend
+  of niet toegestaan → standaard (rifle, iron, pistol, geen perk); een optiek die het wapen niet kan dragen wordt de standaardoptiek
+  van dat wapen. Een klasse die je binnen **3 s na je spawn en vóór je eerste schot** kiest, gaat direct in (`gear`), anders bij
+  je volgende leven. `spawn`/`gear` dragen `optic` en `perk`; `holds` draagt `optic`, `sup` (demper) en `quiet` (Ninja) zodat
+  anderen het juiste model, de demper en de glinstering zien en je stappen goed horen.
+- **Gun Game** houdt zijn vaste ladder (geen klassen, geen perks). De ladder begint nu met de rifle in plaats van de shotgun
+  (eerste kill duurde op grote kaarten > 50 s, zie `docs/qa/ARCADE.md`) en bevat alle 11 vuurwapens (18 treden).
+
+Screenshots: `docs/screenshots/arcade/` (`scripts/qa/weapon-shots.py`): `rifle-reddot-ads.png`, `rifle-holo-ads.png`,
+`lmg-holo-ads.png`, `sniper-scope.png`, `dmr-scope-breath.png`, `class-menu.png`, `model-*.png`.
+
+## Geluid
+
+Alles procedureel (geen samples), data in `src/core/audio/weaponSounds.ts`, recepten in `AudioEngine`:
+
+- **Schot per wapen in lagen:** transient (korte felle crack), body (band-beperkte ruis + dalende sinus-thump) en een staart.
+  Buiten (`env.enclosure` laag) een lange donkere echo met een late "slap" van verre muren; binnen vroege reflecties en een korte
+  heldere ruimte. Eigen schoten krijgen ook de klik van het mechaniek.
+- **Afstand en muren:** elk wapen heeft een hoorafstand (machine pistol 55 m … bolt-action 160 m, gedempt 24 m); ver weg wordt
+  het een gedempte "pop + boem", en de bestaande ruimtelijke keten (afstand, luchtdemping, occlusie door blokken, stereo/HRTF)
+  maakt schoten achter muren dof.
+- **Handelingen:** herlaadsequenties per wapenklasse (magazijn eruit/erin, grendel/charging handle; shotgun patroon per patroon +
+  pomp; revolver cilinder open, hulzen, patronen, dicht; LMG klep open, band, klep dicht), grendel na elk sniperschot, droog
+  klikken, stoffen ritsel bij richten in/uit, wapenwissel. De stappen volgen de herlaadvoortgang, dus een afgebroken herlading
+  stopt ook in het geluid.
+- **Vijanden horen aankomen:** voetstappen van andere spelers per ondergrond, positioneel (tot 26 m, Ninja 7 m) met wat
+  uitrusting-rammel; bij Subtitles een caption "Footsteps" met richting.
+- **Feedback:** hitmarker-tik, metalen headshot-*ding*, kill confirm (thunk + twee tonen), medailles voor double/triple/multi
+  kill (binnen 3,5 s) en killstreaks 3/5/10 (koperachtige arpeggio's + tekst onder het richtkruis), stingers bij matchstart en
+  -einde (winst, verlies, gelijkspel). Adem inhouden/uitblazen bij de scope.
+- **Volume en toegankelijkheid:** alles via de sfx/ui-bussen (volume-instellingen gelden); elk geluid meldt zich bij de
+  Subtitles-luisteraar, en de arcade-sessie geeft captions voor schoten ("Gunshot", "Suppressed shot", "Distant gunfire"),
+  voetstappen, medailles en match start/einde.
+- **Budget:** schoten van anderen gebruiken drie stemmen (crack, body die in de ruimtestaart overgaat, thump), ver weg één, en er
+  worden er hooguit drie per frame gebouwd; de stemmenlimiet (64, prioriteiten) doet de rest. `python3 scripts/audio-report.py`:
+  alle geluiden binnen de grenzen, worst case (16 spelers SMG + explosie) 0,26 ms/frame (budget 0,3).
 
 ## Matchregels
 
@@ -194,7 +284,7 @@ doodt in één schot tot ongeveer 4 m; de DMR wint van de rifle pas ver weg).
   loadout en spawn-bescherming.
 - Health regenereert na `REGEN_DELAY` (5 s) zonder schade met `REGEN_PER_SECOND` (25) per seconde.
 - Hitbox: 0,6 breed, 1,8 hoog, de bovenste 0,4 is het hoofd (headshot).
-- Een loadout-keuze geldt vanaf je **volgende leven**.
+- Een klasse geldt vanaf je **volgende leven**, behalve als je hem binnen 3 s na je spawn en vóór je eerste schot kiest: dan meteen.
 
 ## Netwerk (client)
 

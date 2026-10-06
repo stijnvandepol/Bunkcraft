@@ -266,6 +266,16 @@ regenereert, respawns en een scoreboard. Beschrijving, besturing en wapentabel: 
   Terminus (station), puntsymmetrisch met per helft een eigen palet; alle met zones en vlaggen (zie `docs/GAMEMODES.md`).
 - **Wapenherziening: Gedaan.** Shotgun 10 × 13 (one-shot dichtbij), SMG 15, nieuwe DMR, burst rifle en revolver, klassen in het
   loadoutmenu.
+- **Shooter-afwerking: Gedaan (oktober 2026).** Create-a-Class (primair + optiek + secundair + perk, presets als quick picks,
+  `localStorage`, servervalidatie met terugval op de standaard, klassewissel direct binnen 3 s na spawn), nieuwe wapens (LMG,
+  semi-auto sniper, machine pistol; de sniper is nu bolt-action), optieken (red dot, holo met reticle in het viewmodel; scope met
+  overlay, sway, adem inhouden met Shift, glinstering voor vijanden), terugslagpatronen die het richtpunt verplaatsen, ADS-tijd per
+  wapen, perks (Extended Mags, Quickdraw, Ninja, Suppressor), balansmodel `src/modes/Balance.ts` met nichetests, en een
+  geluidsronde (gelaagde schoten met binnen/buiten-staart, gedempte en verre varianten, herlaadsequenties, grendel, voetstappen van
+  vijanden per ondergrond, hitmarker/headshot/kill, medailles, stingers). Details en wapentabel: [`GAMEMODES.md`](GAMEMODES.md).
+  Meting 16 spelers (15 bots + Chromium `--use-angle=metal`, M1 Pro, classic): 120 fps (vsync) vóór en na, frame p99 10,3 → 10,4 ms,
+  JS-tijd per frame 0,57 → 0,58 ms, zonder vsync-cap 650 → 637 fps (−2%); server (`bench-arena.ts 16 30`): tick 0,074 → 0,085 ms,
+  0,84 → 0,93% van een core. Audio worst case 0,26 ms/frame (budget 0,3).
 
 **Open:**
 
@@ -278,7 +288,11 @@ regenereert, respawns en een scoreboard. Beschrijving, besturing en wapentabel: 
    Domination/Hardpoint-varianten per kaart (meer zones op kleine kaarten, spawnkeuze weg van de actieve heuvel).
 4. **Objective-afwerking:** dragerpijl met interval voor de vijand, MVP-punten (dragerkill, terugbrengen), overtime bij een
    gelijkspel in ctf, rondes met zijwissel, granaten voor elimination, de vlag als echt derde-persoonsmodel op de rug.
-5. **Meer wapens en perks**, scorestreaks, kill cam, headshot-statistieken, teamchat.
+5. **Na Create-a-Class:** meerdere opgeslagen custom-klassen (nu één), attachments per slot (grip, laser) en een
+   tweede perk; scorestreaks (UAV, die de medailles al voorbereiden), kill cam, headshot-statistieken, teamchat; een
+   variabele zoom op de bolt-action; een granaat/launcher pas als de server projectielen kan (nu alles hitscan); de
+   glinstering ook in de dev-preview (de nep-bots sturen nog geen ADS-vlag); een echte TTS- of ingesproken announcer als
+   iemand stemmen opneemt (nu muzikale cues + tekst).
 6. **Anti-cheat vervolg:** server-side invoersimulatie (de client stuurt invoer + tijd, de server speelt `Player.step` na)
    zodat ook kleine speedhacks en lage zweefhacks opvallen; drempels van de verdenkingsscore kalibreren met echte
    spelersdata; tracers alleen naar wie de schutter mag zien; delta-snapshots (alleen wat veranderde) voor de overige

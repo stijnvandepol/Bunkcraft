@@ -63,6 +63,10 @@ SAMPLER = """
 })
 """
 
+# QA_UNCAPPED=1: no vsync / frame-rate cap, so the frame rate shows the headroom above the display rate.
+if os.environ.get('QA_UNCAPPED'):
+    q.ARGS = q.ARGS + ['--disable-gpu-vsync', '--disable-frame-rate-limit']
+
 with sync_playwright() as pw:
     b = q.launch(pw)
     page = q.open_game(b, 1280, 720)
