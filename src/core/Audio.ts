@@ -31,6 +31,8 @@ export type OcclusionProbe = (x0: number, y0: number, z0: number, x1: number, y1
 const MAX_VOICES = 64;
 /** Occlusion raycasts per frame (each is at most ~32 block reads). */
 const PROBES_PER_FRAME = 6;
+/** Other players' gunshots built per frame; more in one frame are masked by these anyway (caps node churn in big firefights). */
+const REMOTE_SHOTS_PER_FRAME = 3;
 
 /**
  * Fully procedural audio (no audio assets). The engine owns the Web Audio graph; the sound design lives in
@@ -65,6 +67,7 @@ export class AudioEngine {
   private hrtf = false;
   private probe: OcclusionProbe | null = null;
   private probeBudget = PROBES_PER_FRAME;
+  private shotBudget = REMOTE_SHOTS_PER_FRAME;
   private armor: ArmorMaterial | null = null;
   private readonly lastVariant = new Map<string, number>();
   private readonly listeners = new Set<SoundListener>();
@@ -727,6 +730,7 @@ export class AudioEngine {
     this.emitAt(suppressed ? `weapon.${weapon}.suppressed` : `weapon.${weapon}`, at, volume);
     if (volume <= 0.02) return;
     const own = !at;
+    if (!own && this.shotBudget-- <= 0) return;
     this.placed(at, gunEarshot(weapon, suppressed), own ? Priority.Player : Priority.Normal, () => this.gunRecipe(weapon, Math.min(1, volume), own, suppressed));
   }
 
@@ -754,7 +758,15 @@ export class AudioEngine {
       // Distant: the crack is gone, a soft pop and a long muffled boom roll in.
       this.noiseBurst(1100 * p, 0.7, 0.04, v * g.crack[3] * 0.5);
       this.noiseBurst(g.tail[0] * 0.8, 0.5, g.tail[1] * 1.3, v * g.tail[2] * 1.6, 'lowpass', 0.01);
-      this.voice('sine', g.thump[1] * 1.4, g.thump[1], g.tail[1] * 0.6, v * g.thump[3] * 0.5);
+      return;
+    }
+    if (!own) {
+      // Other players' shots: three voices (a firefight of 16 must not eat the voice budget): the crack, a body
+      // that rings out into the room's tail (long and dark outdoors, short indoors) and the thump.
+      this.noiseBurst(g.crack[0] * p, g.crack[1], g.crack[2], v * g.crack[3]);
+      const tail = g.body[2] + (g.tail[1] - g.body[2]) * (0.35 + 0.65 * out);
+      this.noiseBurst((g.body[0] + g.tail[0]) * 0.5 * p, 0.55, tail, v * (g.body[3] + g.tail[2] * 0.5), 'lowpass');
+      this.voice('sine', g.thump[0] * p, g.thump[1], g.thump[2], v * g.thump[3]);
       return;
     }
     // Transient, body, thump.
@@ -969,6 +981,7 @@ export class AudioEngine {
   /** Per-frame upkeep: ambience, music, mix parameters. Keep this cheap (< 0.3 ms). */
   update(dt: number): void {
     this.probeBudget = PROBES_PER_FRAME;
+    this.shotBudget = REMOTE_SHOTS_PER_FRAME;
     const ctx = this.ctx;
     if (!ctx || !this.running) return;
     const env = this.env;

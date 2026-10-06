@@ -47,7 +47,7 @@ export const DEFAULT_GUN_SOUND = GUN_SOUNDS.rifle;
 export const SUPPRESSED_EARSHOT = 24;
 export const SUPPRESSED_GAIN = 0.45;
 /** Below this distance gain a positional shot uses the distant recipe. */
-export const FAR_LEVEL = 0.3;
+export const FAR_LEVEL = 0.45;
 
 export function gunSound(id: string): GunSound {
   return GUN_SOUNDS[id] ?? DEFAULT_GUN_SOUND;
