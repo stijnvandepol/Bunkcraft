@@ -1,9 +1,10 @@
 import { type ArenaMap, DEFAULT_MAP, type Spawn, getMap, mapFor, parseMapId } from '../src/modes/maps';
 import { type GameTypeDef, type Team, gameTypeDef } from '../src/modes/GameTypes';
 import {
-  DEFAULT_PRIMARY, DEFAULT_SECONDARY, PLAYER_MAX_HEALTH, PRIMARY_WEAPONS, REGEN_DELAY, REGEN_PER_SECOND, SECONDARY_WEAPONS,
-  type WeaponDef, damageAt, fireInterval, weaponDef,
+  DEFAULT_PRIMARY, DEFAULT_SECONDARY, type OpticId, PLAYER_MAX_HEALTH, type PerkId, REGEN_DELAY, REGEN_PER_SECOND,
+  type WeaponDef, damageAt, fireInterval, magazineFor, opticFor, rangeMulFor, switchDelayFor, weaponDef,
 } from '../src/modes/Weapons';
+import { type ClassSpec, DEFAULT_CLASS, validateClass } from '../src/modes/Loadouts';
 import type {
   ClientMessage, MatchInfo, MatchPhase, ModeEventKind, RosterEntry, ServerMessage,
 } from '../src/net/protocol';
@@ -18,6 +19,8 @@ export const WARMUP_SECONDS = 10;
 export const ENDED_SECONDS = 12;
 export const SPAWN_PROTECTION = 2;
 export const SWITCH_DELAY = 0.25;
+/** A class picked this soon after spawning (and before the first shot) applies at once instead of next life. */
+export const CLASS_SWAP_WINDOW = 3;
 export const EYE_HEIGHT = 1.62;
 /**
  * A client-reported shot origin further than this from the server's eye is replaced by the server's.
@@ -70,6 +73,10 @@ export interface ShotReport {
 interface Slot {
   def: WeaponDef;
   mag: number;
+  /** Magazine size of this slot (the perk may enlarge it). */
+  cap: number;
+  /** Falloff distance multiplier (suppressor). */
+  rangeMul: number;
   nextFireAt: number;
   /** 0 when not reloading. */
   reloadDoneAt: number;
@@ -98,11 +105,15 @@ export interface MatchPlayer {
   lastHpSent: number;
   respawnAt: number;
   protectedUntil: number;
-  /** Weapons of this life and the ones chosen for the next. */
+  /** Weapons of this life (primary with its optic, secondary, perk) and the class chosen for the next. */
   primary: string;
-  nextPrimary: string;
   secondary: string;
-  nextSecondary: string;
+  optic: OpticId;
+  perk: PerkId;
+  next: ClassSpec;
+  /** When this life began and whether a shot went out in it (early class swap). */
+  spawnedAt: number;
+  firedThisLife: boolean;
   slots: [Slot, Slot, Slot];
   slot: 0 | 1 | 2;
   switchReadyAt: number;
@@ -192,8 +203,8 @@ export class Match {
     const p: MatchPlayer = {
       id, name, team, kills: 0, deaths: 0, pts: 0, joinSeq: ++this.joinCounter, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, alive: false, health: PLAYER_MAX_HEALTH,
       lastDamageAt: -1e9, lastHpSent: PLAYER_MAX_HEALTH, respawnAt: 0, protectedUntil: 0,
-      primary: DEFAULT_PRIMARY, nextPrimary: DEFAULT_PRIMARY, secondary: DEFAULT_SECONDARY, nextSecondary: DEFAULT_SECONDARY,
-      slots: [newSlot(DEFAULT_PRIMARY), newSlot(DEFAULT_SECONDARY), newSlot('knife')], slot: 0,
+      primary: DEFAULT_PRIMARY, secondary: DEFAULT_SECONDARY, optic: 'iron', perk: 'none', next: { ...DEFAULT_CLASS }, spawnedAt: now, firedThisLife: false,
+      slots: [newSlot(DEFAULT_PRIMARY, 'none'), newSlot(DEFAULT_SECONDARY, 'none'), newSlot('knife', 'none')], slot: 0,
       switchReadyAt: 0, history: Array.from({ length: HISTORY_SIZE }, () => ({ t: 0, x: 0, y: 0, z: 0 })), historyHead: 0, historyCount: 0,
     };
     this.players.set(id, p);
@@ -211,9 +222,9 @@ export class Match {
     this.host.send(id, this.matchMessage());
     this.sendMode(id);
     for (const o of this.players.values()) {
-      if (o.id !== id) this.host.send(id, { t: 'holds', id: o.id, weapon: o.slots[o.slot].def.id });
+      if (o.id !== id) this.host.send(id, this.holds(o));
     }
-    this.host.broadcast({ t: 'holds', id, weapon: p.slots[p.slot].def.id });
+    this.host.broadcast(this.holds(p));
     this.broadcastRoster();
   }
 
@@ -243,12 +254,51 @@ export class Match {
     p.x = x; p.y = y; p.z = z; p.yaw = yaw; p.pitch = pitch;
   }
 
-  /** The weapons for the next life: a primary and optionally a secondary (unknown ids are ignored). */
-  setLoadout(id: number, primary: string, secondary?: string): void {
+  /**
+   * The class for the next life (Create-a-Class). Every field is validated: an unknown or disallowed one
+   * becomes the default (a missing secondary/optic/perk keeps the current choice, for older clients).
+   * Picked within CLASS_SWAP_WINDOW seconds of spawning and before the first shot, it applies at once.
+   */
+  setLoadout(id: number, primary: string, secondary?: string, optic?: string, perk?: string): void {
     const p = this.players.get(id);
     if (!p) return;
-    if (PRIMARY_WEAPONS.includes(primary)) p.nextPrimary = primary;
-    if (secondary !== undefined && SECONDARY_WEAPONS.includes(secondary)) p.nextSecondary = secondary;
+    const keepOptic = optic === undefined && primary === p.next.primary;
+    p.next = validateClass({
+      primary, secondary: secondary ?? p.next.secondary, optic: keepOptic ? p.next.optic : optic, perk: perk ?? p.next.perk,
+    });
+    const now = this.host.now();
+    if (p.alive && !p.firedThisLife && now - p.spawnedAt <= CLASS_SWAP_WINDOW && this.phase !== 'ended' && !this.logic.loadoutFor) {
+      this.equip(p, p.next.primary, p.next.secondary, 'knife', p.next.optic, p.next.perk);
+      p.switchReadyAt = now + SWITCH_DELAY;
+      this.sendGear(p);
+    }
+  }
+
+  /** What other players see of a player's hands: the weapon, its optic and suppressor, and the Ninja perk. */
+  holds(p: MatchPlayer): Extract<ServerMessage, { t: 'holds' }> {
+    const w = p.slots[p.slot].def;
+    const msg: Extract<ServerMessage, { t: 'holds' }> = { t: 'holds', id: p.id, weapon: w.id };
+    if (p.slot === 0 && p.optic !== 'iron') msg.optic = p.optic;
+    if (p.perk === 'suppressor' && w.slot !== 'melee') msg.sup = 1;
+    if (p.perk === 'ninja') msg.quiet = 1;
+    return msg;
+  }
+
+  /** New weapon slots (full magazines) for a class; the primary in hand. */
+  private equip(p: MatchPlayer, primary: string, secondary: string, melee: string, optic: string | undefined, perk: PerkId): void {
+    p.primary = primary;
+    p.secondary = secondary;
+    p.optic = opticFor(weaponDef(primary) ?? weaponDef(DEFAULT_PRIMARY)!, optic);
+    p.perk = perk;
+    p.slots = [newSlot(primary, perk), newSlot(secondary, perk), newSlot(melee, perk)];
+    p.slot = 0;
+  }
+
+  /** Tells the player and everyone else about new gear mid-life. */
+  private sendGear(p: MatchPlayer): void {
+    this.host.send(p.id, { t: 'gear', primary: p.primary, secondary: p.secondary, optic: p.optic, perk: p.perk });
+    for (let i = 0; i < 3; i++) this.host.send(p.id, { t: 'ammo', slot: i as 0 | 1 | 2, mag: p.slots[i].mag, reloading: false });
+    this.host.broadcast(this.holds(p), p.id);
   }
 
   // ---------------------------------------------------------------- weapons
@@ -266,8 +316,8 @@ export class Match {
       }
     }
     p.slot = slot;
-    p.switchReadyAt = now + SWITCH_DELAY;
-    this.host.broadcast({ t: 'holds', id, weapon: p.slots[slot].def.id });
+    p.switchReadyAt = now + switchDelayFor(p.perk, SWITCH_DELAY);
+    this.host.broadcast(this.holds(p));
   }
 
   reload(id: number, slot: number): void {
@@ -279,7 +329,7 @@ export class Match {
 
   private startReload(p: MatchPlayer, now: number): void {
     const s = p.slots[p.slot];
-    if (s.def.magazine <= 0 || s.mag >= s.def.magazine || s.reloadDoneAt > 0 || now < p.switchReadyAt) return;
+    if (s.cap <= 0 || s.mag >= s.cap || s.reloadDoneAt > 0 || now < p.switchReadyAt) return;
     s.reloadDoneAt = now + s.def.reloadSec;
     this.host.send(p.id, { t: 'ammo', slot: p.slot, mag: s.mag, reloading: true });
   }
@@ -289,14 +339,10 @@ export class Match {
    * magazines, the primary slot in hand, and the player and everyone else are told.
    */
   giveGear(p: MatchPlayer, primary: string, secondary?: string, melee?: string): void {
-    p.primary = primary;
-    if (secondary) p.secondary = secondary;
-    p.slots = [newSlot(primary), newSlot(secondary ?? p.secondary), newSlot(melee ?? 'knife')];
-    p.slot = 0;
+    // Mode gear (gun game): the weapon's default optic and no perk.
+    this.equip(p, primary, secondary ?? p.secondary, melee ?? 'knife', undefined, 'none');
     p.switchReadyAt = this.host.now() + SWITCH_DELAY;
-    this.host.send(p.id, { t: 'gear', primary, secondary: p.secondary });
-    for (let i = 0; i < 3; i++) this.host.send(p.id, { t: 'ammo', slot: i as 0 | 1 | 2, mag: p.slots[i].mag, reloading: false });
-    this.host.broadcast({ t: 'holds', id: p.id, weapon: primary }, p.id);
+    this.sendGear(p);
   }
 
   /** A `fire` request: validates and resolves the whole hitscan shot. Returns whether a shot was fired. */
@@ -313,7 +359,7 @@ export class Match {
     const w = s.def;
     if (now < p.switchReadyAt || s.reloadDoneAt > 0) return false;
     if (now < s.nextFireAt - FIRE_SLACK) return false;
-    if (w.magazine > 0 && s.mag <= 0) {
+    if (s.cap > 0 && s.mag <= 0) {
       this.startReload(p, now); // clicking an empty weapon reloads it
       return false;
     }
@@ -326,7 +372,8 @@ export class Match {
         s.burstShots = 0;
       } else s.nextFireAt = shotAt + fireInterval(w);
     } else s.nextFireAt = shotAt + fireInterval(w);
-    if (w.magazine > 0) {
+    p.firedThisLife = true;
+    if (s.cap > 0) {
       s.mag--;
       this.host.send(id, { t: 'ammo', slot: p.slot, mag: s.mag, reloading: false });
     }
@@ -379,14 +426,16 @@ export class Match {
       }
       if (!tracer) tracer = [ox + dir[0] * tEnd, oy + dir[1] * tEnd, oz + dir[2] * tEnd];
       if (victim && damaging && now >= victim.protectedUntil) {
-        const dmg = damageAt(w, tEnd) * (hitHead ? w.headshot : 1);
+        const dmg = damageAt(w, tEnd, s.rangeMul) * (hitHead ? w.headshot : 1);
         const prev = dealt.get(victim.id);
         if (prev) { prev.damage += dmg; prev.head ||= hitHead; } else dealt.set(victim.id, { damage: dmg, head: hitHead });
       }
     }
     if (w.slot !== 'melee') {
       const [tx, ty, tz] = tracer!;
-      this.host.broadcast({ t: 'shot', id, weapon: w.id, ox: r2(ox), oy: r2(oy), oz: r2(oz), ex: r2(tx), ey: r2(ty), ez: r2(tz) });
+      const shot: Extract<ServerMessage, { t: 'shot' }> = { t: 'shot', id, weapon: w.id, ox: r2(ox), oy: r2(oy), oz: r2(oz), ex: r2(tx), ey: r2(ty), ez: r2(tz) };
+      if (p.perk === 'suppressor') shot.sup = 1;
+      this.host.broadcast(shot);
     }
     for (const [vid, d] of dealt) this.applyDamage(p, this.players.get(vid)!, Math.max(1, Math.round(d.damage)), w, d.head, now);
     this.host.onShot?.({ shooter: id, weapon: w.id, ox, oy, oz, dx, dy, dz, hits: hitList });
@@ -481,7 +530,7 @@ export class Match {
         const s = p.slots[i];
         if (s.reloadDoneAt > 0 && now >= s.reloadDoneAt) {
           s.reloadDoneAt = 0;
-          s.mag = s.def.magazine;
+          s.mag = s.cap;
           this.host.send(p.id, { t: 'ammo', slot: i as 0 | 1 | 2, mag: s.mag, reloading: false });
         }
       }
@@ -630,7 +679,7 @@ export class Match {
     if (this.teams) this.applyBalance(p);
     this.resetLife(p, now);
     this.sendSpawn(p);
-    this.host.broadcast({ t: 'holds', id: p.id, weapon: p.slots[0].def.id }, p.id);
+    this.host.broadcast(this.holds(p), p.id);
   }
 
   /** Full health, full magazines, the chosen (or the mode's) weapons, a fresh spawn point and brief protection. */
@@ -640,12 +689,12 @@ export class Match {
     p.lastHpSent = PLAYER_MAX_HEALTH;
     p.lastDamageAt = -1e9;
     p.protectedUntil = now + (this.def.respawn?.protectionSec ?? SPAWN_PROTECTION);
-    const kit = this.logic.loadoutFor?.(this, p) ?? { primary: p.nextPrimary, secondary: p.nextSecondary };
-    p.primary = kit.primary;
-    p.secondary = kit.secondary ?? DEFAULT_SECONDARY;
-    p.slots = [newSlot(p.primary), newSlot(p.secondary), newSlot(kit.melee ?? 'knife')];
-    p.slot = 0;
+    const kit = this.logic.loadoutFor?.(this, p);
+    if (kit) this.equip(p, kit.primary, kit.secondary ?? DEFAULT_SECONDARY, kit.melee ?? 'knife', undefined, 'none');
+    else this.equip(p, p.next.primary, p.next.secondary, 'knife', p.next.optic, p.next.perk);
     p.switchReadyAt = 0;
+    p.spawnedAt = now;
+    p.firedThisLife = false;
     const s = this.logic.pickSpawn?.(this, p) ?? this.pickSpawn(p);
     p.x = s.x; p.y = s.y; p.z = s.z; p.yaw = s.yaw; p.pitch = 0;
     p.historyCount = 0;
@@ -655,7 +704,9 @@ export class Match {
 
   private sendSpawn(p: MatchPlayer): void {
     this.host.moveTo(p.id, p.x, p.y, p.z);
-    this.host.send(p.id, { t: 'spawn', x: p.x, y: p.y, z: p.z, yaw: p.yaw, team: p.team, primary: p.primary, secondary: p.secondary, health: p.health });
+    this.host.send(p.id, {
+      t: 'spawn', x: p.x, y: p.y, z: p.z, yaw: p.yaw, team: p.team, primary: p.primary, secondary: p.secondary, optic: p.optic, perk: p.perk, health: p.health,
+    });
     for (let i = 0; i < 3; i++) this.host.send(p.id, { t: 'ammo', slot: i as 0 | 1 | 2, mag: p.slots[i].mag, reloading: false });
   }
 
@@ -756,9 +807,10 @@ export class Match {
   }
 }
 
-function newSlot(id: string): Slot {
+function newSlot(id: string, perk: PerkId): Slot {
   const def = weaponDef(id) ?? weaponDef(DEFAULT_PRIMARY)!;
-  return { def, mag: def.magazine, nextFireAt: 0, reloadDoneAt: 0, burstShots: 0, burstStart: 0 };
+  const cap = magazineFor(def, perk);
+  return { def, mag: cap, cap, rangeMul: rangeMulFor(def, perk), nextFireAt: 0, reloadDoneAt: 0, burstShots: 0, burstStart: 0 };
 }
 
 function isSlot(v: unknown): v is 0 | 1 | 2 {

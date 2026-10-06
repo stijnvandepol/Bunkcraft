@@ -6,8 +6,11 @@ import { MusicDirector } from './audio/music';
 import type { MusicMode } from './audio/musicTheory';
 import { SOUND_PROFILES, pickVariant, profileFor, type BlockSound, type BlockSoundKind } from './audio/profiles';
 import { MAX_HEAR_DISTANCE, distanceCutoff, distanceGain, occlusionCutoff, occlusionGain, panFor } from './audio/spatial';
-import { Synth, type UiSoundName } from './audio/synth';
+import { type NoiseOpts, Synth, type ToneOpts, type UiSoundName } from './audio/synth';
 import { Priority, VoiceLimiter } from './audio/voiceLimiter';
+import {
+  type AnnounceKind, FAR_LEVEL, type MechKind, SUPPRESSED_GAIN, type StingerKind, gunEarshot, gunSound, outdoorShare, reloadSteps,
+} from './audio/weaponSounds';
 
 export type { BlockSound } from './audio/profiles';
 export { SOUND_PROFILES } from './audio/profiles';
@@ -428,14 +431,14 @@ export class AudioEngine {
 
   // ---------------------------------------------------------------- recipes (voice / noise)
 
-  private voice(type: OscillatorType, f0: number, f1: number, dur: number, vol: number, delay = 0): void {
+  private voice(type: OscillatorType, f0: number, f1: number, dur: number, vol: number, delay = 0, opts?: ToneOpts): void {
     if (!this.ready) return;
-    this.synth.tone(type, f0, f1, dur, vol, delay);
+    this.synth.tone(type, f0, f1, dur, vol, delay, opts);
   }
 
-  private noiseBurst(freq: number, q: number, dur: number, vol: number, type: BiquadFilterType = 'bandpass', delay = 0): void {
+  private noiseBurst(freq: number, q: number, dur: number, vol: number, type: BiquadFilterType = 'bandpass', delay = 0, opts?: NoiseOpts): void {
     if (!this.ready) return;
-    this.synth.noiseBurst(freq, q, dur, vol, type, delay);
+    this.synth.noiseBurst(freq, q, dur, vol, type, delay, opts);
   }
 
   /**
@@ -714,114 +717,210 @@ export class AudioEngine {
   // ---------------------------------------------------------------- arcade weapons
 
   /**
-   * Gunshot per weapon; `volume` 0..1 already includes the distance falloff for other players'
-   * shots (see {@link gunVolume}); pass `at` instead to place the shot in the stereo field.
-   * Each weapon gets its own mix of crack, body and thump.
+   * Gunshot of a weapon, layered: transient crack + body (noise and a sine thump) + a tail shaped by the
+   * room (see audio/weaponSounds.ts). Own shots: no `at`, full level, plus the click of the action.
+   * Other players' shots: pass `at`; they fade out over the weapon's earshot (much less with a
+   * suppressor), lose their highs with distance and behind walls, and far away switch to a muffled
+   * distant recipe. `volume` scales the whole shot.
    */
-  playGun(weapon: string, volume: number, at?: Vec3): void {
-    this.emitAt(`weapon.${weapon}`, at, volume);
+  playGun(weapon: string, volume: number, at?: Vec3, suppressed = false): void {
+    this.emitAt(suppressed ? `weapon.${weapon}.suppressed` : `weapon.${weapon}`, at, volume);
     if (volume <= 0.02) return;
-    const own = volume >= 0.99 && !at;
-    this.placed(at, 60, own ? Priority.Player : Priority.Normal, () => this.gunRecipe(weapon, Math.min(1, volume)));
+    const own = !at;
+    this.placed(at, gunEarshot(weapon, suppressed), own ? Priority.Player : Priority.Normal, () => this.gunRecipe(weapon, Math.min(1, volume), own, suppressed));
   }
 
-  private gunRecipe(weapon: string, v: number): void {
+  private gunRecipe(weapon: string, v: number, own: boolean, suppressed: boolean): void {
     const p = 0.95 + Math.random() * 0.1;
-    // Far shots: only the crack (one voice); the body and thump are inaudible at that range anyway.
-    if (this.synth.level < 0.5 && weapon !== 'sniper' && weapon !== 'shotgun' && weapon !== 'revolver') {
-      this.noiseBurst(weapon === 'pistol' ? 2400 : 2800 * p, 0.8, 0.06, v * 0.6);
+    if (weapon === 'knife') {
+      this.noiseBurst(2800, 0.6, 0.11, v * 0.35, 'highpass');
+      this.noiseBurst(1400, 0.8, 0.12, v * 0.25, 'bandpass', 0.03);
       return;
     }
-    switch (weapon) {
-      case 'rifle':
-        this.noiseBurst(2200 * p, 0.7, 0.09, v * 0.7);
-        this.noiseBurst(500, 0.6, 0.12, v * 0.5, 'lowpass');
-        this.voice('sine', 150 * p, 55, 0.1, v * 0.6);
-        break;
-      case 'smg':
-        this.noiseBurst(3000 * p, 0.8, 0.05, v * 0.55);
-        if (this.synth.level >= 0.75) this.voice('square', 260 * p, 110, 0.05, v * 0.25);
-        this.voice('sine', 170, 70, 0.06, v * 0.4);
-        break;
-      case 'shotgun':
-        this.noiseBurst(1400, 0.5, 0.2, v * 0.9);
-        this.noiseBurst(300, 0.5, 0.35, v * 0.8, 'lowpass');
-        this.voice('sine', 100 * p, 38, 0.3, v * 0.9);
-        // Pump action a moment later.
-        this.noiseBurst(1200, 2, 0.03, v * 0.3, 'bandpass', 0.38);
-        this.noiseBurst(900, 2, 0.04, v * 0.3, 'bandpass', 0.5);
-        break;
-      case 'sniper':
-        this.noiseBurst(3400, 0.5, 0.12, v * 1.0, 'highpass');
-        this.noiseBurst(350, 0.4, 0.55, v * 0.9, 'lowpass');
-        this.voice('sine', 80, 28, 0.45, v * 1.0);
-        this.noiseBurst(600, 0.5, 0.4, v * 0.25, 'lowpass', 0.12);
-        break;
-      case 'dmr':
-        this.noiseBurst(2600 * p, 0.6, 0.1, v * 0.8);
-        this.noiseBurst(420, 0.5, 0.25, v * 0.7, 'lowpass');
-        this.voice('sine', 110 * p, 40, 0.2, v * 0.8);
-        break;
-      case 'burst':
-        this.noiseBurst(2800 * p, 0.7, 0.06, v * 0.6);
-        this.noiseBurst(600, 0.6, 0.08, v * 0.4, 'lowpass');
-        this.voice('sine', 160 * p, 60, 0.07, v * 0.5);
-        break;
-      case 'revolver':
-        this.noiseBurst(1800 * p, 0.6, 0.12, v * 0.9);
-        this.noiseBurst(380, 0.5, 0.3, v * 0.8, 'lowpass');
-        this.voice('sine', 95 * p, 36, 0.25, v * 0.9);
-        break;
-      case 'pistol':
-        this.noiseBurst(2600 * p, 0.8, 0.06, v * 0.6);
-        this.voice('triangle', 320 * p, 120, 0.07, v * 0.45);
-        this.voice('sine', 130, 60, 0.07, v * 0.35);
-        break;
-      case 'knife':
-        this.noiseBurst(2800, 0.6, 0.11, v * 0.35, 'highpass');
-        this.noiseBurst(1400, 0.8, 0.12, v * 0.25, 'bandpass', 0.03);
-        break;
-      default:
-        this.noiseBurst(2000, 0.7, 0.08, v * 0.5);
+    const g = gunSound(weapon);
+    const level = this.synth.level;
+    const out = outdoorShare(this.env.enclosure);
+    if (suppressed) {
+      // "Thwip": a short band of noise, the action louder than the shot, a whisper of a tail.
+      const s = v * SUPPRESSED_GAIN;
+      this.noiseBurst(1700 * p, 1.3, 0.05, s * 0.8);
+      this.noiseBurst(g.body[0] * 0.8, 0.7, 0.06, s * 0.5, 'lowpass');
+      this.voice('sine', g.thump[0] * 1.2, g.thump[1], 0.05, s * 0.5);
+      if (g.mech[0] > 0) this.voice('square', g.mech[0], g.mech[0] * 0.6, 0.02, s * 0.6, 0.005);
+      this.noiseBurst(g.tail[0], 0.5, g.tail[1] * 0.35, s * 0.25, 'lowpass', 0.02);
+      return;
+    }
+    if (!own && level < FAR_LEVEL) {
+      // Distant: the crack is gone, a soft pop and a long muffled boom roll in.
+      this.noiseBurst(1100 * p, 0.7, 0.04, v * g.crack[3] * 0.5);
+      this.noiseBurst(g.tail[0] * 0.8, 0.5, g.tail[1] * 1.3, v * g.tail[2] * 1.6, 'lowpass', 0.01);
+      this.voice('sine', g.thump[1] * 1.4, g.thump[1], g.tail[1] * 0.6, v * g.thump[3] * 0.5);
+      return;
+    }
+    // Transient, body, thump.
+    this.noiseBurst(g.crack[0] * p, g.crack[1], g.crack[2], v * g.crack[3]);
+    this.noiseBurst(g.body[0] * p, g.body[1], g.body[2], v * g.body[3], 'lowpass');
+    this.voice('sine', g.thump[0] * p, g.thump[1], g.thump[2], v * g.thump[3]);
+    if (own && g.mech[0] > 0) this.voice('square', g.mech[0] * p, g.mech[0] * 0.5, 0.025, v * g.mech[1], 0.012);
+    // Tail: outdoors a long echo and a late slap; indoors early reflections and a short bright room.
+    if (out > 0.05) {
+      this.noiseBurst(g.tail[0], 0.5, g.tail[1], v * g.tail[2] * out, 'lowpass', 0.015);
+      this.noiseBurst(g.body[0] * 0.9, 0.6, 0.14, v * g.tail[2] * 0.45 * out, 'lowpass', 0.16 + Math.random() * 0.12);
+    }
+    if (out < 0.95) {
+      const room = 1 - out;
+      this.noiseBurst(g.crack[0] * 0.6, 0.8, 0.05, v * g.crack[3] * 0.3 * room, 'bandpass', 0.018);
+      this.noiseBurst(g.body[0] * 1.4, 0.7, 0.06, v * g.body[3] * 0.35 * room, 'lowpass', 0.037);
+      this.noiseBurst(g.tail[0] * 2, 0.5, g.tail[1] * 0.45, v * g.tail[2] * 0.7 * room, 'lowpass', 0.02);
     }
   }
 
-  /** Reload: magazine out, magazine in, bolt (or pump for the shotgun) as three clicks. */
+  /**
+   * Weapon handling (reload steps, bolt, dry fire, aiming cloth, switch): small metallic clicks and
+   * slides from noise and short tones. Own sounds unless `at` is given.
+   */
+  playMech(kind: MechKind, at?: Vec3, volume = 1): void {
+    this.emitAt(`weapon.mech.${kind}`, at, 0.25 * volume);
+    this.placed(at, 16, at ? Priority.Normal : Priority.Player, () => this.mechRecipe(kind, volume));
+  }
+
+  private mechRecipe(kind: MechKind, v: number): void {
+    const p = 0.94 + Math.random() * 0.12;
+    const click = (f: number, vol: number, delay = 0) => {
+      this.voice('square', f * p, f * 0.45 * p, 0.022, vol * v, delay);
+      this.noiseBurst(f * 1.6 * p, 2.2, 0.025, vol * 0.8 * v, 'bandpass', delay);
+    };
+    const slide = (f: number, dur: number, vol: number, delay = 0) => this.noiseBurst(f * p, 1.6, dur, vol * v, 'bandpass', delay, { grains: 3 });
+    switch (kind) {
+      case 'magout': slide(1500, 0.08, 0.18); click(900, 0.16, 0.05); break;
+      case 'magin': click(700, 0.22); click(1300, 0.2, 0.035); slide(1000, 0.05, 0.12, 0.01); break;
+      case 'charge': slide(2200, 0.09, 0.16); click(1500, 0.22, 0.1); break;
+      case 'boltup': click(1700, 0.16); break;
+      case 'boltback': slide(1900, 0.1, 0.18); click(1200, 0.14, 0.09); break;
+      case 'boltfwd': slide(2100, 0.08, 0.16); click(1000, 0.24, 0.075); break;
+      case 'shell': click(2400, 0.14); slide(1300, 0.06, 0.1, 0.01); break;
+      case 'pump': slide(1100, 0.1, 0.24); click(800, 0.22, 0.1); slide(1300, 0.08, 0.2, 0.16); click(1000, 0.2, 0.24); break;
+      case 'cylopen': click(1600, 0.16); slide(2600, 0.12, 0.08, 0.02); break;
+      case 'cylclose': click(1100, 0.24); break;
+      case 'eject': for (let i = 0; i < 4; i++) this.voice('triangle', 3800 + i * 300, 3200, 0.05, 0.05 * v, i * 0.03); break;
+      case 'coveropen': click(800, 0.18); slide(900, 0.12, 0.12, 0.03); break;
+      case 'coverclose': click(600, 0.28); break;
+      case 'belt': slide(2600, 0.25, 0.1); break;
+      case 'dry': click(1900, 0.22); break;
+      case 'adsin': this.noiseBurst(900 * p, 0.8, 0.14, 0.09 * v, 'bandpass', 0, { attack: 0.03 }); click(2600, 0.04, 0.08); break;
+      case 'adsout': this.noiseBurst(1100 * p, 0.8, 0.1, 0.06 * v, 'bandpass', 0, { attack: 0.02 }); break;
+      case 'switch': slide(1200, 0.08, 0.1); click(1500, 0.1, 0.07); break;
+    }
+  }
+
+  /** Legacy single-call reload (offline catalog): the rifle's steps spread over `reloadSec`. */
   playReload(reloadSec: number): void {
     this.emit('weapon.reload', NaN, NaN, NaN, 0.25);
     this.placed(undefined, 0, Priority.Player, () => {
-      const click = (f: number, delay: number, vol: number) => {
-        this.voice('square', f, f * 0.45, 0.025, vol, delay);
-        this.noiseBurst(f * 1.5, 1.5, 0.03, vol * 0.8, 'bandpass', delay);
-      };
-      click(1100, 0.05, 0.22);
-      click(800, Math.max(0.1, reloadSec * 0.55), 0.26);
-      click(1400, Math.max(0.2, reloadSec - 0.15), 0.22);
+      for (const [at, kind] of reloadSteps('rifle')) {
+        const d = at * reloadSec;
+        if (kind === 'magout') { this.noiseBurst(1500, 1.6, 0.08, 0.18, 'bandpass', d, { grains: 3 }); this.voice('square', 900, 400, 0.022, 0.16, d + 0.05); }
+        else if (kind === 'magin') { this.voice('square', 700, 320, 0.022, 0.22, d); this.voice('square', 1300, 600, 0.022, 0.2, d + 0.035); }
+        else { this.noiseBurst(2200, 1.6, 0.09, 0.16, 'bandpass', d, { grains: 3 }); this.voice('square', 1500, 700, 0.022, 0.22, d + 0.1); }
+      }
     });
   }
 
-  /** Trigger on an empty magazine. */
+  /** Trigger on an empty magazine: the hammer falls on nothing. */
   playEmpty(): void {
-    this.emit('weapon.empty', NaN, NaN, NaN, 0.2);
-    this.placed(undefined, 0, Priority.Player, () => this.voice('square', 900, 400, 0.03, 0.2));
+    this.playMech('dry');
   }
 
-  /** White tick when your bullet hits a player; higher and doubled for a headshot. */
-  playHitMarker(head: boolean): void {
-    this.emit('weapon.hitmarker', NaN, NaN, NaN, 0.35);
-    this.placed(undefined, 0, Priority.Player, () => {
-      this.voice('sine', head ? 2400 : 1700, head ? 2400 : 1700, 0.05, 0.35);
-      if (head) this.voice('sine', 3200, 3200, 0.06, 0.28, 0.045);
+  /** Another player's footstep: positional, per surface; Ninja (`quiet`) footsteps carry only a few blocks. */
+  playPlayerStep(surface: BlockSound | string, at: Vec3, quiet: boolean): void {
+    this.emitAt('player.remote.step', at, quiet ? 0.15 : 0.4);
+    this.placed(at, quiet ? 7 : 26, Priority.Ambient, () => {
+      this.synth.block('step', surface, quiet ? 0.35 : 0.85, this.pitchFor(surface) * 0.95);
+      // Gear rattle on a running soldier.
+      if (!quiet) this.noiseBurst(3200 + Math.random() * 800, 2, 0.03, 0.05, 'bandpass', 0.02);
     });
   }
 
-  /** Kill confirmation: a bright two-note ding. */
-  playKillDing(): void {
-    this.emit('weapon.kill', NaN, NaN, NaN, 0.35);
+  /** Breath while steadying a scope: a slow inhale (hold) or a release (let go, or out of breath). */
+  playBreath(inhale: boolean): void {
+    this.emit(inhale ? 'player.breath.hold' : 'player.breath.release', NaN, NaN, NaN, 0.2);
     this.placed(undefined, 0, Priority.Player, () => {
-      this.voice('sine', 1318, 1318, 0.28, 0.32);
-      this.voice('sine', 1760, 1760, 0.32, 0.3, 0.08);
-      this.voice('triangle', 2637, 2637, 0.2, 0.12, 0.08);
+      if (inhale) this.noiseBurst(1300, 0.6, 0.45, 0.06, 'bandpass', 0, { attack: 0.25 });
+      else this.noiseBurst(700, 0.5, 0.6, 0.08, 'lowpass', 0, { attack: 0.03 });
+    });
+  }
+
+  /** Hit marker: a dry tick on a hit; a headshot adds a metallic ding (two inharmonic partials). */
+  playHitMarker(head: boolean): void {
+    this.emit(head ? 'weapon.hitmarker.head' : 'weapon.hitmarker', NaN, NaN, NaN, 0.35);
+    this.placed(undefined, 0, Priority.Ui, () => {
+      this.noiseBurst(4200, 3, 0.025, 0.22);
+      this.voice('square', 1900, 1500, 0.025, 0.12, 0, { lp: 5000 });
+      if (head) {
+        this.voice('sine', 2637, 2637, 0.4, 0.2, 0.01);
+        this.voice('sine', 3952, 3952, 0.28, 0.1, 0.01);
+        this.voice('sine', 6100, 6100, 0.12, 0.05, 0.01);
+      }
+    });
+  }
+
+  /** Kill confirm: a low thunk under a bright two-note chime. */
+  playKillDing(head = false): void {
+    this.emit('weapon.kill', NaN, NaN, NaN, 0.35);
+    this.placed(undefined, 0, Priority.Ui, () => {
+      this.voice('sine', 160, 70, 0.12, 0.3);
+      this.noiseBurst(4200, 3, 0.03, 0.2);
+      this.voice('sine', 1318, 1318, 0.28, 0.28, 0.02);
+      this.voice('sine', 1760, 1760, 0.34, 0.26, 0.09);
+      this.voice('triangle', 2637, 2637, 0.22, 0.1, 0.09);
+      if (head) this.voice('sine', 3520, 3520, 0.3, 0.08, 0.16);
+    });
+  }
+
+  /** Multi-kill and killstreak medals: rising brass-like arpeggios, longer and higher for bigger feats. */
+  playAnnouncer(kind: AnnounceKind): void {
+    this.emit(`arcade.medal.${kind}`, NaN, NaN, NaN, 0.4);
+    this.placed(undefined, 0, Priority.Ui, () => {
+      const brass = (f: number, delay: number, dur: number, vol: number) => {
+        this.voice('sawtooth', f, f, dur, vol, delay, { lp: 1800, attack: 0.02 });
+        this.voice('square', f * 0.5, f * 0.5, dur, vol * 0.4, delay, { lp: 900, attack: 0.02 });
+      };
+      const seqs: Record<AnnounceKind, readonly number[]> = {
+        headshot: [880, 1319],
+        double: [523, 784],
+        triple: [523, 659, 784],
+        multi: [523, 659, 784, 1047],
+        streak3: [392, 523, 659],
+        streak5: [392, 523, 659, 784, 1047],
+        streak10: [392, 523, 659, 784, 1047, 1319],
+      };
+      const notes = seqs[kind];
+      for (let i = 0; i < notes.length; i++) brass(notes[i], i * 0.085, i === notes.length - 1 ? 0.45 : 0.12, 0.11);
+      if (kind === 'streak5' || kind === 'streak10') this.noiseBurst(6000, 0.5, 0.6, 0.05, 'highpass', notes.length * 0.085); // cymbal
+    });
+  }
+
+  /** Match start (a rising call to arms) and end (major for a win, minor for a loss, open for a draw). */
+  playStinger(kind: StingerKind): void {
+    this.emit(`arcade.stinger.${kind}`, NaN, NaN, NaN, 0.45);
+    this.placed(undefined, 0, Priority.Ui, () => {
+      const hit = (f: number, delay: number, dur: number, vol: number) => {
+        this.voice('sawtooth', f, f, dur, vol, delay, { lp: 1500, attack: 0.015 });
+        this.voice('sawtooth', f * 1.005, f * 1.005, dur, vol * 0.7, delay, { lp: 1500, attack: 0.015 });
+      };
+      const drum = (delay: number, vol: number) => { this.voice('sine', 110, 45, 0.3, vol, delay); this.noiseBurst(200, 0.6, 0.25, vol * 0.6, 'lowpass', delay); };
+      if (kind === 'start') {
+        drum(0, 0.4); drum(0.18, 0.3); drum(0.36, 0.45);
+        hit(392, 0.36, 0.2, 0.09); hit(523, 0.5, 0.2, 0.09); hit(784, 0.64, 0.7, 0.1);
+      } else if (kind === 'win') {
+        hit(523, 0, 0.18, 0.09); hit(659, 0.15, 0.18, 0.09); hit(784, 0.3, 0.18, 0.09);
+        hit(1047, 0.45, 1.1, 0.1); hit(659, 0.45, 1.1, 0.06); drum(0.45, 0.4);
+        this.noiseBurst(6500, 0.5, 1.0, 0.05, 'highpass', 0.45);
+      } else if (kind === 'lose') {
+        hit(440, 0, 0.3, 0.08); hit(415, 0.28, 0.3, 0.08); hit(330, 0.56, 1.2, 0.09); hit(262, 0.56, 1.2, 0.06); drum(0.56, 0.35);
+      } else {
+        hit(523, 0, 0.3, 0.08); hit(587, 0.25, 1.0, 0.08); hit(392, 0.25, 1.0, 0.06);
+      }
     });
   }
 

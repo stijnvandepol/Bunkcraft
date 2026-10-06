@@ -2,6 +2,8 @@ import { AudioEngine } from '../Audio';
 import { BLOCK_SOUND_KINDS, SOUND_PROFILES } from './profiles';
 import { UI_SOUND_NAMES } from './synth';
 import { BIOME } from '../../world/Biomes';
+import { WEAPONS } from '../../modes/Weapons';
+import { type AnnounceKind, MECH_KINDS, MEDAL_TEXT, gunEarshot } from './weaponSounds';
 
 /**
  * Every sound the engine can make, as a named recipe that plays it on a fresh engine (usually on an
@@ -76,7 +78,20 @@ export function buildCatalog(): CatalogEntry[] {
   add('item.pickup', 0.3, (e) => e.playPop());
   add('player.eat', 0.3, (e) => e.playEat());
   add('player.burp', 0.5, (e) => e.playBurp());
-  for (const w of ['rifle', 'smg', 'shotgun', 'sniper', 'dmr', 'burst', 'pistol', 'revolver', 'knife']) add(`weapon.${w}`, w === 'shotgun' || w === 'revolver' ? 1.2 : 0.9, (e) => e.playGun(w, 1));
+  for (const w of WEAPONS) {
+    const long = w.id === 'shotgun' || w.id === 'revolver' || w.id === 'sniper' || w.id === 'semisniper';
+    add(`weapon.${w.id}`, long ? 1.6 : 1.1, (e) => e.playGun(w.id, 1));
+    if (w.slot === 'melee') continue;
+    add(`weapon.${w.id}.indoors`, 1.1, (e) => { setupEnv(e, (env) => { env.enclosure = 0.85; }); e.playGun(w.id, 1); });
+    add(`weapon.${w.id}.suppressed`, 0.6, (e) => e.playGun(w.id, 1, undefined, true));
+    add(`weapon.${w.id}.distant`, 1.8, (e) => { setupEnv(e, () => {}); e.playGun(w.id, 1, at(gunEarshot(w.id, false) * 0.5, 0)); }, -95);
+  }
+  for (const kind of MECH_KINDS) add(`weapon.mech.${kind}`, 0.5, (e) => e.playMech(kind));
+  for (const kind of Object.keys(MEDAL_TEXT) as AnnounceKind[]) add(`arcade.medal.${kind}`, 1.2, (e) => e.playAnnouncer(kind));
+  for (const kind of ['start', 'win', 'lose', 'draw'] as const) add(`arcade.stinger.${kind}`, 2.2, (e) => e.playStinger(kind));
+  add('player.breath.hold', 0.7, (e) => e.playBreath(true));
+  add('player.breath.release', 0.8, (e) => e.playBreath(false));
+  add('player.remote.step', 0.4, (e) => { setupEnv(e, () => {}); e.playPlayerStep('stone', at(4, 2), false); });
   add('weapon.reload', 1.6, (e) => e.playReload(1.5));
   add('weapon.empty', 0.3, (e) => e.playEmpty());
   add('weapon.hitmarker', 0.4, (e) => e.playHitMarker(false));

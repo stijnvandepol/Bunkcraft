@@ -86,9 +86,9 @@ describe('loadout presets and new weapons', () => {
     const match = new Match(host, { type: 'ffa', scoreLimit: 50, timeLimitSec: 600 });
     const p = match.join(1, 'a');
     match.setLoadout(1, 'dmr', 'revolver');
-    match.setLoadout(1, 'knife', 'nonsense'); // ignored
-    expect(p.nextPrimary).toBe('dmr');
-    expect(p.nextSecondary).toBe('revolver');
+    expect(p.next).toMatchObject({ primary: 'dmr', secondary: 'revolver' });
+    match.setLoadout(1, 'knife', 'nonsense'); // invalid: back to the defaults
+    expect(p.next).toMatchObject({ primary: 'rifle', secondary: 'pistol' });
   });
 
   it('every weapon has a model', () => {

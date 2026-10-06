@@ -907,7 +907,9 @@ export class GameServer {
       case 'fire': return void (s.fires.take() && this.onFire(s, msg, match));
       case 'reload': return void (s.actions.take() && match.reload(s.id, Number(msg.slot)));
       case 'weapon': return void (s.actions.take() && match.switchWeapon(s.id, Number(msg.slot)));
-      case 'loadout': return void (s.actions.take() && match.setLoadout(s.id, String(msg.primary), msg.secondary === undefined ? undefined : String(msg.secondary)));
+      case 'loadout': return void (s.actions.take() && match.setLoadout(
+        s.id, String(msg.primary), optStr(msg.secondary), optStr(msg.optic), optStr(msg.perk),
+      ));
       case 'block':
         // Nobody builds in an arcade game: roll the client's guess back.
         return this.send(s, { t: 'reject', seq: msg.seq, x: msg.x, y: msg.y, z: msg.z, id: this.arena!.getBlock(msg.x | 0, msg.y | 0, msg.z | 0) });
@@ -1453,4 +1455,9 @@ const MAX_ITEM_DATA = 40;
 function enchantData(raw: unknown): Record<string, number> | undefined {
   if (!Array.isArray(raw)) return undefined;
   return enchantsOf(decodeData(raw.slice(0, MAX_ITEM_DATA).map(Number)));
+}
+
+/** An optional string field of a client message (anything else is treated as absent). */
+function optStr(v: unknown): string | undefined {
+  return v === undefined || v === null ? undefined : String(v).slice(0, 32);
 }

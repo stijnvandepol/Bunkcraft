@@ -979,6 +979,7 @@ html, body {
 .mode-pips { display: flex; gap: calc(var(--s) * 2); }
 .mode-pips i { width: calc(var(--s) * 5); height: calc(var(--s) * 5); border: var(--s) solid #000; background: rgba(255, 255, 255, 0.2); }
 .mode-alive { font-size: calc(var(--fs) * 1.2); }
+.arc-hud.board-open .mode-ladder, .arc-hud.board-open .mode-panel { visibility: hidden; }
 .mode-ladder { background: rgba(0, 0, 0, 0.45); padding: calc(var(--s) * 3) calc(var(--s) * 4); display: flex; flex-direction: column; gap: var(--s); }
 .mode-ladder-level { color: #ffd23f; }
 .mode-ladder-weapon { font-size: calc(var(--fs) * 1.4); }
@@ -990,11 +991,39 @@ html, body {
 .mode-toast { position: absolute; top: calc(var(--s) * 60); left: 50%; transform: translateX(-50%); font-size: calc(var(--fs) * 1.3); white-space: nowrap; }
 .arc-protect { position: absolute; top: calc(var(--s) * 70); left: 50%; transform: translateX(-50%); color: #7ec8ff; background: rgba(20, 60, 120, 0.5); padding: calc(var(--s) * 2) calc(var(--s) * 6); border: var(--s) solid #7ec8ff; white-space: nowrap; }
 
-/* Sniper scope: black ring, thin crosshair lines. */
-.arc-scope { position: absolute; inset: 0; background: radial-gradient(circle at center, rgba(0, 0, 0, 0) 0, rgba(0, 0, 0, 0) 38vh, #000 38.4vh); }
-.arc-scope i { position: absolute; background: #000; }
-.arc-scope .h { left: calc(50% - 38vh); right: calc(50% - 38vh); top: calc(50% - 1px); height: 2px; }
-.arc-scope .v { top: calc(50% - 38vh); bottom: calc(50% - 38vh); left: calc(50% - 1px); width: 2px; }
+/* Scope: black surround with a soft lens edge and vignette, duplex reticle with mil-dots, breath meter. */
+.arc-scope {
+  position: absolute; inset: 0; --r: 40vh;
+  background: radial-gradient(circle at center, rgba(0, 0, 0, 0) 0, rgba(0, 0, 0, 0) calc(var(--r) * 0.72), rgba(0, 0, 0, 0.55) calc(var(--r) * 0.97), #000 var(--r));
+}
+.arc-scope-lens { position: absolute; left: 50%; top: 50%; width: 0; height: 0; }
+.arc-scope-lens::before {
+  content: ''; position: absolute; left: calc(var(--r) * -1); top: calc(var(--r) * -1); width: calc(var(--r) * 2); height: calc(var(--r) * 2);
+  border-radius: 50%; box-shadow: inset 0 0 calc(var(--r) * 0.08) rgba(20, 40, 60, 0.6); background: radial-gradient(circle at 38% 34%, rgba(150, 190, 255, 0.07), rgba(0, 0, 0, 0) 45%);
+}
+.arc-scope-lens i { position: absolute; background: #050505; }
+.arc-scope-lens .h { left: calc(var(--r) * -0.62); width: calc(var(--r) * 1.24); top: -0.5px; height: 1px; }
+.arc-scope-lens .v { top: calc(var(--r) * -0.62); height: calc(var(--r) * 1.24); left: -0.5px; width: 1px; }
+.arc-scope-lens .hl { left: calc(var(--r) * -1); width: calc(var(--r) * 0.38); top: -3px; height: 6px; }
+.arc-scope-lens .hr { left: calc(var(--r) * 0.62); width: calc(var(--r) * 0.38); top: -3px; height: 6px; }
+.arc-scope-lens .vb { top: calc(var(--r) * 0.62); height: calc(var(--r) * 0.38); left: -3px; width: 6px; }
+.arc-scope-dots b { position: absolute; width: 4px; height: 4px; margin: -2px 0 0 -2px; border-radius: 50%; background: #050505; left: calc(var(--i) * var(--r) * 0.13); top: 0; }
+.arc-scope-dots b.v { left: 0; top: calc(var(--i) * var(--r) * 0.13); }
+.arc-breath { position: absolute; left: 50%; top: calc(50% + var(--r) * 0.72); transform: translateX(-50%); width: calc(var(--s) * 60); height: calc(var(--s) * 2); background: rgba(255, 255, 255, 0.18); }
+.arc-breath-fill { height: 100%; width: 100%; background: #e8f4ff; }
+.arc-breath.spent .arc-breath-fill { background: #ff6a5a; }
+.arc-scope-hint { position: absolute; left: 50%; top: calc(50% + var(--r) * 0.76); transform: translateX(-50%); color: rgba(255, 255, 255, 0.7); white-space: nowrap; text-shadow: var(--shadow); }
+
+/* Medals: multi-kill and killstreak banners under the crosshair. */
+.arc-medal { position: absolute; left: 50%; top: calc(50% + var(--s) * 34); transform: translateX(-50%); font-size: calc(var(--fs) * 1.6); white-space: nowrap; text-shadow: var(--shadow); }
+.arc-medal.pop { animation: arc-medal-pop 2.2s ease-out forwards; }
+@keyframes arc-medal-pop {
+  0% { transform: translateX(-50%) scale(1.6); opacity: 0; }
+  10% { transform: translateX(-50%) scale(1); opacity: 1; }
+  80% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) { .arc-medal.pop { animation: none; } }
 
 .arc-board, .arc-end-board { display: flex; flex-direction: column; gap: calc(var(--s) * 1); }
 .arc-board {
@@ -1105,7 +1134,23 @@ html, body {
 .inv-armor-row + .inv-hotbar { margin-left: calc(var(--s) * 22); }
 
 
-.arc-card.preset { width: calc(var(--s) * 64); }
+.arc-card.preset { width: calc(var(--s) * 70); padding: calc(var(--s) * 3); gap: calc(var(--s) * 1); }
+.arc-card.preset .arc-card-name { margin-bottom: 0; }
+.arc-card-perk { color: #ffff55; text-align: center; }
+.arc-card.custom { box-shadow: inset 0 0 0 var(--s) #6a5a2a; }
+.arc-card.custom.selected { box-shadow: inset 0 0 0 calc(var(--s) * 2) #ffd23f; }
+.arc-loadout-panel { max-height: 96vh; overflow-y: auto; gap: calc(var(--s) * 4) !important; }
+/* Create-a-Class editor: four pick columns and the stats of the chosen primary. */
+.arc-cac { display: flex; gap: calc(var(--s) * 4); align-items: flex-start; background: rgba(0, 0, 0, 0.45); padding: calc(var(--s) * 4); border: var(--s) solid #000; max-width: 96vw; flex-wrap: wrap; justify-content: center; }
+.arc-cac-col { display: flex; flex-direction: column; gap: var(--s); min-width: calc(var(--s) * 78); }
+.arc-cac-head { color: #a0a0a0; margin-bottom: var(--s); }
+.arc-cac-item { display: flex; justify-content: space-between; gap: calc(var(--s) * 3); padding: var(--s) calc(var(--s) * 3); background: rgba(20, 20, 20, 0.85); box-shadow: inset 0 0 0 var(--s) #444; cursor: pointer; color: #e0e0e0; }
+.arc-cac-item em { font-style: normal; color: #808080; }
+.arc-cac-item:hover { box-shadow: inset 0 0 0 var(--s) #a8a8a8; }
+.arc-cac-item.selected { box-shadow: inset 0 0 0 var(--s) #ffd23f; background: rgba(70, 60, 20, 0.9); color: #fff; }
+.arc-cac-item.disabled { opacity: 0.35; pointer-events: none; }
+.arc-cac-stats { display: flex; flex-direction: column; gap: calc(var(--s) * 2); width: calc(var(--s) * 96); }
+.arc-cac-stats .role { text-align: left; color: #c8c8c8; }
 /* Furnace screen: input over flame over fuel, the progress arrow, the output (Minecraft's layout). */
 .furnace-ui { display: flex; align-items: center; gap: calc(var(--s) * 8); padding: calc(var(--s) * 2) calc(var(--s) * 30); }
 .furnace-ui.hidden, .inv-grid.hidden { display: none; }

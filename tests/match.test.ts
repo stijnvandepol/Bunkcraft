@@ -372,7 +372,7 @@ describe('hitscan', () => {
     const dn = near.host.of('hit', 1)[0].damage, df = far.host.of('hit', 1)[0].damage;
     expect(dn).toBe(20);
     expect(df).toBeLessThan(dn);
-    expect(df).toBeGreaterThanOrEqual(12); // minDamage 0.6
+    expect(df).toBeGreaterThanOrEqual(11); // minDamage 0.55
   });
 
   it('the shotgun fires pellets that add up at close range, and the knife needs to be close', () => {
@@ -483,10 +483,11 @@ describe('weapon handling', () => {
     expect(host.of('hit', 1)[0].damage).toBe(18);
   });
 
-  it('applies the chosen primary at the next spawn, not immediately', () => {
+  it('applies the chosen primary at the next spawn once the life has started (a shot went out)', () => {
     const { host, match, advance } = liveDuel('ffa');
+    match.fire(1, aim(match.players.get(1)!, { x: 20, y: 66, z: 0.5 }));
+    match.setLoadout(1, 'nonsense'); // invalid: the default
     match.setLoadout(1, 'sniper');
-    match.setLoadout(1, 'nonsense');
     expect(match.players.get(1)!.primary).toBe('rifle');
     for (let i = 0; i < 5; i++) { match.fire(2, aim(match.players.get(2)!, { x: 0.5, y: 65.9, z: 0.5 })); advance(0.11); }
     advance(RESPAWN_SECONDS + 0.2);
@@ -576,6 +577,8 @@ describe('maps in the match', () => {
 
 describe('weapon data', () => {
   it('has the contract weapons', () => {
-    expect(WEAPONS.map((w) => w.id)).toEqual(['rifle', 'smg', 'shotgun', 'sniper', 'dmr', 'burst', 'pistol', 'revolver', 'knife']);
+    expect(WEAPONS.map((w) => w.id)).toEqual([
+      'rifle', 'smg', 'shotgun', 'lmg', 'burst', 'dmr', 'semisniper', 'sniper', 'pistol', 'mpistol', 'revolver', 'knife',
+    ]);
   });
 });

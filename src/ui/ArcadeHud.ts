@@ -1,7 +1,10 @@
 import { TEAM_COLORS, type Team } from '../modes/GameTypes';
 import { type KillFeedEntry, damageAngle, formatClock, kdRatio, sortRoster } from '../modes/ArcadeLogic';
-import { LOADOUT_PRESETS, presetFor } from '../modes/Loadouts';
-import { DEFAULT_SECONDARY, PLAYER_MAX_HEALTH, PRIMARY_WEAPONS, type WeaponDef, weaponDef } from '../modes/Weapons';
+import { type ClassSpec, LOADOUT_PRESETS, presetFor, sameClass, validateClass } from '../modes/Loadouts';
+import {
+  OPTICS, type OpticId, PERKS, PERK_IDS, type PerkId, PLAYER_MAX_HEALTH, PRIMARY_WEAPONS, SECONDARY_WEAPONS, type WeaponDef,
+  fireMode, opticAllowed, opticZoom, weaponDef,
+} from '../modes/Weapons';
 import type { MatchPhase, RosterEntry } from '../net/protocol';
 import { h } from './dom';
 
@@ -82,9 +85,20 @@ export class ArcadeHud {
   private readonly endTitle: HTMLDivElement;
   private readonly endBoard: HTMLDivElement;
   private readonly endCount: HTMLDivElement;
-  private readonly loadoutCards = new Map<string, HTMLDivElement>();
   private readonly presetCards = new Map<string, HTMLDivElement>();
+  private readonly customCard: HTMLDivElement;
+  private readonly customDesc: HTMLDivElement;
+  /** Create-a-Class editor buttons per field and value. */
+  private readonly pick = { primary: new Map<string, HTMLElement>(), optic: new Map<string, HTMLElement>(), secondary: new Map<string, HTMLElement>(), perk: new Map<string, HTMLElement>() };
+  private readonly statsEl: HTMLDivElement;
   private readonly loadoutNote: HTMLDivElement;
+  private custom: ClassSpec = validateClass(null);
+  private readonly scopeBreath: HTMLDivElement;
+  private readonly scopeBreathFill: HTMLDivElement;
+  private readonly scopeHint: HTMLDivElement;
+  private lastBreath = -1;
+  private readonly medal: HTMLDivElement;
+  private medalUntil = 0;
 
   private lastHealth = -1;
   private lastGap = -1;
@@ -100,9 +114,8 @@ export class ArcadeHud {
   private lastCount = -1;
   private lastEndCount = -1;
 
-  /** Called when a primary weapon is chosen in the loadout menu. */
-  /** A primary card (primary only) or a class preset (primary and secondary) was clicked. */
-  onLoadout: ((primary: string, secondary?: string) => void) | null = null;
+  /** A class was chosen: a preset card, or the custom class (any change in the editor; save it). */
+  onClass: ((c: ClassSpec, custom: boolean) => void) | null = null;
   onLoadoutClose: (() => void) | null = null;
 
   constructor() {
@@ -155,7 +168,16 @@ export class ArcadeHud {
     );
     this.banner = h('div', { class: 'arc-banner hidden' });
     this.protect = h('div', { class: 'arc-protect hidden' });
-    this.scope = h('div', { class: 'arc-scope hidden' }, h('i', { class: 'h' }), h('i', { class: 'v' }));
+    this.scopeBreathFill = h('div', { class: 'arc-breath-fill' });
+    this.scopeBreath = h('div', { class: 'arc-breath' }, this.scopeBreathFill);
+    this.scopeHint = h('div', { class: 'arc-scope-hint', text: 'Hold Shift to steady' });
+    // Scope: black surround, the lens edge, a duplex reticle with mil-dots and a centre gap, the breath meter.
+    const dots = h('div', { class: 'arc-scope-dots' });
+    for (let i = -4; i <= 4; i++) if (i !== 0) dots.append(h('b', { style: `--i:${i}` }), h('b', { class: 'v', style: `--i:${i}` }));
+    this.scope = h('div', { class: 'arc-scope hidden' },
+      h('div', { class: 'arc-scope-lens' }, h('i', { class: 'h' }), h('i', { class: 'v' }), h('i', { class: 'hl' }), h('i', { class: 'hr' }), h('i', { class: 'vb' }), dots),
+      this.scopeBreath, this.scopeHint);
+    this.medal = h('div', { class: 'arc-medal hidden' });
     this.board = h('div', { class: 'arc-board hidden' });
 
     // -- death
@@ -173,45 +195,96 @@ export class ArcadeHud {
     this.end = h('div', { class: 'arc-end hidden' }, this.endTitle, this.endBoard, this.endCount);
 
     this.el = h('div', { class: 'arc-hud hidden' },
-      this.scope, this.crosshair, this.hit, this.damageLayer, this.protect,
+      this.scope, this.crosshair, this.hit, this.damageLayer, this.protect, this.medal,
       this.top, this.banner, this.feed, this.healthBox, ammo,
       this.board, this.death, this.end,
     );
 
-    // -- loadout menu (clickable)
+    // -- Create-a-Class menu (clickable): quick-pick presets, the custom class and its editor.
     this.loadoutNote = h('div', { class: 'arc-loadout-note' });
-    const cards = h('div', { class: 'arc-loadout-cards' });
-    for (const id of PRIMARY_WEAPONS) {
-      const def = weaponDef(id)!;
-      const card = h('div', { class: 'arc-card' },
-        h('div', { class: 'arc-card-name', text: def.name }),
-        ...statRows(def),
-      );
-      card.addEventListener('click', () => this.onLoadout?.(id));
-      this.loadoutCards.set(id, card);
-      cards.append(card);
-    }
     const presets = h('div', { class: 'arc-loadout-cards presets' });
-    for (const pr of LOADOUT_PRESETS) {
-      const card = h('div', { class: 'arc-card preset' },
-        h('div', { class: 'arc-card-name', text: pr.name }),
-        h('div', { class: 'arc-card-desc', text: `${weaponDef(pr.primary)!.name} + ${weaponDef(pr.secondary)!.name}` }),
-        h('div', { class: 'arc-card-desc', text: pr.description }),
+    LOADOUT_PRESETS.forEach((pr, i) => {
+      const card = h('div', { class: 'arc-card preset', title: pr.description },
+        h('div', { class: 'arc-card-name', text: `${i + 1}  ${pr.name}` }),
+        h('div', { class: 'arc-card-desc', text: classLine(pr) }),
+        h('div', { class: 'arc-card-perk', text: PERKS[pr.perk].name }),
       );
-      card.addEventListener('click', () => this.onLoadout?.(pr.primary, pr.secondary));
+      card.addEventListener('click', () => this.onClass?.(pr, false));
       this.presetCards.set(pr.id, card);
       presets.append(card);
-    }
+    });
+    this.customDesc = h('div', { class: 'arc-card-desc' });
+    this.customCard = h('div', { class: 'arc-card preset custom' },
+      h('div', { class: 'arc-card-name', text: `${LOADOUT_PRESETS.length + 1}  Custom` }), this.customDesc);
+    this.customCard.addEventListener('click', () => this.onClass?.(this.custom, true));
+    presets.append(this.customCard);
+
+    const column = (title: string, field: keyof typeof this.pick, items: { id: string; label: string; tag?: string; desc?: string }[]) => {
+      const col = h('div', { class: 'arc-cac-col' }, h('div', { class: 'arc-cac-head', text: title }));
+      for (const it of items) {
+        const b = h('div', { class: 'arc-cac-item', title: it.desc ?? '' }, h('span', { text: it.label }), it.tag ? h('em', { text: it.tag }) : null);
+        b.addEventListener('click', () => this.editCustom(field, it.id));
+        this.pick[field].set(it.id, b);
+        col.append(b);
+      }
+      return col;
+    };
+    const wItem = (id: string) => {
+      const w = weaponDef(id)!;
+      return { id, label: w.name, tag: fireMode(w).toUpperCase(), desc: w.role };
+    };
+    this.statsEl = h('div', { class: 'arc-cac-stats' });
+    const editor = h('div', { class: 'arc-cac' },
+      column('Primary', 'primary', PRIMARY_WEAPONS.map(wItem)),
+      column('Optic', 'optic', (Object.keys(OPTICS) as OpticId[]).map((o) => ({ id: o, label: OPTICS[o].name, desc: OPTICS[o].desc }))),
+      column('Secondary', 'secondary', SECONDARY_WEAPONS.map(wItem)),
+      column('Perk', 'perk', PERK_IDS.map((p) => ({ id: p, label: PERKS[p].name, desc: PERKS[p].desc }))),
+      this.statsEl,
+    );
     this.loadoutEl = h('div', { class: 'arc-loadout hidden' },
       h('div', { class: 'arc-loadout-panel' },
-        h('div', { class: 'arc-loadout-title', text: 'Loadout' }),
-        h('div', { class: 'arc-card-desc', text: 'Classes' }),
+        h('div', { class: 'arc-loadout-title', text: 'Create-a-Class' }),
         presets,
-        h('div', { class: 'arc-card-desc', text: 'Primary weapon' }),
-        cards,
+        h('div', { class: 'arc-card-desc', text: 'Custom class: click to edit (saved in this browser)' }),
+        editor,
         this.loadoutNote,
         h('button', { class: 'mc-btn w150', text: 'Done', onclick: () => this.onLoadoutClose?.() }),
       ),
+    );
+    this.renderCustom();
+  }
+
+  /** The custom class (from storage); the editor shows it. */
+  setCustomClass(c: ClassSpec): void {
+    this.custom = validateClass(c);
+    this.renderCustom();
+  }
+
+  private editCustom(field: keyof typeof this.pick, id: string): void {
+    const next = { ...this.custom, [field]: id };
+    // A new primary keeps the optic only when it fits; else the weapon's default.
+    if (field === 'primary' && !opticAllowed(weaponDef(id)!, next.optic)) next.optic = weaponDef(id)!.optics[0];
+    if (field === 'optic' && !opticAllowed(weaponDef(next.primary)!, id)) return;
+    this.custom = validateClass(next);
+    this.renderCustom();
+    this.onClass?.(this.custom, true);
+  }
+
+  private renderCustom(): void {
+    const c = this.custom;
+    const w = weaponDef(c.primary)!;
+    for (const [id, el] of this.pick.primary) el.classList.toggle('selected', id === c.primary);
+    for (const [id, el] of this.pick.secondary) el.classList.toggle('selected', id === c.secondary);
+    for (const [id, el] of this.pick.perk) el.classList.toggle('selected', id === c.perk);
+    for (const [id, el] of this.pick.optic) {
+      el.classList.toggle('selected', id === c.optic);
+      el.classList.toggle('disabled', !opticAllowed(w, id));
+    }
+    this.customDesc.textContent = `${classLine(c)} · ${PERKS[c.perk].name}`;
+    this.statsEl.replaceChildren(
+      h('div', { class: 'arc-card-name', text: w.name }),
+      ...statRows(w, c.optic, c.perk),
+      h('div', { class: 'arc-card-desc role', text: w.role }),
     );
   }
 
@@ -275,10 +348,32 @@ export class ArcadeHud {
     this.crosshair.style.setProperty('--g', `${g}px`);
   }
 
-  setScope(on: boolean): void {
-    if (on === this.scopeOn) return;
-    this.scopeOn = on;
-    this.scope.classList.toggle('hidden', !on);
+  /** Scope overlay; `breath` 0..1 is the breath left for steadying (-1 hides the meter), `holding` while Shift steadies, `spent` while out of breath. */
+  setScope(on: boolean, breath = -1, holding = false, spent = false): void {
+    if (on !== this.scopeOn) {
+      this.scopeOn = on;
+      this.scope.classList.toggle('hidden', !on);
+    }
+    if (!on) return;
+    const q = breath < 0 ? -1 : Math.round(breath * 50);
+    const key = q * 4 + (holding ? 1 : 0) + (spent ? 2 : 0);
+    if (key === this.lastBreath) return;
+    this.lastBreath = key;
+    this.scopeBreath.classList.toggle('hidden', q < 0);
+    this.scopeHint.classList.toggle('hidden', q < 0 || holding);
+    this.scopeHint.textContent = spent ? 'Out of breath' : 'Hold Shift to steady';
+    this.scopeBreath.classList.toggle('spent', spent);
+    if (q >= 0) this.scopeBreathFill.style.width = `${q * 2}%`;
+  }
+
+  /** Big medal text under the crosshair (multi-kill, killstreak) for a moment. */
+  showMedal(text: string, color: string, now: number): void {
+    this.medal.textContent = text;
+    this.medal.style.color = color;
+    this.medal.classList.remove('hidden', 'pop');
+    void this.medal.offsetWidth; // restart the animation
+    this.medal.classList.add('pop');
+    this.medalUntil = now + 2.2;
   }
 
   /** Spawn protection: seconds left (0 hides it). */
@@ -315,6 +410,10 @@ export class ArcadeHud {
 
   /** Per frame: turns the damage wedges with the view and fades them. */
   frame(now: number, yaw: number): void {
+    if (this.medalUntil > 0 && now >= this.medalUntil) {
+      this.medalUntil = 0;
+      this.medal.classList.add('hidden');
+    }
     for (let i = 0; i < this.markers.length; i++) {
       const m = this.markers[i];
       const age = now - m.born;
@@ -380,6 +479,8 @@ export class ArcadeHud {
 
   setScoreboard(visible: boolean, roster: readonly RosterEntry[], ctx: ScoreboardContext): void {
     this.board.classList.toggle('hidden', !visible);
+    // The objective panels (gun game ladder) step aside while the scoreboard is up.
+    this.el.classList.toggle('board-open', visible);
     if (visible) renderBoard(this.board, roster, ctx);
   }
 
@@ -410,32 +511,37 @@ export class ArcadeHud {
     this.deathWatch.replaceChildren(h('div', { class: 'arc-watch-name', text: `Spectating ${name}` }), h('div', { class: 'arc-death-hint', text: hint }));
   }
 
-  /** Respawn countdown in whole seconds; also lists the loadout choices. */
   /**
-   * Respawn countdown in whole seconds (negative = no respawn before the next round) and the loadout
-   * choices (hidden when the mode chooses the weapons).
+   * Respawn countdown in whole seconds (negative = no respawn before the next round) and the class
+   * choices (hidden when the mode chooses the weapons). `next` is the class of the next life.
    */
-  setRespawn(seconds: number, primary: string, pending: string, secondary: string = DEFAULT_SECONDARY, pendingSecondary = '', choice = true): void {
+  setRespawn(seconds: number, next: ClassSpec | null, choice = true): void {
     const n = seconds < 0 ? -1 : Math.max(0, Math.ceil(seconds));
-    const key = `${pending}|${pendingSecondary}`;
+    const custom = !!next && sameClass(next, this.custom) && !presetFor(next);
+    const key = next ? `${next.primary}|${next.optic}|${next.secondary}|${next.perk}|${custom}` : '';
     if (n === this.lastCount && key === this.lastRespawnPending) return;
     this.lastCount = n;
     this.lastRespawnPending = key;
     this.deathCount.textContent = n < 0 ? 'Eliminated: you are back next round' : `Respawning in ${n}`;
-    if (!choice) {
+    if (!choice || !next) {
       this.deathLoadout.replaceChildren();
       return;
     }
-    const cur = presetFor(pending || primary, pendingSecondary || secondary);
-    this.deathLoadout.replaceChildren(h('div', { class: 'arc-death-hint', text: `Next class (keys 1-${LOADOUT_PRESETS.length}, or B for the loadout menu)` }),
-      h('div', { class: 'arc-death-weapons' }, ...LOADOUT_PRESETS.map((pr, i) =>
-        h('span', { class: pr === cur ? 'sel' : '', text: `${i + 1} ${pr.name}` }))));
+    const cur = presetFor(next);
+    const keys = LOADOUT_PRESETS.length + 1;
+    this.deathLoadout.replaceChildren(h('div', { class: 'arc-death-hint', text: `Next class (keys 1-${keys}, or B for Create-a-Class)` }),
+      h('div', { class: 'arc-death-weapons' },
+        ...LOADOUT_PRESETS.map((pr, i) => h('span', { class: pr === cur ? 'sel' : '', text: `${i + 1} ${pr.name}` })),
+        h('span', { class: custom ? 'sel' : '', text: `${keys} Custom` })),
+      h('div', { class: 'arc-death-hint', text: `${classLine(next)} · ${PERKS[next.perk].name}` }));
   }
 
   setMatchEnd(info: { title: string; color: string; roster: readonly RosterEntry[]; ctx: ScoreboardContext } | null): void {
     this.end.classList.toggle('hidden', info === null);
     this.lastEndCount = -1;
     if (!info) return;
+    this.setProtection(0); // nothing of the round shows through the end screen
+    this.medal.classList.add('hidden');
     this.endTitle.textContent = info.title;
     this.endTitle.style.color = info.color;
     renderBoard(this.endBoard, info.roster, info.ctx);
@@ -448,16 +554,18 @@ export class ArcadeHud {
     this.endCount.textContent = `Next match in ${n}`;
   }
 
-  showLoadout(selected: string, nextLife: boolean, secondary: string = DEFAULT_SECONDARY): void {
+  /** Opens Create-a-Class with `selected` (the class of the next life) highlighted. */
+  showLoadout(selected: ClassSpec, nextLife: boolean): void {
     this.loadoutEl.classList.remove('hidden');
-    this.markLoadout(selected, secondary);
-    this.loadoutNote.textContent = nextLife ? 'Applies from your next life' : 'Applies when you respawn';
+    this.markClass(selected);
+    this.loadoutNote.textContent = nextLife ? 'Applies at once right after spawning, else from your next life' : 'Applies when you respawn';
   }
 
-  markLoadout(selected: string, secondary: string = DEFAULT_SECONDARY): void {
-    for (const [id, card] of this.loadoutCards) card.classList.toggle('selected', id === selected);
-    const cur = presetFor(selected, secondary);
+  /** Highlights the chosen class: its preset card, or the custom card. */
+  markClass(selected: ClassSpec): void {
+    const cur = presetFor(selected);
     for (const [id, card] of this.presetCards) card.classList.toggle('selected', id === cur?.id);
+    this.customCard.classList.toggle('selected', !cur && sameClass(selected, this.custom));
   }
 
   hideLoadout(): void {
@@ -491,15 +599,24 @@ export class ArcadeHud {
   }
 }
 
-function statRows(def: WeaponDef): HTMLElement[] {
-  const bar = (label: string, frac: number) => h('div', { class: 'arc-stat' },
-    h('span', { text: label }), h('div', { class: 'arc-stat-bar' }, h('i', { style: `width:${Math.round(Math.min(1, Math.max(0.05, frac)) * 100)}%` })));
+/** "Assault Rifle (Red Dot) + Pistol". */
+function classLine(c: ClassSpec): string {
+  const optic = c.optic === 'iron' ? '' : ` (${OPTICS[c.optic].name})`;
+  return `${weaponDef(c.primary)!.name}${optic} + ${weaponDef(c.secondary)!.name}`;
+}
+
+function statRows(def: WeaponDef, optic: OpticId = 'iron', perk: PerkId = 'none'): HTMLElement[] {
+  const bar = (label: string, frac: number, value: string) => h('div', { class: 'arc-stat' },
+    h('span', { text: `${label}  ${value}` }), h('div', { class: 'arc-stat-bar' }, h('i', { style: `width:${Math.round(Math.min(1, Math.max(0.05, frac)) * 100)}%` })));
+  const mag = perk === 'extmag' ? Math.round(def.magazine * 1.4) : def.magazine;
   return [
-    bar('Damage', (def.damage * def.pellets * 0.6) / 100),
-    bar('Fire rate', def.rpm / 900),
-    bar('Range', def.range / 120),
-    bar('Magazine', def.magazine / 30),
-    h('div', { class: 'arc-card-desc', text: def.auto ? 'Automatic' : 'Semi-automatic' }),
+    bar('Damage', (def.damage * def.pellets * 0.6) / 100, String(def.damage * def.pellets)),
+    bar('Fire rate', def.rpm / 1000, `${def.rpm}`),
+    bar('Range', def.range / 100, `${Math.round(def.range * (perk === 'suppressor' ? 0.8 : 1))}`),
+    bar('Magazine', mag / 75, String(mag)),
+    bar('Mobility', (def.moveSpeed - 0.8) / 0.3, `${Math.round(def.moveSpeed * 100)}%`),
+    bar('Aim speed', (0.5 - def.adsTime) / 0.4, `${def.adsTime.toFixed(2)}s`),
+    h('div', { class: 'arc-card-desc', text: `${fireMode(def).toUpperCase()} · zoom ${(1 / opticZoom(def, optic)).toFixed(1)}x` }),
   ];
 }
 

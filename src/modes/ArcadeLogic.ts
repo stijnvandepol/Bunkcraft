@@ -234,3 +234,109 @@ export function cycleTarget(candidates: readonly number[], current: number, dir:
   const i = candidates.indexOf(current);
   return candidates[i < 0 ? (dir > 0 ? 0 : n - 1) : (i + dir + n) % n];
 }
+
+// ---------------------------------------------------------------- scope sway and breath
+
+/** Seconds of breath a full lung holds the scope steady, and the recovery after running out. */
+export const BREATH_HOLD_SEC = 4;
+export const BREATH_SPENT_SEC = 2.5;
+/** Breath comes back this fast (fraction per second) when not holding. */
+export const BREATH_REGEN = 0.35;
+/** Sway amplitude through a scope (degrees): idle, holding the breath, out of breath, moving (multiplier). */
+export const SCOPE_SWAY = { idle: 0.32, held: 0.035, spent: 0.6, moving: 1.7 } as const;
+
+/**
+ * Scope sway with breath control (hold Shift): holding steadies the aim for up to BREATH_HOLD_SEC, then the
+ * shooter gasps and sways harder for BREATH_SPENT_SEC. `amp` is the current sway amplitude in degrees; the
+ * caller turns it into a figure-eight drift with {@link swayOffset}. Pure state, no allocations.
+ */
+export class ScopeBreath {
+  /** 0..1 breath left. */
+  breath = 1;
+  holding = false;
+  /** Out of breath until this time (seconds). */
+  spentUntil = 0;
+  amp: number = SCOPE_SWAY.idle;
+  private now = 0;
+
+  /** Returns 'hold' / 'release' when the breath sound should play this frame, else ''. */
+  update(dt: number, now: number, scoped: boolean, wantHold: boolean, moving: boolean): '' | 'hold' | 'release' {
+    this.now = now;
+    const spent = now < this.spentUntil;
+    const hold = scoped && wantHold && !spent && this.breath > 0;
+    let cue: '' | 'hold' | 'release' = '';
+    if (hold && !this.holding) cue = 'hold';
+    if (!hold && this.holding) cue = 'release';
+    this.holding = hold;
+    if (hold) {
+      this.breath = Math.max(0, this.breath - dt / BREATH_HOLD_SEC);
+      if (this.breath === 0) {
+        this.spentUntil = now + BREATH_SPENT_SEC;
+        this.holding = false;
+        cue = 'release';
+      }
+    } else if (!spent) this.breath = Math.min(1, this.breath + dt * BREATH_REGEN);
+    const target = (this.holding ? SCOPE_SWAY.held : now < this.spentUntil ? SCOPE_SWAY.spent : SCOPE_SWAY.idle) * (moving ? SCOPE_SWAY.moving : 1);
+    this.amp += (target - this.amp) * Math.min(1, dt * 6);
+    return cue;
+  }
+
+  /** Out of breath right now (the meter shows it). */
+  get spent(): boolean {
+    return this.now < this.spentUntil;
+  }
+
+  reset(): void {
+    this.breath = 1;
+    this.holding = false;
+    this.spentUntil = 0;
+    this.amp = SCOPE_SWAY.idle;
+  }
+}
+
+/** Sway offset (degrees) at time `t` for amplitude `amp`: a slow figure-eight, written into `out`. */
+export function swayOffset(t: number, amp: number, out: { x: number; y: number }): void {
+  out.x = amp * Math.sin(t * 0.83);
+  out.y = amp * Math.sin(t * 1.66 + 0.6) * 0.6;
+}
+
+// ---------------------------------------------------------------- recoil
+
+/**
+ * Aim recoil: every shot climbs the aim by `recoil × AIM_CLIMB` degrees (less when aiming) and drifts it
+ * sideways by the weapon's pattern; after the trigger lets go most of the climb comes back down.
+ * `kick` returns the pitch/yaw change (degrees) to apply for a shot; `recover` the change for a frame.
+ */
+export class RecoilState {
+  private shot = 0;
+  private lastShotAt = -1e9;
+  /** Climb (degrees) still to recover. */
+  private climb = 0;
+  readonly out = { pitch: 0, yaw: 0 };
+
+  kick(now: number, recoil: number, recoilX: number, pattern: readonly number[], ads: number, climbPerRecoil: number): { pitch: number; yaw: number } {
+    if (now - this.lastShotAt > 0.35) this.shot = 0;
+    this.lastShotAt = now;
+    const k = 1 - 0.3 * Math.min(1, Math.max(0, ads));
+    const up = recoil * climbPerRecoil * k;
+    this.out.pitch = up;
+    this.out.yaw = pattern.length ? pattern[this.shot % pattern.length] * recoilX * k : 0;
+    this.shot++;
+    this.climb += up * 0.7;
+    return this.out;
+  }
+
+  /** Pitch change (degrees, negative = down) for this frame: recovers once the shooting stops. */
+  recover(now: number, dt: number): number {
+    if (this.climb <= 1e-4 || now - this.lastShotAt < 0.09) return 0;
+    const r = this.climb * Math.min(1, dt * 9);
+    this.climb -= r;
+    return -r;
+  }
+
+  reset(): void {
+    this.shot = 0;
+    this.climb = 0;
+    this.lastShotAt = -1e9;
+  }
+}

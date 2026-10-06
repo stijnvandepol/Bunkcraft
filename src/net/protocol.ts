@@ -121,6 +121,8 @@ export interface MatchInfo {
  */
 export type SnapshotEntry = [number, number, number, number, number, number, number, number];
 export const SNAP_FLAG_STALE = 8;
+/** Arcade: the player is aiming down the sights (scope glint for enemies). Set by the client in `pos`, passed on as is. */
+export const SNAP_FLAG_ADS = 16;
 
 /**
  * Mob snapshot: [id, kind, x, y, z, yaw, headYaw, headPitch, flags, hurtTime, fuse, deathTime]. flags: MOB_FLAG bits.
@@ -211,8 +213,11 @@ export type ClientMessage =
   | { t: 'take'; id: number }
   /** Bone meal used on a block (the server grows the sapling or grass). Optional: older servers ignore it. */
   | { t: 'bonemeal'; x: number; y: number; z: number }
-  /** Arcade: choose the primary weapon for the next life (rifle, smg, shotgun, sniper). */
-  | { t: 'loadout'; primary: string; secondary?: string }
+  /**
+   * Arcade: the class for the next life (Create-a-Class): primary, its optic, secondary and perk. The server
+   * validates every field (unknown or disallowed → default); within the first seconds of a life it applies at once.
+   */
+  | { t: 'loadout'; primary: string; secondary?: string; optic?: string; perk?: string }
   /** Arcade: fire the weapon in a slot. Origin is the client's eye, dir the aim; the server re-checks both. */
   | { t: 'fire'; slot: 0 | 1 | 2; ox: number; oy: number; oz: number; dx: number; dy: number; dz: number; ads: boolean }
   /** Arcade: start reloading the weapon in a slot. */
@@ -310,9 +315,9 @@ export type ServerMessage =
   /** Who is on which team plus kills/deaths; sent on joins, leaves, kills and every few seconds. */
   | { t: 'roster'; players: RosterEntry[] }
   /** You (re)spawn: position, facing, team, loadout and full health. */
-  | { t: 'spawn'; x: number; y: number; z: number; yaw: number; team: Team | ''; primary: string; health: number; secondary?: string }
+  | { t: 'spawn'; x: number; y: number; z: number; yaw: number; team: Team | ''; primary: string; health: number; secondary?: string; optic?: string; perk?: string }
   /** The mode changed your weapons while you live (gun game level up): primary slot, optional secondary slot. */
-  | { t: 'gear'; primary: string; secondary?: string }
+  | { t: 'gear'; primary: string; secondary?: string; optic?: string; perk?: string }
   /** Mode-specific HUD state (zones, flags, round wins), about twice a second and on changes. Absent in tdm/ffa/gun game. */
   | { t: 'mode'; state: ModeState }
   /** A one-off happening (flag taken, zone captured, round won): `team` is the team it concerns, `id` the player. */
@@ -322,7 +327,7 @@ export type ServerMessage =
   /** Your ammo is authoritative: magazine, spare bullets are unlimited, reloading flag per slot. */
   | { t: 'ammo'; slot: 0 | 1 | 2; mag: number; reloading: boolean }
   /** Someone fired: draw tracer and play sound. `end` is where the bullet stopped. */
-  | { t: 'shot'; id: number; weapon: string; ox: number; oy: number; oz: number; ex: number; ey: number; ez: number }
+  | { t: 'shot'; id: number; weapon: string; ox: number; oy: number; oz: number; ex: number; ey: number; ez: number; /** Suppressed (perk): quieter, shorter earshot. */ sup?: 1 }
   /** Your shot hit a player: hit marker, damage dealt, headshot, and whether it killed. */
   | { t: 'hit'; victim: number; damage: number; head: boolean; killed: boolean }
   /** You took damage from `from` at direction (dx, dz) relative to the world. */
@@ -332,7 +337,11 @@ export type ServerMessage =
   /** The match ended; a new one starts after `restartIn` seconds. winner: team, a player id or 0 for a draw. */
   | { t: 'matchend'; winnerTeam: Team | ''; winnerId: number; restartIn: number }
   /** A weapon slot a remote player holds (third-person model). */
-  | { t: 'holds'; id: number; weapon: string }
+  | {
+    t: 'holds'; id: number; weapon: string;
+    /** Optic on that weapon (third-person model, scope glint), suppressor on the muzzle, Ninja perk (quiet footsteps). */
+    optic?: string; sup?: 1; quiet?: 1;
+  }
   /** The requested item entity is yours. */
   | { t: 'taken'; id: number; itemId: number; count: number; damage?: number; data?: number[] }
   /**
