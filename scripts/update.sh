@@ -113,6 +113,7 @@ main() {
   fi
 
   # The image that runs now stays reachable as bunkcraft:previous (rollback below, and 'bunkcraft rollback').
+  local prev_before; prev_before="$(docker image inspect --format '{{.Id}}' bunkcraft:previous 2>/dev/null || true)"
   [ -n "$old_id" ] && [ "$old_id" != "$new_id" ] && docker tag "$old_id" bunkcraft:previous
 
   # ---- 5./6. recreate and check
@@ -134,6 +135,8 @@ main() {
   ref="$(docker compose config --images bunkcraft)"
   # A tag can be pointed back at the old image; a digest reference (latest@sha256:…) already names it.
   case "$ref" in *@*) ;; *) docker tag "$old_id" "$ref" ;; esac
+  # 'bunkcraft rollback' keeps pointing at the version before this one.
+  if [ -n "$prev_before" ]; then docker tag "$prev_before" bunkcraft:previous; fi
   docker compose up -d --remove-orphans
   if wait_healthy; then
     say "rolled back, healthy again: $(health)"
