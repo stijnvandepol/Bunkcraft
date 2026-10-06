@@ -41,3 +41,37 @@ test('arcade: the end screen shows the final score that arrives right after matc
   await expect(page.locator('.arc-end .arc-board-scores')).toContainText('RED 3');
   await expect(page.locator('.arc-end .arc-board-scores')).toContainText('1 BLUE');
 });
+
+test('arcade: an objective marker at the screen edge keeps its whole caption on screen (wide "CONTESTED" label)', async ({ page }) => {
+  await startPreview(page, 'domination', 'villa');
+  // Three contested points, the player turning around: markers stick to the left and right edges.
+  await page.evaluate(() => {
+    const g = (window as any).game;
+    g.previewServer.demo();
+    const st = g.arcade.modeHud.state;
+    g.previewServer.modeState({ ...st, zones: st.zones.map((z: any) => ({ ...z, contested: true, owner: '', progress: 0, progressTeam: '' })) });
+  });
+  for (const yaw of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
+    await page.evaluate((y) => { const g = (window as any).game; g.player.yaw = y; g.player.pitch = 0; }, yaw);
+    await page.waitForTimeout(400);
+    const boxes = await page.evaluate(() => [...document.querySelectorAll('.mode-marker:not(.hidden)')].map((e) => {
+      const r = e.getBoundingClientRect();
+      return { left: r.left, right: r.right, text: e.textContent };
+    }));
+    expect(boxes.length).toBeGreaterThan(0);
+    for (const b of boxes) {
+      expect(b.left, `${b.text} at yaw ${yaw}`).toBeGreaterThanOrEqual(0);
+      expect(b.right, `${b.text} at yaw ${yaw}`).toBeLessThanOrEqual(1280);
+    }
+  }
+});
+
+test('arcade: Create-a-Class hides the match HUD under it (its title sat on the score bar)', async ({ page }) => {
+  await startPreview(page, 'tdm', 'atomic');
+  await expect(page.locator('.arc-top')).toBeVisible();
+  await page.evaluate(() => (window as any).game.arcade.openLoadout());
+  await expect(page.locator('.arc-loadout-title')).toBeVisible();
+  await expect(page.locator('.arc-top')).toBeHidden();
+  await page.evaluate(() => (window as any).game.arcade.closeLoadout());
+  await expect(page.locator('.arc-top')).toBeVisible();
+});

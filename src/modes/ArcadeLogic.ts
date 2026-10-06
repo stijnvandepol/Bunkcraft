@@ -302,6 +302,9 @@ export function swayOffset(t: number, amp: number, out: { x: number; y: number }
 
 // ---------------------------------------------------------------- recoil
 
+/** Shortest pause after a shot before the aim recovers. */
+export const RECOIL_REST_SEC = 0.09;
+
 /**
  * Aim recoil: every shot climbs the aim by `recoil × AIM_CLIMB` degrees (less when aiming) and drifts it
  * sideways by the weapon's pattern; after the trigger lets go most of the climb comes back down.
@@ -310,13 +313,23 @@ export function swayOffset(t: number, amp: number, out: { x: number; y: number }
 export class RecoilState {
   private shot = 0;
   private lastShotAt = -1e9;
+  /** Seconds without a shot before the aim starts to come back down (the trigger rests). */
+  private restAfter = RECOIL_REST_SEC;
   /** Climb (degrees) still to recover. */
   private climb = 0;
   readonly out = { pitch: 0, yaw: 0 };
 
-  kick(now: number, recoil: number, recoilX: number, pattern: readonly number[], ads: number, climbPerRecoil: number): { pitch: number; yaw: number } {
+  /**
+   * `interval` is an automatic weapon's time between shots: the aim only recovers after a pause longer than that, so a
+   * held trigger keeps climbing (the 600 rpm rifle fires every 0.1 s, more than the old fixed 0.09 s rest, and
+   * recovered between every shot of a spray: QA round 2).
+   */
+  kick(
+    now: number, recoil: number, recoilX: number, pattern: readonly number[], ads: number, climbPerRecoil: number, interval = 0,
+  ): { pitch: number; yaw: number } {
     if (now - this.lastShotAt > 0.35) this.shot = 0;
     this.lastShotAt = now;
+    this.restAfter = Math.max(RECOIL_REST_SEC, interval * 1.3);
     const k = 1 - 0.3 * Math.min(1, Math.max(0, ads));
     const up = recoil * climbPerRecoil * k;
     this.out.pitch = up;
@@ -328,7 +341,7 @@ export class RecoilState {
 
   /** Pitch change (degrees, negative = down) for this frame: recovers once the shooting stops. */
   recover(now: number, dt: number): number {
-    if (this.climb <= 1e-4 || now - this.lastShotAt < 0.09) return 0;
+    if (this.climb <= 1e-4 || now - this.lastShotAt < this.restAfter) return 0;
     const r = this.climb * Math.min(1, dt * 9);
     this.climb -= r;
     return -r;

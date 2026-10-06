@@ -803,7 +803,7 @@ export class ArcadeSession {
     this.viewmodel.fire();
     this.kick = Math.min(0.12, this.kick + (w.recoil * Math.PI) / 180 * 0.8);
     // The aim climbs along the weapon's pattern (after the shot went out with the old aim).
-    const r = this.recoil.kick(now, w.recoil, w.recoilX, w.pattern, this.ads, AIM_CLIMB);
+    const r = this.recoil.kick(now, w.recoil, w.recoilX, w.pattern, this.ads, AIM_CLIMB, w.auto ? fireInterval(w) : 0);
     p.pitch = Math.min(Math.PI / 2 - 0.001, p.pitch + r.pitch * DEG);
     p.yaw -= r.yaw * DEG;
     if (w.bolt) { this.boltAt = now + BOLT_DELAY; this.boltStage = 0; }

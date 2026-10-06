@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { BREATH_HOLD_SEC, BREATH_SPENT_SEC, RecoilState, SCOPE_SWAY, ScopeBreath, swayOffset } from '../src/modes/ArcadeLogic';
-import { AIM_CLIMB, WEAPONS, weaponDef } from '../src/modes/Weapons';
+import { AIM_CLIMB, WEAPONS, fireInterval, weaponDef } from '../src/modes/Weapons';
 import {
   GUN_SOUNDS, MECH_KINDS, MULTI_KILL_WINDOW, RELOAD_STEPS, SUPPRESSED_EARSHOT, gunEarshot, medalFor, outdoorShare, reloadSteps,
 } from '../src/core/audio/weaponSounds';
@@ -61,6 +61,24 @@ describe('recoil', () => {
     expect(-back).toBeLessThanOrEqual(pitch * 0.7 + 1e-9);
     const aimed = new RecoilState().kick(0, lmg.recoil, lmg.recoilX, lmg.pattern, 1, AIM_CLIMB);
     expect(aimed.pitch).toBeLessThan(lmg.recoil * AIM_CLIMB);
+  });
+
+  it('a held trigger keeps climbing at any fire rate; ~70% comes back after letting go', () => {
+    // Frame by frame like the game: recover() every frame, kick() on every shot (the 600 rpm rifle fires every 0.1 s).
+    for (const id of ['rifle', 'smg', 'lmg', 'mpistol']) {
+      const w = weaponDef(id)!;
+      const r = new RecoilState();
+      const dt = 1 / 60;
+      let pitch = 0, rise = 0, next = 0, shots = 0;
+      for (let t = 0; shots < 20; t += dt) {
+        pitch += r.recover(t, dt);
+        if (t >= next) { const k = r.kick(t, w.recoil, w.recoilX, w.pattern, 0, AIM_CLIMB, fireInterval(w)); pitch += k.pitch; rise += k.pitch; next += fireInterval(w); shots++; }
+      }
+      expect(pitch, `${id}: no recovery during the spray`).toBeCloseTo(rise, 6);
+      let back = 0;
+      for (let t = 10; t < 11.5; t += dt) back += r.recover(t, dt);
+      expect(-back / rise, id).toBeGreaterThan(0.65);
+    }
   });
 
   it('every gun has a recoil pattern', () => {

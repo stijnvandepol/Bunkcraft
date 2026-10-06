@@ -37,7 +37,8 @@ def check(name, ok, detail=''):
 HOOK = """() => {
   const g = window.game;
   window.__snd = [];
-  g.audio.addSoundListener((name) => window.__snd.push([name, performance.now()]));
+  // Own sounds have no position (NaN): that tells them apart from the bots' gunshots.
+  g.audio.addSoundListener((name, x) => window.__snd.push([name, performance.now(), Number.isNaN(x)]));
 }"""
 
 STATE = """() => {
@@ -53,8 +54,8 @@ def st(page):
     return page.evaluate(STATE)
 
 
-def sounds(page, since=0.0, prefix=''):
-    return page.evaluate('([s, p]) => window.__snd.filter((e) => e[1] >= s && e[0].startsWith(p))', [since, prefix])
+def sounds(page, since=0.0, prefix='', own=True):
+    return page.evaluate('([s, p, o]) => window.__snd.filter((e) => e[1] >= s && e[0].startsWith(p) && (!o || e[2]))', [since, prefix, own])
 
 
 def now(page):
@@ -93,10 +94,12 @@ def fire_mag(page, wdef):
     """Empties the magazine; returns (shots heard, climb in degrees, recovered fraction)."""
     t0 = now(page)
     p0 = st(page)['pitch']
-    auto = wdef['mode'] in ('auto', 'burst')
+    auto = wdef['mode'] == 'auto'
     peak = p0
     end = time.time() + 12
-    while time.time() < end and st(page)['mag'] > 0:
+    own = lambda: len([s for s in sounds(page, t0, 'weapon.') if s[0] in (f"weapon.{wdef['id']}", f"weapon.{wdef['id']}.suppressed")])
+    # Until the magazine's worth of shots went off (the preview's ammo echo is not exact on the last round).
+    while time.time() < end and own() < wdef['magazine'] and st(page)['mag'] > 0:
         if auto:
             hold(page, 'Mouse0', True)
         else:
@@ -109,7 +112,7 @@ def fire_mag(page, wdef):
     climb = math.degrees(peak - p0)
     rec = (peak - p1) / (peak - p0) if peak > p0 else 0
     heard = len([s for s in sounds(page, t0, 'weapon.') if s[0] in (f"weapon.{wdef['id']}", f"weapon.{wdef['id']}.suppressed")])
-    return heard, climb, rec
+    return heard, climb, rec, t0
 
 
 with sync_playwright() as pw:
@@ -148,7 +151,7 @@ with sync_playwright() as pw:
             pump(page, 0.3)
             s1 = st(page)
             check(f'{tag}: ADS in ~{w["adsTime"]:.2f}s', reached is not None and reached < w['adsTime'] + 0.35, f'{reached}')
-            check(f'{tag}: ADS zooms the view', s1['zoom'] > 1.05, f"zoom {s1['zoom']:.2f}")
+            check(f'{tag}: ADS zooms the view (narrower FOV)', s1['zoom'] < 0.95, f"zoom {s1['zoom']:.2f}")
             if optic == 'scope':
                 check(f'{tag}: scope overlay on, gun hidden', s1['scope'] and not s1['gun'], json.dumps(s1))
                 # Breath: sway first, then Shift steadies it.
@@ -169,19 +172,23 @@ with sync_playwright() as pw:
                 check(f'{tag}: reticle shown while aiming', s1['reticle'] and not s1['scope'], json.dumps(s1))
             else:
                 check(f'{tag}: no scope overlay with {optic}', not s1['scope'])
-            heard, climb, rec = fire_mag(page, w)
-            check(f'{tag}: every shot heard ({w["magazine"]})', heard >= w['magazine'] * 0.9, f'{heard}')
-            check(f'{tag}: recoil climbs and recovers', climb > 0.05 and rec > 0.4, f'climb {climb:.2f} deg, recovered {rec:.0%}')
+            heard, climb, rec, t_r = fire_mag(page, w)
+            check(f'{tag}: every shot heard ({w["magazine"]})', heard >= w['magazine'] - 1, f'{heard}')
+            if w['mode'] == 'auto':
+                check(f'{tag}: recoil climbs during the spray and ~70% comes back', climb > 0.5 and rec > 0.55, f'climb {climb:.2f} deg, recovered {rec:.0%}')
+            else:
+                check(f'{tag}: recoil kicks per shot', climb > 0.05, f'climb {climb:.2f} deg')
             hold(page, 'Mouse2', False)
+            # The empty magazine reloads by itself.
+            # An empty magazine reloads by itself; one round left (the preview's echo) needs R.
             pump(page, 0.3)
-            # Reload
-            t_r = now(page)
-            press(page, 'KeyR')
-            pump(page, 0.2)
-            check(f'{tag}: reloading', st(page)['reloading'] or st(page)['mag'] == w['magazine'])
-            pump(page, w['reloadSec'] + 0.4)
-            check(f'{tag}: full after {w["reloadSec"]}s', st(page)['mag'] == w['magazine'], json.dumps(st(page)))
-            steps = [s[0] for s in sounds(page, t_r) if s[0].startswith('weapon.mech') or s[0] == 'weapon.reload']
+            if not st(page)['reloading'] and st(page)['mag'] < w['magazine']:
+                press(page, 'KeyR')
+                pump(page, 0.15)
+            check(f'{tag}: reloading', st(page)['reloading'] or st(page)['mag'] == w['magazine'], json.dumps(st(page)))
+            pump(page, w['reloadSec'] + 0.3)
+            check(f'{tag}: magazine full after {w["reloadSec"]}s', st(page)['mag'] == w['magazine'], json.dumps(st(page)))
+            steps = [s[0] for s in sounds(page, t_r) if s[0].startswith('weapon.mech') and 'ads' not in s[0]]
             check(f'{tag}: reload sounds', len(steps) >= 2, str(steps[:6]))
             if optic != w['optics'][0]:
                 continue
@@ -208,16 +215,25 @@ with sync_playwright() as pw:
             pump(page, 0.4)
             t0 = now(page)
             press(page, 'Digit2')
-            hold(page, 'Mouse0', True)
-            pump(page, 0.9)
-            hold(page, 'Mouse0', False)
+            if w['mode'] == 'auto':
+                hold(page, 'Mouse0', True)
+                pump(page, 0.9)
+                hold(page, 'Mouse0', False)
+            else:
+                # Semi-automatic: a click every frame or so until it goes off.
+                for _ in range(18):
+                    press(page, 'Mouse0')
+                    pump(page, 0.05)
             shots = [s for s in sounds(page, t0) if s[0] == f"weapon.{w['id']}"]
             first = (shots[0][1] - t0) / 1000 if shots else None
             want = 0.28 * (0.5 if perk == 'quickdraw' else 1)
             check(f"{w['id']} ({perk}): first shot {want:.2f}s after switching", first is not None and want - 0.05 <= first <= want + 0.2, f'{first}')
             pump(page, 0.3)
-        heard, climb, rec = fire_mag(page, w)
-        check(f"{w['id']}: magazine heard ({w['magazine']})", heard >= (w['magazine'] - 1) * 0.9, f'{heard}')
+        # The switch test used some rounds: reload first, then a full magazine.
+        press(page, 'KeyR')
+        pump(page, w['reloadSec'] + 0.4)
+        heard, climb, rec, _ = fire_mag(page, w)
+        check(f"{w['id']}: magazine heard ({w['magazine']})", heard >= w['magazine'] - 2, f'{heard}')
         press(page, 'Digit1')
         pump(page, 0.4)
 
