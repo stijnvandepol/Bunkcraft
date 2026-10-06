@@ -1,6 +1,6 @@
 import { type GameType, type GameTypeDef, gameTypeDef } from '../modes/GameTypes';
 import { MAP_SETTINGS, type MapSetting, getMap } from '../modes/maps';
-import { LOBBY_SIZES, type ModeStats, REALMS_MODES, isArcade } from '../modes/Realms';
+import { type ModeStats, REALMS_MODES, isArcade, lobbySizes } from '../modes/Realms';
 import { NAME_PATTERN, formatCode, normalizeCode } from '../net/protocol';
 import { type ListedRoom, type RoomInfo, browseRooms, createRoom, inviteLink, inviteText, lookupRoom, quickPlay, realmsStats, serverInfo } from '../net/RoomApi';
 import { button, h, menuScreen } from './dom';
@@ -65,11 +65,15 @@ function seconds(v: number): string {
  * Minecraft's world and server lists.
  */
 export class RealmsMenu {
+  /** Lobby sizes this server allows (from /api/server, ROOM_MAX_PLAYERS). */
+  private sizes: number[] = lobbySizes();
+
   constructor(private readonly stack: ScreenStack, private readonly actions: RealmsActions) {}
 
   /** The playlist. Asks for a player name first when none is saved. */
   async show(): Promise<void> {
     const info = await serverInfo();
+    this.sizes = lobbySizes(info?.roomMaxPlayers);
     if (!info || !info.rooms) {
       this.stack.push(menuScreen(t('title.realms'), [h('div', { class: 'hint', text: t('realms.offline') })], [
         button(t('common.back'), () => this.stack.pop(), { cls: 'w150' }),
@@ -294,7 +298,8 @@ export class RealmsMenu {
     let map: MapSetting = 'rotate';
     let score = def.scoreLimit;
     let time = def.timeLimitSec;
-    let size = 8;
+    const sizes = this.sizes;
+    let size = sizes.includes(8) ? 8 : sizes[sizes.length - 1];
     let listed = false;
     const error = h('div', { class: 'error' });
     const modeHint = h('div', { class: 'hint' });
@@ -312,7 +317,7 @@ export class RealmsMenu {
     const mapBtn = button('', () => { map = next(maps(), map); render(); });
     const scoreBtn = button('', () => { score = next(def.options?.score ?? [], score); render(); });
     const timeBtn = button('', () => { time = next(def.options?.time ?? [], time); render(); });
-    const sizeBtn = button('', () => { size = next(LOBBY_SIZES, size); render(); });
+    const sizeBtn = button('', () => { size = next(sizes, size); render(); });
     const listedBtn = button('', () => { listed = !listed; render(); });
     const render = () => {
       modeBtn.textContent = t('realms.create.mode', realmsModeName(mode));

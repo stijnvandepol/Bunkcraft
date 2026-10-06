@@ -6,7 +6,7 @@ import type { WebSocket } from 'ws';
 import { afterEach, describe, expect, it } from 'vitest';
 import { getMap, voteChoices } from '../src/modes/maps';
 import {
-  type LobbyCandidate, NEAR_END_PROGRESS, NEAR_END_SECONDS, REALMS_MODES, filterRooms, joinable, parseListingKind, pickLobby, quickPlayName,
+  LOBBY_SIZES, type LobbyCandidate, NEAR_END_PROGRESS, NEAR_END_SECONDS, REALMS_MODES, filterRooms, joinable, lobbySizes, parseListingKind, pickLobby, quickPlayName,
 } from '../src/modes/Realms';
 import { PROTOCOL_VERSION, type ClientMessage, type ServerMessage } from '../src/net/protocol';
 import { Rooms } from '../server/Rooms';
@@ -70,6 +70,17 @@ describe('Realms matchmaking: pickLobby', () => {
 
   it('names quick play lobbies after the mode and the code', () => {
     expect(quickPlayName('tdm', 'K7QM2X')).toBe('Team Deathmatch #K7Q');
+  });
+});
+
+describe('Realms lobby sizes', () => {
+  it('offers only sizes the server allows (ROOM_MAX_PLAYERS), all of them when unknown', () => {
+    expect(lobbySizes(8)).toEqual([2, 4, 6, 8]);
+    expect(lobbySizes(16)).toEqual(LOBBY_SIZES);
+    expect(lobbySizes(20)).toEqual(LOBBY_SIZES);
+    expect(lobbySizes(9)).toEqual([2, 4, 6, 8]);
+    expect(lobbySizes(undefined)).toEqual(LOBBY_SIZES);
+    expect(lobbySizes(1)).toEqual([2]);
   });
 });
 

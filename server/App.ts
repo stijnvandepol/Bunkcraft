@@ -186,6 +186,8 @@ export async function startServer(config: Config): Promise<RunningServer> {
     if (path === '/api/server' && req.method === 'GET') {
       return json(res, 200, {
         rooms: !!rooms, main: !!main, players: gauges().players,
+        // Largest lobby a game may have (ROOM_MAX_PLAYERS): Realms only offers sizes up to it.
+        ...(rooms ? { roomMaxPlayers: config.roomMaxPlayers } : {}),
         // What this server can do beyond the basics; clients hide features an older server lacks.
         features: { passwords: true, browse: !!rooms, binary: config.binary, realms: !!rooms },
       });

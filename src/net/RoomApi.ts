@@ -48,6 +48,8 @@ export interface ServerInfo {
   rooms: boolean;
   /** The always-on main world is open. */
   main: boolean;
+  /** Largest lobby size this server allows (ROOM_MAX_PLAYERS); absent on older servers. */
+  roomMaxPlayers?: number;
   /** Features of newer servers; absent on older ones. */
   features?: { passwords?: boolean; browse?: boolean; binary?: boolean; realms?: boolean };
 }
