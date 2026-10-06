@@ -87,13 +87,21 @@ const CV = [0, 0, 1, 1];
 /** Returns an ArrayBuffer of at least the requested size (the worker recycles them through a pool). */
 export type BufferAlloc = (bytes: number) => ArrayBuffer;
 
+/** Worst case of `quad(flip, doubleSided = true)`: 12 indices per 4 vertices. */
+const INDICES_PER_VERTEX = 3;
+
 class GeometryBuilder {
   pos = new Uint16Array(4096 * 4);
   data = new Uint8Array(4096 * 4);
   tint = new Uint8Array(4096 * 4);
   /** Packed 0xRRGGBB applied to subsequently emitted vertices. */
   currentTint = 0xffffff;
-  idx = new Uint32Array(4096 * 1.5);
+  /**
+   * Index scratch, INDICES_PER_VERTEX per vertex of capacity: a double-sided quad (cross plants)
+   * emits 12 indices for its 4 vertices. Typed-array writes past the end are silently dropped, so a
+   * smaller scratch loses indices and the result keeps stale pool bytes in their place.
+   */
+  idx = new Uint32Array(4096 * INDICES_PER_VERTEX);
   vertexCount = 0;
   indexCount = 0;
   minY = 0;
@@ -112,7 +120,7 @@ class GeometryBuilder {
     const pos = new Uint16Array(n * 4); pos.set(this.pos); this.pos = pos;
     const data = new Uint8Array(n * 4); data.set(this.data); this.data = data;
     const tint = new Uint8Array(n * 4); tint.set(this.tint); this.tint = tint;
-    const idx = new Uint32Array(n * 1.5); idx.set(this.idx); this.idx = idx;
+    const idx = new Uint32Array(n * INDICES_PER_VERTEX); idx.set(this.idx); this.idx = idx;
   }
 
   vertex(x: number, y: number, z: number, u: number, v: number, d0: number, d1: number, d2: number, d3: number): void {
