@@ -4,6 +4,7 @@
  */
 import { PerformanceObserver, monitorEventLoopDelay } from 'node:perf_hooks';
 import type { ChunkGenStats } from './chunkgen/ChunkGenPool';
+import { TICK_PHASES, type TickPhases } from './TickPhases';
 
 const RING = 8192;
 /** Event-loop delay sampling interval; the histogram includes it, so it is subtracted again. */
@@ -33,7 +34,12 @@ export class Metrics {
   cheatBans = 0;
   suspicionFlags = 0;
   private readonly ticks = new Float64Array(RING);
+  /** Main-thread CPU time of the same ticks (ms): a tick much longer than its CPU time waited for a core. */
+  private readonly tickCpus = new Float64Array(RING);
   private tickN = 0;
+  /** Time per entity tick phase, all games (ms), and the ticks that took longer than the slow-tick threshold. */
+  readonly phaseMs: TickPhases = { world: 0, blocks: 0, spawn: 0, mobs: 0, other: 0, snapshots: 0 };
+  slowTicks = 0;
   private lastCpu = process.cpuUsage();
   private lastCpuAt = Date.now();
   /**
@@ -45,6 +51,8 @@ export class Metrics {
   loopLag = { p50: 0, p99: 0, max: 0 };
   /** Game ticks of the last rate window in ms (the ring above spans minutes on a quiet server). */
   tickWindow = { p50: 0, p99: 0, max: 0, count: 0 };
+  /** CPU time of the game ticks in the last rate window in ms (threadCpuUsage; zeros where Node lacks it). */
+  tickCpuWindow = { p50: 0, p99: 0, max: 0 };
   private tickNAtRoll = 0;
   /** Garbage collection: pauses (count, total and longest in ms), all time and in the last rate window. */
   gcCount = 0;
@@ -82,7 +90,11 @@ export class Metrics {
   sent(bytes: number, count = 1): void { this.msgOut += count; this.bytesOut += bytes; }
   rateLimited(kind: string): void { this.rateLimitHits.set(kind, (this.rateLimitHits.get(kind) ?? 0) + 1); }
   cheat(rule: string): void { this.cheatEvents.set(rule, (this.cheatEvents.get(rule) ?? 0) + 1); }
-  tick(ms: number): void { this.ticks[this.tickN++ % RING] = ms; }
+  tick(ms: number, cpuMs = 0, phases?: TickPhases): void {
+    this.tickCpus[this.tickN % RING] = cpuMs;
+    this.ticks[this.tickN++ % RING] = ms;
+    if (phases) for (const k of TICK_PHASES) this.phaseMs[k] += phases[k];
+  }
 
   /** Quantile (0..1) of recent tick durations in ms. */
   tickQuantile(q: number): number {
@@ -114,6 +126,10 @@ export class Metrics {
     recent.sort((x, y) => x - y);
     const at = (q: number) => (recent.length ? recent[Math.min(recent.length - 1, Math.floor(q * recent.length))] : 0);
     this.tickWindow = { p50: at(0.5), p99: at(0.99), max: recent.length ? recent[recent.length - 1] : 0, count: recent.length };
+    recent.length = 0;
+    for (let i = this.tickN - n; i < this.tickN; i++) recent.push(this.tickCpus[i % RING]);
+    recent.sort((x, y) => x - y);
+    this.tickCpuWindow = { p50: at(0.5), p99: at(0.99), max: recent.length ? recent[recent.length - 1] : 0 };
     this.tickNAtRoll = this.tickN;
     this.gcWindowMaxMs = this.gcWindowAcc;
     this.gcWindowAcc = 0;
@@ -170,6 +186,14 @@ export class Metrics {
       `bunkcraft_tick_window_seconds{quantile="1"} ${num(this.tickWindow.max / 1000)}`,
       `bunkcraft_tick_window_seconds_count ${this.tickWindow.count}`,
     ]);
+    metric('bunkcraft_tick_cpu_window_seconds', 'gauge', 'Main-thread CPU time of the game ticks in the last rate window (about 5 s).', [
+      `bunkcraft_tick_cpu_window_seconds{quantile="0.5"} ${num(this.tickCpuWindow.p50 / 1000)}`,
+      `bunkcraft_tick_cpu_window_seconds{quantile="0.99"} ${num(this.tickCpuWindow.p99 / 1000)}`,
+      `bunkcraft_tick_cpu_window_seconds{quantile="1"} ${num(this.tickCpuWindow.max / 1000)}`,
+    ]);
+    metric('bunkcraft_tick_phase_seconds_total', 'counter', 'Time of the game ticks by phase (all games).',
+      TICK_PHASES.map((k) => `bunkcraft_tick_phase_seconds_total{phase="${k}"} ${num(this.phaseMs[k] / 1000)}`));
+    metric('bunkcraft_slow_ticks_total', 'counter', 'Game ticks longer than SLOW_TICK_MS (logged with their phases).', [`bunkcraft_slow_ticks_total ${this.slowTicks}`]);
     metric('bunkcraft_event_loop_lag_seconds', 'gauge', 'How late the event loop runs timers, last rate window (about 5 s).', [
       `bunkcraft_event_loop_lag_seconds{quantile="0.5"} ${num(this.loopLag.p50 / 1000)}`,
       `bunkcraft_event_loop_lag_seconds{quantile="0.99"} ${num(this.loopLag.p99 / 1000)}`,

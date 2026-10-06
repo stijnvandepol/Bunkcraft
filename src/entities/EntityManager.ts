@@ -100,6 +100,11 @@ export class EntityManager implements MobWorld {
   passiveSpawning = true;
 
   private readonly spawner: MobSpawner;
+  /**
+   * Where the last tick's time went (ms; server slow-tick log, /metrics and the benchmarks): natural spawning, the
+   * mobs (AI, path finding, physics) and the rest (items, arrows, orbs, TNT).
+   */
+  readonly perf = { spawnMs: 0, mobsMs: 0, otherMs: 0 };
 
   constructor(readonly world: EntityWorld, seed: number) {
     this.spawner = new MobSpawner(this, seed);
@@ -293,12 +298,14 @@ export class EntityManager implements MobWorld {
       targets = this.single;
     }
 
+    const t0 = performance.now();
     if ((this.hostileSpawning || this.passiveSpawning) && this.spawningEnabled) {
       this.spawner.recount();
       if (this.hostileSpawning && !this.peaceful) this.spawner.tickHostile(targets, darkness);
       if (this.passiveSpawning) this.spawner.tickPassive(targets, darkness, this.tickCount);
     }
 
+    const t1 = performance.now();
     for (const m of this.mobs) {
       if (m.removed || m.remote) continue;
       if (this.peaceful && m.type.hostile) { m.removed = true; continue; }
@@ -355,6 +362,7 @@ export class EntityManager implements MobWorld {
       }
     }
 
+    const t2 = performance.now();
     for (let i = 0; i < this.tnt.length; i++) {
       const t = this.tnt[i];
       if (!t.removed && !t.remote && t.tick(getBlock)) events.tntExplode(t);
@@ -423,6 +431,10 @@ export class EntityManager implements MobWorld {
     if (this.tickCount % 5 === 0) mergeOrbs(this.orbs);
 
     this.compact();
+    const perf = this.perf;
+    perf.spawnMs = t1 - t0;
+    perf.mobsMs = t2 - t1;
+    perf.otherMs = performance.now() - t2;
   }
 
   private splitSlime(m: Mob): void {

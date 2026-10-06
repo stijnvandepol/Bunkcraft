@@ -23,6 +23,7 @@ import { TerrainGenerator } from '../src/world/TerrainGenerator';
 import { GEN_VERSION_CURRENT, GEN_VERSION_LEGACY } from '../src/world/GenVersion';
 import { Match, type MatchHost } from './Match';
 import { ServerEntities, dayFactorAt } from './ServerEntities';
+import { TICK_PHASES } from './TickPhases';
 import { ServerSurvival, type SurvivalData } from './SurvivalRules';
 import { EffectSet } from '../src/player/Effects';
 import { ServerWorld } from './ServerWorld';
@@ -44,6 +45,15 @@ import { type RateLimiter, hashIp, newToken, safeEqual, tokenMatches, verifyPass
 const TICK_MS = 50; // 20 ticks per second, like Minecraft
 const DAY_SECONDS = 1200;
 const SAVE_INTERVAL_MS = 30_000;
+/** A game tick at least this long (wall clock) is counted and logged with its phases. */
+const SLOW_TICK_MS = Number(process.env.SLOW_TICK_MS) || 20;
+const threadCpu = (process as { threadCpuUsage?: () => NodeJS.CpuUsage }).threadCpuUsage;
+/** CPU time of the main thread in ms (0 where Node lacks threadCpuUsage). */
+function threadCpuMs(): number {
+  if (!threadCpu) return 0;
+  const u = threadCpu.call(process);
+  return (u.user + u.system) / 1000;
+}
 const REACH = 8; // lenient server-side reach check (client uses 4.5, creative 5)
 const MAX_SPEED = 26; // blocks/second (fast flying + slack)
 const PING_INTERVAL_SECONDS = 3; // arcade: measure the round trip every 3 s
@@ -250,6 +260,7 @@ export class GameServer {
   private readonly file: string;
   private dirty = false;
   private lastTick = Date.now();
+  private slowTickLoggedAt = 0;
   private tickCount = 0;
   /** Ticks per second: 20 (Minecraft), arcade rooms ARCADE_TICK_HZ (default 30). */
   private readonly tickHz: number = 20;
@@ -1303,8 +1314,27 @@ export class GameServer {
 
   private tick(): void {
     const t0 = performance.now();
+    const c0 = threadCpuMs();
     this.tickInner();
-    if (this.sessions.size > 0) metrics.tick(performance.now() - t0);
+    if (this.sessions.size === 0) return;
+    const ms = performance.now() - t0;
+    const cpuMs = threadCpuMs() - c0;
+    const phases = this.entities?.phaseMs;
+    metrics.tick(ms, cpuMs, phases);
+    if (ms >= SLOW_TICK_MS) {
+      metrics.slowTicks++;
+      // At most one line per game every 10 s: enough to see what was slow without flooding the log.
+      const now = Date.now();
+      if (now - this.slowTickLoggedAt >= 10_000) {
+        this.slowTickLoggedAt = now;
+        const p: Record<string, number> = {};
+        if (phases) for (const k of TICK_PHASES) p[k] = Math.round(phases[k] * 100) / 100;
+        this.logger.warn('slow tick', {
+          ms: Math.round(ms * 10) / 10, cpuMs: Math.round(cpuMs * 10) / 10, ...p,
+          players: this.sessions.size, mobs: this.entities?.mobCount ?? 0,
+        });
+      }
+    }
   }
 
   private tickInner(): void {
