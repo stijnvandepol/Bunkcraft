@@ -6,14 +6,17 @@
 ARG NODE_IMAGE=node:24-alpine
 
 # ---- build: all dependencies, type check, client bundle (dist/) and server bundle (dist-server/) ----
-FROM ${NODE_IMAGE} AS build
+# Runs on the builder's own platform: the output is plain JS, identical for every target architecture, so a
+# multi-arch build (CI: linux/amd64 + linux/arm64) builds once and needs no emulation.
+FROM --platform=$BUILDPLATFORM ${NODE_IMAGE} AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY . .
-RUN npm run build
+RUN npm run build && mkdir -p /out/data
 
 # ---- runtime: plain Node and two build outputs. No node_modules, no TypeScript at runtime. ----
+# No RUN in this stage: nothing executes for the target architecture, so arm64 builds fine on amd64 without QEMU.
 FROM ${NODE_IMAGE}
 WORKDIR /app
 # Heap limits fit the compose memory limit (docker-compose.yml); measured in docs/research/SERVER-DEPLOY.md.
@@ -25,7 +28,7 @@ COPY package.json ./
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/dist-server/index.js /app/dist-server/genWorker.js ./dist-server/
 # The world (edits, players, time) lives here; the unprivileged "node" user owns it. Mount a volume to keep it.
-RUN mkdir -p /app/data && chown node:node /app/data
+COPY --from=build --chown=node:node /out/data /app/data
 VOLUME ["/app/data"]
 USER node
 EXPOSE 3000
