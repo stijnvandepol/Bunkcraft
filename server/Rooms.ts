@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, s
 import { join } from 'node:path';
 import { randomInt } from 'node:crypto';
 import { type GameType, gameTypeDef, parseGameType } from '../src/modes/GameTypes';
-import { DEFAULT_MAP, type MapSetting, mapFor, parseMapId, parseMapSetting } from '../src/modes/maps';
+import { DEFAULT_MAP, MAP_IDS, type MapSetting, getMap, mapFor, parseMapId, parseMapSetting } from '../src/modes/maps';
 import { CODE_ALPHABET, CODE_LENGTH, type MatchPhase, normalizeCode } from '../src/net/protocol';
 import {
   LOBBY_SIZE_RANGE, type LobbyCandidate, type ListingKind, type ModeStats, REALMS_MODES, filterRooms, pickLobby, quickPlayName,
@@ -92,6 +92,8 @@ export interface MatchRequest {
   mapId?: unknown;
   /** Arcade lobbies: players the game takes (clamped to 2..the server's limit). */
   maxPlayers?: unknown;
+  /** Rotating arcade lobbies: the map of the first match (server-side only, quick play). */
+  startMap?: unknown;
 }
 
 export const SCORE_LIMIT_RANGE = { min: 5, max: 100 };
@@ -169,6 +171,7 @@ export class Rooms {
           : clampSetting(match.scoreLimit, rangeFor(SCORE_LIMIT_RANGE, type.options?.score), type.scoreLimit),
         timeLimitSec: clampSetting(match.timeLimitSec, rangeFor(TIME_LIMIT_RANGE, type.options?.time), type.timeLimitSec),
         mapId: mapSettingFor(parseMapSetting(match.mapId) ?? DEFAULT_MAP, type.requires),
+        ...(parseMapId(match.startMap) ? { startMap: parseMapId(match.startMap)! } : {}),
         ...(match.maxPlayers !== undefined ? {
           lobbySize: clampSetting(match.maxPlayers, { min: LOBBY_SIZE_RANGE.min, max: Math.min(LOBBY_SIZE_RANGE.max, this.opts.maxPlayers) }, this.opts.maxPlayers),
         } : {}),
@@ -288,7 +291,10 @@ export class Rooms {
     if (pick) return { code: pick.code, created: false };
     if (!mayCreate()) return { error: 'limited' };
     // Named after its code so lobbies of one mode can be told apart in the list.
-    const code = this.create((c) => quickPlayName(mode, c), undefined, undefined, { gameType: mode, mapId: 'rotate' }, { listed: true });
+    // Every new lobby starts on a random map the mode can use, so not every lobby opens on the same arena.
+    const maps = MAP_IDS.filter((id) => getMap(id).supports(def.requires));
+    const startMap = maps[randomInt(maps.length)];
+    const code = this.create((c) => quickPlayName(mode, c), undefined, undefined, { gameType: mode, mapId: 'rotate', startMap }, { listed: true });
     if (!code) return { error: 'full' };
     return { code, created: true };
   }

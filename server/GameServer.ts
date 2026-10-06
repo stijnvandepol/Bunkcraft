@@ -229,6 +229,8 @@ export interface ServerOptions {
   scoreLimit?: number;
   timeLimitSec?: number;
   mapId?: MapSetting;
+  /** A rotating game: the map of its first match (not saved; after a restart rotation goes on from the default map). */
+  startMap?: MapId;
   /** For a new game: its own player limit (a Realms lobby size), at most `maxPlayers`. */
   lobbySize?: number;
 }
@@ -295,7 +297,7 @@ export class GameServer {
     const def = gameTypeDef(this.world.gameType ?? 'minecraft');
     if (def.arcade) {
       this.mapSetting = parseMapSetting(this.world.mapId) ?? DEFAULT_MAP;
-      const first: MapId = mapFor(parseMapId(this.mapSetting) ?? DEFAULT_MAP, def.requires);
+      const first: MapId = mapFor(parseMapId(this.mapSetting) ?? parseMapId(opts.startMap) ?? DEFAULT_MAP, def.requires);
       this.loadArena(first);
       this.guard = new ArcadeGuard(
         { getBlock: (x, y, z) => this.arena!.getBlock(x, y, z), getMeta: (x, y, z) => this.arena!.getMeta(x, y, z) },

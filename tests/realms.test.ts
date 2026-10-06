@@ -163,6 +163,19 @@ describe('Rooms quick play', () => {
     expect(r.quickPlay('ffa', () => true)).toMatchObject({ created: true });
   });
 
+  it('starts new lobbies on a random map the mode can be played on', () => {
+    const r = rooms();
+    const seen = new Set<string>();
+    for (let i = 0; i < 12; i++) {
+      const { code } = r.quickPlay('ctf', () => true) as { code: string };
+      const map = r.get(code)!.server.lobbyStatus()!.map;
+      expect(getMap(map).supports(['flags'])).toBe(true);
+      seen.add(map);
+      r.close(code, true); // no players: the next quick play would otherwise join this lobby
+    }
+    expect(seen.size).toBeGreaterThan(1);
+  });
+
   it('does not create a lobby when the creation limit says no', () => {
     expect(rooms().quickPlay('tdm', () => false)).toEqual({ error: 'limited' });
   });
