@@ -66,6 +66,21 @@ test('arcade: an objective marker at the screen edge keeps its whole caption on 
   }
 });
 
+test('arcade: sound captions sit above the weapon slots and the ammo counter', async ({ page }) => {
+  await startPreview(page, 'tdm', 'atomic');
+  await page.evaluate(() => {
+    const g = (window as any).game;
+    g.subtitles.enabled = true;
+    for (const label of ['Gunshot', 'Footsteps', 'Footsteps', 'Double kill']) g.caption(label, g.player.x + 5, g.player.z);
+  });
+  await expect(page.locator('.subtitle').first()).toBeVisible();
+  const [subs, ammo] = await page.evaluate(() => ['.subtitles', '.arc-ammo'].map((s) => {
+    const r = document.querySelector(s)!.getBoundingClientRect();
+    return { top: r.top, bottom: r.bottom };
+  }));
+  expect(subs.bottom).toBeLessThanOrEqual(ammo.top);
+});
+
 test('arcade: Create-a-Class hides the match HUD under it (its title sat on the score bar)', async ({ page }) => {
   await startPreview(page, 'tdm', 'atomic');
   await expect(page.locator('.arc-top')).toBeVisible();

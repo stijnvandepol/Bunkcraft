@@ -1205,6 +1205,8 @@ html, body {
   pointer-events: none;
 }
 .subtitle { padding: var(--s) calc(var(--s) * 4); background: rgba(0, 0, 0, 0.65); color: #fff; }
+/* Arcade: above the weapon slots and the ammo counter (the captions covered them). */
+.subtitles.arcade { bottom: calc(var(--s) * 72); }
 .touch-ui .subtitles { right: auto; bottom: auto; left: calc(var(--s) * 4); top: calc(var(--s) * 4); align-items: flex-start; }
 
 .notice {
