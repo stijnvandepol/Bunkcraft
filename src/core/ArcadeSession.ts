@@ -919,7 +919,8 @@ export class ArcadeSession {
     const scoped = this.scoped;
     hud.setScope(scoped, scoped ? this.breath.breath : -1, this.breath.holding, this.breath.spent);
     const spread = w.magazine === 0 ? 0.5 : currentSpread(w, this.ads, Math.hypot(p.vx, p.vz) > 0.5, !p.onGround);
-    hud.setCrosshair(2 + spreadPixels(spread, this.d.cam.camera.fov, window.innerHeight), !scoped && !this.dead);
+    // Aimed down the sights the sights (or the reticle) are the crosshair.
+    hud.setCrosshair(2 + spreadPixels(spread, this.d.cam.camera.fov, window.innerHeight), !scoped && !this.dead && this.ads < 0.6);
     hud.setProtection(this.protect);
     hud.frame(now, p.yaw);
     if (this.feed.prune(now)) hud.setKillFeed(this.feed.entries, this.d.selfName);

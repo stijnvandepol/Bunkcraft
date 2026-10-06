@@ -189,23 +189,25 @@ interface OpticModel { boxes: Box[]; sightY: number; /** z of the reticle window
 
 export const OPTIC_MODELS: Record<Exclude<OpticId, 'iron'>, OpticModel> = {
   reddot: {
-    sightY: 0.034, windowZ: -0.02, frontZ: -0.03,
+    sightY: 0.046, windowZ: -0.03, frontZ: -0.045,
     boxes: [
-      [-0.016, 0.0, -0.035, 0.016, 0.012, 0.03, BLACK], // mount
-      [-0.022, 0.012, -0.03, -0.016, 0.056, -0.01, DARK], // left of the hood
-      [0.016, 0.012, -0.03, 0.022, 0.056, -0.01, DARK], // right of the hood
-      [-0.022, 0.05, -0.03, 0.022, 0.056, -0.01, DARK], // top of the hood
-      [0.016, 0.02, -0.005, 0.026, 0.034, 0.02, METAL], // brightness knob
+      [-0.02, 0.0, -0.05, 0.02, 0.014, 0.03, BLACK], // mount
+      [-0.036, 0.014, -0.05, -0.026, 0.08, -0.02, DARK], // left of the hood
+      [0.026, 0.014, -0.05, 0.036, 0.08, -0.02, DARK], // right of the hood
+      [-0.036, 0.07, -0.05, 0.036, 0.08, -0.02, DARK], // top of the hood
+      [-0.036, 0.014, -0.05, 0.036, 0.02, -0.02, DARK], // bottom of the hood
+      [0.036, 0.03, -0.04, 0.046, 0.05, -0.02, METAL], // brightness knob
     ],
   },
   holo: {
-    sightY: 0.04, windowZ: -0.04, frontZ: -0.05,
+    sightY: 0.05, windowZ: -0.06, frontZ: -0.075,
     boxes: [
-      [-0.024, 0.0, -0.055, 0.024, 0.014, 0.035, BLACK], // base
-      [-0.028, 0.014, -0.055, -0.021, 0.07, -0.035, DARK], // left of the window
-      [0.021, 0.014, -0.055, 0.028, 0.07, -0.035, DARK], // right of the window
-      [-0.028, 0.064, -0.055, 0.028, 0.072, -0.035, DARK], // top of the window
-      [-0.016, 0.014, 0.0, 0.016, 0.03, 0.035, METAL], // battery box
+      [-0.03, 0.0, -0.08, 0.03, 0.018, 0.04, BLACK], // base
+      [-0.044, 0.018, -0.08, -0.034, 0.094, -0.05, DARK], // left of the window
+      [0.034, 0.018, -0.08, 0.044, 0.094, -0.05, DARK], // right of the window
+      [-0.044, 0.084, -0.08, 0.044, 0.094, -0.05, DARK], // top of the window
+      [-0.02, 0.018, 0.0, 0.02, 0.036, 0.04, METAL], // battery box
+      [0.03, 0.02, -0.02, 0.04, 0.034, 0.02, METAL], // buttons
     ],
   },
   scope: {

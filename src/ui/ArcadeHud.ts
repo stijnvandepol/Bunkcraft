@@ -173,7 +173,7 @@ export class ArcadeHud {
     this.scopeHint = h('div', { class: 'arc-scope-hint', text: 'Hold Shift to steady' });
     // Scope: black surround, the lens edge, a duplex reticle with mil-dots and a centre gap, the breath meter.
     const dots = h('div', { class: 'arc-scope-dots' });
-    for (let i = -4; i <= 4; i++) if (i !== 0) dots.append(h('b', { style: `--i:${i}` }), h('b', { class: 'v', style: `--i:${i}` }));
+    for (let i = -4; i <= 4; i++) if (i !== 0) dots.append(h('b', { style: `--i:${i}` }), h('b', { class: 'dv', style: `--i:${i}` }));
     this.scope = h('div', { class: 'arc-scope hidden' },
       h('div', { class: 'arc-scope-lens' }, h('i', { class: 'h' }), h('i', { class: 'v' }), h('i', { class: 'hl' }), h('i', { class: 'hr' }), h('i', { class: 'vb' }), dots),
       this.scopeBreath, this.scopeHint);
@@ -204,18 +204,14 @@ export class ArcadeHud {
     this.loadoutNote = h('div', { class: 'arc-loadout-note' });
     const presets = h('div', { class: 'arc-loadout-cards presets' });
     LOADOUT_PRESETS.forEach((pr, i) => {
-      const card = h('div', { class: 'arc-card preset', title: pr.description },
-        h('div', { class: 'arc-card-name', text: `${i + 1}  ${pr.name}` }),
-        h('div', { class: 'arc-card-desc', text: classLine(pr) }),
-        h('div', { class: 'arc-card-perk', text: PERKS[pr.perk].name }),
-      );
+      const card = h('div', { class: 'arc-chip', title: `${classLine(pr)} · ${PERKS[pr.perk].name}: ${pr.description}` },
+        h('b', { text: String(i + 1) }), ` ${pr.name}`);
       card.addEventListener('click', () => this.onClass?.(pr, false));
       this.presetCards.set(pr.id, card);
       presets.append(card);
     });
-    this.customDesc = h('div', { class: 'arc-card-desc' });
-    this.customCard = h('div', { class: 'arc-card preset custom' },
-      h('div', { class: 'arc-card-name', text: `${LOADOUT_PRESETS.length + 1}  Custom` }), this.customDesc);
+    this.customDesc = h('div', { class: 'arc-class-line' });
+    this.customCard = h('div', { class: 'arc-chip custom' }, h('b', { text: String(LOADOUT_PRESETS.length + 1) }), ' Custom');
     this.customCard.addEventListener('click', () => this.onClass?.(this.custom, true));
     presets.append(this.customCard);
 
@@ -245,8 +241,9 @@ export class ArcadeHud {
       h('div', { class: 'arc-loadout-panel' },
         h('div', { class: 'arc-loadout-title', text: 'Create-a-Class' }),
         presets,
-        h('div', { class: 'arc-card-desc', text: 'Custom class: click to edit (saved in this browser)' }),
+        this.customDesc,
         editor,
+        h('div', { class: 'arc-card-desc', text: 'Editing makes it your Custom class (saved in this browser)' }),
         this.loadoutNote,
         h('button', { class: 'mc-btn w150', text: 'Done', onclick: () => this.onLoadoutClose?.() }),
       ),
@@ -280,7 +277,6 @@ export class ArcadeHud {
       el.classList.toggle('selected', id === c.optic);
       el.classList.toggle('disabled', !opticAllowed(w, id));
     }
-    this.customDesc.textContent = `${classLine(c)} · ${PERKS[c.perk].name}`;
     this.statsEl.replaceChildren(
       h('div', { class: 'arc-card-name', text: w.name }),
       ...statRows(w, c.optic, c.perk),
@@ -566,6 +562,8 @@ export class ArcadeHud {
     const cur = presetFor(selected);
     for (const [id, card] of this.presetCards) card.classList.toggle('selected', id === cur?.id);
     this.customCard.classList.toggle('selected', !cur && sameClass(selected, this.custom));
+    const label = cur ? cur.name : sameClass(selected, this.custom) ? 'Custom' : 'Class';
+    this.customDesc.textContent = `${label}: ${classLine(selected)} · ${PERKS[selected.perk].name}`;
   }
 
   hideLoadout(): void {

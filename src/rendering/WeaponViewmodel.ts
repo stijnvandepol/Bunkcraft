@@ -119,7 +119,7 @@ export class WeaponViewmodel {
       this.root.add(m);
       return m;
     };
-    this.reticles = { reddot: reticle('reddot', 0.012), holo: reticle('holo', 0.034) };
+    this.reticles = { reddot: reticle('reddot', 0.014), holo: reticle('holo', 0.05) };
     this.root.add(this.weaponMesh, this.armsMesh, this.flash);
     this.scene.add(this.root);
   }
@@ -265,7 +265,8 @@ export class WeaponViewmodel {
       hipZ + (adsZ - hipZ) * e + this.kick * 0.045 + 0.05 * reloadT,
     );
     // Aiming slims the weapon so the receiver does not fill the screen next to the sight line.
-    r.scale.set(0.85 * (1 - 0.55 * e), 0.85, 0.85);
+    // (Not with an optic: its housing frames the reticle.)
+    r.scale.set(0.85 * (1 - (this.optic === 'iron' ? 0.55 : 0.1) * e), 0.85, 0.85);
     r.rotation.set(
       this.kick * 0.1 + equipDrop * 0.6 - reloadT * 0.2 - sw * 0.5 + this.swayY * 0.03,
       -this.swayX * 0.035 + sw * 0.5 + reloadT * 0.25,
@@ -284,7 +285,7 @@ export class WeaponViewmodel {
     if (ret) {
       ret.visible = ads > 0.35;
       // Undo the root's sideways slimming so the dot stays round.
-      ret.scale.x = 1 / (1 - 0.55 * e);
+      ret.scale.x = 1 / (1 - 0.1 * e);
       (ret.material as THREE.MeshBasicMaterial).opacity = Math.min(1, (ads - 0.35) * 3);
     }
   }
