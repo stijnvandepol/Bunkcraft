@@ -467,7 +467,7 @@ export class Game {
     this.precompileShaders();
     // An invite link (?join=CODE) goes straight to the join screen with the code filled in.
     const invited = normalizeCode(new URLSearchParams(location.search).get('join') ?? '');
-    if (invited) void this.menu.showMultiplayer(invited);
+    if (invited) void this.menu.openInvite(invited);
     // A share link (?seed=…&mode=…) opens Create World prefilled.
     else {
       const share = parseShareParams(location.search);
@@ -1026,11 +1026,14 @@ export class Game {
 
   private async quitToTitle(): Promise<void> {
     window.clearTimeout(this.reconnectTimer);
+    // Leaving a Realms match goes back to the Realms playlist, like Minecraft returns to the server list.
+    const fromRealms = !!this.arcade && !!this.roomCode && !this.previewServer;
     await this.saveGame(true);
     this.disconnect();
     this.input.exitLock();
     this.stack.clear();
     this.enterMenu();
+    if (fromRealms) void this.menu.showRealms();
   }
 
   // ---------------------------------------------------------------- multiplayer

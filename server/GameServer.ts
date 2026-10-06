@@ -140,6 +140,8 @@ interface Session {
   id: number;
   name: string;
   ws: WebSocket;
+  /** Hash of the identity key sent in hello (open lobbies tell two players with one name apart by it). */
+  keyHash?: string;
   x: number; y: number; z: number;
   yaw: number; pitch: number;
   flags: number; held: number;
@@ -538,6 +540,11 @@ export class GameServer {
     };
   }
 
+  /** An arcade game nobody owns (opened by Realms quick play): names are not claimed there. */
+  private get openLobby(): boolean {
+    return !!this.match && !this.world.ownerHash;
+  }
+
   /** Players this game takes: its own lobby size when it has one, never more than the server allows. */
   get maxPlayers(): number {
     const own = this.world.maxPlayers;
@@ -679,7 +686,8 @@ export class GameServer {
       if (ban) return kick(`You are banned from this game: ${ban.reason}`, 'banned');
     }
     // A name belongs to the browser that first used it (identity key), so nobody can take over an operator.
-    const claim = this.claimOf(name);
+    // Open lobbies (Realms quick play, nobody owns them) keep no names: strangers come and go, a name is only taken while it plays.
+    const claim = this.openLobby ? undefined : this.claimOf(name);
     if (claim && !owner && !tokenMatches(key, claim)) {
       return kick('This name is already used by another player. Pick another name.', 'identity');
     }
@@ -715,6 +723,15 @@ export class GameServer {
     ws: WebSocket, ip: string, name: string, hello: Extract<ClientMessage, { t: 'hello' }>,
     who: { owner: boolean; verified: boolean; key: string | null },
   ): Session | null {
+    const keyHash = who.key ? hashToken(who.key) : undefined;
+    if (this.openLobby) {
+      for (const s of this.sessions.values()) {
+        if (s.name.toLowerCase() !== name.toLowerCase() || (keyHash && s.keyHash === keyHash)) continue;
+        ws.send(JSON.stringify({ t: 'kick', reason: 'Somebody with this name is already playing in this lobby. Pick another name.', code: 'identity' } satisfies ServerMessage));
+        ws.close(1008, 'Name in use');
+        return null;
+      }
+    }
     // Logging in again from elsewhere replaces the old session, like Minecraft.
     for (const s of this.sessions.values()) {
       if (s.name.toLowerCase() === name.toLowerCase()) {
@@ -730,7 +747,7 @@ export class GameServer {
       return null;
     }
     // First login with an identity key claims the name (bounded, so names cannot bloat world.json).
-    if (who.key && !this.claimOf(name) && Object.keys(this.world.claims!).length < MAX_CLAIMS) {
+    if (who.key && !this.openLobby && !this.claimOf(name) && Object.keys(this.world.claims!).length < MAX_CLAIMS) {
       // defineProperty: a name like "__proto__" must become an own entry, not touch the prototype.
       Object.defineProperty(this.world.claims!, lc(name), { value: hashToken(who.key), enumerable: true, writable: true, configurable: true });
       this.dirty = true;
@@ -745,7 +762,7 @@ export class GameServer {
     const start = record ?? this.world.spawn;
     const initial = parseInventory(record?.inventory);
     const session: Session = {
-      id: this.nextId++, name, ws, ip, op, owner: who.owner, verified: who.verified,
+      id: this.nextId++, name, ws, ip, op, owner: who.owner, verified: who.verified, keyHash,
       bin: hello.bin === true && this.opts.binary !== false,
       binq: hello.bin === true && this.opts.binary !== false && !!this.match && Number(hello.binv) >= BINARY_VERSION,
       guard: new InventoryGuard(initial.error ? [] : initial.slots),

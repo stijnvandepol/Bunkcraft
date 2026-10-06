@@ -202,6 +202,27 @@ describe('Rooms quick play', () => {
     expect(r.modeStats().map((m) => m.gameType)).toEqual(REALMS_MODES);
   });
 
+  it('open lobbies keep no names: a name is only taken while it plays', () => {
+    const r = rooms();
+    const { code } = r.quickPlay('tdm', () => true) as { code: string };
+    const hello = (name: string, key: string) => {
+      const ws = new FakeSocket();
+      r.get(code)!.server.accept(ws as unknown as WebSocket);
+      ws.say({ t: 'hello', v: PROTOCOL_VERSION, name, key });
+      return ws;
+    };
+    const a = hello('alice', 'a'.repeat(32));
+    expect(a.sent.some((m) => m.t === 'welcome')).toBe(true);
+    // A stranger with the same name cannot kick the player out...
+    const b = hello('alice', 'b'.repeat(32));
+    expect(b.sent.find((m) => m.t === 'kick')).toMatchObject({ code: 'identity' });
+    expect(a.sent.some((m) => m.t === 'kick')).toBe(false);
+    // ... but once alice left, the name is free for another browser (nothing was claimed for good).
+    a.emit('close');
+    const c = hello('alice', 'c'.repeat(32));
+    expect(c.sent.some((m) => m.t === 'welcome')).toBe(true);
+  });
+
   it('keeps a private lobby size, clamped to the server limit, across a restart', () => {
     const r = rooms(8);
     const small = r.create('Duel', undefined, undefined, { gameType: 'ffa', maxPlayers: 2 })!;
