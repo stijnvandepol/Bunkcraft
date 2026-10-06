@@ -56,6 +56,8 @@ services:
       INVENTORY_GUARD: ${INVENTORY_GUARD:-enforce}
       BACKUP_KEEP: ${BACKUP_KEEP:-12}
       ROOM_IDLE_UNLOAD_MIN: ${ROOM_IDLE_UNLOAD_MIN:-5}
+      # Terrain generation threads; empty = min(2, BUNKCRAFT_CPUS − 1), 0 = on the main thread (docs/SERVER.md).
+      CHUNK_WORKERS: ${CHUNK_WORKERS:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       NODE_OPTIONS: ${BUNKCRAFT_NODE_OPTIONS:---max-old-space-size=384 --max-semi-space-size=16}
     volumes:

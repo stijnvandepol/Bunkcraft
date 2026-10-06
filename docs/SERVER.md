@@ -135,6 +135,7 @@ limieten per bezoeker werken in plaats van per proxy.
 | `ROOM_CREATE_LIMIT` | `6` | Games die één bezoeker per uur mag aanmaken |
 | `ROOM_EXPIRE_DAYS` | `60` | Games zonder bezoek worden na zoveel dagen verwijderd (`0` = nooit) |
 | `ROOM_IDLE_UNLOAD_MIN` | `5` | Minuten dat een lege game in het geheugen blijft voordat hij wordt opgeslagen en uitgeladen |
+| `CHUNK_WORKERS` | `min(2, cores − 1)` | Threads die nieuw terrein genereren voor alle survival-games samen, zodat verkennende spelers de ticks niet ophouden. `0` = op de main thread (het oude pad, ook de standaard met één core). Cores = die van de machine, of minder als Docker een CPU-limiet zet (`BUNKCRAFT_CPUS`). Elke thread kost ~10-15 MB RSS. Meer dan 2 helpt pas bij honderden verkennende spelers. |
 | `ADMIN_TOKEN` | niet gezet | Geheim voor `/admin` en `/api/admin/*`. Leeg = beheer staat uit. Minstens 16 willekeurige tekens (`openssl rand -hex 24`). Wie dit token als `owner` meestuurt, is ook operator in elke game. |
 | `METRICS_TOKEN` | niet gezet | Bearer-token voor `/metrics`. Zonder `METRICS_TOKEN` en `ADMIN_TOKEN` is `/metrics` alleen bereikbaar vanaf deze machine (niet via een reverse proxy). |
 | `OPS` | leeg | Komma-gescheiden namen die operator zijn in de **hoofdwereld** (games hebben hun eigen eigenaar). |
@@ -239,7 +240,9 @@ adressen blokkeren. Alle data gaat via `textContent` de pagina in en een strikte
   `bunkcraft_ws_messages_per_second{direction}`, `bunkcraft_ws_bytes_per_second{direction}`,
   `bunkcraft_rate_limit_hits_total{kind}`, `bunkcraft_connections_refused_total`, `bunkcraft_logins_failed_total`,
   `bunkcraft_inventory_rejects_total`, `bunkcraft_cheat_events_total{rule}`, `bunkcraft_cheat_kicks_total`,
-  `bunkcraft_cheat_bans_total`, `bunkcraft_suspicion_flags_total` (arcade anti-cheat, zie SECURITY.md). Scrape-config: `bearer_token: <METRICS_TOKEN>` of scrape lokaal.
+  `bunkcraft_cheat_bans_total`, `bunkcraft_suspicion_flags_total` (arcade anti-cheat, zie SECURITY.md); met `CHUNK_WORKERS` > 0 ook
+  `bunkcraft_chunkgen_workers`, `bunkcraft_chunkgen_queue{state="queued"|"in_flight"}`,
+  `bunkcraft_chunkgen_chunks_total{result="generated"|"dropped"|"failed"}` en `bunkcraft_chunkgen_seconds_total`. Scrape-config: `bearer_token: <METRICS_TOKEN>` of scrape lokaal.
 - **Prometheus/Grafana (optioneel, niet standaard):** draai ze liever op een andere machine of als losse compose-stack. Minimale
   scrape-config:
 
@@ -334,8 +337,8 @@ docker build -t bunkcraft .
 docker run -d -p 3000:3000 -v bunkcraft-data:/app/data -e GAMEMODE=survival --name bunkcraft bunkcraft
 ```
 
-De wereld staat in het volume `bunkcraft-data` en overleeft herstarts en updates. De image bevat alleen Node, `dist/` en
-`dist-server/index.js` (geen `node_modules`, geen TypeScript tijdens het draaien). Standaard
+De wereld staat in het volume `bunkcraft-data` en overleeft herstarts en updates. De image bevat alleen Node, `dist/`,
+`dist-server/index.js` en `dist-server/genWorker.js` (de terreingeneratie-thread; geen `node_modules`, geen TypeScript tijdens het draaien). Standaard
 `NODE_OPTIONS=--max-old-space-size=384 --max-semi-space-size=16`; `docker-compose.yml` zet geheugen- (`BUNKCRAFT_MEMORY`,
 standaard 640m), CPU- (`BUNKCRAFT_CPUS`) en heap-limiet (`BUNKCRAFT_NODE_OPTIONS`) via `.env`, roteert de logs (3 × 10 MB) en
 herstart bij een crash.
@@ -413,8 +416,11 @@ aansteken, item pakken of droppen), de server controleert bereik, wat je vasthou
 stuurt 10 keer per seconde de entiteiten om je heen terug. Schade komt als bericht naar de speler; explosies
 sturen de verwijderde blokken mee. Een lege game geeft zijn geheugen vrij.
 
-Kosten: ongeveer 0,03 ms CPU per tick in rust en ~0,3 ms terwijl chunks genereren, plus een paar MB per
-geladen game.
+Kosten: ongeveer 0,03 ms CPU per tick in rust, plus een paar MB per geladen game. Nieuw terrein (~1-2 ms per chunk)
+wordt op aparte threads gegenereerd (`CHUNK_WORKERS`): dichtstbijzijnde chunks eerst, en een chunk die nog niet klaar is
+telt als "niet geladen" (mobs wachten, water stroomt er nog niet in), net als in de client. Breekt of plaatst een speler
+een blok in zo'n chunk, dan maakt de server die ene chunk meteen zelf. De uitkomst is byte voor byte gelijk aan genereren
+op de main thread (getest met de golden hashes van elke generatorversie).
 
 ## Speltypes: Minecraft en de arcade-modes
 

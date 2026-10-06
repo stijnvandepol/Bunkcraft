@@ -6,7 +6,8 @@
  * player: 0 first), are de-duplicated per world and chunk, and wait in a bounded queue. Results come back with their
  * buffers transferred and are handed to the world that asked (ServerWorld installs them on its next tick).
  */
-import { cpus } from 'node:os';
+import { readFileSync } from 'node:fs';
+import { availableParallelism } from 'node:os';
 import { Worker } from 'node:worker_threads';
 import type { GenSpec, GeneratedChunk } from './genChunk';
 import type { GenRequest, GenResponse } from './protocol';
@@ -77,8 +78,23 @@ interface Slot {
   dead: boolean;
 }
 
+/**
+ * Cores this process may use: the machine's, capped by a cgroup CPU quota (Docker `cpus:`), which Node's own count
+ * does not see.
+ */
+export function usableCores(): number {
+  let n = availableParallelism();
+  try {
+    const [quota, period] = readFileSync('/sys/fs/cgroup/cpu.max', 'utf8').trim().split(/\s+/);
+    if (quota !== 'max' && Number(quota) > 0 && Number(period) > 0) n = Math.min(n, Math.max(1, Math.ceil(Number(quota) / Number(period))));
+  } catch {
+    // Not Linux or no cgroup v2: the machine's count.
+  }
+  return n;
+}
+
 /** The pool size from CHUNK_WORKERS: unset = min(2, cores − 1), 0 = generate on the main thread (the old path). */
-export function chunkWorkerCount(env: string | undefined, cores = cpus().length): number {
+export function chunkWorkerCount(env: string | undefined, cores = usableCores()): number {
   const n = Number(env);
   if (env !== undefined && env !== '' && Number.isFinite(n)) return Math.max(0, Math.min(16, Math.floor(n)));
   return Math.max(0, Math.min(2, cores - 1));
