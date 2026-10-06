@@ -7,6 +7,11 @@
 #   3. Open https://play.example.com and press Multiplayer → Create Game.
 #
 # Optional settings go in a .env file next to this one (see docs/SERVER.md). Updates: ./scripts/update.sh.
+#
+# The game server comes as a ready-made image from GHCR (linux/amd64 + linux/arm64, built by CI from main).
+# Pick a version with BUNKCRAFT_TAG in .env: latest (default), sha-<commit>, a release such as 1.2.0, or an
+# exact build, latest@sha256:<digest>. To build the image yourself instead, add the build override:
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.build.yml   (in .env; or: install.sh --build)
 # Resource limits below are sized from the load tests in docs/research/SERVER-DEPLOY.md.
 
 # Docker's default json-file log grows without bound: rotate it (3 × 10 MB per container).
@@ -18,7 +23,7 @@ x-logging: &logging
 
 services:
   bunkcraft:
-    build: .
+    image: ${BUNKCRAFT_IMAGE:-ghcr.io/stijnvandepol/bunkcraft}:${BUNKCRAFT_TAG:-latest}
     restart: unless-stopped
     # Hardening: read-only image, no capabilities, no privilege escalation, bounded resources.
     read_only: true

@@ -6,8 +6,11 @@
 #   # or from a checkout:
 #   sudo ./scripts/install.sh --domain play.example.com [--admin-token TOKEN]
 #
+# The game server comes as a ready-made image (ghcr.io/stijnvandepol/bunkcraft, amd64 + arm64): nothing is
+# built on the server, so 1 GB of RAM is enough. --build builds it from the checkout instead.
+#
 # Safe to run again (idempotent): it only installs what is missing, keeps the existing .env values and
-# worlds, and rebuilds/restarts the containers. See docs/SERVER.md ("Op je eigen Linux-server in 5 minuten").
+# worlds, and pulls/restarts the containers. See docs/SERVER.md ("Op je eigen Linux-server in 5 minuten").
 #
 # Options (or the environment variable in brackets):
 #   --domain NAME        domain that points at this server (DOMAIN); asked when missing and a terminal is attached
@@ -15,10 +18,15 @@
 #   --dir PATH           where the code lives (BUNKCRAFT_DIR); default: this checkout, else /opt/bunkcraft
 #   --repo URL           git repository to clone (BUNKCRAFT_REPO)
 #   --branch NAME        branch to clone/follow (BUNKCRAFT_BRANCH, default main)
+#   --tag TAG            image version (BUNKCRAFT_TAG in .env): latest (default), sha-<commit>, 1.2.0,
+#                        or latest@sha256:<digest> to pin one exact build
+#   --image NAME         image repository (BUNKCRAFT_IMAGE), for a mirror or a fork
+#   --build              build the image on this server instead of pulling it (needs ~1.5 GB RAM; adds swap)
+#   --pull               switch an earlier --build install back to the ready-made image
 #   --no-firewall        do not touch ufw
-#   --no-swap            do not create a swap file on small machines
+#   --no-swap            do not create a swap file on small machines (only used with --build)
 #   --no-backups         do not install the daily backup timer
-#   --no-start           prepare everything but do not build/start the containers
+#   --no-start           prepare everything but do not pull/build/start the containers
 #   --dry-run            print what would happen, change nothing (works without root)
 #   -h, --help
 set -euo pipefail
@@ -28,6 +36,9 @@ ADMIN_TOKEN_ARG="${ADMIN_TOKEN:-}"
 DIR="${BUNKCRAFT_DIR:-}"
 REPO="${BUNKCRAFT_REPO:-https://github.com/stijnvandepol/Bunkcraft.git}"
 BRANCH="${BUNKCRAFT_BRANCH:-main}"
+TAG_ARG="${BUNKCRAFT_TAG:-}"
+IMAGE_ARG="${BUNKCRAFT_IMAGE:-}"
+MODE=""   # build | pull | "" (keep what .env says; pull on a fresh install)
 FIREWALL=1 SWAP=1 BACKUPS=1 START=1 DRY=0
 ORIG_ARGS=("$@")
 
@@ -43,6 +54,12 @@ while [ $# -gt 0 ]; do
     --dir=*) DIR="${1#*=}"; shift ;;
     --repo) REPO="${2:?--repo needs a value}"; shift 2 ;;
     --branch) BRANCH="${2:?--branch needs a value}"; shift 2 ;;
+    --tag) TAG_ARG="${2:?--tag needs a value}"; shift 2 ;;
+    --tag=*) TAG_ARG="${1#*=}"; shift ;;
+    --image) IMAGE_ARG="${2:?--image needs a value}"; shift 2 ;;
+    --image=*) IMAGE_ARG="${1#*=}"; shift ;;
+    --build) MODE=build; shift ;;
+    --pull) MODE=pull; shift ;;
     --no-firewall) FIREWALL=0; shift ;;
     --no-swap) SWAP=0; shift ;;
     --no-backups) BACKUPS=0; shift ;;
@@ -97,8 +114,16 @@ fi
 case "$DOMAIN" in
   *[!A-Za-z0-9.:-]*) die "domain '$DOMAIN' contains invalid characters." ;;
 esac
+case "$TAG_ARG$IMAGE_ARG" in
+  *[!A-Za-z0-9._:@/-]*) die "--tag/--image contain invalid characters." ;;
+esac
+# Build or pull: the argument, else what an earlier run wrote to .env, else pull.
+if [ -z "$MODE" ]; then
+  MODE=pull
+  if [ -f "$DIR/.env" ] && grep -q '^COMPOSE_FILE=.*docker-compose\.build\.yml' "$DIR/.env"; then MODE=build; fi
+fi
 
-say "BunkCraft install: domain $DOMAIN, directory $DIR$([ "$DRY" = 1 ] && echo ' (dry run)')"
+say "BunkCraft install: domain $DOMAIN, directory $DIR, image $([ "$MODE" = build ] && echo 'built here' || echo 'pulled')$([ "$DRY" = 1 ] && echo ' (dry run)')"
 
 # ---------------------------------------------------------------- packages
 if [ "$APT" = 1 ]; then
@@ -140,10 +165,10 @@ if [ "$DRY" = 0 ] && ! docker info >/dev/null 2>&1; then
   docker info >/dev/null 2>&1 || die "the Docker daemon does not start (see 'journalctl -u docker')."
 fi
 
-# ---------------------------------------------------------------- swap on small machines
-# Building the image (TypeScript + Vite) needs more than 1 GB; the running server needs far less.
+# ---------------------------------------------------------------- swap on small machines (only for --build)
+# Building the image (TypeScript + Vite) needs more than 1 GB; the running server (pulled image) needs far less.
 MEM_MB=$(awk '/^MemTotal:/ { printf "%d", $2 / 1024 }' /proc/meminfo 2>/dev/null || echo 2048)
-if [ "$SWAP" = 1 ] && [ "$MEM_MB" -lt 1900 ] && [ "$(awk 'NR > 1' /proc/swaps 2>/dev/null | wc -l)" -eq 0 ]; then
+if [ "$MODE" = build ] && [ "$SWAP" = 1 ] && [ "$MEM_MB" -lt 1900 ] && [ "$(awk 'NR > 1' /proc/swaps 2>/dev/null | wc -l)" -eq 0 ]; then
   say "only ${MEM_MB} MB RAM and no swap: adding a 2 GB /swapfile (for the image build)"
   if [ ! -f /swapfile ]; then
     run fallocate -l 2G /swapfile || run dd if=/dev/zero of=/swapfile bs=1M count=2048
@@ -201,6 +226,15 @@ set_env METRICS_TOKEN "$(token)"
 set_env BUNKCRAFT_CPUS "$CPUS"
 set_env BUNKCRAFT_MEMORY "${CONTAINER_MB}m"
 set_env BUNKCRAFT_NODE_OPTIONS "--max-old-space-size=$HEAP_MB --max-semi-space-size=16"
+if [ -n "$TAG_ARG" ]; then set_env BUNKCRAFT_TAG "$TAG_ARG" 1; fi
+if [ -n "$IMAGE_ARG" ]; then set_env BUNKCRAFT_IMAGE "$IMAGE_ARG" 1; fi
+# docker compose reads COMPOSE_FILE from .env, so every later command (update, backup, restart) builds too.
+if [ "$MODE" = build ]; then
+  set_env COMPOSE_FILE docker-compose.yml:docker-compose.build.yml 1
+elif [ -f "$ENV_FILE" ] && grep -q '^COMPOSE_FILE=' "$ENV_FILE"; then
+  if [ "$DRY" = 1 ]; then echo "  [dry-run] .env: remove COMPOSE_FILE (back to the ready-made image)"
+  else tmp="$(mktemp)"; grep -v '^COMPOSE_FILE=' "$ENV_FILE" >"$tmp" || true; cat "$tmp" >"$ENV_FILE"; rm -f "$tmp"; fi
+fi
 say ".env ready ($ENV_FILE, mode 600): ${CPUS} CPU, ${CONTAINER_MB} MB for the game server"
 
 # ---------------------------------------------------------------- firewall
@@ -266,14 +300,22 @@ WantedBy=timers.target"
   fi
 fi
 
-# ---------------------------------------------------------------- build and start
+# ---------------------------------------------------------------- pull (or build) and start
+# From the install directory, so compose finds its files and reads .env (COMPOSE_FILE, BUNKCRAFT_TAG).
+compose() { (cd "$DIR" && docker compose "$@"); }
 if [ "$START" = 1 ]; then
-  say "building and starting (first build takes a few minutes)"
-  run docker compose --project-directory "$DIR" up -d --build --remove-orphans
+  if [ "$MODE" = build ]; then
+    say "building and starting (the first build takes a few minutes)"
+    run compose up -d --build --remove-orphans
+  else
+    say "pulling the images and starting"
+    run compose pull --quiet
+    run compose up -d --remove-orphans
+  fi
   if [ "$DRY" = 0 ]; then
     ok=0
     for _ in $(seq 1 60); do
-      if docker compose --project-directory "$DIR" exec -T bunkcraft wget -qO- http://127.0.0.1:3000/health 2>/dev/null | grep -q '"ok":true'; then ok=1; break; fi
+      if compose exec -T bunkcraft wget -qO- http://127.0.0.1:3000/health 2>/dev/null | grep -q '"ok":true'; then ok=1; break; fi
       sleep 2
     done
     [ "$ok" = 1 ] || die "the game server is not healthy: see 'bunkcraft logs'."
@@ -287,6 +329,6 @@ BunkCraft is running.
   Play:      https://$DOMAIN   (the first visit can take ~30 s while Caddy gets the certificate)
   Admin:     https://$DOMAIN/admin   token: ADMIN_TOKEN in $ENV_FILE
   Metrics:   https://$DOMAIN/metrics with 'Authorization: Bearer <METRICS_TOKEN>'
-  Commands:  bunkcraft status | logs | update | backup | restart
+  Commands:  bunkcraft status | logs | update | rollback | backup | restart
   Settings:  $ENV_FILE (docs/SERVER.md), then 'bunkcraft restart'
 EOF
