@@ -15,6 +15,7 @@ interface Budget {
   mesh: { meanMs: number; p95Ms: number };
   arena: { tickMeanMs: number; tickP95Ms: number; handleMeanMs: number; outKiBps: number };
   mobs: { obstacleTickMeanMs: number; obstacleTickP95Ms: number; roomTickMeanMs: number; roomTickP95Ms: number; roomMobsMeanMs: number };
+  visibility: { tickMeanMs: number; tickP95Ms: number };
 }
 
 const root = process.cwd();
@@ -48,6 +49,11 @@ results.push({ name: 'mobs obstacles p95', value: num(/obstacles.*p95 ([\d.]+) m
 results.push({ name: 'mobs room tick mean', value: num(/room.*tick mean ([\d.]+) ms/, mobs, 'room mean'), limit: budget.mobs.roomTickMeanMs * factor, unit: 'ms' });
 results.push({ name: 'mobs room tick p95', value: num(/room.*p95 ([\d.]+) ms/, mobs, 'room p95'), limit: budget.mobs.roomTickP95Ms * factor, unit: 'ms' });
 results.push({ name: 'mobs room AI mean', value: num(/room.*mobs mean ([\d.]+) ms/, mobs, 'room mobs'), limit: budget.mobs.roomMobsMeanMs * factor, unit: 'ms' });
+
+// Arcade visibility culling (anti-wallhack) in CPU time; tests/anticheatVisibility.test.ts counts its rays and lookups.
+const vis = run('bench-visibility.ts', []);
+results.push({ name: 'visibility tick mean', value: num(/visibility.*tick mean ([\d.]+) ms/, vis, 'visibility mean'), limit: budget.visibility.tickMeanMs * factor, unit: 'ms' });
+results.push({ name: 'visibility tick p95', value: num(/visibility.*p95 ([\d.]+) ms/, vis, 'visibility p95'), limit: budget.visibility.tickP95Ms * factor, unit: 'ms' });
 
 let failed = false;
 for (const r of results) {

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { BLOCK } from '../src/world/BlockRegistry';
 import { Send, VIS, type Viewer, Visibility, sightClear } from '../server/anticheat/Visibility';
 import { TestWorld } from './helpers';
+import { visibilityScenario } from './helpers/visibilityScenario';
 
 const viewer = (id: number, x: number, z: number, team = '', y = 64): Viewer => ({ id, team, alive: true, x, y, z, firedAt: -1e9 });
 
@@ -83,29 +84,16 @@ describe('visibility (anti-wallhack culling)', () => {
     expect(vis.select(a, b, false, t + VIS.STALE + 0.11, out)).toBe(Send.None);
   });
 
-  it('stays within a small ray budget per tick for 16 players at 30 Hz', () => {
-    // A dense array world like the server's chunks (the TestWorld map is too slow to measure with).
-    const blocks = new Uint8Array(96 * 96 * 16);
-    const get = (x: number, y: number, z: number) => {
-      const ix = x + 48, iz = z + 48, iy = y - 60;
-      if (ix < 0 || iz < 0 || iy < 0 || ix >= 96 || iz >= 96 || iy >= 16) return 0;
-      return blocks[(iy * 96 + iz) * 96 + ix];
-    };
-    for (let z = -10; z <= 10; z++) for (let y = 64; y <= 68; y++) blocks[((y - 60) * 96 + z + 48) * 96 + 48] = BLOCK.STONE;
-    for (let k = 0; k < 40; k++) { const x = (k * 37) % 70 - 35, z = (k * 53) % 70 - 35; for (let y = 64; y <= 66; y++) blocks[((y - 60) * 96 + z + 48) * 96 + x + 48] = BLOCK.STONE; }
-    const vis = new Visibility({ getBlock: get });
-    const players = Array.from({ length: 16 }, (_, i) => viewer(i + 1, (i % 2 ? 1 : -1) * (14 + (i % 4)), (i - 8) * 3, i % 2 ? 'blue' : 'red'));
-    const t0 = performance.now();
-    let ticks = 0;
-    for (let t = 0; t < 10; t += 1 / 30, ticks++) {
-      for (const p of players) { p.z += Math.sin(t + p.id) * 0.2; vis.track(p, t); }
-      for (const r of players) for (const p of players) if (p !== r) vis.select(r, p, true, t, out);
-    }
-    const perTick = (performance.now() - t0) / ticks;
-    // Timing is noisy when the test files run in parallel: assert the work (rays) and a loose time bound;
-    // scripts/bench-arena.ts measures the real cost.
-    console.log(`visibility: ${(vis.rays / ticks).toFixed(0)} rays/tick, ${perTick.toFixed(3)} ms/tick`);
-    expect(vis.rays / ticks).toBeLessThan(600);
-    expect(perTick).toBeLessThan(5);
+  it('stays within a small work budget per tick for 16 players at 30 Hz', () => {
+    // Counts the work (rays, block lookups), not milliseconds: wall-clock time is noise when the test files
+    // run in parallel on a loaded machine. `npm run test:perf` (scripts/bench-visibility.ts) guards the time.
+    const sc = visibilityScenario();
+    const ticks = 300;
+    for (let i = 0; i < ticks; i++) sc.tick();
+    const rays = sc.vis.rays / ticks, lookups = sc.lookups / ticks;
+    console.log(`visibility: ${rays.toFixed(0)} rays/tick, ${lookups.toFixed(0)} block lookups/tick`);
+    expect(rays).toBeLessThan(600);
+    // Deterministic: about 450 rays and 10 600 lookups today; the headroom is for deliberate changes, not noise.
+    expect(lookups).toBeLessThan(14000);
   });
 });
