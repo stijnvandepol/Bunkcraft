@@ -136,6 +136,9 @@ class QA:
         self.console: list[str] = []
         self.page.on('console', lambda m: self.console.append(f'[{m.type}] {m.text}') if m.type in ('error', 'warning') else None)
         self.page.on('pageerror', lambda e: self.console.append(f'[pageerror] {e}'))
+        self.navigations: list[str] = []
+        self.page.on('framenavigated', lambda f: self.navigations.append(f'{time.strftime("%H:%M:%S")} {f.url}') if f == self.page.main_frame else None)
+        self.page.on('crash', lambda p: self.console.append('[crash] page crashed'))
         self.steps: list[Step] = []
         self.cur: Step | None = None
         self.frame_samples: list[dict[str, float]] = []
@@ -473,15 +476,23 @@ class QA:
             if b in (12, 44):  # water, lava
                 self.note(f'dig: liquid {b} at {x},{y},{z}; stopping')
                 return False
+            # A careful player does not open a block that has lava behind it.
+            if self.js('([x, y, z]) => [[1,0,0],[-1,0,0],[0,1,0],[0,0,1],[0,0,-1]].some(([a, b, c]) => game.world.getBlock(x + a, y + b, z + c) === 44)', [x, y, z]):
+                self.note(f'dig: lava next to {x},{y},{z}; not opening it')
+                return False
             if self.mine(x, y, z, timeout=25) is None:
                 self.note(f'dig: could not mine block {b} at {x},{y},{z}')
                 return False
             self.wait(0.15)
         return self.block(x, y, z) == 0
 
-    def dig_to(self, tx, ty, tz, reach: float = 3.8, max_steps: int = 80, until=None) -> bool:
+    def dig_to(self, tx, ty, tz, reach: float = 3.8, max_steps: int = 80, until=None, max_secs: float = 150) -> bool:
         """Greedy staircase/tunnel digging until the target block is within reach and in sight (or `until()` holds)."""
+        t_start = time.time()
         for _ in range(max_steps):
+            if time.time() - t_start > max_secs:
+                self.note(f'dig_to {tx},{ty},{tz}: gave up after {max_secs}s')
+                return False
             s = self.st()
             if s['dead'] or s['state'] != 'playing':
                 return False
@@ -500,6 +511,9 @@ class QA:
                         return False
                     continue
             dx, dy, dz = tx - px, ty - py, tz - pz
+            if d < 2.2:
+                # Right next to it (in the same shaft): the target itself is the next block to take.
+                return True
             if abs(dx) + abs(dz) <= 1 and dy < -1:
                 if not self.clear_cell(px, py - 1, pz):
                     return False
@@ -583,7 +597,7 @@ class QA:
             hp0 = m['h']
             self.press('Mouse0')
             res['swings'] += 1
-            self.wait(0.45)
+            self.wait(0.6)  # 1.9 combat: a sword recharges in 0.625 s
             after = [x for x in self.js(f'qa.mobs({chase + 4})') if x['kind'] == m['kind'] and abs(x['x'] - m['x']) < 3 and abs(x['z'] - m['z']) < 3]
             if not after:
                 res['kills'] += 1
@@ -599,12 +613,12 @@ INSTRUMENT = r"""
   const g = window.game;
   if (window.__qaLog) return true;
   const log = window.__qaLog = { damage: [], frames: [] };
-  // Record every damage event (wraps PlayerStats.damage without changing what it does).
-  const dmg = g.stats.damage.bind(g.stats);
-  g.stats.damage = (amount, cause, mode, killer, fromYaw) => {
+  // Record every damage event (wraps PlayerStats.hurt, the central pipeline, without changing what it does).
+  const hurt = g.stats.hurt.bind(g.stats);
+  g.stats.hurt = (amount, source, mode) => {
     const before = g.stats.health;
-    const r = dmg(amount, cause, mode, killer, fromYaw);
-    if (r) log.damage.push({ t: +(performance.now() / 1000).toFixed(1), amount, cause, killer: killer || '', dealt: before - g.stats.health, health: g.stats.health, armor: g.stats.armorPoints });
+    const r = hurt(amount, source, mode);
+    if (r && r.hurt) log.damage.push({ t: +(performance.now() / 1000).toFixed(1), amount, cause: source.kind, killer: source.attacker || '', dealt: +(before - g.stats.health).toFixed(2), health: +g.stats.health.toFixed(2), armor: g.stats.armorPoints });
     return r;
   };
   // Frame statistics every 250 ms (DebugOverlay computes them even when F3 is hidden).

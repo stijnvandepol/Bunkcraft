@@ -293,7 +293,7 @@ def mine_ore(qa: QA, block: int, want_item: str, want: int, radius: int = 24, la
     tries = 0
     while qa.js('(n) => qa.count(n)', want_item) < want and tries < 6:
         tries += 1
-        found = qa.js(f'qa.find([{block}], {radius}, -24, 10, 30)')
+        found = qa.js(f'qa.find([{block}], {radius}, -16, 10, 30)')
         if not found:
             qa.note(f'{label}: no ore within {radius} blocks')
             break
@@ -303,6 +303,9 @@ def mine_ore(qa: QA, block: int, want_item: str, want: int, radius: int = 24, la
         if not ensure_pickaxe(qa, 'stone'):
             break
         ok = qa.dig_to(x, y, z, max_steps=70)
+        if qa.st()['dead']:
+            qa.note(f'{label}: died while digging')
+            break
         if not ok:
             info['dig_failures'] += 1
             qa.note(f'{label}: could not reach ore at {x},{y},{z}')
@@ -361,16 +364,75 @@ def phase_torches(qa: QA) -> None:
 
 
 def phase_smelt(qa: QA) -> None:
-    qa.begin('IJzer smelten in de oven (receptenboek, tab Smelt)')
+    qa.begin('IJzer smelten in de oven (rechtsklik, invoer + brandstof slepen, wachten, output pakken)')
     ok = go_to_block(qa, B_FURNACE)
     qa.note(f'at furnace: {ok}')
     raw = qa.js('qa.count(`raw_iron`)')
-    fuel_before = {k: qa.js('(n) => qa.count(n)', k) for k in ('coal', 'oak_planks', 'spruce_planks', 'spruce_log')}
-    t0 = time.time()
-    made = qa.ui_craft('Iron Ingot', times=raw, search='iron')
-    fuel_after = {k: qa.js('(n) => qa.count(n)', k) for k in fuel_before}
-    qa.note(f'smelted {made} iron ingots from {raw} raw iron in {round(time.time() - t0, 1)}s (instant, no furnace UI); fuel before {fuel_before} after {fuel_after}')
+    coal0 = qa.js('qa.count(`coal`)')
+    made = smelt_in_furnace(qa, 'raw_iron', 'coal', 'iron_ingot', raw)
+    qa.note(f'raw iron {raw} -> ingots {made}; coal {coal0} -> {qa.js("qa.count(`coal`)")}; xp level {qa.js("game.stats.xp?.level")}')
     qa.end(made > 0)
+
+
+def furnace_ui(qa: QA, furnace) -> bool:
+    qa.aim(furnace[0] + 0.5, furnace[1] + 0.5, furnace[2] + 0.5)
+    qa.press('Mouse2')
+    qa.wait(0.5)
+    qa.js('game.input.locked = false')
+    return qa.page.locator('.screen.inventory:not(.hidden) .furnace-in').count() > 0
+
+
+def inv_slot(qa: QA, i: int):
+    base = '.screen.inventory:not(.hidden)'
+    if i < 9:
+        return qa.page.locator(f'{base} .inv-hotbar .inv-slot').nth(i)
+    return qa.page.locator(f'{base} .inv-armor-row > .inv-grid .inv-slot').nth(i - 9)
+
+
+def smelt_in_furnace(qa: QA, item: str, fuel: str, result: str, n: int) -> int:
+    """Through the furnace screen like a player: drag the stack into the input, fuel into the fuel slot, wait, take it out."""
+    f = qa.js(f'qa.find([{B_FURNACE}], 6, -3, 4, 1)')
+    if not f or n <= 0:
+        qa.note(f'smelt: furnace near={bool(f)}, items={n}')
+        return 0
+    before = qa.js('(n) => qa.count(n)', result)
+    if not furnace_ui(qa, f[0][:3]):
+        qa.note('smelt: right click did not open a furnace screen')
+        qa.shot('err_furnace_ui')
+        qa.relock()
+        return 0
+    base = '.screen.inventory:not(.hidden)'
+    page = qa.page
+    s_in = qa.js('(n) => qa.slotOf(n)', item)
+    inv_slot(qa, s_in).click()
+    page.locator(f'{base} .furnace-in').click()
+    # Fuel: one coal smelts 8 items; take half the stack with a right click when we have more.
+    s_f = qa.js('(n) => qa.slotOf(n)', fuel)
+    need = max(1, math.ceil(n / 8))
+    inv_slot(qa, s_f).click()
+    for _ in range(need):
+        page.locator(f'{base} .furnace-fuel').click(button='right')
+    inv_slot(qa, s_f).click()  # the rest back
+    qa.wait(0.5)
+    qa.shot('furnace_running')
+    t0 = time.time()
+    slots = lambda: qa.js('game.survivalInventory.box?.slots.map(s => s.count)')  # noqa: E731
+    while time.time() - t0 < 12 * n + 10:
+        qa.page.bring_to_front()
+        time.sleep(1)
+        sl = slots()
+        if sl and sl[0] == 0 and sl[2] > 0:
+            break
+    first = round(time.time() - t0, 1)
+    qa.note(f'furnace slots after {first}s: {slots()} (input, fuel, output)')
+    qa.shot('furnace_done')
+    page.locator(f'{base} .furnace-out').click(modifiers=['Shift'])
+    qa.wait(0.3)
+    qa.js('document.activeElement && document.activeElement.blur()')
+    qa.key('KeyE')
+    qa.wait(0.3)
+    qa.relock()
+    return qa.js('(n) => qa.count(n)', result) - before
 
 
 def phase_place_furnace(qa: QA) -> None:
@@ -751,7 +813,11 @@ def phase_bed(qa: QA) -> None:
     s2 = qa.st()
     qa.aim(pos[0] + 0.5, pos[1] + 0.3, pos[2] + 0.5)
     qa.press('Mouse2')
-    qa.wait(1)
+    qa.wait(1.5)
+    qa.shot('20_bed_sleeping')
+    msgs = qa.js("[...document.querySelectorAll('.chat-line, .chat .line, .chat div')].slice(-4).map(e => e.textContent)")
+    qa.note(f'chat after clicking the bed: {msgs}')
+    qa.wait(5)
     s3 = qa.st()
     qa.note(f'sleep at {s2["clock"]} with {len(hostile)} hostile mobs within 10 blocks: clock -> {s3["clock"]} (day {s2["day"] + 1} -> {s3["day"] + 1}), player pos unchanged {abs(s3["x"] - s2["x"]) < 0.01}')
     qa.shot('20_bed')
@@ -874,8 +940,172 @@ def phase_settings(qa: QA) -> None:
     qa.end(all(found.values()))
 
 
+def phase_farm(qa: QA) -> None:
+    qa.begin('Dieren fokken: zaden uit gras, twee kippen voeren')
+    go_surface(qa)
+    # Seeds: break grass tufts (12.5 % chance each).
+    t0 = time.time()
+    broken = 0
+    for _ in range(40):
+        if qa.js('qa.count(`wheat_seeds`)') >= 4:
+            break
+        tufts = qa.js(f'qa.find([{qa.js("__R.BLOCK.TALL_GRASS")}], 12, -3, 3, 5)')
+        if not tufts:
+            qa.walk_to(qa.st()['x'] + 8, qa.st()['z'], timeout=4)
+            continue
+        x, y, z = tufts[0][:3]
+        qa.walk_to(x + 0.5, z + 0.5, tol=2.5, timeout=6)
+        if qa.mine(x, y, z, timeout=3) is not None:
+            broken += 1
+        qa.collect_items(4, 2)
+    seeds = qa.js('qa.count(`wheat_seeds`)')
+    qa.note(f'seeds {seeds} from {broken} grass tufts in {round(time.time() - t0)}s')
+    if seeds < 2:
+        qa.end(False)
+        return
+    fed = 0
+    babies0 = qa.js('game.entities.mobs.filter(m => m.type.kind === "chicken" && m.age < 0 || m.baby).length')
+    for _ in range(4):
+        if fed >= 2:
+            break
+        hens = [m for m in qa.js('qa.mobs(60)') if m['kind'] == 'chicken']
+        if not hens:
+            qa.note('no chickens within 60 blocks')
+            break
+        c = hens[min(fed, len(hens) - 1)]
+        qa.walk_to(c['x'], c['z'], tol=2.0, timeout=25)
+        qa.select_item('wheat_seeds')
+        c = [m for m in qa.js('qa.mobs(6)') if m['kind'] == 'chicken']
+        if not c:
+            continue
+        n0 = qa.js('qa.count(`wheat_seeds`)')
+        qa.aim(c[0]['x'], c[0]['y'] + 0.4, c[0]['z'])
+        qa.press('Mouse2')
+        qa.wait(0.4)
+        if qa.js('qa.count(`wheat_seeds`)') < n0:
+            fed += 1
+    qa.wait(6)
+    kids = qa.js('game.entities.mobs.filter(m => m.type.kind === "chicken" && (m.baby || m.age < 0 || m.growingAge < 0)).length')
+    qa.note(f'fed {fed} chickens; baby chickens before {babies0} after {kids}; XP level {qa.js("game.stats.xp?.level")}')
+    qa.shot('30_breeding')
+    qa.end(fed >= 2)
+
+
+def phase_enchant(qa: QA) -> None:
+    qa.begin('Betoveren (enchanting table) - SETUP SHORTCUT: tafel, lapis en levels gegeven')
+    xp0 = qa.js('game.stats.xp.level')
+    qa.note(f'XP level earned by playing so far: {xp0}')
+    qa.js("""() => {
+      const inv = game.playerInventory;
+      inv.add({ id: __I.itemId('enchanting_table'), count: 1 });
+      inv.add({ id: __I.itemId('lapis_lazuli'), count: 6 });
+      if (game.stats.xp.level < 5) game.stats.xp.add(160);
+    }""")
+    TIME_SHORTCUTS.append('ENCHANT SETUP: gave enchanting_table, 6 lapis and XP up to ~level 10')
+    pos = qa.place_near('enchanting_table', qa.js('__R.BLOCK.ENCHANTING_TABLE'), rings=(2, 1, 3))
+    qa.note(f'table at {pos}, level now {qa.js("game.stats.xp.level")}')
+    if not pos:
+        qa.end(False)
+        return
+    target = 'stone_sword' if qa.js('qa.count(`stone_sword`)') else 'stone_pickaxe'
+    qa.aim(pos[0] + 0.5, pos[1] + 0.6, pos[2] + 0.5)
+    qa.press('Mouse2')
+    qa.wait(0.5)
+    qa.js('game.input.locked = false')
+    base = '.screen.inventory:not(.hidden)'
+    box = qa.page.locator(f'{base} .inv-box .inv-slot')
+    if box.count() < 2:
+        qa.note('right click did not open the enchanting screen')
+        qa.relock()
+        qa.end(False)
+        return
+    inv_slot(qa, qa.js('(n) => qa.slotOf(n)', target)).click()
+    box.nth(0).click()
+    inv_slot(qa, qa.js('qa.slotOf(`lapis_lazuli`)')).click()
+    box.nth(1).click()
+    qa.wait(0.4)
+    offers = qa.page.locator(f'{base} .ench-offer')
+    info = [(offers.nth(i).get_attribute('class'), offers.nth(i).get_attribute('title')) for i in range(offers.count())]
+    qa.note(f'offers: {info}')
+    qa.shot('31_enchanting')
+    ok_offers = qa.page.locator(f'{base} .ench-offer.ok')
+    enchanted = None
+    if ok_offers.count():
+        ok_offers.first.click()
+        qa.wait(0.4)
+        enchanted = qa.js('game.survivalInventory.box?.slots[0]')
+    qa.note(f'item after enchanting: {enchanted}; level {qa.js("game.stats.xp.level")}')
+    qa.shot('32_enchanted')
+    qa.js('document.activeElement && document.activeElement.blur()')
+    qa.key('KeyE')
+    qa.wait(0.3)
+    qa.relock()
+    qa.end(bool(enchanted and enchanted.get('data')))
+
+
+def phase_creative(qa: QA) -> None:
+    qa.begin('Creative: nieuwe wereld, inventory-tabs, zoeken, vliegen')
+    page = qa.page
+    qa.js('game.pause()')
+    qa.wait(0.4)
+    page.locator('.mc-btn', has_text='Save and Quit to Title').click()
+    qa.wait(2)
+    page.get_by_role('button', name='Singleplayer').click()
+    qa.wait(0.5)
+    page.get_by_role('button', name='Create New World').click()
+    qa.wait(0.3)
+    page.locator('.screen:not(.hidden) input.mc-input').first.fill('QA Creative')
+    mode = page.locator('.mc-btn', has_text='Game Mode')
+    for _ in range(4):
+        if 'Creative' in mode.inner_text():
+            break
+        mode.click()
+    page.locator('.mc-btn', has_text='Create New World').last.click()
+    wait_loaded(qa)
+    qa.relock()
+    qa.wait(1.5)
+    qa.key('KeyE')
+    qa.wait(0.4)
+    qa.js('game.input.locked = false')
+    tabs = page.locator('.inv-tab')
+    n = tabs.count()
+    names = []
+    for i in range(n):
+        t = tabs.nth(i)
+        names.append(t.get_attribute('title') or t.inner_text())
+        if i < n - 1:
+            t.click()
+            qa.wait(0.15)
+            if i in (0, 3, 7):
+                qa.shot(f'33_creative_tab{i}')
+    qa.note(f'{n} tabs: {names}')
+    tabs.nth(min(5, n - 1)).click()
+    search = page.locator('.inv-search:visible')
+    if search.count():
+        search.first.fill('diamond')
+        qa.wait(0.3)
+        qa.note(f'search "diamond": {page.locator(".creative-grid .inv-slot img, .inv-grid .inv-slot img").count()} icons')
+        qa.shot('34_creative_search')
+    qa.js('document.activeElement && document.activeElement.blur()')
+    qa.key('KeyE')
+    qa.wait(0.3)
+    qa.relock()
+    # Double jump to fly.
+    y0 = qa.st()['y']
+    qa.press('Space')
+    qa.wait(0.1)
+    qa.press('Space')
+    qa.hold('Space')
+    qa.wait(1.0)
+    qa.release('Space')
+    s = qa.st()
+    flying = qa.js('game.player.flying')
+    qa.note(f'double space: flying={flying}, rose {s["y"] - y0:.1f} blocks')
+    qa.end(n > 3 and flying)
+
+
 def go_to_block(qa: QA, block: int) -> bool:
-    found = qa.js(f'qa.find([{block}], 40, -30, 30, 1)')
+    found = qa.js(f'qa.find([{block}], 64, -40, 40, 1)')
     if not found:
         return False
     x, y, z = found[0][:3]
@@ -904,6 +1134,9 @@ PHASES = {
     'death': phase_death,
     'save_reload': phase_save_reload,
     'settings': phase_settings,
+    'farm': phase_farm,
+    'enchant': phase_enchant,
+    'creative': phase_creative,
 }
 
 
@@ -925,10 +1158,32 @@ def main() -> None:
             continue_world(qa)
         for name in a.phases.split(','):
             try:
+                s = qa.st()
+                if s['dead'] or s['state'] == 'dead':
+                    qa.begin(f'Onverwachte dood vóór fase {name}')
+                    qa.note(f'death message: {s["deathMessage"]}')
+                    qa.shot(f'death_before_{name}')
+                    qa.page.locator('.mc-btn', has_text='Respawn').click()
+                    wait_loaded(qa, 30)
+                    qa.relock()
+                    qa.wait(1)
+                    qa.end(False)
+                elif s['health'] < 10 and name not in ('death',):
+                    # A real player waits to heal before the next risky thing.
+                    t0 = time.time()
+                    while time.time() - t0 < 40 and qa.st()['health'] < 14:
+                        qa.wait(2)
+                    print(f'    (healed {s["health"]:.1f} -> {qa.st()["health"]:.1f} in {round(time.time() - t0)}s, food {qa.st()["hunger"]})', flush=True)
                 PHASES[name](qa)
             except Exception as e:  # keep going: a failing step is a finding
-                qa.note(f'EXCEPTION {type(e).__name__}: {e}')
+                qa.note(f'EXCEPTION {type(e).__name__}: {str(e)[:300]}')
+                qa.note(f'navigations so far: {qa.navigations}')
                 qa.end(False)
+                if 'qa is not defined' in str(e) or 'context was destroyed' in str(e):
+                    # The page reloaded under us: open it again and continue the saved world.
+                    qa.page.wait_for_timeout(2000)
+                    qa.open()
+                    continue_world(qa)
                 try:
                     qa.shot(f'error_{name}')
                 except Exception:
