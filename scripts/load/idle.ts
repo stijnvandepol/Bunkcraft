@@ -2,7 +2,7 @@
  * Start-up time and idle cost of the server: how fast it answers /health, what an empty process costs, what
  * loaded-but-empty games cost (CPU and memory) and what is given back once they are unloaded.
  *
- *   npx tsx scripts/load/idle.ts [--entry bundle|tsx] [--rooms 20] [--port 3198] [--node-flags "..."]
+ *   npx tsx scripts/load/idle.ts [--entry bundle|tsx] [--rooms 20] [--port 3198] [--node-flags="..."]
  *
  * Memory is the RSS of the whole process tree (tsx starts an esbuild helper process next to node).
  */
@@ -19,6 +19,8 @@ const args = new Map<string, string>();
 for (let i = 2; i < process.argv.length; i++) {
   const a = process.argv[i];
   if (!a.startsWith('--')) continue;
+  // --key=value (needed when the value itself starts with --, e.g. --node-flags=--max-semi-space-size=32).
+  if (a.includes('=')) { args.set(a.slice(2, a.indexOf('=')), a.slice(a.indexOf('=') + 1)); continue; }
   const next = process.argv[i + 1];
   if (next && !next.startsWith('--')) { args.set(a.slice(2), next); i++; } else args.set(a.slice(2), '1');
 }

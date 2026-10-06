@@ -8,7 +8,7 @@
  * Options: --steps kind:rooms[,…] (kind = survival | arena), --bots per room (8), --warmup s (20),
  * --measure s (45), --profile (node --cpu-prof on the server; .cpuprofile files land in --prof-dir),
  * --workers n (bot processes; default one per 100 bots, max 6), --port (3199), --out results.json,
- * --entry bundle|tsx (default bundle: run `npm run build:server` first), --node-flags "...".
+ * --entry bundle|tsx (default bundle: run `npm run build:server` first), --node-flags="...".
  *
  * Per step: server tick time p50/p99/max (/metrics), event-loop lag p50/p99/max (/metrics, monitorEventLoopDelay),
  * CPU % of one core, RSS, outgoing bytes/s, bot-side latencies (ping, chat echo, take, fire, edit propagation,
@@ -30,6 +30,8 @@ const args = new Map<string, string>();
 for (let i = 2; i < process.argv.length; i++) {
   const a = process.argv[i];
   if (!a.startsWith('--')) continue;
+  // --key=value (needed when the value itself starts with --, e.g. --node-flags=--max-semi-space-size=32).
+  if (a.includes('=')) { args.set(a.slice(2, a.indexOf('=')), a.slice(a.indexOf('=') + 1)); continue; }
   const next = process.argv[i + 1];
   if (next && !next.startsWith('--')) { args.set(a.slice(2), next); i++; } else args.set(a.slice(2), '1');
 }
@@ -54,7 +56,7 @@ const BASE = `http://127.0.0.1:${PORT}`;
 const SERVER_DIR = resolve(args.get('server-dir') ?? root);
 /** How the server runs: `tsx` (TypeScript at runtime, the old production start) or `bundle` (dist-server/index.js, `npm run build:server`). */
 const ENTRY = args.get('entry') ?? 'bundle';
-/** Extra node flags for the server, e.g. --node-flags "--max-old-space-size=256 --max-semi-space-size=16". */
+/** Extra node flags for the server, e.g. --node-flags="--max-old-space-size=256 --max-semi-space-size=16". */
 const NODE_FLAGS = (args.get('node-flags') ?? '').split(/\s+/).filter(Boolean);
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));

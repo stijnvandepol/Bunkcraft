@@ -45,7 +45,9 @@ export async function startServer(env: Record<string, string> = {}, existingDir?
 
   const boot = (): Promise<void> => new Promise((res, rej) => {
     let ready = false;
-    const c = spawn(join(ROOT, 'node_modules/.bin/tsx'), ['server/index.ts'], {
+    // BUNK_SERVER_ENTRY=bundle runs the production bundle (`npm run build:server`) instead of the TypeScript source.
+    const bundle = process.env.BUNK_SERVER_ENTRY === 'bundle';
+    const c = spawn(bundle ? process.execPath : join(ROOT, 'node_modules/.bin/tsx'), [bundle ? 'dist-server/index.js' : 'server/index.ts'], {
       cwd: ROOT,
       env: {
         ...process.env, PORT: String(port), DATA_DIR: dataDir, ROOM_CREATE_LIMIT: '1000', MAIN_WORLD: 'off', TRUST_PROXY: '1', MAX_CONN_PER_IP: '1000', MAX_CONNECTIONS: '5000', BACKUP_KEEP: '0', LOG_FORMAT: 'text', LOG_LEVEL: 'info',

@@ -31,6 +31,12 @@ interface ServerChunk extends ChunkLike {
   tops: Int16Array;
   /** Block indices that emit light (torches, glowstone, lava). */
   emitters: Set<number>;
+  /**
+   * The same indices sorted ascending, built on demand (null after a change). An index is x | z<<4 | y<<8,
+   * so the order is by height and getLight only visits emitters within EMIT_RADIUS layers: a generated
+   * chunk can hold over a thousand lava blocks deep down that never light anything at the surface.
+   */
+  emitSorted: Int32Array | null;
 }
 
 /**
@@ -44,6 +50,9 @@ export class ServerWorld implements EntityWorld {
   /** Edits per chunk: block index → packed state (id | meta << 8). */
   private readonly editsByChunk = new Map<number, Map<number, number>>();
   private readonly wanted = new Set<number>();
+  /** Chunk coordinates of the players at the last update (x, z pairs) and whether that update loaded everything. */
+  private readonly lastCenters: number[] = [];
+  private lastComplete = false;
   /** Fired for every block change (including explosions) so the server can persist it. */
   onEdit: ((x: number, y: number, z: number, id: number, meta: number) => void) | null = null;
   /**
@@ -180,12 +189,22 @@ export class ServerWorld implements EntityWorld {
     if (!c) return 0xf0;
     const sky = y > c.tops[(x & 15) | ((z & 15) << 4)] ? 15 : 0;
     let block = 0;
+    const lx = x & 15, lz = z & 15;
+    // Only emitter layers within reach: indices are sorted by height (see emitSorted).
+    const from = Math.max(0, y - EMIT_RADIUS) << 8, to = (y + EMIT_RADIUS + 1) << 8;
     // Emitters in the 3×3 chunks around: level = emission − distance (ignores occlusion).
     for (let dz = -1; dz <= 1; dz++) {
+      // Horizontal distance to the nearest column of that neighbour: farther than the radius = nothing to find.
+      const hz = dz < 0 ? lz + 1 : dz > 0 ? 16 - lz : 0;
       for (let dx = -1; dx <= 1; dx++) {
+        const hx = dx < 0 ? lx + 1 : dx > 0 ? 16 - lx : 0;
+        if (hx + hz > EMIT_RADIUS) continue;
         const n = dx === 0 && dz === 0 ? c : this.chunks.get(chunkKey(cx + dx, cz + dz));
         if (!n || n.emitters.size === 0) continue;
-        for (const i of n.emitters) {
+        const list = n.emitSorted ??= Int32Array.from(n.emitters).sort();
+        for (let k = lowerBound(list, from); k < list.length; k++) {
+          const i = list[k];
+          if (i >= to) break;
           const ex = ((cx + dx) << 4) + (i & 15), ez = ((cz + dz) << 4) + ((i >> 4) & 15), ey = i >> 8;
           const d = Math.abs(ex - x) + Math.abs(ey - y) + Math.abs(ez - z);
           if (d > EMIT_RADIUS) continue;
@@ -240,7 +259,9 @@ export class ServerWorld implements EntityWorld {
     noteRandomTickable(c.blocks, y, id);
     if (meta !== 0 && !c.meta) c.meta = new Uint8Array(CHUNK_VOLUME);
     if (c.meta) c.meta[i] = meta;
-    if (LIGHT_EMIT[id] > 0) c.emitters.add(i); else c.emitters.delete(i);
+    if (LIGHT_EMIT[id] > 0) {
+      if (!c.emitters.has(i)) { c.emitters.add(i); c.emitSorted = null; }
+    } else if (c.emitters.delete(i)) c.emitSorted = null;
     const col = (x & 15) | ((z & 15) << 4);
     if (OPAQUE[id]) {
       if (y > c.tops[col]) c.tops[col] = y;
@@ -345,6 +366,14 @@ export class ServerWorld implements EntityWorld {
    * is near any more. `centers` are player positions in blocks.
    */
   update(centers: { x: number; z: number }[]): void {
+    // Runs every tick: when no player changed chunk and everything around them is loaded, nothing would change.
+    let same = this.lastComplete && centers.length * 2 === this.lastCenters.length;
+    for (let k = 0; k < centers.length && same; k++) {
+      same = this.lastCenters[k * 2] === Math.floor(centers[k].x) >> 4 && this.lastCenters[k * 2 + 1] === Math.floor(centers[k].z) >> 4;
+    }
+    if (same) return;
+    this.lastCenters.length = 0;
+    for (const p of centers) this.lastCenters.push(Math.floor(p.x) >> 4, Math.floor(p.z) >> 4);
     this.wanted.clear();
     let generated = 0;
     // Nearest-first so the area around a player is ready before the outskirts.
@@ -375,6 +404,8 @@ export class ServerWorld implements EntityWorld {
       this.cacheCx = NaN;
       this.onChunkUnloaded?.(key);
     }
+    // Below the budget means the ring loop ran to the end: every chunk in reach is loaded.
+    this.lastComplete = generated < MAX_GEN_PER_UPDATE;
   }
 
   private generate(cx: number, cz: number, key: number): void {
@@ -392,7 +423,7 @@ export class ServerWorld implements EntityWorld {
     for (let col = 0; col < 256; col++) tops[col] = topOf(blocks, col);
     const emitters = new Set<number>();
     for (let i = 0; i < CHUNK_VOLUME; i++) if (LIGHT_EMIT[blocks[i]] > 0) emitters.add(i);
-    const chunk: ServerChunk = { key, cx, cz, blocks, meta, tops, emitters };
+    const chunk: ServerChunk = { key, cx, cz, blocks, meta, tops, emitters, emitSorted: null };
     this.chunks.set(key, chunk);
     this.cacheCx = NaN;
     // Liquid that was still flowing when the chunk went away carries on.
@@ -406,6 +437,16 @@ export class ServerWorld implements EntityWorld {
     }
     this.onChunkReady?.(chunk);
   }
+}
+
+/** First position in a sorted list whose value is ≥ v. */
+function lowerBound(list: Int32Array, v: number): number {
+  let lo = 0, hi = list.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (list[mid] < v) lo = mid + 1; else hi = mid;
+  }
+  return lo;
 }
 
 /** Highest light-blocking block in a column of a chunk, −1 if none. */
