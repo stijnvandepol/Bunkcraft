@@ -77,6 +77,14 @@ function half(b: LayoutBuilder, s: 1 | -1, p: Side): void {
   box(-35, -34, 5, 11, 1, 2, BLOCK.OAK_PLANKS);
   box(-35, -35, 7, 9, 3, 3, BLOCK.SPRUCE_PLANKS);
   box(-34, -34, 10, 10, 1, 2, BLOCK.CRAFTING_TABLE);
+  // ...and along the north edge: without them the bow's taper left a sight line from the far water
+  // straight into the bow-side spawn (seen from 215 spots on the enemy half, the stern spawn from 71).
+  box(-35, -34, -12, -6, 1, 2, BLOCK.OAK_PLANKS);
+  box(-35, -35, -11, -9, 3, 3, BLOCK.SPRUCE_PLANKS);
+  // The bow tapers, so its dock face would be open water where the stern's square hull closes it off:
+  // fenders (stacked crates) fill the two gaps beside the gangway, otherwise the bow-side spawn is in
+  // sight from the far water lanes.
+  if (p.bow) for (const z of [-5, 2]) box(-35, -35, z, z + 2, 1, 2, BLOCK.SPRUCE_PLANKS);
   // Lamps on the dock corners.
   for (const z of [-11, 10]) {
     box(-36, -36, z, z, 1, 2, BLOCK.FENCE);
