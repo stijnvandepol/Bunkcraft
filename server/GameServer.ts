@@ -1,4 +1,4 @@
-import { findSpawnColumn } from '../src/world/Spawn';
+import { findSpawnColumn, isSpawnableColumn, spreadSpawn } from '../src/world/Spawn';
 import { enchantsOf } from '../src/items/EnchantRules';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -457,6 +457,15 @@ export class GameServer {
     }
   }
 
+  /** A dry spot within the spawn radius for a player without a record, at the terrain height there (+2, like `findSpawn`). */
+  private newcomerSpawn(name: string): { x: number; y: number; z: number } {
+    const gen = this.entities?.world.generator;
+    if (this.match || !gen) return this.world.spawn;
+    const at = spreadSpawn(this.world.spawn, name, (x, z) => isSpawnableColumn(gen, x, z));
+    if (at === this.world.spawn) return at;
+    return { x: at.x, y: Math.floor(gen.heightAt(Math.floor(at.x), Math.floor(at.z))) + 2, z: at.z };
+  }
+
   /** Same dry-land spawn search as the client, using the shared terrain generator. */
   private findSpawn(seed: number, genVersion: number): { x: number; y: number; z: number } {
     const gen = new TerrainGenerator(seed, genVersion);
@@ -777,7 +786,8 @@ export class GameServer {
     const op = who.owner || (who.verified && this.world.ops!.includes(lc(name)));
 
     const record = this.match ? null : this.playerRecord(name);
-    const start = record ?? this.world.spawn;
+    // A newcomer appears somewhere within the spawn radius (Minecraft's spawnRadius), not inside the last one.
+    const start = record ?? this.newcomerSpawn(name);
     const initial = parseInventory(record?.inventory);
     const session: Session = {
       id: this.nextId++, name, ws, ip, op, owner: who.owner, verified: who.verified, keyHash,
@@ -806,7 +816,7 @@ export class GameServer {
     this.send(session, {
       t: 'welcome', id: session.id, worldName: this.world.name, seed: this.world.seed, genVersion: this.match ? undefined : this.world.genVersion, gameMode: this.world.gameMode,
       gameType: this.match?.info.type ?? 'minecraft', worldType: this.match ? 'arena' : 'terrain', match: this.match?.info,
-      time: this.world.time, day: this.world.day ?? 0, spawn: joined ? { x: joined.x, y: joined.y, z: joined.z } : this.world.spawn, edits, player: record,
+      time: this.world.time, day: this.world.day ?? 0, spawn: joined ? { x: joined.x, y: joined.y, z: joined.z } : record ? this.world.spawn : start, edits, player: record,
       players: [...this.sessions.values()].map((s) => ({ id: s.id, name: s.name, team: this.match?.players.get(s.id)?.team || undefined })),
       motd: this.opts.motd,
       ...(op ? { op: true } : {}),

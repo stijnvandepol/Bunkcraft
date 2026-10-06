@@ -111,6 +111,11 @@ Wereld maken, boom slaan (3,2 s per log), receptenboek, werkbank, houten en sten
   een gerecyclede buffer die nog niet geüpload was), krijg je precies dit.
 - **Repro:** `python3 scripts/qa/gl_probe.py 5241` een paar keer, liefst met een tweede browser ernaast; of
   `scenarios.py` (de console-warnings staan in `scenarios-chromium-run.json`).
+- **Opgelost.** Oorzaak zat in de mesher, niet in de upload: `GeometryBuilder` had 1,5 index per vertex aan
+  capaciteit, maar dubbelzijdige quads (kruisplanten) maken 12 indices per 4 vertices. Chunk −2,3 van seed 4242
+  (precies 3976 vertices en 6396 indices) schreef op een verse worker voorbij het einde; die schrijfacties vallen
+  stil weg, dus de staart van de index-buffer hield oude bytes uit de buffer-pool. Nu 3 per vertex; regressietests
+  in `tests/mesher.test.ts`, en `scripts/qa/chunk_gl_repro.py` (10 runs, CPU ×4, afstand 14: 0 GL-fouten).
 
 ### 2. P2: heks bij spawn: spawn-kill-lus 's nachts en de doodsboodschap mist de dader
 - In de doorlopende sessie ging de speler na respawnen twee keer binnen een minuut opnieuw dood:
@@ -130,10 +135,14 @@ Wereld maken, boom slaan (3,2 s per log), receptenboek, werkbank, houten en sten
 ### 4. P2: beide spelers spawnen op exact hetzelfde punt
 - Alice en Bob staan allebei op `0.5, 65, 0.5` en zitten in elkaar (`mp_02_alice_sees_bob.png`: Bob is niet te
   zien). Minecraft spreidt nieuwe spelers binnen `spawnRadius` (10).
+- **Opgelost:** de server zet een nieuwe speler op een droge plek binnen 10 blokken, gekozen uit de naam
+  (`spreadSpawn` in `src/world/Spawn.ts`).
 
 ### 5. P3: spawn op een boomkruin
 - Seed 779050144 en 4242: spawn op y 73, de grond eronder op y 64 tot 66. De eerste stappen geven valschade
   (2 HP in drie runs). Minecraft zoekt een vast grasblok.
+- **Opgelost:** `findStandingSpot` (`src/world/Spawn.ts`) kiest de dichtstbijzijnde kolom binnen 8 blokken
+  waarvan de bovenkant grond is, geen blad, stam, water of lava. Spawn-zoektocht en generator zijn ongewijzigd.
 
 ### 6. P3: de eerste multiplayer-game na het starten van de server duurt 36 s
 - Daarna 3 s. Waarschijnlijk het opwarmen van de server-workers voor chunk-generatie. Een voortgangsmelding of een
