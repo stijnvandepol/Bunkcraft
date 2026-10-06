@@ -139,6 +139,18 @@ Realistischer (paar uur per avond) is < 1 TB.
   14 bewaard), `bunkcraft`-commando, `deploy/bunkcraft.service` + `HOST`-instelling voor de systemd-variant.
 - Laadtest en idle-meting als scripts, zodat elke volgende wijziging opnieuw gemeten kan worden.
 
+### Getest
+
+- **Image** (`node:24-alpine`, arm64): 243 MB, waarvan het grootste deel de Node-basisimage. Container met de compose-hardening
+  (read-only, `cap_drop: ALL`, 640 MB, 1 CPU): `/health` gezond, `scripts/load/smoke.ts` maakt een game aan, joint via
+  WebSocket, krijgt welcome, klok en chat-echo. `docker stop` slaat netjes op in < 1 s.
+- **`install.sh` echt gedraaid** in een kale `ubuntu:24.04`-container (privileged, Docker-in-Docker): dry-run, installatie
+  van Docker uit de officiële repo, build, Caddy met HTTPS (`https://localhost/health` 200, HTTP/2), tweede run idempotent
+  (tokens blijven), `bunkcraft status`/`backup`/`restart` (een `.env`-wijziging komt in de container aan).
+  Niet getest in die container: systemd-timer en ufw (geen systemd in een container; daar valt het script terug op cron en een
+  hint), en `update.sh` tegen een echte remote.
+- shellcheck: schoon.
+
 ## 6. Open beslissingen voor Stijn
 
 - **A. Chunkgeneratie naar een worker thread?** Grootste winst voor soepel spel bij veel survival-spelers (lagpieken weg,
