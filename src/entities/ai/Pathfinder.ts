@@ -46,6 +46,10 @@ const nx = new Int32Array(NODE_CAP), ny = new Int32Array(NODE_CAP), nz = new Int
 const nG = new Float32Array(NODE_CAP), nF = new Float32Array(NODE_CAP), nH = new Float32Array(NODE_CAP);
 const nParent = new Int32Array(NODE_CAP);
 const nClosed = new Uint8Array(NODE_CAP);
+/** Cactus penalty of the node's cell, −1 = not looked up yet (a cell is reached from several neighbours). */
+const nCactus = new Int8Array(NODE_CAP);
+/** Whether the body fits in the four side neighbours of the node being expanded, −1 = not looked up yet. */
+const sideFits = new Int8Array(4);
 const hashTable = new Int32Array(HASH_SIZE);
 const hashStamp = new Uint32Array(HASH_SIZE);
 let stamp = 1;
@@ -98,7 +102,7 @@ function nodeAt(x: number, y: number, z: number): number {
       hashStamp[h] = stamp;
       hashTable[h] = n;
       nx[n] = x; ny[n] = y; nz[n] = z;
-      nG[n] = Infinity; nClosed[n] = 0; nParent[n] = -1;
+      nG[n] = Infinity; nClosed[n] = 0; nParent[n] = -1; nCactus[n] = -1;
       return n;
     }
     const n = hashTable[h];
@@ -109,6 +113,9 @@ function nodeAt(x: number, y: number, z: number): number {
 
 const DX = [1, -1, 0, 0, 1, 1, -1, -1];
 const DZ = [0, 0, 1, -1, 1, -1, 1, -1];
+/** For the diagonal moves 4-7: the side moves along x and along z whose cells must both be free. */
+const DIAG_X = [0, 0, 0, 0, 0, 0, 1, 1];
+const DIAG_Z = [0, 0, 0, 0, 2, 3, 2, 3];
 
 // Cell classes.
 const OPEN = 0, BLOCKED = 1, WATER = 2;
@@ -205,9 +212,14 @@ export function findPath(getBlock: BlockGetter, sx: number, sy: number, sz: numb
   let expanded = 0;
   let found = false;
 
-  const relax = (from: number, x: number, y: number, z: number, cost: number): void => {
+  const relax = (from: number, x: number, y: number, z: number, cost: number, cactus = false): void => {
     const n = nodeAt(x, y, z);
     if (n < 0 || nClosed[n]) return;
+    if (cactus) {
+      let c = nCactus[n];
+      if (c < 0) c = nCactus[n] = cactusPenalty(getBlock, x, y, z);
+      cost += c;
+    }
     const ng = nG[from] + cost;
     if (ng >= nG[n]) return;
     if (nG[n] === Infinity) nH[n] = h(x, y, z);
@@ -225,19 +237,23 @@ export function findPath(getBlock: BlockGetter, sx: number, sy: number, sz: numb
     const ddx = x - tx, ddz = z - tz;
     if (ddx * ddx + ddz * ddz <= reach2 && Math.abs(y - ty) <= 1) { best = n; found = true; break; }
     const inWater = g.cell(x, y, z) === WATER;
+    // The side cells are needed twice (their own move and the corner check of two diagonals): look them up once.
+    sideFits[0] = sideFits[1] = sideFits[2] = sideFits[3] = -1;
 
     for (let d = 0; d < 8; d++) {
       const px = x + DX[d], pz = z + DZ[d];
       if (Math.abs(px - sx) > range || Math.abs(pz - sz) > range) continue;
       const diag = d >= 4;
       const step = diag ? 1.414 : 1;
-      if (diag && !(g.fits(x + DX[d], y, z) && g.fits(x, y, z + DZ[d]))) continue;
-      if (g.canStand(px, y, pz)) {
-        relax(n, px, y, pz, step + (g.cell(px, y, pz) === WATER ? 2.5 : 0) + cactusPenalty(getBlock, px, y, pz));
+      if (diag && !(sideFree(DIAG_X[d], x, y, z) && sideFree(DIAG_Z[d], x, y, z))) continue;
+      const fits = diag ? g.fits(px, y, pz) : sideFree(d, x, y, z);
+      // canStand, with the fit already known.
+      if (fits && (g.supported(px, y, pz) || g.cell(px, y, pz) === WATER)) {
+        relax(n, px, y, pz, step + (g.cell(px, y, pz) === WATER ? 2.5 : 0), true);
         continue;
       }
       if (diag) continue;
-      if (g.fits(px, y, pz)) {
+      if (fits) {
         // A hole: fall up to three blocks (a landing in water is safe, lava and cactus are not).
         for (let k = 1; k <= 3; k++) {
           const c = g.cell(px, y - k, pz);
@@ -274,6 +290,13 @@ export function findPath(getBlock: BlockGetter, sx: number, sy: number, sz: numb
   out.length = len - skip;
   out.complete = found && skip === 0;
   return out.length > 0;
+}
+
+/** Whether the body fits in side neighbour `d` (0-3) of (x, y, z), memoised per expanded node in `sideFits`. */
+function sideFree(d: number, x: number, y: number, z: number): boolean {
+  let f = sideFits[d];
+  if (f < 0) f = sideFits[d] = grid.fits(x + DX[d], y, z + DZ[d]) ? 1 : 0;
+  return f === 1;
 }
 
 /** Cells next to a cactus are avoided (contact damage). */
