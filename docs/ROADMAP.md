@@ -313,7 +313,7 @@ regenereert, respawns en een scoreboard. Beschrijving, besturing en wapentabel: 
 
 - **Eigen server: klaar (oktober 2026).** `sudo ./scripts/install.sh --domain …` op Ubuntu/Debian (Docker + Caddy, back-ups,
   `bunkcraft update`), systemd-variant in `deploy/`. Server draait als gebundelde JS (`dist-server/`). Metingen en keuzes:
-  `docs/research/SERVER-DEPLOY.md`. Chunkgeneratie draait op worker threads (`CHUNK_WORKERS`, voorstel A, gedaan). **Open voorstellen (beslissing Stijn):** B delta-`ent`-frames (~90 % van het survival-verkeer), D meerdere processen boven ~150-200
+  `docs/research/SERVER-DEPLOY.md`. Chunkgeneratie draait op worker threads (`CHUNK_WORKERS`, voorstel A, gedaan). Tickpieken in draaiende werelden: tick-CPU blijft ≤ ~4-9 ms, de wandklokpieken kwamen van de drukke meetmachine; mobpad goedkoper en per tick begrensd (§2.7, `npm run test:perf` bewaakt het). **Open voorstellen (beslissing Stijn):** B delta-`ent`-frames (~90 % van het survival-verkeer), D meerdere processen boven ~150-200
   spelers, E multi-arch images op GHCR via CI (kleine VPS hoeft niet zelf te bouwen). uWebSockets.js: advies nee.
 - **PWA (S): klaar.** Manifest, handgeschreven service worker (versioned precache, runtime-cache voor texturepacks, `index.html` network-first, update-toast), installknoppen, iOS-meta, offline singleplayer getest met Playwright. Zie `docs/DISTRIBUTION.md`.
 - **itch.io (S): klaar.** `npm run build:static` geeft `dist-static/` + `bunkcraft-static.zip` (relatieve base, werkt onder een submap, multiplayer vraagt om serveradres).
