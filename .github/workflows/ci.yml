@@ -93,3 +93,108 @@ jobs:
             playwright-report/
             test-results/
           retention-days: 14
+
+  # Ready-made multi-arch images on GHCR (docs/SERVER.md): a VPS pulls the image instead of building it.
+  # Only for pushes to main and v* tags, and only after every check above passed.
+  image:
+    needs: [check, perf, e2e]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # The only job that may write anything: packages of this repository.
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Image name (GHCR needs lowercase)
+        id: name
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/bunkcraft" >> "$GITHUB_OUTPUT"
+      # No QEMU: the Dockerfile builds on the runner's own platform and its runtime stage has no RUN step,
+      # so the arm64 image is assembled without emulating arm64.
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Tags, OCI labels and annotations
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        env:
+          # Annotate the multi-arch index too: GHCR reads the description and source from it.
+          DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest,index
+        with:
+          images: ${{ steps.name.outputs.image }}
+          # latest = newest main, not newest release tag.
+          flavor: latest=false
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=sha-,format=short
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}},enable=${{ !startsWith(github.ref, 'refs/tags/v0.') }}
+          labels: |
+            org.opencontainers.image.title=BunkCraft
+            org.opencontainers.image.description=Minecraft-inspired voxel game for the browser, with its multiplayer server
+            org.opencontainers.image.licenses=ISC
+          annotations: |
+            org.opencontainers.image.title=BunkCraft
+            org.opencontainers.image.description=Minecraft-inspired voxel game for the browser, with its multiplayer server
+            org.opencontainers.image.licenses=ISC
+      # Nothing is published unless the amd64 image starts, answers /health and serves the game.
+      - name: Build for the smoke test (amd64)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: bunkcraft:smoke
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Smoke test (compose hardening, /health and the game page)
+        run: |
+          docker run -d --name smoke --read-only --tmpfs /tmp --cap-drop ALL \
+            --security-opt no-new-privileges:true -p 127.0.0.1:3000:3000 bunkcraft:smoke
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:3000/health | grep -q '"ok":true'; then
+              curl -fsS -o /dev/null http://127.0.0.1:3000/
+              docker rm -f smoke >/dev/null
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs smoke
+          exit 1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push (linux/amd64 + linux/arm64)
+        id: push
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # SLSA provenance and an SPDX SBOM, stored as attestations next to the image (BuildKit makes them for free).
+          provenance: mode=max
+          sbom: true
+      - name: Summary
+        env:
+          IMAGE: ${{ steps.name.outputs.image }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          {
+            echo "### Published ${IMAGE}"
+            echo
+            echo "Digest: \`${DIGEST}\`. Pin a server to exactly this build with \`BUNKCRAFT_TAG=latest@${DIGEST}\` in its .env."
+            echo
+            echo '```'
+            echo "${TAGS}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

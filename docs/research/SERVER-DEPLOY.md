@@ -212,7 +212,7 @@ speler/mob-zoekacties: bij 8 spelers per game niet nodig.
 | Statische bestanden | **al goed** | Vite schrijft `.br`/`.gz`, de server serveert die met `immutable` cache voor gehashte bestanden; Caddy doet zstd/gzip voor de rest. |
 | Caddy vs nginx | **Caddy** | Automatisch HTTPS en vernieuwing, HTTP/3 standaard (443/udp), zstd. nginx is iets lichter maar vraagt certbot en meer config. Caddy ~30-40 MB RAM. |
 | Docker vs systemd | **Docker standaard, systemd gedocumenteerd** | Docker: één commando, geïsoleerd, read-only, makkelijke updates; kost ~50-80 MB voor dockerd/containerd en ~0 CPU. systemd: `deploy/bunkcraft.service` met dezelfde hardening voor wie geen Docker wil. |
-| Kant-en-klare images (GHCR, multi-arch) | **voorstel E** | Nu bouwt de server zelf de image (TypeScript + Vite: > 1 GB RAM, daarom maakt `install.sh` swap op kleine machines). Een CI-workflow die amd64+arm64-images publiceert maakt installeren en updaten seconden werk en een 1 GB-VPS probleemloos. |
+| Kant-en-klare images (GHCR, multi-arch) | **gedaan** (voorstel E, §5.1) | CI publiceert amd64+arm64-images; de server haalt ze op in plaats van te bouwen (TypeScript + Vite: > 1 GB RAM). Installeren en updaten is seconden werk, een 1 GB-VPS heeft geen swap meer nodig, en een update die niet gezond wordt draait zichzelf terug. |
 | Prometheus/Grafana standaard | **nee** | Te zwaar voor een kleine VPS. `/health` heeft nu tick/lag/geheugen; `/metrics` met token voor wie wil scrapen (voorbeeld in SERVER.md). |
 
 ## 4. Welke VPS en hoeveel spelers
@@ -222,8 +222,8 @@ survival-spelers ≈ 35 % main thread op een M1-core; op een VPS-vCPU (1,5-2× t
 
 | VPS | Indicatie prijs | Survival-spelers | Alleen arcade | Opmerking |
 |---|---|---|---|---|
-| 1 vCPU / 1 GB | €2-5/mnd | ~40-60 | ~100 | Caddy, Docker en GC delen de ene core; image bouwen alleen met swap (het script regelt dat). |
-| **2 vCPU / 4 GB (Hetzner CAX11 ARM of CX22)** | ~€4-5/mnd | **~120-150** | ~200+ | **Aanbevolen.** Tweede core voor Caddy/TLS, GC-threads en het OS; bouwen zonder swap. ARM werkt (alles is pure JS, image is multi-arch). |
+| 1 vCPU / 1 GB | €2-5/mnd | ~40-60 | ~100 | Caddy, Docker en GC delen de ene core. De image komt kant-en-klaar van GHCR; alleen met `--build` is swap nodig (het script regelt dat). |
+| **2 vCPU / 4 GB (Hetzner CAX11 ARM of CX22)** | ~€4-5/mnd | **~120-150** | ~200+ | **Aanbevolen.** Tweede core voor Caddy/TLS, GC-threads en het OS. ARM werkt (alles is pure JS, image is multi-arch). |
 | 4 vCPU / 8 GB | €8-15/mnd | ~150-200 | ~300 | Terreingeneratie gebruikt nu de extra cores (§2.6); voor de gamelogica zelf pas meer met voorstel D (meerdere processen). |
 
 Verkeer: 150 survival-spelers continu = ~19 Mbit/s, ~6 TB/maand bij 24/7 vol; Hetzner geeft 20 TB inbegrepen.
@@ -258,6 +258,49 @@ Realistischer (paar uur per avond) is < 1 TB.
   hint), en `update.sh` tegen een echte remote.
 - shellcheck: schoon.
 
+### 5.1 Kant-en-klare images (voorstel E, gedaan)
+
+- **CI** (`.github/workflows/ci.yml`, job `image`): draait alleen bij een push naar `main` of een `v*`-tag, en pas als
+  `check`, `perf` en `e2e` groen zijn. Bouwt linux/amd64 + linux/arm64 met buildx en pusht naar
+  `ghcr.io/stijnvandepol/bunkcraft`: `latest` (alleen `main`), `sha-<kort>`, en bij tags `1.2.0`/`1.2`/`1` (geen `0` bij
+  v0.x). OCI-labels en annotaties (ook op de multi-arch index, zodat GHCR beschrijving en repo toont), SBOM en
+  provenance (`mode=max`) als attestations, layer-cache in GitHub Actions (`type=gha`). Alleen deze job heeft
+  `packages: write`; alle actions staan op een commit-SHA (gecontroleerd met `git ls-remote`). Vóór het pushen start
+  de job de amd64-image met de compose-hardening en controleert `/health` en de gamepagina.
+- **Geen QEMU nodig:** de build-stage in de `Dockerfile` draait op `$BUILDPLATFORM` (de uitvoer is platformonafhankelijke
+  JS, dus één keer bouwen) en de runtime-stage heeft geen `RUN` meer (`/app/data` komt via `COPY --chown`). Lokaal:
+  amd64 + arm64 samen in ~6 s met warme cache; beide images starten, `/app/data` is van `node`.
+- **Compose:** `image: ${BUNKCRAFT_IMAGE:-ghcr.io/stijnvandepol/bunkcraft}:${BUNKCRAFT_TAG:-latest}`. Zelf bouwen via
+  `docker-compose.build.yml` (`image: bunkcraft:local`, `pull_policy: never`), aangezet met
+  `COMPOSE_FILE=docker-compose.yml:docker-compose.build.yml` in `.env`; daardoor bouwen ook `backup.sh`, `restart` enz.
+  zonder extra vlaggen. Vastpinnen op digest: `BUNKCRAFT_TAG=latest@sha256:…`.
+- **Scripts:** `install.sh` haalt standaard de image op (swap alleen nog bij `--build`), met `--tag`, `--image`,
+  `--build`/`--pull`. `update.sh`: `git pull` → image ophalen (of bouwen) terwijl de oude draait → niets veranderd = klaar
+  → back-up → herstart → health-check (`BUNKCRAFT_HEALTH_TIMEOUT`, standaard 120 s). Niet gezond: `.env`, commit en image
+  terug naar de vorige versie en opnieuw starten, exit 1. De vorige image blijft als `bunkcraft:previous` staan voor
+  `bunkcraft rollback`. `--dry-run` overal.
+
+**Getest** in een kale `ubuntu:24.04`-container (privileged, Docker-in-Docker, arm64) met een lokale registry
+(`registry:2`) als stand-in voor GHCR en een bare git-repo als remote, via `--image localhost:5000/bunkcraft`:
+
+| Scenario | Uitkomst |
+|---|---|
+| `install.sh --dry-run`, daarna echt (Docker uit de officiële repo), tweede run | niets veranderd / geïnstalleerd / idempotent, tokens blijven, geen swap, **niets gebouwd** |
+| Ophalen + starten (image al bekend bij Docker) | 10-18 s tot gezond, `https://localhost/health` via Caddy 200 |
+| `bunkcraft update` zonder nieuwe versie | "already up to date", geen herstart |
+| `update` v1 → v2 plus een nieuwe commit | 10-17 s, back-up gemaakt, `bunkcraft:previous` = v1 |
+| `update` naar een image die niet start (plus een commit) | exit 1, **automatisch terug naar v2 én de vorige commit**, Caddy blijft serveren |
+| `bunkcraft rollback`, twee keer | v1, daarna weer v2 |
+| `--tag sha-…`, `--tag latest@sha256:…`, dan kapotte `latest` | draait de gekozen versie; rollback zet de digest-pin in `.env` terug |
+| Tag die niet bestaat / Dockerfile die niet bouwt (`--build`) | exit 1, `.env`, code en container onveranderd |
+| `--build` (en `restart`/`backup` in die modus), `--pull` terug | lokale image draait, `COMPOSE_FILE` in `.env`; terug naar de registry-image |
+
+Gevonden en opgelost: `docker compose up` faalt zelf als de nieuwe container niet gezond wordt (Caddy wacht op
+`service_healthy`), waardoor de rollback nooit begon; de health-check beslist nu. Niet getest: de echte
+TypeScript/Vite-build bleef in de geneste Docker hangen bij "rendering chunks" (op de host: 4 s), daarom bouwde de
+`--build`-test een Dockerfile `FROM` de testimage; de GHCR-push zelf (gebeurt pas bij de eerste push naar `main`).
+shellcheck en actionlint: schoon.
+
 ## 6. Open beslissingen voor Stijn
 
 - **A. Chunkgeneratie naar een worker thread:** gedaan (§2.6). Het "19 %" uit het profiel bleek vooral de join-fase te zijn; in
@@ -265,6 +308,7 @@ Realistischer (paar uur per avond) is < 1 TB.
 - **B. Delta-`ent`-frames?** Halveert tot derdeelt het survival-verkeer per speler. Protocolwijziging.
 - **C. uWebSockets.js?** Advies: nee, tenzij verzenden later > 20 % van de CPU wordt.
 - **D. Meerdere processen per server?** Pas nodig boven ~150-200 gelijktijdige spelers per machine.
-- **E. Images publiceren op GHCR via CI?** Maakt installeren en updaten op een kleine VPS veel sneller en betrouwbaarder.
+- **E. Images publiceren op GHCR via CI:** gedaan (§5.1). Na de eerste push naar `main` éénmalig de package op public
+  zetten als GitHub hem privé aanmaakt (§5.1).
 - **Repo publiek of privé?** De one-liner in SERVER.md haalt `install.sh` van GitHub; bij een privé-repo moet de server een
   deploy-key of token hebben (of je kopieert de map zelf en draait `./scripts/install.sh`).

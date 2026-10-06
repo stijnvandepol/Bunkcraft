@@ -1,0 +1,259 @@
+{
+ "steps": [
+  {
+   "name": "Nieuwe survival-wereld via het menu",
+   "ok": true,
+   "seconds": 7.6,
+   "notes": [
+    "default mode button: Game Mode: Survival",
+    "world loaded in 0.6s, state after load: paused (pointer lock fails in automation)",
+    "spawn at 8.5,73.0,0.5 clock 07:57, mobs near: 0 hostile / 31 passive",
+    "inventory at start: []",
+    "end: clock 07:58 day 1, hp 20, food 20, mobs<64: 0 hostile / 31 passive"
+   ],
+   "frame": {
+    "samples": 9,
+    "fps_min": 31,
+    "fps_p10": 31,
+    "fps_median": 47,
+    "cpu_ms_avg": 4.54,
+    "worst_frame_ms": 56,
+    "now": {
+     "fps": 38,
+     "frameMs": 3.4,
+     "worstMs": 100
+    }
+   },
+   "errors": [],
+   "shots": [
+    "shots/webkit_00_title.png",
+    "shots/webkit_01_worlds.png",
+    "shots/webkit_02_create.png",
+    "shots/webkit_03_spawn.png"
+   ]
+  },
+  {
+   "name": "Boom slaan met de hand (logs verzamelen)",
+   "ok": true,
+   "seconds": 49.2,
+   "notes": [
+    "tree birch_log at 8,66,1: walked there ok=True",
+    "mine: crosshair on [8, 72, 0], wanted [8, 66, 1]",
+    "log break times so far (s): [5.79, 3.24, 3.28, 3.17, 3.15]; items left on ground: 0",
+    "tree birch_log at 5,65,-2: walked there ok=True",
+    "mine: crosshair on [6, 67, -1], wanted [5, 67, -2]",
+    "mine: crosshair on [6, 68, -1], wanted [5, 69, -2]",
+    "log break times so far (s): [5.79, 3.24, 3.28, 3.17, 3.15, 3.09, 3.17, 4.6, 3.08, 4.36]; items left on ground: 0",
+    "inventory: [('Birch Log', 10), ('Stick', 1)]; total 49s",
+    "damage taken: [('fall', '', 2, 18)]",
+    "end: clock 08:56 day 1, hp 20, food 20, mobs<64: 4 hostile / 37 passive"
+   ],
+   "frame": {
+    "samples": 192,
+    "fps_min": 12,
+    "fps_p10": 42,
+    "fps_median": 59,
+    "cpu_ms_avg": 3.06,
+    "worst_frame_ms": 100,
+    "now": {
+     "fps": 59,
+     "frameMs": 2.87,
+     "worstMs": 26
+    }
+   },
+   "errors": [],
+   "shots": [
+    "shots/webkit_04_tree.png"
+   ]
+  },
+  {
+   "name": "Planken, stokken, werkbank en houten pikhouweel via het receptenboek",
+   "ok": true,
+   "seconds": 19.6,
+   "notes": [
+    "Birch Planks crafted 10x (from 10 logs) -> planks 40",
+    "Stick crafted 2x -> 9 sticks",
+    "Crafting Table crafted 1x",
+    "recipe search \"pickaxe\" without table shows 0 recipes",
+    "table placed at 5,65,-4",
+    "select ok=True, placed=True",
+    "Wooden Pickaxe crafted 1x",
+    "Wooden Sword crafted 1x",
+    "end: clock 09:14 day 1, hp 20, food 20, mobs<64: 5 hostile / 34 passive"
+   ],
+   "frame": {
+    "samples": 8,
+    "fps_min": 47,
+    "fps_p10": 47,
+    "fps_median": 60,
+    "cpu_ms_avg": 3.14,
+    "worst_frame_ms": 49,
+    "now": {
+     "fps": 55,
+     "frameMs": 3.86,
+     "worstMs": 25
+    }
+   },
+   "errors": [],
+   "shots": [
+    "shots/webkit_05_inventory_open.png",
+    "shots/webkit_06_recipes_no_table.png",
+    "shots/webkit_07_inventory_wood_tools.png"
+   ]
+  },
+  {
+   "name": "Steen hakken met het houten pikhouweel (trap naar beneden)",
+   "ok": true,
+   "seconds": 58.3,
+   "notes": [
+    "cobblestone 18 after 58s; stone break times with wooden pickaxe: [1.36, 1.22, 1.26, 1.21, 1.42, 1.28, 1.35, 1.38]",
+    "wooden pickaxe damage: [{'slot': 0, 'id': 270, 'name': 'Wooden Pickaxe', 'count': 1, 'damage': 27}]",
+    "end: clock 10:24 day 1, hp 20, food 20, mobs<64: 4 hostile / 30 passive"
+   ],
+   "frame": {
+    "samples": 229,
+    "fps_min": 12,
+    "fps_p10": 30,
+    "fps_median": 57,
+    "cpu_ms_avg": 4.06,
+    "worst_frame_ms": 100,
+    "now": {
+     "fps": 43,
+     "frameMs": 3.91,
+     "worstMs": 81
+    }
+   },
+   "errors": [],
+   "shots": [
+    "shots/webkit_08_staircase.png"
+   ]
+  },
+  {
+   "name": "Stenen gereedschap en oven maken (bij de werkbank)",
+   "ok": false,
+   "seconds": 31.4,
+   "notes": [
+    "back at the table: True",
+    "crafted: {'Stone Pickaxe': 1, 'Stone Sword': 1, 'Furnace': 1}",
+    "place_near: furnace failed after 11 tries",
+    "furnace placed at None",
+    "end: clock 11:01 day 1, hp 20, food 20, mobs<64: 4 hostile / 30 passive"
+   ],
+   "frame": {
+    "samples": 97,
+    "fps_min": 40,
+    "fps_p10": 50,
+    "fps_median": 59,
+    "cpu_ms_avg": 4.1,
+    "worst_frame_ms": 81,
+    "now": {
+     "fps": 34,
+     "frameMs": 5.11,
+     "worstMs": 100
+    }
+   },
+   "errors": [],
+   "shots": [
+    "shots/webkit_09_table_furnace.png"
+   ]
+  },
+  {
+   "name": "Opslaan en opnieuw laden (Save and Quit to Title → Play Selected World)",
+   "ok": true,
+   "seconds": 7.3,
+   "notes": [
+    "reload 0.7s; pos [5.8, 65.0, -1.5] -> [5.8, 65.0, -1.5]; clock 11:02 -> 11:04; hp 20->20 food 20->20",
+    "inventory same: True; edited chunks 83 -> 83",
+    "end: clock 11:04 day 1, hp 20, food 20, mobs<64: 0 hostile / 32 passive"
+   ],
+   "frame": {
+    "samples": 10,
+    "fps_min": 20,
+    "fps_p10": 26,
+    "fps_median": 34,
+    "cpu_ms_avg": 5.17,
+    "worst_frame_ms": 100,
+    "now": {
+     "fps": 41,
+     "frameMs": 6.64,
+     "worstMs": 32
+    }
+   },
+   "errors": [],
+   "shots": [
+    "shots/webkit_23_pause_menu.png",
+    "shots/webkit_24_world_list.png"
+   ]
+  },
+  {
+   "name": "Instellingen-menu’s doorlopen (Options, Video, Sound, Controls, Key Binds)",
+   "ok": true,
+   "seconds": 11.4,
+   "notes": [
+    "sub screens found: {'Video Settings...': 1, 'Music & Sounds...': 1, 'Controls...': 1}",
+    "settings: {\"renderDistance\":8,\"renderScale\":100,\"dynamicResolution\":true,\"graphics\":\"fancy\",\"shadows\":\"low\",\"particles\":\"all\",\"fov\":70,\"sensitivity\":100,\"soundVolume\":80,\"musicVolume\":50,\"ambientVolume\":80,\"uiVolume\":80,\"spatialAudio\":\"stereo\",\"viewBobbing\":true,\"guiScale\":0,\"brightness\":50,\"clouds\":\"fancy\",\"masterVolume\":100,\"invertMouse\":false,\"texturePack\":\"pixel-perfection\",\"keybinds\":{\"key.forward\":\"Ke",
+    "end: clock 11:06 day 1, hp 20, food 20, mobs<64: 5 hostile / 32 passive"
+   ],
+   "frame": {
+    "samples": 7,
+    "fps_min": 23,
+    "fps_p10": 23,
+    "fps_median": 41,
+    "cpu_ms_avg": 5.54,
+    "worst_frame_ms": 63,
+    "now": {
+     "fps": 38,
+     "frameMs": 4.9,
+     "worstMs": 39
+    }
+   },
+   "errors": [],
+   "shots": [
+    "shots/webkit_25_options.png",
+    "shots/webkit_26_video.png",
+    "shots/webkit_27_sound.png",
+    "shots/webkit_28_controls.png",
+    "shots/webkit_29_keybinds.png"
+   ]
+  }
+ ],
+ "frames": [
+  {
+   "fps": 38,
+   "frameMs": 3.4,
+   "worstMs": 100
+  },
+  {
+   "fps": 59,
+   "frameMs": 2.87,
+   "worstMs": 26
+  },
+  {
+   "fps": 55,
+   "frameMs": 3.86,
+   "worstMs": 25
+  },
+  {
+   "fps": 43,
+   "frameMs": 3.91,
+   "worstMs": 81
+  },
+  {
+   "fps": 34,
+   "frameMs": 5.11,
+   "worstMs": 100
+  },
+  {
+   "fps": 41,
+   "frameMs": 6.64,
+   "worstMs": 32
+  },
+  {
+   "fps": 38,
+   "frameMs": 4.9,
+   "worstMs": 39
+  }
+ ],
+ "console": [],
+ "time_shortcuts": []
+}
