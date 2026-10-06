@@ -82,13 +82,19 @@ main() {
   local ref old_id new_id
   ref="$(docker compose config --images bunkcraft)"
   old_id="$(running_image_id)"
+  # A failed pull or build changes nothing: .env and the code go back, the old server never stopped.
+  local fetched=1
   if [ "$building" = 1 ]; then
     say "building $ref from this checkout (the old server keeps running)"
-    run docker compose build --pull bunkcraft
-    run docker compose pull --quiet caddy
+    { run docker compose build --pull bunkcraft && run docker compose pull --quiet caddy; } || fetched=0
   else
     say "pulling $ref (the old server keeps running)"
-    run docker compose pull --quiet
+    run docker compose pull --quiet || fetched=0
+  fi
+  if [ "$fetched" = 0 ]; then
+    restore_env "$old_tag" "$old_compose_file"
+    if [ -n "$before" ] && [ "$before" != "$after" ]; then git reset -q --keep "$before"; fi
+    die "could not $([ "$building" = 1 ] && echo build || echo pull) $ref; nothing was changed, the old server keeps running."
   fi
   new_id="$(docker image inspect --format '{{.Id}}' "$ref" 2>/dev/null || true)"
 

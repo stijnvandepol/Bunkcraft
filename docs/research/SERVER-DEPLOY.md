@@ -212,7 +212,26 @@ Realistischer (paar uur per avond) is < 1 TB.
   terug naar de vorige versie en opnieuw starten, exit 1. De vorige image blijft als `bunkcraft:previous` staan voor
   `bunkcraft rollback`. `--dry-run` overal.
 
-RESULTS_PLACEHOLDER
+**Getest** in een kale `ubuntu:24.04`-container (privileged, Docker-in-Docker, arm64) met een lokale registry
+(`registry:2`) als stand-in voor GHCR en een bare git-repo als remote, via `--image localhost:5000/bunkcraft`:
+
+| Scenario | Uitkomst |
+|---|---|
+| `install.sh --dry-run`, daarna echt (Docker uit de officiële repo), tweede run | niets veranderd / geïnstalleerd / idempotent, tokens blijven, geen swap, **niets gebouwd** |
+| Ophalen + starten (image al bekend bij Docker) | 10-18 s tot gezond, `https://localhost/health` via Caddy 200 |
+| `bunkcraft update` zonder nieuwe versie | "already up to date", geen herstart |
+| `update` v1 → v2 plus een nieuwe commit | 10-17 s, back-up gemaakt, `bunkcraft:previous` = v1 |
+| `update` naar een image die niet start (plus een commit) | exit 1, **automatisch terug naar v2 én de vorige commit**, Caddy blijft serveren |
+| `bunkcraft rollback`, twee keer | v1, daarna weer v2 |
+| `--tag sha-…`, `--tag latest@sha256:…`, dan kapotte `latest` | draait de gekozen versie; rollback zet de digest-pin in `.env` terug |
+| Tag die niet bestaat / Dockerfile die niet bouwt (`--build`) | exit 1, `.env`, code en container onveranderd |
+| `--build` (en `restart`/`backup` in die modus), `--pull` terug | lokale image draait, `COMPOSE_FILE` in `.env`; terug naar de registry-image |
+
+Gevonden en opgelost: `docker compose up` faalt zelf als de nieuwe container niet gezond wordt (Caddy wacht op
+`service_healthy`), waardoor de rollback nooit begon; de health-check beslist nu. Niet getest: de echte
+TypeScript/Vite-build bleef in de geneste Docker hangen bij "rendering chunks" (op de host: 4 s), daarom bouwde de
+`--build`-test een Dockerfile `FROM` de testimage; de GHCR-push zelf (gebeurt pas bij de eerste push naar `main`).
+shellcheck en actionlint: schoon.
 
 ## 6. Open beslissingen voor Stijn
 
