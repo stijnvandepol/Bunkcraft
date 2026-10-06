@@ -58,6 +58,14 @@ export const ADVANCEMENTS: readonly AdvancementDef[] = [
 
 const BY_ID = new Map(ADVANCEMENTS.map((a) => [a.id, a]));
 
+/**
+ * Whether earning it pops a toast. Minecraft's tab roots ("Minecraft", "Adventure") have show_toast false, so
+ * entering a world does not cover the corner with two toasts before anything happened.
+ */
+export function showsToast(def: AdvancementDef): boolean {
+  return def.parent !== null;
+}
+
 export function getAdvancement(id: string): AdvancementDef | undefined {
   return BY_ID.get(id);
 }

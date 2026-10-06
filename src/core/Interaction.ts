@@ -49,6 +49,14 @@ export interface BowEnchants {
 }
 
 /** Blocks a right click does something to (instead of placing against them). */
+/**
+ * Right click with an armor piece wears it wherever the player looks (sky, far away, a mob), like Minecraft's
+ * "use item"; only a usable block in reach (door, chest, bed...) takes the click instead.
+ */
+export function wearsArmorOnUse(heldId: number, targetsUsableBlock: boolean): boolean {
+  return !!getItemDef(heldId)?.armor && !targetsUsableBlock;
+}
+
 function isUsable(id: number): boolean {
   if (isUsableComponent(id)) return true;
   if (SHAPE[id] === SHAPE_DOOR || id === BLOCK.CHEST || id === BLOCK.FURNACE || id === BLOCK.LIT_FURNACE || STATIONS[id]) return true;
@@ -241,7 +249,9 @@ export class Interaction {
       this.eating = false;
       this.bowDraw = this.bowPull = 0;
       this.placeCooldown -= dt;
-      if (hit.hit && !mobHit && isUsable(hit.id) && input.rightClicked
+      if (input.rightClicked && wearsArmorOnUse(held.id, hit.hit && !mobHit && isUsable(hit.id))) {
+        if (this.d.inventory.equipFromSlot(this.d.hotbar.selected)) this.d.hand.swingHand();
+      } else if (hit.hit && !mobHit && isUsable(hit.id) && input.rightClicked
         && !(input.actionDown(KB.SNEAK) && isBlockItem(held.id))) {
         // Use a door, trapdoor, gate, chest or bed (sneaking with a block in hand places against it instead).
         this.useBlock(hit);

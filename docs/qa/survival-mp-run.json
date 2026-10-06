@@ -1,0 +1,203 @@
+[
+ {
+  "step": "Alice creates a survival game through the menu",
+  "ok": true,
+  "state": "paused",
+  "code": "UC3EQY",
+  "secs": 3.2
+ },
+ {
+  "step": "Bob joins with the invite link and both see each other",
+  "ok": true,
+  "state": "paused",
+  "remote": [
+   1,
+   1
+  ]
+ },
+ {
+  "step": "spawn and inventory",
+  "ok": null,
+  "alice": [
+   0.5,
+   65,
+   0.5
+  ],
+  "bob": [
+   0.5,
+   65,
+   0.5
+  ],
+  "alice_inv": 0,
+  "mode": "survival",
+  "clock": "08:05"
+ },
+ {
+  "step": "Alice punches a log; Bob sees it gone",
+  "ok": true,
+  "secs": 6.35,
+  "bob_block": 0
+ },
+ {
+  "step": "Alice picks up her logs",
+  "ok": true,
+  "inv": [
+   [
+    "Birch Log",
+    4
+   ]
+  ]
+ },
+ {
+  "step": "Bob gathers wood",
+  "ok": true,
+  "inv": [
+   [
+    "Birch Log",
+    4
+   ]
+  ]
+ },
+ {
+  "step": "Bob crafts and places a crafting table; Alice sees it",
+  "ok": true,
+  "pos": [
+   0,
+   65,
+   3
+  ],
+  "alice_block": 45
+ },
+ {
+  "step": "Bob crafts a wooden pickaxe at the table",
+  "ok": true
+ },
+ {
+  "step": "Bob tries to place a block where Alice stands (should be refused)",
+  "ok": true,
+  "bob_local_placed": false,
+  "alice_sees": 0,
+  "ground": 2
+ },
+ {
+  "step": "Alice digs stone in multiplayer",
+  "ok": true,
+  "cobblestone": 9
+ },
+ {
+  "step": "Alice places a furnace; Bob sees it",
+  "ok": false,
+  "crafted": 0,
+  "pos": null
+ },
+ {
+  "step": "Owner sets night with /time; Bob sees it",
+  "ok": true,
+  "alice_clock": "19:16",
+  "bob_clock": "19:16",
+  "chat": [
+   "Alice set the time to night"
+  ]
+ },
+ {
+  "step": "hostile mobs near the two players during 60 s of night",
+  "ok": null,
+  "samples": [
+   [
+    17,
+    17
+   ],
+   [
+    17,
+    18
+   ],
+   [
+    16,
+    18
+   ],
+   [
+    17,
+    18
+   ],
+   [
+    17,
+    19
+   ]
+  ]
+ },
+ {
+  "step": "night fight",
+  "ok": null,
+  "alice": {
+   "swings": 0,
+   "hits": 0,
+   "kills": 0,
+   "seen": []
+  },
+  "bob": {
+   "swings": 0,
+   "hits": 0,
+   "kills": 0,
+   "seen": []
+  },
+  "alice_damage": [
+   [
+    "fall",
+    "",
+    10
+   ]
+  ],
+  "bob_damage": [],
+  "hp": [
+   15.333333333333332,
+   20
+  ]
+ },
+ {
+  "step": "/kill is not available to the owner",
+  "ok": null,
+  "chat": [
+   "Unknown command: /kill. Type /help for help."
+  ]
+ },
+ {
+  "step": "Bob dies: death screen, drops visible to Alice",
+  "ok": false,
+  "state": "playing",
+  "bob_items_before": 10,
+  "alice_local_items": 0,
+  "alice_net_items": -1,
+  "msg": ""
+ },
+ {
+  "step": "passive animals around in multiplayer",
+  "ok": null,
+  "n": 7,
+  "kinds": [
+   "cow",
+   "sheep"
+  ]
+ },
+ {
+  "step": "frame statistics",
+  "ok": null,
+  "alice": {
+   "samples": 1609,
+   "fps_min": 108,
+   "fps_p10": 120,
+   "fps_median": 120,
+   "cpu_ms_avg": 2.78,
+   "worst_frame_ms": 33.5
+  },
+  "bob": {
+   "samples": 1599,
+   "fps_min": 116,
+   "fps_p10": 120,
+   "fps_median": 120,
+   "cpu_ms_avg": 3.02,
+   "worst_frame_ms": 17.6
+  },
+  "alice_console": [],
+  "bob_console": []
+ }
+]
