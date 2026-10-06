@@ -1244,7 +1244,7 @@ export class Game {
       case 'fall': this.netFalling?.apply(msg.f, performance.now() / 1000); break;
       case 'hurt':
         this.hurtByServer(msg.cause, msg.amount, msg.by, msg.yaw);
-        if (msg.effect) this.applyMobEffect(msg.effect as MobEffect);
+        if (msg.effect) this.applyMobEffect(msg.effect as MobEffect, msg.by);
         break;
       case 'mobused': this.applyMobUse(msg); break;
       case 'mobfx': {
@@ -1765,7 +1765,7 @@ export class Game {
       if (this.stats.hurt(damage, { kind: 'mob', attacker: mob.type.name, yaw }, this.mode).hurt) {
         this.progression.thorns(mob);
         // Cave spiders poison, husks make hungry.
-        this.applyMobEffect(meleeEffect(mob));
+        this.applyMobEffect(meleeEffect(mob), mob.type.name);
         // Knockback away from the attacker.
         const d = Math.hypot(p.x - mob.x, p.z - mob.z) || 1;
         p.vx += ((p.x - mob.x) / d) * 8;
@@ -1798,7 +1798,7 @@ export class Game {
         p.vy = Math.max(p.vy, 3);
         this.cam.hurtSide = Math.sin(yaw - p.yaw) >= 0 ? 1 : -1;
         // Strays shoot arrows of Slowness.
-        this.applyMobEffect(arrowEffect(arrow.shooter));
+        this.applyMobEffect(arrowEffect(arrow.shooter), arrow.shooter?.type.name);
       }
     },
     arrowImpact: (arrow) => {
@@ -1815,7 +1815,7 @@ export class Game {
       if (vol > 0.05) this.caption(mobSoundLabel(mob.type.kind, kind), mob.x, mob.z);
     },
     fx: (mob, kind) => this.mobRenderer.emote(kind, mob.x, mob.y + mob.height, mob.z, mob.width),
-    potion: (mob) => this.witchPotion(mob.x, mob.z),
+    potion: (mob) => this.witchPotion(mob.x, mob.z, mob.type.name),
 
   };
 
@@ -1875,20 +1875,23 @@ export class Game {
 
   /** Damage from a server mob or arrow: same hurt camera, knockback and rules as a local hit. */
   /** A witch's splash potion hits the player (the witch picks it like Minecraft's: see MobEffects.witchPotion). */
-  private witchPotion(x: number, z: number): void {
+  private witchPotion(x: number, z: number, by: string): void {
     const p = this.player, stats = this.stats;
     if (!hasSurvivalRules(this.mode) || stats.dead) return;
     const effect = witchPotion(Math.hypot(p.x - x, p.z - z), stats.health, (id) => stats.effects.has(id), Math.random());
-    this.applyMobEffect(effect);
+    this.applyMobEffect(effect, by);
     const color = EFFECT_DEFS[effect[0]].color;
     for (let i = 0; i < 4; i++) this.renderer.particles.spawnBreak(Math.floor(p.x), Math.floor(p.y + 1), Math.floor(p.z), BLOCK.GLASS, 0xf0, color);
     this.audio.playMob('witch', 'hurt', 0.6);
   }
 
   /** A status effect from a mob (bite, husk hit, stray arrow, witch potion); survival only. */
-  private applyMobEffect(e: MobEffect | null): void {
+  /** @param by the mob's name, for the death message of an instant-damage potion ("was killed by Witch using magic"). */
+  private applyMobEffect(e: MobEffect | null, by?: string): void {
     if (!e || !hasSurvivalRules(this.mode) || this.stats.dead || !isEffectId(e[0])) return;
+    this.stats.effectAttacker = by || null;
     this.stats.effects.add(e[0], e[1], e[2], this.stats);
+    this.stats.effectAttacker = null;
   }
 
   /** Right click on a mob: feed, tame, shear, milk, dye, saddle or mount. True when something happened. */

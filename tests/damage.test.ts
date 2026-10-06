@@ -233,6 +233,23 @@ describe('death messages', () => {
     expect(deathMessage('Steve', { kind: 'lightning' })).toBe('Steve was struck by lightning');
     expect(deathMessage('Steve', { kind: 'anvil' })).toBe('Steve was squashed by a falling anvil');
     expect(deathMessage('Steve', { kind: 'poison' })).toBe('Steve was killed by magic');
+    expect(deathMessage('Steve', { kind: 'magic', attacker: 'Witch' })).toBe('Steve was killed by Witch using magic');
+  });
+
+  it("a witch's Instant Damage potion names the witch, other magic does not", () => {
+    const stats = new PlayerStats();
+    stats.playerName = 'Steve';
+    stats.health = 3;
+    stats.effectAttacker = 'Witch';
+    stats.effects.add('instant_damage', 0, 1, stats);
+    stats.effectAttacker = null;
+    expect(stats.dead).toBe(true);
+    expect(stats.deathMessage).toBe('Steve was killed by Witch using magic');
+    const other = new PlayerStats();
+    other.playerName = 'Alex';
+    other.health = 3;
+    other.effects.add('instant_damage', 0, 1, other);
+    expect(other.deathMessage).toBe('Alex was killed by magic');
   });
 });
 

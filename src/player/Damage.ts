@@ -231,7 +231,7 @@ export function deathText(source: DamageSource): string {
     case 'suffocate': return 'suffocated in a wall';
     case 'starve': return 'starved to death';
     case 'poison':
-    case 'magic': return source.attacker ? `was killed by magic from${by}` : 'was killed by magic';
+    case 'magic': return source.attacker ? `was killed by${by} using magic` : 'was killed by magic';
     case 'wither': return 'withered away';
     case 'lightning': return 'was struck by lightning';
     case 'anvil': return 'was squashed by a falling anvil';

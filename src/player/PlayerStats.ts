@@ -124,10 +124,14 @@ export class PlayerStats implements DamageTarget, EffectHost {
     return r;
   }
 
+  /** Who is applying the effect right now (a witch's Instant Damage acts at once): named in the death message. */
+  effectAttacker: string | null = null;
+
   /** Damage over time and Instant Damage from effects (Poison cannot kill). */
   effectDamage(amount: number, kind: 'poison' | 'wither' | 'magic', canKill: boolean): void {
     if (!canKill && this.health <= 1) return;
-    this.hurt(canKill ? amount : Math.min(amount, this.health - 1), { kind }, this.currentMode);
+    const source = this.effectAttacker ? { kind, attacker: this.effectAttacker } : { kind };
+    this.hurt(canKill ? amount : Math.min(amount, this.health - 1), source, this.currentMode);
   }
 
   heal(amount: number): void {
