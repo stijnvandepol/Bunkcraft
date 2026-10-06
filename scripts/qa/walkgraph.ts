@@ -5,7 +5,7 @@
  */
 import { ARENA_FLOOR_Y } from '../../src/modes/maps';
 import type { ArenaMap, Spawn } from '../../src/modes/maps/ArenaMap';
-import { BLOCK, SOLID } from '../../src/world/BlockRegistry';
+import { BLOCK, SOLID, TALL } from '../../src/world/BlockRegistry';
 
 export interface Node { x: number; y: number; z: number }
 
@@ -25,7 +25,8 @@ export class WalkGraph {
     this.stand = new Uint8Array(this.W * this.D * this.H);
     for (let x = b.minX; x < b.maxX; x++) for (let z = b.minZ; z < b.maxZ; z++) {
       for (let y = ARENA_FLOOR_Y + 1; y <= TOP - 2; y++) {
-        if (this.solid(x, y - 1, z) && !this.solid(x, y, z) && !this.solid(x, y + 1, z)) {
+        // Fences, walls and gates are 1.5 high: nobody stands on them or steps onto them.
+        if (this.solid(x, y - 1, z) && !TALL[this.map.blockAt(this.variant, x, y - 1, z)] && !this.solid(x, y, z) && !this.solid(x, y + 1, z)) {
           this.stand[this.key({ x, y, z })] = 1;
           this.nodes.push({ x, y, z });
         }

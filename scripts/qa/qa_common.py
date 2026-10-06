@@ -73,10 +73,11 @@ HOOK = """
 () => {
   const g = window.game;
   if (window.__qa) return;
-  const qa = window.__qa = { msgs: [], keep: new Set(['hit','damaged','kill','shot','spawn','hp','ammo','match','matchend','teleport','welcome']) };
+  const qa = window.__qa = { msgs: [], mode: null, keep: new Set(['hit','damaged','kill','spawn','match','matchend','teleport','event','kick']) };
   const orig = g.onServerMessage.bind(g);
   g.onServerMessage = (m) => {
-    if (qa.keep.has(m.t)) qa.msgs.push({ ...m, at: performance.now() });
+    if (m.t === 'mode') qa.mode = m.state;
+    else if (qa.keep.has(m.t)) qa.msgs.push({ ...m, at: performance.now() });
     return orig(m);
   };
 }

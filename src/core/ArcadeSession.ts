@@ -145,6 +145,8 @@ export class ArcadeSession {
   private nextCandidates = 0;
   private ended = false;
   private endAt = 0;
+  /** Title and colour of the end screen while it is up (redrawn when the final scores and roster arrive after `matchend`). */
+  private endTitle: { title: string; color: string } | null = null;
   private lastNow = 0;
   private readonly ray: RayHit = createRayHit();
   private loadoutOpen = false;
@@ -274,6 +276,7 @@ export class ArcadeSession {
     if (this.ended && msg.phase !== 'ended') {
       // A new match began: back to the arena view.
       this.ended = false;
+      this.endTitle = null;
       this.hud.setMatchEnd(null);
       this.d.remote.reviveAll();
     }
@@ -287,12 +290,19 @@ export class ArcadeSession {
     this.timeStamp = now;
     this.scores = msg.scores;
     this.matchDirty = true;
+    this.refreshEnd();
+  }
+
+  /** The server sends the final `match` and `roster` right after `matchend`: show those numbers on the end screen. */
+  private refreshEnd(): void {
+    if (this.ended && this.endTitle) this.hud.setMatchEnd({ ...this.endTitle, roster: this.roster, ctx: this.boardContext() });
   }
 
   private onRoster(players: RosterEntry[]): void {
     this.roster = players;
     this.rosterVersion++;
     this.matchDirty = true;
+    this.refreshEnd();
     let best: RosterEntry | null = null;
     this.selfKills = 0;
     for (const p of players) {
@@ -508,6 +518,10 @@ export class ArcadeSession {
       title = msg.winnerId === this.d.selfId ? 'You win!' : `${this.nameOf(msg.winnerId)} wins!`;
       color = msg.winnerId === this.d.selfId ? '#ffd23f' : '#ffffff';
     }
+    // The final kill may have been yours: the end screen replaces the death screen and spectating.
+    this.d.remote.setSpectated(0);
+    this.hud.setDeath(null);
+    this.endTitle = { title, color };
     this.hud.setMatchEnd({ title, color, roster: this.roster, ctx: this.boardContext() });
   }
 

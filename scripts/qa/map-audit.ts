@@ -19,7 +19,7 @@ import { writeFileSync } from 'node:fs';
 import { traceBlocks } from '../../server/Combat';
 import { ARENA_FLOOR_Y, MAPS, getMap } from '../../src/modes/maps';
 import type { ArenaMap, Spawn } from '../../src/modes/maps/ArenaMap';
-import { BLOCK, SOLID } from '../../src/world/BlockRegistry';
+import { BLOCK, SOLID, TALL } from '../../src/world/BlockRegistry';
 
 const args = process.argv.slice(2);
 const jsonAt = args.indexOf('--json');
@@ -51,7 +51,7 @@ function audit(map: ArenaMap, variant: number) {
   const nodes: Node[] = [];
   for (let x = b.minX; x < b.maxX; x++) for (let z = b.minZ; z < b.maxZ; z++) {
     for (let y = ARENA_FLOOR_Y + 1; y <= TOP - 2; y++) {
-      if (solid(x, y - 1, z) && !solid(x, y, z) && !solid(x, y + 1, z)) { stand[idx(x, y, z)] = 1; nodes.push({ x, y, z }); }
+      if (solid(x, y - 1, z) && !TALL[map.blockAt(variant, x, y - 1, z)] && !solid(x, y, z) && !solid(x, y + 1, z)) { stand[idx(x, y, z)] = 1; nodes.push({ x, y, z }); }
     }
   }
   const isStand = (x: number, y: number, z: number) =>
@@ -193,7 +193,20 @@ function audit(map: ArenaMap, variant: number) {
     if (d >= 60) { n60++; if (ok) s60++; }
     if (ok) longest = Math.max(longest, d);
   }
+  // Spawns standing in a block or on nothing, and objectives (zones, flags) nobody can walk to.
+  const badSpawns = allSpawns.filter((s) => !isStand(Math.floor(s.x), Math.round(s.y), Math.floor(s.z)))
+    .map((s) => `(${s.x},${s.y},${s.z})`);
+  const objective = (label: string, x: number, y: number, z: number) => {
+    const bx = Math.floor(x), bz = Math.floor(z);
+    const ok = isStand(bx, y, bz) && reach[idx(bx, y, bz)] >= 0;
+    return { label, x, y, z, ok };
+  };
+  const objectives = [
+    ...map.zones.map((zn) => objective(`zone ${zn.name}`, zn.x, zn.y, zn.z)),
+    ...map.flags.map((f) => objective(`flag ${f.team}`, f.x, f.y, f.z)),
+  ];
   return {
+    badSpawns, objectives,
     map: map.id, variant, size: `${W}x${D}`, wallHeight: map.wallHeight,
     standing: nodes.length, reachable: reachable.length, upperReachable: upper(reachable),
     unreachable: unreachable.length, unreachableUpper: upper(unreachable),
@@ -243,6 +256,9 @@ for (const map of maps) {
       console.log(`${t} spawn: seen from ${e.seeingSpots} spots, ${e.fromEnemyHalf} on the enemy half, nearest enemy-half spot ${e.nearestEnemyHalf} m${e.nearestAt ? ` at (${e.nearestAt.x},${e.nearestAt.y},${e.nearestAt.z})` : ''}; spawn-to-spawn lines ${e.spawnPairs}`);
     }
     console.log(`ffa: ${a.ffa.spawns} spawns, ${a.ffa.seeEachOther}/${a.ffa.pairs} pairs see each other, closest pair ${a.ffa.closest} m`);
+    if (a.badSpawns.length) console.log('BAD SPAWNS (not a standing spot):', a.badSpawns.join(' '));
+    const badObj = a.objectives.filter((o) => !o.ok);
+    console.log(`objectives: ${a.objectives.length}${badObj.length ? ', UNREACHABLE: ' + badObj.map((o) => `${o.label} (${o.x},${o.y},${o.z})`).join('; ') : ' all reachable'}`);
     console.log(`first contact ${a.firstContactSec} s; long lines: ${a.longLines.seeing40pct}% of ≥40 m pairs, ${a.longLines.seeing60pct}% of ≥60 m pairs see each other; longest ${a.longLines.longest} m`);
   }
 }
