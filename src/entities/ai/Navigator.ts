@@ -1,5 +1,5 @@
 import type { Mob } from '../Mob';
-import { DEFAULT_PATH, Path, type PathOptions, findPath, lineWalkable } from './Pathfinder';
+import { DEFAULT_PATH, Path, type PathOptions, findPath, lineWalkable, pathStats } from './Pathfinder';
 
 /** Ticks between path recomputations while following a moving target, plus a per-mob random part. */
 const REPATH_CHASE = 10;
@@ -10,8 +10,8 @@ const STUCK_TICKS = 24;
 /**
  * Path-following for one mob. Goals call `moveTo`; every tick the navigator hands the next waypoint to the mob's
  * move control (`mob.setMove`). Short or open routes are walked in a straight line, anything else goes through the
- * A* with a node budget and a recompute interval, and the world-wide per-tick search allowance
- * (`MobWorld.pathBudget`) keeps a crowd of mobs cheap: a mob that is refused steers straight until its next turn.
+ * A* with a node budget and a recompute interval, and the world-wide per-tick allowance of searches and nodes
+ * (`MobWorld.pathBudget`, `pathNodeBudget`) keeps a crowd of mobs cheap: a mob that is refused steers straight until its next turn.
  */
 export class Navigator {
   active = false;
@@ -122,10 +122,16 @@ export class Navigator {
       this.repathAt = m.age + interval;
       return;
     }
-    if (world && world.pathBudget <= 0) { this.repathAt = m.age + 1; return; }
+    if (world && (world.pathBudget <= 0 || (world.pathNodeBudget !== undefined && world.pathNodeBudget < o.maxNodes))) {
+      // Over this tick's allowance: steer straight and ask again next tick.
+      pathStats.deferred++;
+      this.repathAt = m.age + 1;
+      return;
+    }
     if (world) world.pathBudget--;
     o.reach = Math.max(0, Math.min(2, this.reach - 0.5));
     this.hasPath = findPath(m.getBlock, sx, sy, sz, tx, ty, tz, o, this.path);
+    if (world && world.pathNodeBudget !== undefined) world.pathNodeBudget -= pathStats.lastNodes;
     this.repathAt = m.age + interval;
     if (!this.hasPath && !this.path.complete) {
       // Nothing better than where we stand: try again later and steer straight meanwhile.

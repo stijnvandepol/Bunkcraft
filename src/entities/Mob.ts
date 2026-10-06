@@ -80,6 +80,11 @@ export interface MobWorld {
   time: number;
   /** Path searches still allowed this tick (reset by the manager; keeps a crowd of mobs cheap). */
   pathBudget: number;
+  /**
+   * A* nodes still allowed this tick (reset by the manager). A search only starts when its whole node cap fits, so the
+   * path finding of one tick never exceeds this however the searches fall. Absent = no node limit.
+   */
+  pathNodeBudget?: number;
   spawnMob(kind: MobKind, x: number, y: number, z: number): Mob;
   /** Whether direct sunlight reaches this point right now (daytime and open sky). */
   sunlit(x: number, y: number, z: number): boolean;

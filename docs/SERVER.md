@@ -147,7 +147,7 @@ limieten per bezoeker werken in plaats van per proxy.
 | `MAIN_WORLD` | `on` | De hoofdwereld op `/ws` (knop *Join Public Server*) |
 | `ROOMS` | `on` | Spelers kunnen zelf games aanmaken (`off` = alleen de hoofdwereld) |
 | `MAX_ROOMS` | `200` | Maximum aantal games op de server |
-| `ROOM_MAX_PLAYERS` | `8` | Spelers per game |
+| `ROOM_MAX_PLAYERS` | `12` | Spelers per game |
 | `ROOM_CREATE_LIMIT` | `6` | Games die één bezoeker per uur mag aanmaken |
 | `ROOM_EXPIRE_DAYS` | `60` | Games zonder bezoek worden na zoveel dagen verwijderd (`0` = nooit) |
 | `ROOM_IDLE_UNLOAD_MIN` | `5` | Minuten dat een lege game in het geheugen blijft voordat hij wordt opgeslagen en uitgeladen |
@@ -169,6 +169,7 @@ limieten per bezoeker werken in plaats van per proxy.
 | `BACKUP_INTERVAL_MIN` | `60` | Minuten tussen back-ups |
 | `RECONNECT_HINT_MS` | `8000` | Bij afsluiten (SIGTERM) krijgen spelers de hint om zoveel milliseconden later opnieuw te verbinden |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn` of `error` |
+| `SLOW_TICK_MS` | `20` | Een game-tick die langer duurt telt als traag (`bunkcraft_slow_ticks_total`) en komt, hooguit één keer per 10 s per game, als `slow tick` in de log met wandkloktijd, CPU-tijd en de tijd per fase. |
 | `LOG_FORMAT` | `json` | `json` (een object per regel) of `text` |
 
 `world.json` bevat ook `genVersion`, de versie van de terreingenerator (zie RESEARCH.md §4). Een nieuw bestand krijgt de huidige versie, een bestand zonder het veld (van voor versies) is versie 1 en blijft dat: zijn terrein blijft hetzelfde.
@@ -249,6 +250,9 @@ adressen blokkeren. Alle data gaat via `textContent` de pagina in en een strikte
   alarm bij geen 200, of bij `loopLagP99Ms` structureel boven ~20 (de server loopt achter).
 - **`/metrics`** (Prometheus): `bunkcraft_players`, `bunkcraft_rooms_loaded`, `bunkcraft_rooms_total`, `bunkcraft_connections`,
   `bunkcraft_tick_duration_seconds{quantile="0.5"|"0.99"|"1"}`, `bunkcraft_tick_window_seconds{quantile}` (laatste ~5 s),
+  `bunkcraft_tick_cpu_window_seconds{quantile}` (CPU-tijd van diezelfde ticks: een tick die veel langer duurt dan zijn
+  CPU-tijd wachtte op een core, de machine is dan te druk, niet de game), `bunkcraft_tick_phase_seconds_total{phase=
+  "world"|"blocks"|"spawn"|"mobs"|"other"|"snapshots"}` (waar de ticktijd heen gaat), `bunkcraft_slow_ticks_total`,
   `bunkcraft_event_loop_lag_seconds{quantile}` (hoe laat timers afgaan: hét overbelastingssignaal),
   `bunkcraft_gc_pauses_total`, `bunkcraft_gc_pause_seconds_total`, `bunkcraft_gc_pause_max_seconds`,
   `process_resident_memory_bytes`, `process_heap_used_bytes`, `process_cpu_seconds_total`,

@@ -95,3 +95,14 @@ export interface ModeStats { gameType: GameType; players: number; lobbies: numbe
 /** Lobby sizes a private lobby may choose. */
 export const LOBBY_SIZES = [2, 4, 6, 8, 10, 12, 16];
 export const LOBBY_SIZE_RANGE = { min: 2, max: 16 };
+
+/**
+ * The lobby sizes to offer on a server that allows at most `max` players per game (unknown = all of them). The
+ * server clamps a bigger choice anyway, so offering 16 on a server with the default ROOM_MAX_PLAYERS of 8 made
+ * "Max. players: 16" a lie (QA round 2).
+ */
+export function lobbySizes(max?: number): number[] {
+  if (!max || !Number.isFinite(max)) return LOBBY_SIZES;
+  const sizes = LOBBY_SIZES.filter((n) => n <= max);
+  return sizes.length ? sizes : [LOBBY_SIZES[0]];
+}

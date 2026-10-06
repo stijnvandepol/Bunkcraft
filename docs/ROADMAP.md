@@ -305,15 +305,17 @@ regenereert, respawns en een scoreboard. Beschrijving, besturing en wapentabel: 
 7. **Bots** voor lege Realms-lobby's (Snel spelen zet je nu bij echte spelers of in een lege lobby die wacht).
 8. **Mobiel:** touchbediening voor schieten en richten (hoort bij de touch-taak in 6).
 9. **Realms vervolg:** party's (samen met vrienden in één lobby via Snel spelen), skill-based matchmaking (K/D per naam),
-   een playlist-rotatie met tijdelijke modes (bijv. "Gun Game weekend"), de match-HUD vertalen (die is nog Engels; het
-   lobbypaneel en de stemming zijn al NL/EN), lege open lobby's na een dag opruimen (nu na `ROOM_EXPIRE_DAYS`), en de
-   lobbylijst pagineren als er meer dan `LIST_MAX` zijn.
+   een playlist-rotatie met tijdelijke modes (bijv. "Gun Game weekend"), lege open lobby's na een dag opruimen (nu na
+   `ROOM_EXPIRE_DAYS`), en de lobbylijst pagineren als er meer dan `LIST_MAX` zijn. (De match-HUD is sinds QA-ronde 2 NL/EN.)
+10. **Uit QA-ronde 2** (`docs/qa/ARCADE.md`): `ROOM_MAX_PLAYERS` standaard 12 voor 6v6 (nu 8); eerlijke vlagdrager op Riptide
+    nog gecorrigeerd door de anti-cheat onder last (`lag`/`speed`); Riptide-spawns zichtbaar vanaf de andere helft; botpaden
+    met traptreden (Terminus); audio-worst-case 0,59 ms/frame opnieuw meten op een rustige machine.
 
 ## 8. Distributie
 
 - **Eigen server: klaar (oktober 2026).** `sudo ./scripts/install.sh --domain …` op Ubuntu/Debian (Docker + Caddy, back-ups,
   `bunkcraft update`), systemd-variant in `deploy/`. Server draait als gebundelde JS (`dist-server/`). Metingen en keuzes:
-  `docs/research/SERVER-DEPLOY.md`. Chunkgeneratie draait op worker threads (`CHUNK_WORKERS`, voorstel A, gedaan). Kant-en-klare multi-arch images op GHCR
+  `docs/research/SERVER-DEPLOY.md`. Chunkgeneratie draait op worker threads (`CHUNK_WORKERS`, voorstel A, gedaan). Tickpieken in draaiende werelden: tick-CPU blijft ≤ ~4-9 ms, de wandklokpieken kwamen van de drukke meetmachine; mobpad goedkoper en per tick begrensd (§2.7, `npm run test:perf` bewaakt het). Kant-en-klare multi-arch images op GHCR
   via CI (voorstel E, gedaan): de server pullt in plaats van te bouwen, `bunkcraft update` rolt zichzelf terug als de
   nieuwe versie niet gezond wordt. **Open voorstellen (beslissing Stijn):** B delta-`ent`-frames (~90 % van het
   survival-verkeer), D meerdere processen boven ~150-200 spelers. uWebSockets.js: advies nee.

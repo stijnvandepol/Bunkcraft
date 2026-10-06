@@ -25,6 +25,8 @@ const MAX_GEN_PER_UPDATE = 2;
 const MAX_INSTALL_PER_UPDATE = 8;
 /** Light emitters affect blocks up to this far away (torch 14 → needs ≤ 14, mobs only care about 0). */
 const EMIT_RADIUS = 14;
+/** Empty slot of the chunk lookup cache (no real chunk coordinate gets near it). */
+const NO_CHUNK = 0x7fffffff;
 /** Random ticks run in the chunks this close to a player (inside the loaded area, so trees and leaves see their neighbours). */
 export const SIM_RADIUS = LOAD_RADIUS - 1;
 
@@ -177,18 +179,27 @@ export class ServerWorld implements EntityWorld, GenClient {
     m.set(blockIndex(x & 15, y, z & 15), packState(id, meta));
   }
 
-  // Redstone and liquids read the same chunk over and over: a one-entry cache skips the Map (like the client's World).
-  private cacheCx = NaN;
-  private cacheCz = NaN;
-  private cacheChunk: ServerChunk | undefined;
+  // Redstone, liquids, mob physics and path finding read the same few chunks over and over: a small direct-mapped
+  // cache (4×4 chunk slots) skips the Map. A one-entry cache thrashed when mobs on both sides of a chunk border, or a
+  // path search across it, alternated between two chunks.
+  private readonly cacheCx = new Int32Array(16).fill(NO_CHUNK);
+  private readonly cacheCz = new Int32Array(16);
+  private readonly cacheChunks: (ServerChunk | undefined)[] = new Array<ServerChunk | undefined>(16).fill(undefined);
 
   private chunkAt(cx: number, cz: number): ServerChunk | undefined {
-    if (cx !== this.cacheCx || cz !== this.cacheCz) {
-      this.cacheCx = cx;
-      this.cacheCz = cz;
-      this.cacheChunk = this.chunks.get(chunkKey(cx, cz));
+    const s = (cx & 3) | ((cz & 3) << 2);
+    if (this.cacheCx[s] !== cx || this.cacheCz[s] !== cz) {
+      this.cacheCx[s] = cx;
+      this.cacheCz[s] = cz;
+      this.cacheChunks[s] = this.chunks.get(chunkKey(cx, cz));
     }
-    return this.cacheChunk;
+    return this.cacheChunks[s];
+  }
+
+  /** A chunk came or went: forget the cached lookups (also the misses). */
+  private resetChunkCache(): void {
+    this.cacheCx.fill(NO_CHUNK);
+    this.cacheChunks.fill(undefined);
   }
 
   getBlock(x: number, y: number, z: number): number {
@@ -210,7 +221,7 @@ export class ServerWorld implements EntityWorld, GenClient {
     if (y >= CHUNK_HEIGHT) return 0xf0;
     if (y < 0) return 0;
     const cx = x >> 4, cz = z >> 4;
-    const c = this.chunks.get(chunkKey(cx, cz));
+    const c = this.chunkAt(cx, cz);
     if (!c) return 0xf0;
     const sky = y > c.tops[(x & 15) | ((z & 15) << 4)] ? 15 : 0;
     let block = 0;
@@ -244,7 +255,7 @@ export class ServerWorld implements EntityWorld, GenClient {
   getSkyLight(x: number, y: number, z: number): number {
     if (y >= CHUNK_HEIGHT) return 15;
     if (y < 0) return 0;
-    const c = this.chunks.get(chunkKey(x >> 4, z >> 4));
+    const c = this.chunkAt(x >> 4, z >> 4);
     return !c || y > c.tops[(x & 15) | ((z & 15) << 4)] ? 15 : 0;
   }
 
@@ -454,8 +465,7 @@ export class ServerWorld implements EntityWorld, GenClient {
     for (const key of this.chunks.keys()) {
       if (this.wanted.has(key)) continue;
       this.chunks.delete(key);
-      this.cacheChunk = undefined;
-      this.cacheCx = NaN;
+      this.resetChunkCache();
       this.onChunkUnloaded?.(key);
     }
     // Below the budget means the ring loop ran to the end: every chunk in reach is loaded or requested.
@@ -557,7 +567,7 @@ export class ServerWorld implements EntityWorld, GenClient {
     } else emitters = new Set(g.emitters);
     const chunk: ServerChunk = { key, cx, cz, blocks, meta, tops, emitters, emitSorted };
     this.chunks.set(key, chunk);
-    this.cacheCx = NaN;
+    this.resetChunkCache();
     // Liquid that was still flowing when the chunk went away carries on.
     if (edits) {
       for (const [i, state] of edits) {

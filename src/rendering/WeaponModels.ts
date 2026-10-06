@@ -306,13 +306,27 @@ export function weaponGeometry(id: string, optic: OpticId = 'iron', sup = false)
   return g;
 }
 
-/** The weapon without its stock (and without the scope's eyepiece end), for the first-person aiming view. */
+/**
+ * Where the first-person aiming view cuts the weapon off (boxes end here, nothing behind it): behind the stock with
+ * iron sights or a scope; just behind the window of a red dot or holo, so the eye looks through the housing instead
+ * of at the flat back of the receiver right in front of it (QA: "looking at the back of a block").
+ */
+export function adsCutZ(id: string, optic: OpticId): number {
+  if (optic !== 'reddot' && optic !== 'holo') return STOCK_FROM_Z;
+  return WEAPON_MODELS[id].rail[1] + OPTIC_MODELS[optic].windowZ + 0.012;
+}
+
+/** The weapon cut off at `adsCutZ` (no stock, no receiver behind a red dot or holo), for the first-person aiming view. */
 export function weaponFrontGeometry(id: string, optic: OpticId = 'iron', sup = false): THREE.BufferGeometry | null {
   if (!WEAPON_MODELS[id]) return null;
   const key = `${id}|${optic}|${sup ? 1 : 0}`;
   let g = frontGeometries.get(key);
   if (!g) {
-    g = buildBoxGeometry(assemble(id, optic, sup).filter((b) => b[2] < STOCK_FROM_Z));
+    const cut = adsCutZ(id, optic);
+    const clip = optic === 'reddot' || optic === 'holo';
+    const boxes = assemble(id, optic, sup).filter((b) => b[2] < cut)
+      .map((b) => (clip && b[5] > cut ? [b[0], b[1], b[2], b[3], b[4], cut, b[6]] as Box : b));
+    g = buildBoxGeometry(boxes);
     frontGeometries.set(key, g);
   }
   return g;

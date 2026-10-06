@@ -119,7 +119,7 @@ async function createRoom(kind: StepKind, i: number): Promise<RoomSpec> {
   return { code, ownerToken, kind: kind === 'survival' ? 'survival' : 'arena' };
 }
 
-interface Sample { t: number; tickP50: number; tickP99: number; tickMax: number; lagP50: number; lagP99: number; lagMax: number; rss: number; gcMax: number }
+interface Sample { t: number; tickP50: number; tickP99: number; tickMax: number; cpuP99: number; cpuMax: number; lagP50: number; lagP99: number; lagMax: number; rss: number; gcMax: number }
 
 function sampleOf(m: Map<string, number>): Sample {
   return {
@@ -127,6 +127,8 @@ function sampleOf(m: Map<string, number>): Sample {
     tickP50: (m.get('bunkcraft_tick_window_seconds{quantile="0.5"}') ?? 0) * 1000,
     tickP99: (m.get('bunkcraft_tick_window_seconds{quantile="0.99"}') ?? 0) * 1000,
     tickMax: (m.get('bunkcraft_tick_window_seconds{quantile="1"}') ?? 0) * 1000,
+    cpuP99: (m.get('bunkcraft_tick_cpu_window_seconds{quantile="0.99"}') ?? 0) * 1000,
+    cpuMax: (m.get('bunkcraft_tick_cpu_window_seconds{quantile="1"}') ?? 0) * 1000,
     lagP50: (m.get('bunkcraft_event_loop_lag_seconds{quantile="0.5"}') ?? 0) * 1000,
     lagP99: (m.get('bunkcraft_event_loop_lag_seconds{quantile="0.99"}') ?? 0) * 1000,
     lagMax: (m.get('bunkcraft_event_loop_lag_seconds{quantile="1"}') ?? 0) * 1000,
@@ -141,6 +143,12 @@ const maxOf = (xs: number[]) => xs.reduce((a, b) => Math.max(a, b), 0);
 export interface StepResult {
   step: string; rooms: number; players: number; joined: number; workers: number;
   tick: { p50: number; p99: number; max: number };
+  /** Main-thread CPU time of the ticks (a wall-clock spike with little CPU waited for a core: machine load, not the game). */
+  tickCpu: { p99: number; max: number };
+  /** Tick time by phase in ms per second (all games) and the ticks over SLOW_TICK_MS, with the logged examples. */
+  phases: Record<string, number>;
+  slowTicks: number;
+  slowTickLog: string[];
   loopLag: { p50: number; p99: number; max: number };
   cpuPct: number;
   /** Main-thread CPU (process.threadCpuUsage): the share of the one core the game loop can use; unaffected by waiting for the CPU. */
@@ -209,7 +217,7 @@ async function runStep(kind: StepKind, roomCount: number, BOTS: number): Promise
       await sleep(Math.min(5000, end - performance.now()));
       const s = sampleOf(await metrics());
       samples.push(s);
-      process.stdout.write(`  t+${((s.t - w0) / 1000).toFixed(0)}s tick p50 ${s.tickP50.toFixed(2)} p99 ${s.tickP99.toFixed(2)} max ${s.tickMax.toFixed(1)} ms | lag p99 ${s.lagP99.toFixed(1)} max ${s.lagMax.toFixed(1)} ms | rss ${(s.rss / 1048576).toFixed(0)} MB\n`);
+      process.stdout.write(`  t+${((s.t - w0) / 1000).toFixed(0)}s tick p50 ${s.tickP50.toFixed(2)} p99 ${s.tickP99.toFixed(2)} max ${s.tickMax.toFixed(1)} ms (cpu max ${s.cpuMax.toFixed(1)}) | lag p99 ${s.lagP99.toFixed(1)} max ${s.lagMax.toFixed(1)} ms | rss ${(s.rss / 1048576).toFixed(0)} MB\n`);
     }
     const m1 = await metrics();
     const w1 = performance.now();
@@ -229,6 +237,10 @@ async function runStep(kind: StepKind, roomCount: number, BOTS: number): Promise
     const result: StepResult = {
       step: label, rooms: roomCount, players, joined, workers: workerCount,
       tick: { p50: round(median(samples.map((s) => s.tickP50))), p99: round(maxOf(samples.map((s) => s.tickP99))), max: round(maxOf(samples.map((s) => s.tickMax))) },
+      tickCpu: { p99: round(maxOf(samples.map((s) => s.cpuP99))), max: round(maxOf(samples.map((s) => s.cpuMax))) },
+      phases: Object.fromEntries(['world', 'blocks', 'spawn', 'mobs', 'other', 'snapshots'].map((k) => [k, round((d(`bunkcraft_tick_phase_seconds_total{phase="${k}"}`) * 1000) / secs)])),
+      slowTicks: d('bunkcraft_slow_ticks_total'),
+      slowTickLog: [],
       loopLag: { p50: round(median(samples.map((s) => s.lagP50))), p99: round(maxOf(samples.map((s) => s.lagP99))), max: round(maxOf(samples.map((s) => s.lagMax))) },
       cpuPct: round((d('process_cpu_seconds_total') / secs) * 100),
       mainCpuPct: round((d('process_main_thread_cpu_seconds_total') / secs) * 100),
@@ -258,6 +270,7 @@ async function runStep(kind: StepKind, roomCount: number, BOTS: number): Promise
     for (const line of readFileSync(logFile, 'utf8').split('\n')) {
       try {
         const j = JSON.parse(line) as { level?: string; msg?: string };
+        if (j.msg === 'slow tick' && result.slowTickLog.length < 12) result.slowTickLog.push(line);
         if (j.level === 'warn' || j.level === 'error') result.serverWarnings[`${j.level}: ${j.msg}`] = (result.serverWarnings[`${j.level}: ${j.msg}`] ?? 0) + 1;
       } catch { /* not JSON */ }
     }
@@ -278,7 +291,9 @@ function round(v: number): number {
 function print(r: StepResult): void {
   const l = r.latency, c = r.counts;
   console.log(`--- ${r.step}: ${r.joined}/${r.players} players`);
-  console.log(`  server: tick p50 ${r.tick.p50} p99 ${r.tick.p99} max ${r.tick.max} ms | loop lag p50 ${r.loopLag.p50} p99 ${r.loopLag.p99} max ${r.loopLag.max} ms`);
+  console.log(`  server: tick p50 ${r.tick.p50} p99 ${r.tick.p99} max ${r.tick.max} ms (CPU p99 ${r.tickCpu.p99} max ${r.tickCpu.max}) | loop lag p50 ${r.loopLag.p50} p99 ${r.loopLag.p99} max ${r.loopLag.max} ms`);
+  console.log(`          phases ms/s: ${Object.entries(r.phases).map(([k, v]) => `${k} ${v}`).join(', ')} | slow ticks ${r.slowTicks}`);
+  for (const l of r.slowTickLog) console.log(`          ${l}`);
   console.log(`          GC ${r.gc.perSec}/s, ${r.gc.msPerSec} ms/s, longest ${r.gc.max} ms | heap ${r.heapMB} MB | start-up ${r.startMs} ms`);
   console.log(`          CPU ${r.cpuPct} % of a core (main thread ${r.mainCpuPct} %) | RSS ${r.rssMB} MB | out ${r.outKBps} KiB/s (${r.outKBpsPerPlayer}/player), in ${r.inKBps} KiB/s | ${r.msgOutPs} msg/s out, ${r.msgInPs} in`);
   const k = r.chunks;

@@ -46,6 +46,10 @@ const nx = new Int32Array(NODE_CAP), ny = new Int32Array(NODE_CAP), nz = new Int
 const nG = new Float32Array(NODE_CAP), nF = new Float32Array(NODE_CAP), nH = new Float32Array(NODE_CAP);
 const nParent = new Int32Array(NODE_CAP);
 const nClosed = new Uint8Array(NODE_CAP);
+/** Cactus penalty of the node's cell, −1 = not looked up yet (a cell is reached from several neighbours). */
+const nCactus = new Int8Array(NODE_CAP);
+/** Whether the body fits in the four side neighbours of the node being expanded, −1 = not looked up yet. */
+const sideFits = new Int8Array(4);
 const hashTable = new Int32Array(HASH_SIZE);
 const hashStamp = new Uint32Array(HASH_SIZE);
 let stamp = 1;
@@ -53,8 +57,9 @@ const heapNode = new Int32Array(HEAP_CAP), heapF = new Float32Array(HEAP_CAP);
 let heapSize = 0;
 let nodeCount = 0;
 
-/** Statistics for the F3 overlay and the benchmarks. */
-export const pathStats = { searches: 0, nodes: 0 };
+/** Statistics for the F3 overlay and the benchmarks; `lastNodes` = nodes the latest search expanded, `deferred` = searches
+ * the per-tick budget postponed (Navigator). */
+export const pathStats = { searches: 0, nodes: 0, lastNodes: 0, deferred: 0 };
 
 function heapPush(node: number, f: number): void {
   if (heapSize >= HEAP_CAP) return;
@@ -97,7 +102,7 @@ function nodeAt(x: number, y: number, z: number): number {
       hashStamp[h] = stamp;
       hashTable[h] = n;
       nx[n] = x; ny[n] = y; nz[n] = z;
-      nG[n] = Infinity; nClosed[n] = 0; nParent[n] = -1;
+      nG[n] = Infinity; nClosed[n] = 0; nParent[n] = -1; nCactus[n] = -1;
       return n;
     }
     const n = hashTable[h];
@@ -108,6 +113,9 @@ function nodeAt(x: number, y: number, z: number): number {
 
 const DX = [1, -1, 0, 0, 1, 1, -1, -1];
 const DZ = [0, 0, 1, -1, 1, -1, 1, -1];
+/** For the diagonal moves 4-7: the side moves along x and along z whose cells must both be free. */
+const DIAG_X = [0, 0, 0, 0, 0, 0, 1, 1];
+const DIAG_Z = [0, 0, 0, 0, 2, 3, 2, 3];
 
 // Cell classes.
 const OPEN = 0, BLOCKED = 1, WATER = 2;
@@ -158,6 +166,29 @@ export class Grid {
 
 const grid = new Grid();
 
+// A search reads every cell many times (each node is reached from up to eight neighbours, and every move looks at a
+// whole column of the body): a per-search block cache keeps that to one world lookup per cell. Direct-mapped and
+// stamped, so starting a search clears it for free; blocks cannot change while a search runs.
+const CACHE_BITS = 13;
+const cacheKey = new Int32Array(1 << CACHE_BITS);
+const cacheStamp = new Uint32Array(1 << CACHE_BITS);
+const cacheVal = new Uint16Array(1 << CACHE_BITS);
+let cacheGen = 0;
+let cacheSource: BlockGetter = () => 0;
+let cacheOx = 0, cacheOz = 0;
+
+function cachedBlock(x: number, y: number, z: number): number {
+  const rx = x - cacheOx, ry = y + 64, rz = z - cacheOz;
+  // Cells of a search lie within `range` (≤ 127) of its start; anything else (never in practice) goes straight through.
+  if ((rx & ~255) !== 0 || (rz & ~255) !== 0 || (ry & ~511) !== 0) return cacheSource(x, y, z);
+  const key = rx | (rz << 8) | (ry << 16);
+  const slot = Math.imul(key, 0x9e3779b1) >>> (32 - CACHE_BITS);
+  if (cacheStamp[slot] === cacheGen && cacheKey[slot] === key) return cacheVal[slot];
+  const b = cacheSource(x, y, z);
+  cacheStamp[slot] = cacheGen; cacheKey[slot] = key; cacheVal[slot] = b;
+  return b;
+}
+
 /** Straight walk over level ground: every cell on the line is standable at the start height. */
 export function lineWalkable(getBlock: BlockGetter, sx: number, sy: number, sz: number, tx: number, tz: number, height: number, avoidWater: boolean): boolean {
   grid.getBlock = getBlock; grid.height = height; grid.avoidWater = avoidWater;
@@ -181,6 +212,10 @@ export function lineWalkable(getBlock: BlockGetter, sx: number, sy: number, sz: 
 export function findPath(getBlock: BlockGetter, sx: number, sy: number, sz: number, tx: number, ty: number, tz: number,
   opts: PathOptions, out: Path): boolean {
   const g = grid;
+  cacheSource = getBlock;
+  cacheOx = sx - 128; cacheOz = sz - 128;
+  if (++cacheGen > 0xfffffff0) { cacheStamp.fill(0); cacheGen = 1; }
+  getBlock = cachedBlock;
   g.getBlock = getBlock; g.height = opts.height; g.avoidWater = opts.avoidWater;
   out.length = 0; out.index = 0; out.complete = false;
   stamp++;
@@ -204,9 +239,14 @@ export function findPath(getBlock: BlockGetter, sx: number, sy: number, sz: numb
   let expanded = 0;
   let found = false;
 
-  const relax = (from: number, x: number, y: number, z: number, cost: number): void => {
+  const relax = (from: number, x: number, y: number, z: number, cost: number, cactus = false): void => {
     const n = nodeAt(x, y, z);
     if (n < 0 || nClosed[n]) return;
+    if (cactus) {
+      let c = nCactus[n];
+      if (c < 0) c = nCactus[n] = cactusPenalty(getBlock, x, y, z);
+      cost += c;
+    }
     const ng = nG[from] + cost;
     if (ng >= nG[n]) return;
     if (nG[n] === Infinity) nH[n] = h(x, y, z);
@@ -224,19 +264,23 @@ export function findPath(getBlock: BlockGetter, sx: number, sy: number, sz: numb
     const ddx = x - tx, ddz = z - tz;
     if (ddx * ddx + ddz * ddz <= reach2 && Math.abs(y - ty) <= 1) { best = n; found = true; break; }
     const inWater = g.cell(x, y, z) === WATER;
+    // The side cells are needed twice (their own move and the corner check of two diagonals): look them up once.
+    sideFits[0] = sideFits[1] = sideFits[2] = sideFits[3] = -1;
 
     for (let d = 0; d < 8; d++) {
       const px = x + DX[d], pz = z + DZ[d];
       if (Math.abs(px - sx) > range || Math.abs(pz - sz) > range) continue;
       const diag = d >= 4;
       const step = diag ? 1.414 : 1;
-      if (diag && !(g.fits(x + DX[d], y, z) && g.fits(x, y, z + DZ[d]))) continue;
-      if (g.canStand(px, y, pz)) {
-        relax(n, px, y, pz, step + (g.cell(px, y, pz) === WATER ? 2.5 : 0) + cactusPenalty(getBlock, px, y, pz));
+      if (diag && !(sideFree(DIAG_X[d], x, y, z) && sideFree(DIAG_Z[d], x, y, z))) continue;
+      const fits = diag ? g.fits(px, y, pz) : sideFree(d, x, y, z);
+      // canStand, with the fit already known.
+      if (fits && (g.supported(px, y, pz) || g.cell(px, y, pz) === WATER)) {
+        relax(n, px, y, pz, step + (g.cell(px, y, pz) === WATER ? 2.5 : 0), true);
         continue;
       }
       if (diag) continue;
-      if (g.fits(px, y, pz)) {
+      if (fits) {
         // A hole: fall up to three blocks (a landing in water is safe, lava and cactus are not).
         for (let k = 1; k <= 3; k++) {
           const c = g.cell(px, y - k, pz);
@@ -258,6 +302,9 @@ export function findPath(getBlock: BlockGetter, sx: number, sy: number, sz: numb
     }
   }
   pathStats.nodes += expanded;
+  pathStats.lastNodes = expanded;
+  // The cache is only valid during this search: later users of the grid read the world itself.
+  g.getBlock = cacheSource;
 
   if (best === start) return false;
   // Walk back from the best node, then keep the first PATH_MAX cells from the start.
@@ -272,6 +319,13 @@ export function findPath(getBlock: BlockGetter, sx: number, sy: number, sz: numb
   out.length = len - skip;
   out.complete = found && skip === 0;
   return out.length > 0;
+}
+
+/** Whether the body fits in side neighbour `d` (0-3) of (x, y, z), memoised per expanded node in `sideFits`. */
+function sideFree(d: number, x: number, y: number, z: number): boolean {
+  let f = sideFits[d];
+  if (f < 0) f = sideFits[d] = grid.fits(x + DX[d], y, z + DZ[d]) ? 1 : 0;
+  return f === 1;
 }
 
 /** Cells next to a cactus are avoided (contact damage). */

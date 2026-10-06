@@ -15,6 +15,7 @@ import type { RuleReader } from '../src/world/GameRules';
 import { BLOCK, getBlockDef } from '../src/world/BlockRegistry';
 import { boneMealTarget, useBoneMeal } from '../src/world/Growth';
 import { ServerWorld } from './ServerWorld';
+import type { TickPhases } from './TickPhases';
 import { useOnMob } from '../src/entities/MobInteraction';
 import type { ChunkGenPool } from './chunkgen/ChunkGenPool';
 import { arrowEffect, meleeEffect, witchPotion } from '../src/entities/MobEffects';
@@ -94,6 +95,8 @@ export class ServerEntities {
   /** Game rules and difficulty of this world (set by GameServer; absent in the tests = defaults). */
   rules: RuleReader | null = null;
   private sentFalling = new Set<number>();
+  /** Where the time of the last tick went (all zero after a tick without players). */
+  readonly phaseMs: TickPhases = { world: 0, blocks: 0, spawn: 0, mobs: 0, other: 0, snapshots: 0 };
 
   constructor(
     seed: number,
@@ -195,10 +198,14 @@ export class ServerEntities {
     this.players = players;
     for (const p of players) this.trackCombat(p);
     const active = players.filter((p) => p.hasPos);
+    const ph = this.phaseMs;
+    ph.world = ph.blocks = ph.spawn = ph.mobs = ph.other = ph.snapshots = 0;
     if (active.length === 0) return;
     const attackable = hasSurvivalRules(this.mode);
     const targets: MobTarget[] = active.map((p) => ({ x: p.x, y: p.y, z: p.z, attackable, id: p.id, held: p.held, yaw: p.yaw, pitch: p.pitch }));
+    const t0 = EntityManager.clock();
     this.world.update(targets);
+    const t1 = EntityManager.clock();
     // Water and lava flow (budgeted per tick); what changed goes out as one batch.
     this.world.tickLiquids();
     this.world.tickRedstone();
@@ -210,8 +217,17 @@ export class ServerEntities {
     if (flowed.length > 0) this.host.broadcastBlocks(flowed);
     this.manager.targets = targets;
     const day = dayFactorAt(this.getTime());
+    const t2 = EntityManager.clock();
     this.manager.tick(targets[0], Math.round((1 - day) * 11 + (this.host.skyDarkness?.() ?? 0)), this.events, null, day > 0.6);
+    const t3 = EntityManager.clock();
     if (++this.tickCount % 2 === 0) this.sendSnapshots(active);
+    const perf = this.manager.perf;
+    ph.world = t1 - t0;
+    ph.blocks = t2 - t1;
+    ph.spawn = perf.spawnMs;
+    ph.mobs = perf.mobsMs;
+    ph.other = perf.otherMs;
+    ph.snapshots = EntityManager.clock() - t3;
   }
 
   /** Block edit by a player (already validated by the server). */
@@ -442,16 +458,31 @@ export class ServerEntities {
 
   // ---------------------------------------------------------------- snapshots
 
+  /** Mobs of this snapshot round with their entries, built once and shared by every player's frame. */
+  private readonly snapMobs: Mob[] = [];
+  private readonly snapEntries: MobEntry[] = [];
+
   private sendSnapshots(players: EntityPlayer[]): void {
     const { mobs, items, arrows, tnt, orbs } = this.manager;
+    // The mob entries do not depend on who receives them: one array per mob per round instead of one per mob per player.
+    const sm = this.snapMobs, se = this.snapEntries;
+    sm.length = 0;
+    se.length = 0;
+    for (const e of mobs) {
+      if (e.removed) continue;
+      const kind = NET_MOB_KINDS.indexOf(e.type.kind as typeof NET_MOB_KINDS[number]);
+      if (kind < 0) continue;
+      sm.push(e);
+      se.push([e.netId, kind, r2(e.x), r2(e.y), r2(e.z), r2(e.yaw), r2(e.headYaw), r2(e.headPitch), mobFlags(e), e.hurtTime,
+        e.type.kind === 'creeper' ? e.fuse : mobVariant(e), e.deathTime]);
+    }
+    const r2Send = SEND_RADIUS * SEND_RADIUS;
     for (const p of players) {
       const m: MobEntry[] = [], i: ItemEntry[] = [], a: ArrowEntry[] = [], b: TntEntry[] = [];
-      for (const e of mobs) {
-        if (e.removed || Math.hypot(e.x - p.x, e.y - p.y, e.z - p.z) > SEND_RADIUS) continue;
-        const kind = NET_MOB_KINDS.indexOf(e.type.kind as typeof NET_MOB_KINDS[number]);
-        if (kind < 0) continue;
-        m.push([e.netId, kind, r2(e.x), r2(e.y), r2(e.z), r2(e.yaw), r2(e.headYaw), r2(e.headPitch), mobFlags(e), e.hurtTime,
-          e.type.kind === 'creeper' ? e.fuse : mobVariant(e), e.deathTime]);
+      for (let k = 0; k < sm.length; k++) {
+        const e = sm[k];
+        const dx = e.x - p.x, dy = e.y - p.y, dz = e.z - p.z;
+        if (dx * dx + dy * dy + dz * dz <= r2Send) m.push(se[k]);
       }
       for (const e of items) {
         if (e.removed || Math.hypot(e.x - p.x, e.y - p.y, e.z - p.z) > SEND_ITEM_RADIUS) continue;

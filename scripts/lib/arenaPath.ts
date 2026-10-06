@@ -1,4 +1,8 @@
 import { ARENA_FLOOR_Y, type ArenaMap } from '../../src/modes/maps';
+import { BLOCK_DEFS } from '../../src/world/BlockRegistry';
+
+/** A full-height floor block: the bots walk at floor + 1, so a slab (top at + 0.5) under them reads as flying. */
+const fullFloor = (id: number) => id !== 0 && BLOCK_DEFS[id]?.shape === 'cube';
 
 /**
  * Bot helpers for the arcade scripts: honest movement that the server's movement validator accepts.
@@ -14,7 +18,7 @@ export function arenaPath(map: ArenaMap, variant: number, from: [number, number]
   const b = map.bounds, w = b.maxX - b.minX, d = b.maxZ - b.minZ;
   const open = (x: number, z: number) => map.inBounds(x + 0.5, z + 0.5)
     && map.blockAt(variant, x, ARENA_FLOOR_Y + 1, z) === 0 && map.blockAt(variant, x, ARENA_FLOOR_Y + 2, z) === 0
-    && map.blockAt(variant, x, ARENA_FLOOR_Y, z) !== 0;
+    && fullFloor(map.blockAt(variant, x, ARENA_FLOOR_Y, z));
   const idx = (x: number, z: number) => (x - b.minX) * d + (z - b.minZ);
   const prev = new Int32Array(w * d).fill(-1);
   const sx = Math.floor(from[0]), sz = Math.floor(from[1]), tx = Math.floor(to[0]), tz = Math.floor(to[1]);

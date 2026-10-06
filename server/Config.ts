@@ -73,7 +73,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     motd: env.MOTD ?? 'Welcome to BunkCraft!',
     maxPlayers: num(env.MAX_PLAYERS, 20),
     maxRooms: num(env.MAX_ROOMS, 200),
-    roomMaxPlayers: num(env.ROOM_MAX_PLAYERS, 8),
+    roomMaxPlayers: num(env.ROOM_MAX_PLAYERS, 12),
     roomExpireDays: num(env.ROOM_EXPIRE_DAYS, 60),
     roomIdleUnloadMin: Math.max(0.1, num(env.ROOM_IDLE_UNLOAD_MIN, 5)),
     roomCreateLimit: num(env.ROOM_CREATE_LIMIT, 6),

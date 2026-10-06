@@ -235,7 +235,9 @@ function half(b: LayoutBuilder, s: 1 | -1, p: Side): void {
 
   // --- Front garden south of the villa: planters, a sculpture and a parked car ------------
   paint(-20, -2, 13, 24, BLOCK.GRASS);
-  paint(-14, -10, 10, 25, BLOCK.STONE_SLAB);
+  // Sunken path (bottom slabs): it stops a row short of the curb at z 26 and of the car at x -9, which would
+  // otherwise be 1.5 blocks up from the path, too high to jump (QA: an "invisible wall").
+  paint(-14, -11, 10, 24, BLOCK.STONE_SLAB);
   box(-19, -16, 15, 16, 1, 1, BLOCK.STONE_BRICKS);
   box(-19, -16, 15, 16, 2, 2, BLOCK.OAK_LEAVES);
   box(-7, -4, 20, 21, 1, 1, BLOCK.STONE_BRICKS);

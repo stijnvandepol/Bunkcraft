@@ -15,7 +15,8 @@ wat nog een beslissing van Stijn is. Installatie zelf: docs/SERVER.md, "Op je ei
   (hoe laat timers afgaan; het eerste signaal van overbelasting), bytes per speler, latenties aan botkant (ping, chat, edit).
   Alles via `/metrics`; de nieuwe metrics (lag, GC, main-thread-CPU, tick-venster) zijn nu standaard (zie SERVER.md).
 - **Idle en opstarten:** `scripts/load/idle.ts`. **Deterministische CPU** zonder netwerk: `scripts/load/bench-room.ts`
-  (4 games × 8 spelers, nep-klok, CPU-tijd per tick).
+  (4 games × 8 spelers, nep-klok, CPU-tijd per tick; `--warmup`, `--spread`, tijd per fase) en `scripts/bench-mobs.ts` (mobpad,
+  in `npm run test:perf`).
 - **Machine:** M1 Pro (8 cores), Node 25. Tijdens de metingen draaiden andere agents (load average 10-35), dus losse runs
   wisselen ±30 %, vooral bij lag en p99. CPU-percentages zijn "procent van één core". Een gedeelde vCPU bij een VPS is
   grofweg 1,5-2× trager dan een M1-core: reken capaciteiten daarmee om (gedaan in §4).
@@ -130,6 +131,71 @@ varianten). De resterende pieken in die fase komen dus niet van terrein; volgend
   `bunkcraft_chunk_main_thread_seconds_total{phase="generate"|"install"}`; `npm run load` toont per stap waar de chunks
   gegenereerd werden.
 
+### 2.7 Tickpieken in een draaiende wereld en de kosten van mobs
+
+Vraag: met een draaiende survival-wereld (§2.6, laatste alinea) bleven er tickpieken van 15-75 ms, en mob-AI was ~28 % van de
+CPU. Eerst gemeten wát er piekt, daarna het mobpad goedkoper gemaakt.
+
+**Meten.** De server houdt nu per tick ook de **CPU-tijd** van de main thread bij (`process.threadCpuUsage`) en de tijd per
+fase (wereld laden, blokken/random ticks, spawnen, mobs, items/pijlen, snapshots). `/metrics` heeft
+`bunkcraft_tick_cpu_window_seconds`, `bunkcraft_tick_phase_seconds_total{phase}` en `bunkcraft_slow_ticks_total`; een tick
+boven `SLOW_TICK_MS` (20) komt met die uitsplitsing in de log (`slow tick`, hooguit één regel per game per 10 s). `npm run load`
+toont het allemaal. `scripts/load/bench-room.ts` kreeg `--warmup` en `--spread` (spelers ver uit elkaar = volle mobcap per
+speler) en meet de fases in CPU-tijd.
+
+**Wat de pieken zijn.** In elke laadtest (80 en 160 spelers, middernacht, normale mobcap) was de **CPU-tijd van de langste
+tick 2-9 ms**, terwijl de wandklok 40-500 ms aangaf. Alle 300+ gelogde trage ticks hadden 0,4-3 ms CPU: de thread stond stil
+omdat de machine vol zat (load average 10-200 tijdens deze sessie: andere agents, Playwright-browsers, iCloud, Docker), niet
+omdat de game zoveel deed. Welke fase de tijd "kreeg" was willekeurig (de fase die toevallig liep). De pieken van §2.6 zijn
+dus vooral de meetmachine. Op een VPS met eigen cores is de tick-CPU de maat; vergelijk bij twijfel altijd
+`bunkcraft_tick_cpu_window_seconds` met `bunkcraft_tick_window_seconds`.
+
+**Profiel van het mobpad** (bench-room, 10 games × 8 spelers 64 blokken uit elkaar, middernacht, ~120 mobs per game): mobs ~60 %
+van de game-tick, daarvan ~de helft A* (gemiddeld 70 zoektochten/s per game, ~65 knopen); verder mob-fysica (clipAxis), het
+goal-systeem, `capAreas` (2-3 % van de hele server: elke tick 81 chunks × spelers in een Set) en het bouwen van snapshots
+(per speler per mob een nieuwe array). Geen O(n²) die ertoe doet: 8 spelers × 120 mobs is klein. Lijn-van-zicht wordt alleen
+gecheckt binnen aanvalsafstand (skeletten < 16 blokken): geen kostenpost.
+
+**Gedaan** (gameplay gelijk; een geseede wereld van 2400 ticks met 8 spelers is bit voor bit gelijk aan vóór, behalve het
+eerste punt):
+
+| Wijziging | Effect |
+|---|---|
+| A*-knopenbudget per tick (`EntityManager.PATH_NODES_PER_TICK` = 480, naast de 6 zoektochten): een zoektocht start alleen als zijn hele cap (160) nog past | Pathfinding per tick nooit meer dan 3 volle zoektochten (was 6 = ~1000 knopen). ~25 % van de zoektochten schuift één tick op (50 ms; de mob loopt intussen rechtdoor, zoals al bij de bestaande zoektochtlimiet). Dat is de enige gedragswijziging: onzichtbaar, een mob begint hooguit één tick later aan een omweg. |
+| Blokcache per A*-zoektocht, zijcellen één keer per knoop, cactusstraf één keer per cel | ~20-25 % minder tijd per zoektocht (zelfde paden) |
+| `ServerWorld`: chunkcache van 16 vakjes i.p.v. 1 (mobs en zoektochten over een chunkgrens wisselden steeds) | Minder Map-lookups in fysica, A*, licht |
+| `MobSpawner`: cap-gebied alleen herberekend als een speler van chunk wisselt | spawnfase −70-85 % |
+| Dichtstbijzijnde speler met kwadraten i.p.v. `Math.hypot` | kleine winst per mob per tick |
+| Snapshot: één entry per mob per ronde, gedeeld door alle spelers; `broadcast` maakt alleen JSON als een tekstclient die nodig heeft | snapshotfase −15-20 %, minder garbage |
+
+**Resultaat.**
+
+- *Zelfde proces, oude en nieuwe code om de seconde afgewisseld* (6 games × 8 spelers verspreid, middernacht, CPU-tijd):
+  game-tick gemiddeld 1,32 → 1,14 ms en 1,62 → 1,36 ms (twee runs), p99 2,68 → 2,25 en 3,69 → 3,11 ms; entities-deel
+  gemiddeld −18-22 %, p99 −26 %.
+- *Laadtest, oude en nieuwe server tegelijk* (elk eigen bots, zelfde machinedrukte; 20 s warm-up, 45 s meten, twee rondes):
+
+| Spelers | | Tick p50 / p99 / max ms (wandklok) | Tick-CPU p99 / max ms | Lag p99 / max ms | Main CPU % | GC ms/s, langste | Spawnen ms/s | Snapshots ms/s |
+|---|---|---|---|---|---|---|---|---|
+| 80 | oud | 0,8-1,3 / 52-199 / 194-471 | 2,3-4,0 / 3,4-4,6 | 163-1044 / 298-1386 | 20,8-26,6 | 1,2-3,2, 3,5-23 | 11,8-16,9 | 34-72 |
+| 80 | nieuw | 0,7-1,1 / 42-346 / 161-412 | 2,4-3,8 / 2,6-5,7 | 225-1648 / 382-1648 | 19,4-24,8 | 0,7-1,1, 5-7 | 1,7-3,8 | 28-69 |
+| 160 | oud | 1,1-1,5 / 15-16 / 70-93 | 2,9 / 4,1-4,3 | 60-81 / 168-393 | 51,4-59,8 | 2,8-5,6, 11-21 | 21-30 | 81-113 |
+| 160 | nieuw | 1,0-1,4 / 14-16 / 53-164 | 2,5-2,8 / 3,8-3,9 | 67-83 / 167-367 | 47,4-57,2 | 1,7-1,8, 7-19 | 4,8-5,8 | 74-94 |
+
+  De wandklokkolommen zijn in deze sessie onbruikbaar als vergelijking (de machine stond tot seconden stil, voor oud en nieuw
+  even erg); de CPU-kolommen tellen: main-thread-CPU −4-7 %, GC-tijd −40-65 %, spawnen −75-85 %, snapshots −10-20 %, tick-CPU
+  max −5-15 %. Een tick van een game kost ook bij 160 spelers hooguit ~4 ms CPU: ver onder de 50 ms van een tick.
+
+**Bewaakt.** `tests/mobTickBudget.test.ts` en de padbudgettest in `tests/mobAi.test.ts` tellen werk in plaats van ms (A*-knopen
+en zoektochten per tick, wereldlookups per tick, en dat de snelkoppelingen dezelfde antwoorden geven): die slagen ook op een
+drukke machine. De milliseconden staan in `npm run test:perf` (`scripts/bench-mobs.ts`, budget in `scripts/perf-budget.json`:
+40 mobs achter muren en een survival-game met volle cap, in CPU-tijd).
+
+**Niet gedaan (bewust).** Mobs ver van spelers minder vaak laten denken (Minecraft-achtig): spelers zien mobs tot 64 blokken
+(`SEND_RADIUS`), dus minder vaak wandelen of rondkijken is daar wél een gedragswijziging, en het mobpad kost na deze ronde
+~0,6-1 ms per game-tick met 120 mobs; geen reden. Lijn-van-zicht cachen: geen kostenpost. Een ruimtelijk grid voor
+speler/mob-zoekacties: bij 8 spelers per game niet nodig.
+
 ## 3. Opties
 
 | Optie | Oordeel | Waarom |
@@ -177,6 +243,8 @@ Realistischer (paar uur per avond) is < 1 TB.
   14 bewaard), `bunkcraft`-commando, `deploy/bunkcraft.service` + `HOST`-instelling voor de systemd-variant.
 - Laadtest en idle-meting als scripts, zodat elke volgende wijziging opnieuw gemeten kan worden.
 - Voorstel A: chunkgeneratie op worker threads (§2.6), `CHUNK_WORKERS`; de bundle heeft `dist-server/genWorker.js` erbij.
+- Tickpieken onderzocht (§2.7): tick-CPU en tijd per fase in `/metrics` en de `slow tick`-log; mobpad goedkoper (A*-knopenbudget,
+  blokcache, chunkcache, gecachte mobcap, gedeelde snapshot-entries).
 
 ### Getest
 

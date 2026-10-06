@@ -1,5 +1,7 @@
 import type { Team } from './GameTypes';
 import type { FlagState, MatchPhase, ModeEventKind, ZoneState } from '../net/protocol';
+import { weaponDef } from './Weapons';
+import { t } from '../ui/i18n';
 
 /**
  * DOM-free view logic of the objective modes (texts, colours, cues, marker placement), shared by
@@ -11,8 +13,8 @@ export const NEUTRAL_COLOR = '#e8e8e8';
 export const CONTESTED_COLOR = '#ffaa00';
 const TEAM_HEX: Record<Team, string> = { red: '#e0463c', blue: '#3c7ae0' };
 
-export const teamName = (t: Team): string => (t === 'red' ? 'Red' : 'Blue');
-export const otherTeam = (t: Team): Team => (t === 'red' ? 'blue' : 'red');
+export const teamName = (team: Team): string => (team === 'red' ? t('mode.red') : t('mode.blue'));
+export const otherTeam = (team: Team): Team => (team === 'red' ? 'blue' : 'red');
 
 /** Zone letter in map order: A, B, C ... */
 export function zoneLetter(i: number): string {
@@ -27,14 +29,14 @@ export function zoneColor(z: ZoneState): string {
 
 /** Short status under a zone marker from the viewer's side. */
 export function zoneStatus(z: ZoneState, self: Team | '', variant: 'hardpoint' | 'domination'): string {
-  if (z.contested) return 'CONTESTED';
+  if (z.contested) return t('mode.zone.contested');
   if (variant === 'hardpoint') {
-    if (!z.owner) return 'CAPTURE';
-    return z.owner === self ? 'DEFEND' : 'ATTACK';
+    if (!z.owner) return t('mode.zone.capture');
+    return z.owner === self ? t('mode.zone.defend') : t('mode.zone.attack');
   }
-  if (z.owner === self) return z.progressTeam && z.progressTeam !== self && z.progress < 1 ? 'LOSING' : 'DEFEND';
-  if (z.progressTeam === self && z.progress > 0) return 'CAPTURING';
-  return z.owner ? 'ATTACK' : 'CAPTURE';
+  if (z.owner === self) return z.progressTeam && z.progressTeam !== self && z.progress < 1 ? t('mode.zone.losing') : t('mode.zone.defend');
+  if (z.progressTeam === self && z.progress > 0) return t('mode.zone.capturing');
+  return z.owner ? t('mode.zone.attack') : t('mode.zone.capture');
 }
 
 /** Capture ring fill 0..1 and its colour (domination progress; a held hill is full). */
@@ -46,18 +48,18 @@ export function zoneRing(z: ZoneState, variant: 'hardpoint' | 'domination'): { f
 
 /** One line per flag for the HUD ("Blue flag: taken by Ann", "Red flag: dropped 8"). */
 export function flagLine(f: FlagState, nameOf: (id: number) => string): string {
-  const who = `${teamName(f.team)} flag`;
-  if (f.status === 'home') return `${who}: home`;
-  if (f.status === 'carried') return `${who}: taken by ${nameOf(f.carrier)}`;
-  return `${who}: dropped ${Math.ceil(f.returnIn)}`;
+  const team = teamName(f.team);
+  if (f.status === 'home') return t('mode.flag.home', team);
+  if (f.status === 'carried') return t('mode.flag.carried', team, nameOf(f.carrier));
+  return t('mode.flag.dropped', team, Math.ceil(f.returnIn));
 }
 
 /** What the viewer should do about a flag (marker caption). */
 export function flagAction(f: FlagState, self: Team | '', selfId: number): string {
   if (!self) return '';
-  if (f.team === self) return f.status === 'home' ? 'DEFEND' : f.status === 'dropped' ? 'RETURN' : 'KILL CARRIER';
-  if (f.status === 'carried') return f.carrier === selfId ? 'CAPTURE' : 'ESCORT';
-  return 'TAKE';
+  if (f.team === self) return f.status === 'home' ? t('mode.flag.defend') : f.status === 'dropped' ? t('mode.flag.return') : t('mode.flag.killCarrier');
+  if (f.status === 'carried') return f.carrier === selfId ? t('mode.flag.capture') : t('mode.flag.escort');
+  return t('mode.flag.take');
 }
 
 /** Whether the viewer carries a flag (movement is slower). */
@@ -77,19 +79,21 @@ export function eventView(
   kind: ModeEventKind, team: Team | '', self: Team | '', text: string, who: string, selfIsActor: boolean,
 ): { text: string; cue: Cue } {
   const ours = !!team && team === self;
+  const tn = team ? teamName(team) : '';
   switch (kind) {
-    case 'flag-taken': return { text: `${who} took the ${team ? teamName(team) : ''} flag`.replace('  ', ' '), cue: ours ? 'alarm' : 'good' };
-    case 'flag-dropped': return { text: `The ${team ? teamName(team) : ''} flag was dropped`, cue: ours ? 'good' : 'bad' };
-    case 'flag-returned': return { text: `The ${team ? teamName(team) : ''} flag returned`, cue: ours ? 'good' : 'neutral' };
-    case 'flag-captured': return { text: `${who} captured the flag for ${team ? teamName(team) : ''}`, cue: ours ? 'good' : 'bad' };
-    case 'zone-captured': return { text: `${team ? teamName(team) : ''} captured ${text}`, cue: ours ? 'good' : 'bad' };
-    case 'zone-lost': return { text: `${team ? teamName(team) : ''} lost ${text}`, cue: ours ? 'bad' : 'good' };
-    case 'zone-moved': return { text: `New hill: ${text}`, cue: 'neutral' };
-    case 'round-start': return { text, cue: 'neutral' };
-    case 'round-win': return { text: team ? `${teamName(team)} wins the round` : 'Round draw', cue: !team ? 'neutral' : ours ? 'good' : 'bad' };
-    case 'level-up': return { text: selfIsActor ? `Level up: ${text}` : '', cue: selfIsActor ? 'good' : 'neutral' };
-    case 'level-down': return { text: selfIsActor ? 'Knifed: one level down' : text, cue: selfIsActor ? 'bad' : 'neutral' };
-    default: return { text, cue: 'neutral' };
+    case 'flag-taken': return { text: t('mode.ev.flagTaken', who, tn).replace('  ', ' '), cue: ours ? 'alarm' : 'good' };
+    case 'flag-dropped': return { text: t('mode.ev.flagDropped', tn), cue: ours ? 'good' : 'bad' };
+    case 'flag-returned': return { text: t('mode.ev.flagReturned', tn), cue: ours ? 'good' : 'neutral' };
+    case 'flag-captured': return { text: t('mode.ev.flagCaptured', who, tn), cue: ours ? 'good' : 'bad' };
+    case 'zone-captured': return { text: t('mode.ev.zoneCaptured', tn, text), cue: ours ? 'good' : 'bad' };
+    case 'zone-lost': return { text: t('mode.ev.zoneLost', tn, text), cue: ours ? 'bad' : 'good' };
+    case 'zone-moved': return { text: t('mode.ev.zoneMoved', text), cue: 'neutral' };
+    case 'round-start': return { text: localizeServerText(text), cue: 'neutral' };
+    case 'round-win': return { text: team ? t('mode.ev.roundWin', tn) : t('mode.ev.roundDraw'), cue: !team ? 'neutral' : ours ? 'good' : 'bad' };
+    // The server sends the weapon id ("smg"): show its name.
+    case 'level-up': return { text: selfIsActor ? t('mode.ev.levelUp', weaponDef(text)?.name ?? text) : '', cue: selfIsActor ? 'good' : 'neutral' };
+    case 'level-down': return { text: selfIsActor ? t('mode.ev.levelDown') : localizeServerText(text), cue: selfIsActor ? 'bad' : 'neutral' };
+    default: return { text: localizeServerText(text), cue: 'neutral' };
   }
 }
 
@@ -97,10 +101,37 @@ export function eventView(
 export function phaseBanner(phase: MatchPhase, seconds: number, round: number): string {
   const n = Math.max(0, Math.ceil(seconds));
   switch (phase) {
-    case 'intermission': return `Round ${round} starts in ${n}`;
-    case 'countdown': return n > 0 ? String(n) : 'Fight!';
+    case 'intermission': return t('mode.roundStarts', round, n);
+    case 'countdown': return n > 0 ? String(n) : t('mode.fight');
     default: return '';
   }
+}
+
+/**
+ * The server builds a few English texts itself (the line under the timer in `match.text`, some
+ * `event.text`s; see server/modes/*.ts). The protocol stays English: this recognises those known
+ * patterns and returns them in the current language. Anything else (map zone names, weapon ids,
+ * texts of a newer server) passes through unchanged.
+ */
+const SERVER_TEXTS: readonly [RegExp, (m: RegExpMatchArray) => string][] = [
+  [/^First to (\d+)$/, (m) => t('arc.firstTo', m[1])],
+  [/^First to (\d+) captures$/, (m) => t('mode.srv.captures', m[1])],
+  [/^First to (\d+) capture$/, (m) => t('mode.srv.capture', m[1])],
+  [/^First to (\d+) points$/, (m) => t('mode.srv.points', m[1])],
+  [/^Hill: (.+) · first to (\d+)$/, (m) => t('mode.srv.hill', m[1], m[2])],
+  [/^Round (\d+) · first to (\d+)$/, (m) => t('mode.srv.roundFirstTo', m[1], m[2])],
+  [/^Round (\d+)$/, (m) => t('mode.srv.round', m[1])],
+  [/^(\d+) weapons, the knife is last$/, (m) => t('mode.srv.ladder', m[1])],
+  [/^(\S+) knifed (\S+)$/, (m) => t('mode.srv.knifed', m[1], m[2])],
+];
+
+export function localizeServerText(text: string): string {
+  if (!text) return text;
+  for (const [re, fn] of SERVER_TEXTS) {
+    const m = text.match(re);
+    if (m) return fn(m);
+  }
+  return text;
 }
 
 /**
