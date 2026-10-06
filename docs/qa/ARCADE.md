@@ -38,11 +38,10 @@ spelerfysica over elke kaart (dev-preview). Invoer alleen via `game.input`. Scri
 ## Open (groter, of van een andere agent)
 
 1. **Anti-cheat: eerlijke bunny-hopper gecorrigeerd** (`speed`, yacht; en twee `lag`-correcties). Alleen gezien onder zware
-   CPU-belasting (frame-haperingen). Daarnaast faalt `tests/anticheatMovement.test.ts` op town al op de huidige branch
-   (`noclip` bij smg ADSL en sniper-bursts), ook zonder mijn kaartwijziging. Voor de anti-cheat-agent: de bewegingsvalidator en de
-   clientfysica zijn het op town (en mogelijk bij slabs) niet eens.
-2. **Integratietests `arcade.tdm/ffa.it.test.ts` ("kill within 40 shots")** faalden tijdens de speeltest onder belasting; los
-   gedraaid niet opnieuw onderzocht.
+   CPU-belasting (frame-haperingen), op de anti-cheat-versie van vóór de laatste merge. Na de merge slagen alle tests
+   (`npm test`: 1480/1480, ook `anticheatMovement` op town en de arcade-integratietests); de speeltest is daarop niet opnieuw
+   gedraaid. Advies: `play-modes.py` nog eens draaien en op `tp=`/`cheat=` letten.
+2. *(vervallen: de integratietests die onder belasting faalden slagen na de merge.)*
 3. **Villa: verzonken stenen pad (bottom slabs in de vloerlaag, x ±10..14).** Vanaf het pad (y 64,5) is een richel van 1 blok
    1,5 hoog: daar kun je niet op springen, wel overal ernaast. Voelt als een onzichtbare muur. Shot: `walk-villa`-incident
    bij (12, 65, -26).
