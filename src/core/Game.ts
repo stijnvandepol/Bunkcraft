@@ -75,6 +75,7 @@ import { DEFAULT_MAP, getMap, parseMapId } from '../modes/maps';
 import { GEN_VERSION_CURRENT, normalizeGenVersion } from '../world/GenVersion';
 import { type WorldType, arenaWorldType } from '../world/WorldGenerator';
 import { createRayHit, raycast } from '../world/Raycast';
+import { findStandingSpot } from '../world/Spawn';
 import { World } from '../world/World';
 import type { ArcadeFrame, ArcadeSession } from './ArcadeSession';
 import { AudioEngine } from './Audio';
@@ -925,8 +926,11 @@ export class Game {
       }
     }
     if (this.needsSurface) {
+      // Stand on real ground near the spawn column, not on a tree canopy or in a lake (Minecraft looks for grass).
       const x = Math.floor(this.player.x), z = Math.floor(this.player.z);
-      this.player.setPosition(this.player.x, world.surfaceY(x, z) + 1, this.player.z);
+      const spot = findStandingSpot((a, b, c) => world.getBlock(a, b, c), x, z);
+      if (spot) this.player.setPosition(this.player.x + spot.x - x, spot.y, this.player.z + spot.z - z);
+      else this.player.setPosition(this.player.x, world.surfaceY(x, z) + 1, this.player.z);
     }
     this.player.unstick((x, y, z) => world.getBlock(x, y, z), (x, y, z) => world.getMeta(x, y, z));
     if (this.meta && !this.meta.spawn) this.meta.spawn = { x: this.player.x, y: this.player.y, z: this.player.z };

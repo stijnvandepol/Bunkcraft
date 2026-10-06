@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { ChunkMesher, type GeometryData } from '../src/rendering/ChunkMesher';
 import { BLOCK } from '../src/world/BlockRegistry';
-import { CHUNK_AREA, CHUNK_SIZE } from '../src/world/constants';
+import { CHUNK_AREA, CHUNK_SIZE, CHUNK_VOLUME } from '../src/world/constants';
+import { createGenerator } from '../src/world/WorldGenerator';
 import { emptyChunk, setLocal } from './helpers';
 
 // Same input layout the chunk worker passes: the centre chunk and its 8 neighbours,
@@ -89,5 +90,66 @@ describe('ChunkMesher', () => {
     expect(quadsFacing(r.opaque, 1)).toBe(1);
     expect(quads(r.opaque)).toBeGreaterThanOrEqual(6);
     expect(quads(r.opaque)).toBeLessThanOrEqual(10);
+  });
+});
+
+describe('ChunkMesher index buffer capacity', () => {
+  // Cross plants are double-sided: 12 indices per 4 vertices, twice the 6 of a normal quad. The
+  // builder's index scratch used to hold only 1.5 indices per vertex, so a cutout mesh dense with
+  // plants silently dropped its last indices; the result's pooled index buffer then kept stale bytes
+  // from its previous use there ("Vertex buffer is not big enough for the draw call" in WebGL).
+  const plantLayers = (layers: number) => neighbourhood((c, n) => {
+    if (n !== CENTRE) return;
+    for (let l = 0; l < layers; l++) {
+      for (let z = 0; z < CHUNK_SIZE; z++) {
+        for (let x = 0; x < CHUNK_SIZE; x++) {
+          setLocal(c, x, 40 + l * 2, z, BLOCK.GRASS);
+          setLocal(c, x, 41 + l * 2, z, BLOCK.TALL_GRASS);
+        }
+      }
+    }
+  });
+
+  /** Recycled worker buffers are not cleared: hand out buffers full of garbage, like a reused pool. */
+  const dirtyAlloc = (bytes: number): ArrayBuffer => {
+    const b = new ArrayBuffer(1 << Math.max(10, 32 - Math.clz32(bytes - 1)));
+    new Uint8Array(b).fill(0xff);
+    return b;
+  };
+
+  for (const layers of [1, 2, 3]) {
+    it(`keeps every index of ${layers * 256} double-sided plants inside the vertex range`, () => {
+      const m = new ChunkMesher();
+      m.alloc = dirtyAlloc;
+      const g = m.mesh(plantLayers(layers), biomes(), true).cutout!;
+      const verts = g.packed.length / 4;
+      expect(verts).toBe(layers * 256 * 8);
+      // Two crossed planes per plant, each two-sided: 12 indices per 4 vertices.
+      expect(g.index.length).toBe(verts * 3);
+      let max = 0;
+      for (let i = 0; i < g.index.length; i++) max = Math.max(max, g.index[i]);
+      expect(max).toBe(verts - 1);
+    });
+  }
+
+  it('meshes the QA chunk (seed 4242, chunk -2,3: 3976 vertices, 6396 indices) on a fresh worker', () => {
+    // A fresh worker's builder starts at 4096 vertices: this cutout mesh was the one that failed in
+    // docs/qa/SURVIVAL.md (P1) right after loading, when its index buffer came from a dirty pool slot.
+    const gen = createGenerator('terrain', 4242, 3);
+    const nb: Uint8Array[] = [], bio: Uint8Array[] = [], metas: (Uint8Array | null)[] = [];
+    for (let dz = -1; dz <= 1; dz++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const b = new Uint8Array(CHUNK_VOLUME), bi = new Uint8Array(CHUNK_AREA);
+        metas.push(gen.generate(-2 + dx, 3 + dz, b, bi) || null);
+        nb.push(b);
+        bio.push(bi);
+      }
+    }
+    const m = new ChunkMesher();
+    m.alloc = dirtyAlloc;
+    const g = m.mesh(nb, bio, true, metas).cutout!;
+    const verts = g.packed.length / 4;
+    expect([verts, g.index.length]).toEqual([3976, 6396]);
+    for (let i = 0; i < g.index.length; i++) if (g.index[i] >= verts) throw new Error(`index ${i} = ${g.index[i]} >= ${verts} vertices`);
   });
 });
