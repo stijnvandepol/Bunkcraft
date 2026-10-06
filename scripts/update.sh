@@ -52,4 +52,5 @@ main() {
   exit 1
 }
 main "$@"
+# shellcheck disable=SC2317  # reached only if main returns
 exit

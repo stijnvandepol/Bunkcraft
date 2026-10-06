@@ -1,0 +1,151 @@
+# Server op Linux: metingen, keuzes en aanbeveling
+
+Vraag van Stijn: BunkCraft makkelijk op een eigen Linux-server zetten, met technologie die de gameplay goed houdt en
+zo min mogelijk serverresources kost. Dit document meet eerst, vergelijkt dan opties en eindigt met wat nu is gedaan en
+wat nog een beslissing van Stijn is. Installatie zelf: docs/SERVER.md, "Op je eigen Linux-server in 5 minuten".
+
+## 1. Hoe gemeten
+
+- **Bots:** `scripts/load/` (`npm run load -- --steps survival:10x8,tdm:4x12`). Protocol-bots zonder browser, in aparte
+  processen. Survival-bots lopen over het echte terrein, hakken en plaatsen blokken, rapen items op, chatten en vechten tegen
+  mobs; de eigenaar zet de tijd op middernacht, dus vijandige mobs spawnen (~38 mobs zichtbaar per speler). Eén op de acht
+  verkent en laat de server nieuwe chunks genereren. Arcade-bots lopen tussen vrije cellen (langs de anti-cheat, die door
+  muren lopen kickt), kiezen een wapen en schieten op zichtbare vijanden.
+- **Meetwaarden:** CPU van het proces en van alleen de main thread, RSS, heap, GC-pauzes, tick-tijd p50/p99, event-loop-lag
+  (hoe laat timers afgaan; het eerste signaal van overbelasting), bytes per speler, latenties aan botkant (ping, chat, edit).
+  Alles via `/metrics`; de nieuwe metrics (lag, GC, main-thread-CPU, tick-venster) zijn nu standaard (zie SERVER.md).
+- **Idle en opstarten:** `scripts/load/idle.ts`. **Deterministische CPU** zonder netwerk: `scripts/load/bench-room.ts`
+  (4 games × 8 spelers, nep-klok, CPU-tijd per tick).
+- **Machine:** M1 Pro (8 cores), Node 25. Tijdens de metingen draaiden andere agents (load average 10-35), dus losse runs
+  wisselen ±30 %, vooral bij lag en p99. CPU-percentages zijn "procent van één core". Een gedeelde vCPU bij een VPS is
+  grofweg 1,5-2× trager dan een M1-core: reken capaciteiten daarmee om (gedaan in §4).
+
+## 2. Metingen
+
+### 2.1 Vóór/na de buildstap (tsx tijdens runtime → gebundelde JS)
+
+| | tsx (oud, `node --import tsx server/index.ts`) | bundle (nieuw, `node dist-server/index.js`) |
+|---|---|---|
+| Opstarttijd tot `/health` | 276-374 ms | **132-173 ms** |
+| Geheugen leeg proces (incl. kindprocessen) | 103 MB (node + esbuild-hulpproces van tsx) | **69 MB** |
+| 20 lege games geladen | 124 MB | **95 MB** |
+| 80 spelers (10 survival-games) RSS | 287-293 MB | **263 MB** |
+| CPU bij 80 spelers | 28-29 % | 28-30 % (gelijk binnen ruis) |
+| Docker-image runtime-laag | `node_modules` (tsx, esbuild-binary, ws, fflate) + `src/` + `server/` | alleen `dist/` + één JS-bestand van 938 KB |
+
+De bundle verandert niets aan de gamelogica (zelfde bron, esbuild zonder minify): alle 1483 tests en de 33
+integratietests slagen ook tegen de bundle (`BUNK_SERVER_ENTRY=bundle npx vitest run tests/integration`).
+
+### 2.2 Belasting (bundle)
+
+| Scenario | Spelers | CPU % (main thread) | RSS MB | Tick p50/p99 ms | Lag p99 ms | GC | Uit per speler |
+|---|---|---|---|---|---|---|---|
+| survival 1 × 8 | 8 | 4,5 (3,9) | 107 | 1,4 / 3,5 | 3 | 0,8/s, langste 0,9 ms | 13,4 KiB/s |
+| survival 4 × 8 | 32 | 12,3 (10,7) | 171 | 1,1 / 2,2 | 4 | 1,1/s, langste 4,7 ms | 14,1 KiB/s |
+| survival 10 × 8 | 80 | 28-30 (25-27) | 263-293 | 1,0 / 6 | 5-8 | 1,5-1,9/s, langste 2-8 ms | 14,8 KiB/s |
+| survival 20 × 8 | 160 | 37-42 (33-37) | 365-375 | 0,7 / 4-6 | **5-52** | 2,2/s, langste 2-8 ms | 14,4 KiB/s |
+| arcade TDM 1 × 16 | 16 | 8,5 (7,8) | 89 | 1,7 / 6,7 | 8 | langste 1,9 ms | 8,9 KiB/s |
+| arcade TDM 4 × 12 | 48 | 12,5 (11,3) | 97 | 0,6 / 4,0 | 10 | langste 3,1 ms | 4,4 KiB/s |
+| arcade TDM 8 × 12 | 96 | 18,3 (17,5) | 117 | 0,3 / 3,1 | 7 | langste 2,5 ms | 4,4 KiB/s |
+
+- Eén survival-game met 8 spelers en ~40 mobs kost ~3-4 % van een core en ~15-20 MB extra geheugen. Arcade is veel
+  goedkoper (geen mobs, geen chunks): ~1,5 % per game van 12.
+- De snapshot-cadans blijft netjes: snap-gap p99 53-58 ms (ideaal 50) tot 80 spelers.
+- **Bij 160 spelers springt de event-loop-lag** in sommige runs naar p99 ~50 ms (max 57-180 ms; in een rustige run 5 ms).
+  Oorzaak volgens het CPU-profiel: chunks genereren (verkenners) gebeurt synchroon op de main thread. Zie §2.4.
+- **Bandbreedte:** survival ~14,5 KiB/s per speler uit (~120 kbit/s), vooral `ent`-frames (alle mobs binnen bereik, 10× per
+  seconde, volledig). 160 spelers = ~2,3 MB/s = ~19 Mbit/s. Arcade 4-9 KiB/s per speler.
+- **GC** is geen probleem: 1-3 pauzes per seconde, samen 1-4 ms per seconde, langste meestal < 8 ms.
+
+### 2.3 Idle
+
+| | |
+|---|---|
+| Leeg proces | 69 MB RSS, 0,3-0,5 % CPU |
+| 20 geladen lege games (10 survival, 10 arcade) | +1,2 MB per game, 1,2 % CPU totaal |
+| Na het uitladen | RSS blijft ~93 MB (V8 geeft geheugen niet terug aan het OS), heap 13 MB |
+
+Lege games tikken al bijna gratis (de tick stopt direct als er niemand is, mobs en chunks worden meteen vrijgegeven).
+Uitladen na 5 minuten bespaart dus weinig; het is nu instelbaar (`ROOM_IDLE_UNLOAD_MIN`) maar de standaard blijft.
+
+### 2.4 Waar de CPU heen gaat (profiel, 160 survival-spelers)
+
+| Onderdeel | Aandeel van de bezette tijd |
+|---|---|
+| Mobs: AI, pad zoeken, spawnen (`EntityManager`, `Mob`, `Navigator`) | ~28 % |
+| Chunks laden: `ServerWorld.update`, waarvan **terreingeneratie 19 %** | ~27 % |
+| Random ticks (groei, bladverval) | ~12 % |
+| Licht voor spawnregels (`getLight`) | ~8 % |
+| WebSocket verzenden (`ws` + socket writes) | ~7 % |
+| GC | ~1,6 % |
+
+Twee goedkope verbeteringen zijn meteen doorgevoerd (§5): `ServerWorld.update` deed elke tick de hele ring-scan
+ook als niemand van chunk wisselde, en `getLight` liep alle lichtbronnen van 9 chunks af (een chunk kan honderden
+lavablokken diep onder de grond hebben). **Resultaat (bench-room, CPU per game-tick): 1,51 → 1,30 ms (−14 %), in de
+stabiele fase 1,24 → 1,00 ms (−19 %).** Uitkomsten zijn identiek (test `serverWorldPerf.test.ts` vergelijkt met de oude
+berekening).
+
+### 2.5 Node-flags
+
+`--max-semi-space-size=32` (minder young-gen-GC's) en `--max-old-space-size=192` gaven bij 160 spelers geen meetbare winst
+boven de ruis van deze machine; 192 MB gaf eerder langere pauzes. De heap gebruikt bij 160 spelers ~70 MB. Daarom:
+`--max-old-space-size=384 --max-semi-space-size=16` als **vangrail** (een lek of overbelasting wordt eerst trage GC en een
+nette fout in de log in plaats van de OOM-killer), niet als snelheidswinst. Containerlimiet 640 MB.
+
+## 3. Opties
+
+| Optie | Oordeel | Waarom |
+|---|---|---|
+| **Server bundelen met esbuild** | **gedaan** | −34 MB, 2× sneller opstarten, geen `node_modules`/TypeScript in de image, kleiner aanvalsoppervlak. Dev blijft `tsx watch`. |
+| **Node 24 LTS** (was 22) | **gedaan** (Docker) | Huidige LTS, nieuwere V8; `process.threadCpuUsage` voor de main-thread-metric. Bundle draait op 22+. |
+| `ws` met permessage-deflate | **uit laten** (is al uit) | Snapshots zijn al binair en klein; deflate kost per verbinding een zlib-context (honderden KB met context takeover) en CPU op de hete paden. Caddy kan WebSocket-frames niet comprimeren. |
+| uWebSockets.js i.p.v. `ws` | **niet nu** (voorstel C) | Verzenden is ~7 % van de CPU; uWS wint daar hooguit de helft van. Niet op npm, native binary per platform (Alpine/ARM), andere API. |
+| Chunkgeneratie in `worker_threads` | **voorstel A** | 19 % van de main thread en de oorzaak van lagpieken bij verkennen. De generator is deterministisch en draait in de client al in workers. Vergt dat `ServerWorld` chunks asynchroon krijgt. Grootste winst voor speelgevoel bij veel survival-spelers. |
+| Delta/interest-managed `ent`-frames | **voorstel B** | ~90 % van het survival-verkeer. Alleen gewijzigde mobs sturen, verre mobs minder vaak: geschat −50-70 % bandbreedte en minder allocaties (GC). Protocolwijziging (binaire versie omhoog, client + server). |
+| Eén proces per game / meerdere processen | **voorstel D, later** | Eén proces haalt ~150-200 spelers per core (§4). Pas daarboven nodig. Kost ~70 MB per proces plus routering op gamecode en een gedeelde serverlijst. |
+| Lege games/chunks eerder uitladen | **instelbaar gemaakt** | Gemeten winst klein (§2.3); `ROOM_IDLE_UNLOAD_MIN` voor kleine machines. |
+| Tickrate | **laten** | 20 Hz survival (Minecraft), 30 Hz arcade (`ARCADE_TICK_HZ`). Een tick kost < 1,5 ms per game; lager maakt de gameplay slechter voor weinig winst. |
+| Statische bestanden | **al goed** | Vite schrijft `.br`/`.gz`, de server serveert die met `immutable` cache voor gehashte bestanden; Caddy doet zstd/gzip voor de rest. |
+| Caddy vs nginx | **Caddy** | Automatisch HTTPS en vernieuwing, HTTP/3 standaard (443/udp), zstd. nginx is iets lichter maar vraagt certbot en meer config. Caddy ~30-40 MB RAM. |
+| Docker vs systemd | **Docker standaard, systemd gedocumenteerd** | Docker: één commando, geïsoleerd, read-only, makkelijke updates; kost ~50-80 MB voor dockerd/containerd en ~0 CPU. systemd: `deploy/bunkcraft.service` met dezelfde hardening voor wie geen Docker wil. |
+| Kant-en-klare images (GHCR, multi-arch) | **voorstel E** | Nu bouwt de server zelf de image (TypeScript + Vite: > 1 GB RAM, daarom maakt `install.sh` swap op kleine machines). Een CI-workflow die amd64+arm64-images publiceert maakt installeren en updaten seconden werk en een 1 GB-VPS probleemloos. |
+| Prometheus/Grafana standaard | **nee** | Te zwaar voor een kleine VPS. `/health` heeft nu tick/lag/geheugen; `/metrics` met token voor wie wil scrapen (voorbeeld in SERVER.md). |
+
+## 4. Welke VPS en hoeveel spelers
+
+Grens per Node-proces: de main thread. Houd die onder ~50-60 % voor marge (GC, pieken, verkennende spelers). Gemeten: 160
+survival-spelers ≈ 35 % main thread op een M1-core; op een VPS-vCPU (1,5-2× trager) ≈ 55-70 %. Geheugen ~375 MB bij 160.
+
+| VPS | Indicatie prijs | Survival-spelers | Alleen arcade | Opmerking |
+|---|---|---|---|---|
+| 1 vCPU / 1 GB | €2-5/mnd | ~40-60 | ~100 | Caddy, Docker en GC delen de ene core; image bouwen alleen met swap (het script regelt dat). |
+| **2 vCPU / 4 GB (Hetzner CAX11 ARM of CX22)** | ~€4-5/mnd | **~120-150** | ~200+ | **Aanbevolen.** Tweede core voor Caddy/TLS, GC-threads en het OS; bouwen zonder swap. ARM werkt (alles is pure JS, image is multi-arch). |
+| 4 vCPU / 8 GB | €8-15/mnd | ~150-200 | ~300 | Meer cores helpen één proces nauwelijks; pas zinvol met voorstel A (workers) of D (meerdere processen). |
+
+Verkeer: 150 survival-spelers continu = ~19 Mbit/s, ~6 TB/maand bij 24/7 vol; Hetzner geeft 20 TB inbegrepen.
+Realistischer (paar uur per avond) is < 1 TB.
+
+## 5. Wat nu gedaan is
+
+- `npm run build` bundelt ook de server (`scripts/build-server.mjs` → `dist-server/index.js`); `npm start` en Docker draaien
+  plain JS. Runtime-image zonder `node_modules`; `tsx` en `esbuild` zijn dev-afhankelijkheden.
+- `ServerWorld`: chunk-update overslaan als niemand van chunk wisselt; lichtbronnen per chunk op hoogte gesorteerd (−14-19 %).
+- Metrics: event-loop-lag, tick-venster, GC-pauzes, main-thread-CPU; `/health` met `roomsLoaded`, `tickP99Ms`,
+  `loopLagP99Ms`, `rssMB`.
+- Compose: geheugen/CPU-limieten via `.env` (Docker weigert meer CPU's dan de machine heeft: de oude vaste `cpus: 2` faalde op
+  een 1-vCPU-VPS), heap-vangrail, logrotatie (3 × 10 MB), Caddy start pas als de game gezond is.
+- `scripts/install.sh` (idempotent, `--dry-run`), `scripts/update.sh` (back-up → pull → bouwen terwijl de oude draait →
+  herstart met opslaan → health-check, rollback-commando bij falen), `scripts/backup.sh` (dagelijks via systemd-timer of cron,
+  14 bewaard), `bunkcraft`-commando, `deploy/bunkcraft.service` + `HOST`-instelling voor de systemd-variant.
+- Laadtest en idle-meting als scripts, zodat elke volgende wijziging opnieuw gemeten kan worden.
+
+## 6. Open beslissingen voor Stijn
+
+- **A. Chunkgeneratie naar een worker thread?** Grootste winst voor soepel spel bij veel survival-spelers (lagpieken weg,
+  ~19 % main thread vrij). Middelgroot werk in `ServerWorld`/`ServerEntities`.
+- **B. Delta-`ent`-frames?** Halveert tot derdeelt het survival-verkeer per speler. Protocolwijziging.
+- **C. uWebSockets.js?** Advies: nee, tenzij verzenden later > 20 % van de CPU wordt.
+- **D. Meerdere processen per server?** Pas nodig boven ~150-200 gelijktijdige spelers per machine.
+- **E. Images publiceren op GHCR via CI?** Maakt installeren en updaten op een kleine VPS veel sneller en betrouwbaarder.
+- **Repo publiek of privé?** De one-liner in SERVER.md haalt `install.sh` van GitHub; bij een privé-repo moet de server een
+  deploy-key of token hebben (of je kopieert de map zelf en draait `./scripts/install.sh`).

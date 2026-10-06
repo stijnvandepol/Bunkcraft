@@ -42,4 +42,5 @@ mv "$file.part" "$file"
 echo "backup: $file ($(du -h "$file" | cut -f1))"
 
 # Keep the newest $KEEP archives.
+# shellcheck disable=SC2012  # our own file names, no spaces
 ls -1t "$DEST"/bunkcraft-*.tar.gz 2>/dev/null | tail -n +"$((KEEP + 1))" | while read -r old; do rm -f -- "$old"; done
