@@ -90,8 +90,19 @@ JS_HELPERS = r"""
     }
     return out;
   };
-  qa.count = (name) => g.playerInventory.count(window.__I.itemId(name));
+  qa.count = (name) => {
+    if (/[A-Z ]/.test(name)) {
+      let n = 0;
+      for (let i = 0; i < 36; i++) { const st = g.playerInventory.get(i); if (st.count && window.__I.itemName(st.id) === name) n += st.count; }
+      return n;
+    }
+    return g.playerInventory.count(window.__I.itemId(name));
+  };
   qa.slotOf = (name) => {
+    if (/[A-Z ]/.test(name)) {
+      for (let i = 0; i < 36; i++) { const st = g.playerInventory.get(i); if (st.count && window.__I.itemName(st.id) === name) return i; }
+      return -1;
+    }
     const id = window.__I.itemId(name);
     for (let i = 0; i < 36; i++) if (g.playerInventory.get(i).id === id) return i;
     return -1;
@@ -124,14 +135,20 @@ class Step:
 
 
 class QA:
-    def __init__(self, port: int, out_dir: str, profile_dir: str, headless: bool = True, width: int = 1280, height: int = 720):
+    def __init__(self, port: int, out_dir: str, profile_dir: str, headless: bool = True, width: int = 1280, height: int = 720,
+                 browser: str = 'chromium', pw=None):
         self.port = port
         self.out = out_dir
         os.makedirs(os.path.join(out_dir, 'shots'), exist_ok=True)
-        self.pw = sync_playwright().start()
-        self.ctx = self.pw.chromium.launch_persistent_context(
-            profile_dir, headless=headless, viewport={'width': width, 'height': height},
-            args=['--use-angle=metal', '--ignore-gpu-blocklist', '--autoplay-policy=no-user-gesture-required'])
+        # Several players in one script share one Playwright instance (the sync API allows only one).
+        self.own_pw = pw is None
+        self.pw = pw or sync_playwright().start()
+        if browser == 'chromium':
+            self.ctx = self.pw.chromium.launch_persistent_context(
+                profile_dir, headless=headless, viewport={'width': width, 'height': height},
+                args=['--use-angle=metal', '--ignore-gpu-blocklist', '--autoplay-policy=no-user-gesture-required'])
+        else:
+            self.ctx = getattr(self.pw, browser).launch_persistent_context(profile_dir, headless=headless, viewport={'width': width, 'height': height})
         self.page = self.ctx.pages[0] if self.ctx.pages else self.ctx.new_page()
         self.console: list[str] = []
         self.page.on('console', lambda m: self.console.append(f'[{m.type}] {m.text}') if m.type in ('error', 'warning') else None)
@@ -145,9 +162,12 @@ class QA:
 
     # ------------------------------------------------------------------ plumbing
 
-    def open(self) -> None:
-        self.page.goto(f'http://localhost:{self.port}/')
+    def open(self, path: str = '/') -> None:
+        self.page.goto(f'http://localhost:{self.port}{path}')
         self.page.wait_for_function('!!(window.game && window.game.createWorld)', timeout=60000)
+        self.inject()
+
+    def inject(self) -> None:
         self.page.evaluate("""async () => {
           window.__I = await import('/src/items/ItemRegistry.ts');
           window.__R = await import('/src/world/BlockRegistry.ts');
@@ -218,7 +238,10 @@ class QA:
         self.steps.append(c)
         self.cur = None
 
+    shot_prefix = ''
+
     def shot(self, name: str) -> str:
+        name = self.shot_prefix + name
         path = os.path.join(self.out, 'shots', f'{name}.png')
         self.page.screenshot(path=path)
         if self.cur:
@@ -235,7 +258,8 @@ class QA:
         try:
             self.ctx.close()
         finally:
-            self.pw.stop()
+            if self.own_pw:
+                self.pw.stop()
 
     # ------------------------------------------------------------------ input
 
@@ -286,7 +310,7 @@ class QA:
             s = 8
         self.select(s)
         self.wait(0.1)
-        return self.js('qa.state().held') == self.js('(n) => __I.itemId(n)', name)
+        return self.js('(n) => qa.slotOf(n) === game.hotbar.selected', name)
 
     # ------------------------------------------------------------------ movement
 

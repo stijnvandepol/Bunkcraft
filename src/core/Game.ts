@@ -97,7 +97,7 @@ import { DynamicResolution, MIN_ADAPTIVE_DISTANCE, suggestPreset } from './Adapt
 import { MAX_FPS_UNLIMITED, type Settings, SettingsStore } from './Settings';
 import { applyAccessibilityDocument, effectiveParticles, limitFlash, mobSoundLabel, paletteFor } from './Accessibility';
 import { GamepadController, type PadContext, cleanName } from './Gamepad';
-import { needsAutoJump } from './InputMath';
+import { latchPress, needsAutoJump } from './InputMath';
 import { TouchControls, type TouchContext } from './TouchControls';
 import { announce, clearAnnouncement } from '../ui/Announcer';
 import { MenuNav } from '../ui/MenuNav';
@@ -2054,7 +2054,7 @@ export class Game {
       move.forward = control ? Math.max(-1, Math.min(1, keyFwd + input.axisForward)) : 0;
       move.strafe = control ? Math.max(-1, Math.min(1, keyStrafe + input.axisStrafe)) : 0;
       move.jump = control && input.actionDown(KB.JUMP);
-      move.jumpPressed = control && input.actionPressed(KB.JUMP);
+      move.jumpPressed = latchPress(move.jumpPressed, control, input.actionPressed(KB.JUMP));
       // Arcade: always sprinting at the weapon's pace, bunny hop friendly air control, no sneaking.
       move.sprint = control && (arcade !== null || input.actionDown(KB.SPRINT) || input.sprintAxis);
       // A toggled sprint ends when the player stops walking forward.

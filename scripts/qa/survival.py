@@ -765,7 +765,7 @@ def phase_bed(qa: QA) -> None:
     t0 = time.time()
     qa.select_item('stone_sword') or qa.select_item('wooden_sword')
     for _ in range(6):
-        if qa.js('qa.count(`white_wool`)') >= 3:
+        if qa.js('qa.count(`White Wool`)') >= 3:
             break
         sheep = [m for m in qa.js('qa.mobs(70)') if m['kind'] == 'sheep']
         if not sheep:
@@ -776,7 +776,7 @@ def phase_bed(qa: QA) -> None:
         qa.fight(20, hostile_only=False, kinds=('sheep',), chase=14, stop_when_none=True)
         qa.wait(0.6)
         qa.collect_items(radius=6, timeout=6)
-    wool = qa.js('qa.count(`white_wool`)')
+    wool = qa.js('qa.count(`White Wool`)')
     qa.note(f'white wool {wool} after {round(time.time() - t0)}s')
     made = 0
     if wool >= 3:
@@ -1092,9 +1092,13 @@ def phase_creative(qa: QA) -> None:
     qa.relock()
     # Double jump to fly.
     y0 = qa.st()['y']
-    qa.press('Space')
-    qa.wait(0.1)
-    qa.press('Space')
+    # Double tap inside the page (Playwright round trips are slower than the 0.3 s window).
+    qa.js("""() => new Promise((ok) => {
+      const i = game.input;
+      i.pressed.add('Space'); i.down.add('Space');
+      setTimeout(() => { i.down.delete('Space'); }, 60);
+      setTimeout(() => { i.pressed.add('Space'); i.down.add('Space'); ok(); }, 160);
+    })""")
     qa.hold('Space')
     qa.wait(1.0)
     qa.release('Space')
@@ -1102,6 +1106,76 @@ def phase_creative(qa: QA) -> None:
     flying = qa.js('game.player.flying')
     qa.note(f'double space: flying={flying}, rose {s["y"] - y0:.1f} blocks')
     qa.end(n > 3 and flying)
+
+
+def phase_kit(qa: QA) -> None:
+    """SETUP SHORTCUT for the second session: the items the first session had mined/crafted before dying."""
+    qa.begin('SETUP: uitrusting uit de eerste sessie (stenen gereedschap, ruw ijzer, kolen, planken, steen, fakkels)')
+    kit = [('stone_pickaxe', 1), ('stone_sword', 1), ('stone_axe', 1), ('raw_iron', 11), ('coal', 12), ('oak_planks', 24), ('stick', 8),
+           ('cobblestone', 48), ('dirt', 16), ('torch', 8), ('furnace', 1), ('crafting_table', 1)]
+    qa.js('(kit) => { for (const [n, c] of kit) game.playerInventory.add({ id: __I.itemId(n), count: c }); }', kit)
+    TIME_SHORTCUTS.append(f'KIT: {kit}')
+    qa.note(f'kit given: {kit}')
+    pos_t = qa.place_near('crafting_table', B_TABLE, rings=(2, 3))
+    pos_f = qa.place_near('furnace', B_FURNACE, rings=(1, 2, 3))
+    qa.note(f'table {pos_t}, furnace {pos_f}')
+    qa.end(bool(pos_t and pos_f))
+
+
+def phase_redstone(qa: QA) -> None:
+    qa.begin('Redstone-basis: hendel maken, deur maken, hendel naast de deur zet hem open')
+    go_surface(qa)
+    wood = wood_name(qa)
+    planks = qa.js('qa.inv().filter(s => s.name.endsWith(" Planks")).reduce((a, s) => a + s.count, 0)')
+    if planks < 6:
+        qa.ui_craft(f'{wood} Planks', 2)
+    if not qa.js(f'qa.find([{B_TABLE}], 4, -2, 3, 1).length'):
+        qa.ui_craft('Crafting Table', 1)
+        qa.place_near('crafting_table', B_TABLE, rings=(1, 2))
+    if qa.js('qa.count(`stick`)') < 1:
+        qa.ui_craft('Stick', 1)
+    lever = qa.ui_craft('Lever', 1)
+    doors = qa.js('qa.inv().filter(s => s.name.endsWith(" Door")).map(s => s.name)')
+    if not doors:
+        qa.ui_craft(f'{wood} Door', 1, search='door')
+        doors = qa.js('qa.inv().filter(s => s.name.endsWith(" Door")).map(s => s.name)')
+    qa.note(f'lever crafted {lever}; doors {doors}')
+    if not lever or not doors:
+        qa.end(False)
+        return
+    door_block = qa.js('__R.BLOCK.DOOR')
+    lever_block = qa.js('__R.BLOCK.LEVER')
+    pos = qa.place_near(doors[0], door_block, rings=(2, 3))
+    qa.note(f'door at {pos}')
+    if not pos:
+        qa.end(False)
+        return
+    dx, dy, dz = pos
+    open0 = qa.js('([x, y, z]) => game.world.getMeta(x, y, z)', [dx, dy, dz])
+    # Lever on the ground right next to the door (any side that is free).
+    placed = None
+    qa.select_item('Lever')
+    for ox, oz in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+        gx, gz = dx + ox, dz + oz
+        if qa.block(gx, dy, gz) == 0 and qa.block(gx, dy - 1, gz) not in (0, 12, 44):
+            if qa.place_on(gx, dy - 1, gz) and qa.block(gx, dy, gz) == lever_block:
+                placed = (gx, dy, gz)
+                break
+    qa.note(f'lever placed at {placed}')
+    if not placed:
+        qa.end(False)
+        return
+    qa.aim(placed[0] + 0.5, placed[1] + 0.2, placed[2] + 0.5)
+    qa.press('Mouse2')
+    qa.wait(0.6)
+    open1 = qa.js('([x, y, z]) => game.world.getMeta(x, y, z)', [dx, dy, dz])
+    qa.shot('35_redstone_lever_door')
+    qa.aim(placed[0] + 0.5, placed[1] + 0.2, placed[2] + 0.5)
+    qa.press('Mouse2')
+    qa.wait(0.6)
+    open2 = qa.js('([x, y, z]) => game.world.getMeta(x, y, z)', [dx, dy, dz])
+    qa.note(f'door meta closed {open0} -> lever on {open1} -> lever off {open2}')
+    qa.end(open1 != open0 and open2 == open0)
 
 
 def go_to_block(qa: QA, block: int) -> bool:
@@ -1137,6 +1211,8 @@ PHASES = {
     'farm': phase_farm,
     'enchant': phase_enchant,
     'creative': phase_creative,
+    'redstone': phase_redstone,
+    'kit': phase_kit,
 }
 
 
@@ -1148,8 +1224,11 @@ def main() -> None:
     ap.add_argument('--phases', default=','.join(PHASES))
     ap.add_argument('--report', default='docs/qa/survival-run.json')
     ap.add_argument('--headed', action='store_true')
+    ap.add_argument('--browser', default='chromium', help='chromium (with --use-angle=metal) or webkit')
     a = ap.parse_args()
-    qa = QA(a.port, 'docs/qa', a.profile, headless=not a.headed)
+    qa = QA(a.port, 'docs/qa', a.profile, headless=not a.headed, browser=a.browser)
+    if a.browser != 'chromium':
+        qa.shot_prefix = f'{a.browser}_'
     try:
         qa.open()
         if a.new:

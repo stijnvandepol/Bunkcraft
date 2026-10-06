@@ -3,24 +3,25 @@
   {
    "name": "Nieuwe survival-wereld via het menu",
    "ok": true,
-   "seconds": 8.6,
+   "seconds": 5.5,
    "notes": [
     "default mode button: Game Mode: Survival",
-    "world loaded in 0.5s, state after load: paused (pointer lock fails in automation)",
-    "spawn at 8.5,65.0,0.5 clock 07:57, mobs near: 0 hostile / 25 passive",
-    "inventory at start: []"
+    "world loaded in 0.2s, state after load: paused (pointer lock fails in automation)",
+    "spawn at 8.5,73.0,0.5 clock 07:57, mobs near: 0 hostile / 31 passive",
+    "inventory at start: []",
+    "end: clock 07:57 day 1, hp 20, food 20, mobs<64: 0 hostile / 31 passive"
    ],
    "frame": {
     "samples": 8,
-    "fps_min": 47,
-    "fps_p10": 47,
+    "fps_min": 119,
+    "fps_p10": 119,
     "fps_median": 120,
-    "cpu_ms_avg": 4.15,
-    "worst_frame_ms": 100,
+    "cpu_ms_avg": 1.24,
+    "worst_frame_ms": 10.3,
     "now": {
      "fps": 120,
-     "frameMs": 1.18,
-     "worstMs": 9.2
+     "frameMs": 0.98,
+     "worstMs": 10.2
     }
    },
    "errors": [],
@@ -34,34 +35,30 @@
   {
    "name": "Boom slaan met de hand (logs verzamelen)",
    "ok": true,
-   "seconds": 109.1,
+   "seconds": 40.9,
    "notes": [
-    "tree oak_log at 12,66,-1: walked there ok=False",
-    "mine: crosshair on [10, 67, -1], wanted [12, 66, -1]",
-    "mine: crosshair on [10, 68, -1], wanted [12, 68, -1]",
-    "mine: crosshair on [11, 69, -1], wanted [12, 69, -1]",
-    "log break times so far (s): [4.51, 3.19, 4.31, 3.84]; items left on ground: 0",
-    "tree spruce_log at 14,67,6: walked there ok=False",
-    "mine: crosshair on [12, 67, 0], wanted [14, 67, 6]",
-    "could not break log at height +0",
-    "log break times so far (s): [4.51, 3.19, 4.31, 3.84, None]; items left on ground: 0",
-    "tree spruce_log at 14,67,6: walked there ok=True",
-    "mine: crosshair on [14, 69, 5], wanted [14, 69, 6]",
-    "mine: crosshair on [14, 70, 5], wanted [14, 71, 6]",
-    "log break times so far (s): [4.51, 3.19, 4.31, 3.84, None, 3.06, 3.1, 3.92, 3.16, 3.83]; items left on ground: 0",
-    "inventory: [('Oak Sapling', 3), ('Oak Log', 4), ('Spruce Log', 5)]; total 109s"
+    "tree birch_log at 8,66,1: walked there ok=True",
+    "mine: crosshair on [8, 72, 0], wanted [8, 66, 1]",
+    "log break times so far (s): [5.76, 3.34, 3.19, 3.21, 3.18]; items left on ground: 0",
+    "tree birch_log at 5,65,-2: walked there ok=True",
+    "mine: crosshair on [6, 67, -1], wanted [5, 67, -2]",
+    "mine: crosshair on [6, 68, -1], wanted [5, 69, -2]",
+    "log break times so far (s): [5.76, 3.34, 3.19, 3.21, 3.18, 3.05, 3.22, 4.39, 3.32, 4.44]; items left on ground: 0",
+    "inventory: [('Birch Log', 10)]; total 41s",
+    "damage taken: [('fall', '', 2, 18)]",
+    "end: clock 08:46 day 1, hp 20, food 20, mobs<64: 5 hostile / 31 passive"
    ],
    "frame": {
-    "samples": 436,
-    "fps_min": 108,
+    "samples": 164,
+    "fps_min": 119,
     "fps_p10": 120,
     "fps_median": 120,
-    "cpu_ms_avg": 1.41,
-    "worst_frame_ms": 33.4,
+    "cpu_ms_avg": 1.07,
+    "worst_frame_ms": 10.4,
     "now": {
-     "fps": 120,
-     "frameMs": 1.46,
-     "worstMs": 10
+     "fps": 121,
+     "frameMs": 1.26,
+     "worstMs": 9.9
     }
    },
    "errors": [],
@@ -72,28 +69,29 @@
   {
    "name": "Planken, stokken, werkbank en houten pikhouweel via het receptenboek",
    "ok": true,
-   "seconds": 15.3,
+   "seconds": 10.1,
    "notes": [
-    "Oak Planks crafted 4x (from 9 logs) -> planks 16",
+    "Birch Planks crafted 10x (from 10 logs) -> planks 40",
     "Stick crafted 2x -> 8 sticks",
     "Crafting Table crafted 1x",
     "recipe search \"pickaxe\" without table shows 0 recipes",
-    "table placed at 13,67,5",
+    "table placed at 5,65,-5",
     "select ok=True, placed=True",
     "Wooden Pickaxe crafted 1x",
-    "Wooden Sword crafted 1x"
+    "Wooden Sword crafted 1x",
+    "end: clock 08:56 day 1, hp 20, food 20, mobs<64: 5 hostile / 31 passive"
    ],
    "frame": {
-    "samples": 5,
-    "fps_min": 120,
-    "fps_p10": 120,
+    "samples": 4,
+    "fps_min": 119,
+    "fps_p10": 119,
     "fps_median": 120,
-    "cpu_ms_avg": 1.44,
-    "worst_frame_ms": 10.1,
+    "cpu_ms_avg": 1.28,
+    "worst_frame_ms": 10,
     "now": {
-     "fps": 121,
-     "frameMs": 1.19,
-     "worstMs": 10.3
+     "fps": 120,
+     "frameMs": 1.39,
+     "worstMs": 10
     }
    },
    "errors": [],
@@ -104,48 +102,25 @@
    ]
   },
   {
-   "name": "Bestaande wereld laden (Play Selected World)",
-   "ok": true,
-   "seconds": 3.8,
-   "notes": [
-    "loaded in 0.3s at 13.9,67.0,7.1, clock 10:25 day 0, hp 20 food 20",
-    "inventory: [('Oak Sapling', 3), ('Stick', 5), ('Spruce Log', 5), ('Oak Planks', 3), ('Wooden Pickaxe', 1), ('Wooden Sword', 1)]"
-   ],
-   "frame": {
-    "samples": 6,
-    "fps_min": 119,
-    "fps_p10": 119,
-    "fps_median": 120,
-    "cpu_ms_avg": 1.35,
-    "worst_frame_ms": 10.3,
-    "now": {
-     "fps": 120,
-     "frameMs": 1.17,
-     "worstMs": 10.1
-    }
-   },
-   "errors": [],
-   "shots": []
-  },
-  {
    "name": "Steen hakken met het houten pikhouweel (trap naar beneden)",
    "ok": true,
-   "seconds": 52.6,
+   "seconds": 41.5,
    "notes": [
-    "cobblestone 19 after 52s; stone break times with wooden pickaxe: [1.24, 1.18, 1.19, 1.19, 1.19, 1.39, 1.16, 1.25]",
-    "wooden pickaxe damage: [{'slot': 4, 'id': 270, 'name': 'Wooden Pickaxe', 'count': 1, 'damage': 33}]"
+    "cobblestone 18 after 41s; stone break times with wooden pickaxe: [1.23, 1.22, 1.22, 1.21, 1.22, 1.21, 1.22, 1.2]",
+    "wooden pickaxe damage: [{'slot': 2, 'id': 270, 'name': 'Wooden Pickaxe', 'count': 1, 'damage': 27}]",
+    "end: clock 09:46 day 1, hp 20, food 20, mobs<64: 4 hostile / 30 passive"
    ],
    "frame": {
-    "samples": 210,
-    "fps_min": 76,
+    "samples": 168,
+    "fps_min": 119,
     "fps_p10": 120,
     "fps_median": 120,
-    "cpu_ms_avg": 1.3,
-    "worst_frame_ms": 100,
+    "cpu_ms_avg": 1.5,
+    "worst_frame_ms": 10.4,
     "now": {
-     "fps": 121,
-     "frameMs": 1.28,
-     "worstMs": 10.2
+     "fps": 120,
+     "frameMs": 1.54,
+     "worstMs": 10.1
     }
    },
    "errors": [],
@@ -155,72 +130,24 @@
   },
   {
    "name": "Stenen gereedschap en oven maken (bij de werkbank)",
-   "ok": false,
-   "seconds": 26.7,
+   "ok": true,
+   "seconds": 12.9,
    "notes": [
     "back at the table: True",
     "crafted: {'Stone Pickaxe': 1, 'Stone Sword': 1, 'Furnace': 1}",
-    "furnace placed: False"
+    "furnace placed at (6, 64, -4)",
+    "end: clock 10:02 day 1, hp 20, food 20, mobs<64: 4 hostile / 31 passive"
    ],
    "frame": {
-    "samples": 90,
-    "fps_min": 119,
-    "fps_p10": 120,
-    "fps_median": 120,
-    "cpu_ms_avg": 1.31,
-    "worst_frame_ms": 10.3,
-    "now": {
-     "fps": 120,
-     "frameMs": 1.24,
-     "worstMs": 10.1
-    }
-   },
-   "errors": [],
-   "shots": [
-    "shots/09_table_furnace.png"
-   ]
-  },
-  {
-   "name": "Bestaande wereld laden (Play Selected World)",
-   "ok": true,
-   "seconds": 4.8,
-   "notes": [
-    "loaded in 0.5s at 15.3,65.0,7.5, clock 12:00 day 0, hp 20 food 20",
-    "inventory: [('Oak Sapling', 3), ('Stick', 2), ('Spruce Log', 5), ('Oak Planks', 3), ('Wooden Pickaxe', 1), ('Wooden Sword', 1), ('Dirt', 15), ('Cobblestone', 6), ('Furnace', 1), ('Stone Sword', 1), ('Stone Pickaxe', 1)]"
-   ],
-   "frame": {
-    "samples": 6,
+    "samples": 41,
     "fps_min": 119,
     "fps_p10": 119,
     "fps_median": 120,
-    "cpu_ms_avg": 1.87,
-    "worst_frame_ms": 10.2,
+    "cpu_ms_avg": 1.55,
+    "worst_frame_ms": 10.4,
     "now": {
      "fps": 120,
-     "frameMs": 1.59,
-     "worstMs": 9.7
-    }
-   },
-   "errors": [],
-   "shots": []
-  },
-  {
-   "name": "Oven neerzetten",
-   "ok": true,
-   "seconds": 1.7,
-   "notes": [
-    "furnace placed at (14, 66, 6)"
-   ],
-   "frame": {
-    "samples": 7,
-    "fps_min": 93,
-    "fps_p10": 93,
-    "fps_median": 120,
-    "cpu_ms_avg": 1.78,
-    "worst_frame_ms": 66.7,
-    "now": {
-     "fps": 120,
-     "frameMs": 1.93,
+     "frameMs": 1.68,
      "worstMs": 9.9
     }
    },
@@ -232,31 +159,32 @@
   {
    "name": "Kolen zoeken en hakken",
    "ok": true,
-   "seconds": 199.0,
+   "seconds": 105.5,
    "notes": [
-    "mine: crosshair on [27, 61, 13], wanted [27, 61, 14]",
-    "mine: crosshair on [27, 60, 14], wanted [28, 60, 14]",
-    "mine: crosshair on [28, 61, 13], wanted [29, 60, 14]",
-    "mine: crosshair on [27, 60, 13], wanted [29, 59, 14]",
-    "mine: crosshair on [29, 61, 14], wanted [30, 60, 14]",
-    "mine: crosshair on [35, 59, 21], wanted [35, 58, 21]",
-    "mine: crosshair on [36, 59, 21], wanted [36, 58, 21]",
-    "mine: crosshair on [34, 59, 20], wanted [34, 58, 20]",
-    "mine: crosshair on [36, 59, 20], wanted [36, 58, 20]",
-    "mine: crosshair on [34, 58, 21], wanted [34, 57, 21]",
-    "coal 40 in 198s; {'veins': 4, 'mined': 39, 'times': [2.75, 1.4, 1.37, 1.2, 1.45, 2.99, 1.24, 1.34, 3.92, 1.25, 1.29, 1.52, 1.17, 2.13, 1.16, 1.26, 1.41, 1.2, 1.28, 1.17, 1.3, 1.19, 1.2, 1.25, 1.22, 1.3, 1.21, 2.16, 2.16, 1.29, 1.18, 1.21, 2.66, 1.28, 1.26, 1.22, 1.28, 1.16, 1.28], 'dig_failures': 0}"
+    "mine: crosshair on [10, 54, -1], wanted [10, 53, -1]",
+    "mine: crosshair on [11, 53, -1], wanted [11, 52, 0]",
+    "mine: crosshair on [11, 53, -2], wanted [11, 51, -1]",
+    "mine: crosshair on [11, 54, -2], wanted [12, 52, 0]",
+    "mine: crosshair on [12, 52, -1], wanted [12, 51, -1]",
+    "mine: crosshair on [12, 50, 0], wanted [13, 50, 0]",
+    "mine: crosshair on [12, 50, 1], wanted [13, 50, 1]",
+    "mine: crosshair on [7, 52, -5], wanted [6, 51, -6]",
+    "mine: crosshair on [7, 51, -4], wanted [6, 50, -6]",
+    "mine: crosshair on [5, 50, -5], wanted [5, 50, -6]",
+    "coal 14 in 105s; {'veins': 3, 'mined': 26, 'times': [1.22, 3.13, 3.1, 5.06, 2.13, 1.34, 1.42, 1.21, 1.35, 1.33, 1.33, 2.86, 1.36, 2.76, 1.23, 1.33, 1.33, 2.2, 1.32, 4.06, 1.79, 1.17, 2.23, 1.44, 1.32, 1.43], 'dig_failures': 0}",
+    "end: clock 12:09 day 1, hp 20, food 20, mobs<64: 5 hostile / 26 passive"
    ],
    "frame": {
-    "samples": 794,
-    "fps_min": 116,
+    "samples": 424,
+    "fps_min": 119,
     "fps_p10": 120,
     "fps_median": 120,
-    "cpu_ms_avg": 1.55,
-    "worst_frame_ms": 13.8,
+    "cpu_ms_avg": 1.77,
+    "worst_frame_ms": 10.4,
     "now": {
      "fps": 120,
-     "frameMs": 1.37,
-     "worstMs": 9.8
+     "frameMs": 1.93,
+     "worstMs": 10
     }
    },
    "errors": [],
@@ -267,22 +195,23 @@
   {
    "name": "Fakkels maken en plaatsen",
    "ok": true,
-   "seconds": 3.1,
+   "seconds": 2.6,
    "notes": [
     "torch crafted 2x -> 8 torches",
-    "torch placed at (35, 57, 21), block light there 14"
+    "torch placed at (12, 50, 0), block light there 14",
+    "end: clock 12:12 day 1, hp 20, food 20, mobs<64: 5 hostile / 26 passive"
    ],
    "frame": {
-    "samples": 6,
+    "samples": 5,
     "fps_min": 120,
     "fps_p10": 120,
     "fps_median": 120,
-    "cpu_ms_avg": 1.38,
+    "cpu_ms_avg": 1.87,
     "worst_frame_ms": 10.4,
     "now": {
-     "fps": 121,
-     "frameMs": 1.47,
-     "worstMs": 9.7
+     "fps": 120,
+     "frameMs": 1.87,
+     "worstMs": 9.8
     }
    },
    "errors": [],
@@ -293,90 +222,32 @@
   {
    "name": "IJzererts zoeken en hakken (stenen pikhouweel)",
    "ok": true,
-   "seconds": 421.0,
+   "seconds": 85.0,
    "notes": [
-    "mine: crosshair on [41, 53, 25], wanted [41, 52, 25]",
-    "mine: crosshair on [42, 53, 25], wanted [42, 52, 25]",
-    "mine: crosshair on [42, 52, 24], wanted [43, 50, 24]",
-    "mine: crosshair on [38, 51, 24], wanted [38, 50, 24]",
-    "mine: crosshair on [39, 49, 24], wanted [39, 47, 25]",
-    "mine: crosshair on [40, 49, 20], wanted [40, 48, 20]",
-    "mine: crosshair on [39, 48, 21], wanted [38, 47, 20]",
-    "mine: crosshair on [39, 49, 20], wanted [38, 48, 19]",
-    "mine: crosshair on [40, 47, 21], wanted [39, 46, 21]",
-    "raw iron 1 in 420s; {'veins': 6, 'mined': 8, 'times': [1.2, 4.06, 15.05, 15.25, 15.06, 15.02, 15.19, 15.52], 'dig_failures': 0}"
+    "mine: crosshair on [14, 50, 2], wanted [14, 49, 2]",
+    "mine: crosshair on [13, 50, 2], wanted [14, 49, 3]",
+    "mine: crosshair on [14, 50, -1], wanted [15, 50, -1]",
+    "mine: crosshair on [14, 51, -1], wanted [15, 51, -1]",
+    "mine: crosshair on [13, 51, 2], wanted [13, 49, 4]",
+    "mine: crosshair on [14, 50, 3], wanted [14, 49, 4]",
+    "mine: crosshair on [13, 49, 2], wanted [14, 48, 3]",
+    "mine: crosshair on [8, 47, 1], wanted [8, 46, 1]",
+    "mine: crosshair on [8, 47, 0], wanted [8, 46, 0]",
+    "mine: crosshair on [9, 47, 0], wanted [9, 46, 0]",
+    "mine: crosshair on [10, 47, 0], wanted [10, 47, -1]",
+    "raw iron 11 in 85s; {'veins': 3, 'mined': 20, 'times': [1.22, 1.26, 1.33, 2.14, 1.32, 2.22, 1.33, 2.19, 2.32, 4.0, 2.28, 2.39, 1.21, 1.34, 1.33, 2.65, 1.33, 1.42, 1.33, 2.15], 'dig_failures': 0}",
+    "end: clock 13:54 day 1, hp 20, food 20, mobs<64: 5 hostile / 25 passive"
    ],
    "frame": {
-    "samples": 1683,
-    "fps_min": 112,
+    "samples": 342,
+    "fps_min": 119,
     "fps_p10": 120,
     "fps_median": 120,
-    "cpu_ms_avg": 1.47,
-    "worst_frame_ms": 20.9,
+    "cpu_ms_avg": 2.01,
+    "worst_frame_ms": 10.4,
     "now": {
-     "fps": 120,
-     "frameMs": 1.29,
-     "worstMs": 10.2
-    }
-   },
-   "errors": [],
-   "shots": [
-    "shots/11_iron.png"
-   ]
-  },
-  {
-   "name": "Bestaande wereld laden (Play Selected World)",
-   "ok": true,
-   "seconds": 4.0,
-   "notes": [
-    "loaded in 0.2s at 40.6,47.0,21.3, clock 00:33 day 0, hp 20 food 20",
-    "inventory: [('Oak Sapling', 3), ('Cobblestone', 16), ('Spruce Log', 5), ('Oak Planks', 3), ('Wooden Pickaxe', 1), ('Wooden Sword', 1), ('Dirt', 24), ('Cobblestone', 64), ('Stone Sword', 1), ('Coal', 38), ('Torch', 7), ('Raw Iron', 1)]",
-    "end: clock 00:33 day 1, hp 20, food 20, mobs<64: 8 hostile / 23 passive"
-   ],
-   "frame": {
-    "samples": 6,
-    "fps_min": 120,
-    "fps_p10": 120,
-    "fps_median": 120,
-    "cpu_ms_avg": 1.5,
-    "worst_frame_ms": 10,
-    "now": {
-     "fps": 120,
-     "frameMs": 1.48,
-     "worstMs": 9.7
-    }
-   },
-   "errors": [],
-   "shots": []
-  },
-  {
-   "name": "IJzererts zoeken en hakken (stenen pikhouweel)",
-   "ok": true,
-   "seconds": 78.7,
-   "notes": [
-    "pickaxe gone (broke without a sound/particle cue?) - making a new stone pickaxe; inventory [('Oak Sapling', 3), ('Cobblestone', 16), ('Spruce Log', 5), ('Oak Planks', 3), ('Wooden Pickaxe', 1), ('Wooden Sword', 1), ('Dirt', 24), ('Cobblestone', 64), ('Stone Sword', 1), ('Coal', 38), ('Torch', 7), ('Raw Iron', 1)]",
-    "new crafting table at None",
-    "new stone pickaxe crafted: 1",
-    "mine: crosshair on [40, 47, 20], wanted [39, 46, 20]",
-    "mine: crosshair on [40, 48, 20], wanted [38, 47, 19]",
-    "mine: crosshair on [41, 48, 21], wanted [43, 46, 19]",
-    "mine: crosshair on [44, 48, 20], wanted [44, 47, 20]",
-    "mine: crosshair on [44, 48, 19], wanted [44, 47, 19]",
-    "mine: crosshair on [43, 48, 19], wanted [44, 46, 18]",
-    "mine: crosshair on [45, 47, 19], wanted [45, 47, 18]",
-    "raw iron 9 in 79s; {'veins': 2, 'mined': 12, 'times': [1.23, 2.22, 1.33, 1.3, 6.36, 6.73, 1.22, 1.19, 3.98, 2.23, 1.24, 1.33], 'dig_failures': 0}",
-    "end: clock 02:05 day 1, hp 20, food 20, mobs<64: 18 hostile / 22 passive"
-   ],
-   "frame": {
-    "samples": 288,
-    "fps_min": 97,
-    "fps_p10": 119,
-    "fps_median": 120,
-    "cpu_ms_avg": 1.43,
-    "worst_frame_ms": 48.9,
-    "now": {
-     "fps": 127,
-     "frameMs": 1.38,
+     "fps": 121,
+     "frameMs": 2.09,
      "worstMs": 9.8
     }
    },
@@ -386,63 +257,719 @@
    ]
   },
   {
-   "name": "IJzer smelten in de oven (receptenboek, tab Smelt)",
-   "ok": true,
-   "seconds": 129.8,
+   "name": "Schuilplaats bouwen voor de nacht (muren, dak, fakkel)",
+   "ok": false,
+   "seconds": 81.1,
    "notes": [
-    "mine: crosshair on [41, 47, 19], wanted [41, 48, 19]",
-    "mine: crosshair on [40, 48, 19], wanted [40, 49, 19]",
-    "mine: crosshair on [39, 49, 19], wanted [39, 50, 19]",
-    "mine: crosshair on [37, 48, 19], wanted [37, 49, 19]",
-    "mine: crosshair on [36, 49, 19], wanted [36, 50, 19]",
-    "mine: crosshair on [35, 50, 19], wanted [35, 51, 19]",
-    "mine: crosshair on [34, 51, 19], wanted [34, 52, 19]",
-    "mine: crosshair on [33, 52, 19], wanted [33, 53, 19]",
-    "mine: crosshair on [32, 53, 19], wanted [32, 54, 19]",
-    "mine: crosshair on [31, 54, 19], wanted [31, 55, 19]",
-    "mine: crosshair on [30, 55, 19], wanted [30, 56, 19]",
-    "mine: crosshair on [29, 56, 19], wanted [29, 57, 19]",
-    "mine: crosshair on [28, 57, 19], wanted [28, 58, 19]",
-    "mine: crosshair on [27, 58, 19], wanted [27, 59, 19]",
-    "mine: crosshair on [26, 59, 19], wanted [26, 60, 19]",
-    "mine: crosshair on [26, 60, 18], wanted [26, 61, 18]",
-    "at furnace: True",
-    "smelted 10 iron ingots from 10 raw iron in 4.8s (instant, no furnace UI); fuel before {'coal': 38, 'oak_planks': 0, 'spruce_planks': 5, 'spruce_log': 3} after {'coal': 28, 'oak_planks': 0, 'spruce_planks': 5, 'spruce_log': 3}",
-    "end: clock 04:41 day 1, hp 20, food 20, mobs<64: 17 hostile / 24 passive"
+    "mine: crosshair on [11, 49, 2], wanted [11, 50, 2]",
+    "mine: crosshair on [10, 48, 2], wanted [10, 49, 2]",
+    "dig: could not mine block 1 at 7,45,0",
+    "back on the surface: False at [8.6, 14, 0.3]",
+    "building blocks: 0 (cobblestone + dirt)",
+    "walls: 0 placed, 13 failed",
+    "roof: 0 placed, 8 failed, centre False",
+    "torch inside: False",
+    "holes in walls: [(7, 14, -1), (7, 14, 0), (7, 14, 1), (8, 14, -1), (8, 14, 1), (7, 15, -1), (7, 15, 0), (7, 15, 1), (8, 15, -1), (8, 15, 1), (9, 15, -1), (9, 15, 0), (9, 15, 1)], roof holes: [(7, 16, -1), (7, 16, 0), (7, 16, 1), (8, 16, -1), (8, 16, 0), (8, 16, 1), (9, 16, -1), (9, 16, 0), (9, 16, 1)]",
+    "damage taken: [('fall', '', 20, 0)]",
+    "end: clock 15:32 day 1, hp 0, food 20, mobs<64: 4 hostile / 21 passive"
    ],
    "frame": {
-    "samples": 502,
-    "fps_min": 113,
-    "fps_p10": 118,
+    "samples": 61,
+    "fps_min": 119,
+    "fps_p10": 120,
     "fps_median": 120,
-    "cpu_ms_avg": 1.16,
-    "worst_frame_ms": 16.8,
+    "cpu_ms_avg": 2.13,
+    "worst_frame_ms": 10.4,
     "now": {
-     "fps": 116,
-     "frameMs": 1.27,
-     "worstMs": 16.6
+     "fps": 120,
+     "frameMs": 2.07,
+     "worstMs": 10.3
+    }
+   },
+   "errors": [],
+   "shots": [
+    "shots/13_shelter_inside.png"
+   ]
+  },
+  {
+   "name": "Onverwachte dood vóór fase smelt",
+   "ok": false,
+   "seconds": 1.3,
+   "notes": [
+    "death message: Player fell from a high place",
+    "end: clock 15:34 day 1, hp 20, food 20, mobs<64: 4 hostile / 21 passive"
+   ],
+   "frame": {
+    "samples": 4,
+    "fps_min": 120,
+    "fps_p10": 120,
+    "fps_median": 120,
+    "cpu_ms_avg": 1.79,
+    "worst_frame_ms": 10.3,
+    "now": {
+     "fps": 120,
+     "frameMs": 1.87,
+     "worstMs": 10.3
+    }
+   },
+   "errors": [],
+   "shots": [
+    "shots/death_before_smelt.png"
+   ]
+  },
+  {
+   "name": "IJzer smelten in de oven (rechtsklik, invoer + brandstof slepen, wachten, output pakken)",
+   "ok": false,
+   "seconds": 1.9,
+   "notes": [
+    "at furnace: True",
+    "smelt: furnace near=True, items=0",
+    "raw iron 0 -> ingots 0; coal 0 -> 0; xp level 0",
+    "end: clock 15:37 day 1, hp 20, food 20, mobs<64: 4 hostile / 21 passive"
+   ],
+   "frame": {
+    "samples": 8,
+    "fps_min": 119,
+    "fps_p10": 119,
+    "fps_median": 120,
+    "cpu_ms_avg": 2.22,
+    "worst_frame_ms": 10.3,
+    "now": {
+     "fps": 120,
+     "frameMs": 2.27,
+     "worstMs": 10.1
     }
    },
    "errors": [],
    "shots": []
+  },
+  {
+   "name": "De nacht overleven: in de schuilplaats en daarna buiten vechten met het stenen zwaard",
+   "ok": true,
+   "seconds": 244.5,
+   "notes": [
+    "TIME SHORTCUT: clock 15:37 -> 19:12 (jump to dusk instead of waiting up to 20 real minutes)",
+    "60 s inside at 20:24: hostile within 64 max 18, within 16 per 5 s: [0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1]; hp 20 -> 20",
+    "mine: crosshair on [7, 64, -2], wanted [9, 14, 0]",
+    "dig: could not mine block 102 at 9,14,0",
+    "outside 155s: {'swings': 121, 'hits': 0, 'kills': 0, 'seen': ['zombie']}; hp 20 -> 20, dead=False, sword []",
+    "end: clock 00:05 day 1, hp 20, food 20, mobs<64: 18 hostile / 18 passive"
+   ],
+   "frame": {
+    "samples": 980,
+    "fps_min": 116,
+    "fps_p10": 120,
+    "fps_median": 120,
+    "cpu_ms_avg": 3.11,
+    "worst_frame_ms": 17,
+    "now": {
+     "fps": 119,
+     "frameMs": 4.55,
+     "worstMs": 10.3
+    }
+   },
+   "errors": [],
+   "shots": [
+    "shots/14_night_inside.png",
+    "shots/15_night_fight.png"
+   ]
+  },
+  {
+   "name": "Eten: dier doden, vlees bakken in de oven, eten",
+   "ok": false,
+   "seconds": 127.9,
+   "notes": [
+    "hunger 20, saturation 5.0",
+    "hunt cow: {'swings': 0, 'hits': 0, 'kills': 0, 'seen': ['cow']}; raw meat now 0",
+    "hunt cow: {'swings': 0, 'hits': 0, 'kills': 0, 'seen': []}; raw meat now 0",
+    "hunt cow: {'swings': 0, 'hits': 0, 'kills': 0, 'seen': []}; raw meat now 0",
+    "hunt cow: {'swings': 0, 'hits': 0, 'kills': 0, 'seen': []}; raw meat now 0",
+    "raw meat 0 after 128s",
+    "cooked 0",
+    "not eaten: food=[], hunger=17 (eating only works below 20)",
+    "damage taken: [('poison', '', 1, 19), ('poison', '', 1, 19), ('poison', '', 1, 18.67), ('magic', '', 5, 13.83), ('poison', '', 1, 13.17), ('poison', '', 1, 12.17), ('magic', '', 6, 6.17), ('poison', '', 1, 5.17), ('poison', '', 1, 5.17), ('magic', '', 5, 0.17), ('poison', '', 0.17, 1), ('magic', '', 1, 0)]",
+    "end: clock 02:40 day 1, hp 0, food 17, mobs<64: 18 hostile / 15 passive"
+   ],
+   "frame": {
+    "samples": 457,
+    "fps_min": 116,
+    "fps_p10": 120,
+    "fps_median": 120,
+    "cpu_ms_avg": 4.83,
+    "worst_frame_ms": 18,
+    "now": {
+     "fps": 119,
+     "frameMs": 5.59,
+     "worstMs": 10.2
+    }
+   },
+   "errors": [],
+   "shots": []
+  },
+  {
+   "name": "Onverwachte dood vóór fase armor",
+   "ok": false,
+   "seconds": 1.4,
+   "notes": [
+    "death message: Player was killed by magic",
+    "damage taken: [('poison', '', 1, 19), ('mob', 'Zombie', 3, 16.83)]",
+    "end: clock 02:43 day 1, hp 17.5, food 20, mobs<64: 18 hostile / 15 passive"
+   ],
+   "frame": {
+    "samples": 4,
+    "fps_min": 120,
+    "fps_p10": 120,
+    "fps_median": 120,
+    "cpu_ms_avg": 5.39,
+    "worst_frame_ms": 10.3,
+    "now": {
+     "fps": 120,
+     "frameMs": 5.27,
+     "worstMs": 10.3
+    }
+   },
+   "errors": [],
+   "shots": [
+    "shots/death_before_armor.png"
+   ]
+  },
+  {
+   "name": "Harnas: ijzeren stukken maken en aantrekken, armor-balk",
+   "ok": false,
+   "seconds": 3.9,
+   "notes": [
+    "iron ingots 0; crafted []",
+    "worn by right click: []; armor points 0",
+    "damage taken: [('poison', '', 1, 16.5), ('mob', 'Zombie', 3, 14), ('poison', '', 1, 13.67), ('mob', 'Zombie', 2, 11.67), ('magic', '', 3, 8.83), ('poison', '', 1, 8), ('mob', 'Zombie', 2, 6)]",
+    "end: clock 02:47 day 1, hp 3.333333333333334, food 20, mobs<64: 18 hostile / 15 passive"
+   ],
+   "frame": {
+    "samples": 8,
+    "fps_min": 117,
+    "fps_p10": 117,
+    "fps_median": 120,
+    "cpu_ms_avg": 5.06,
+    "worst_frame_ms": 16.7,
+    "now": {
+     "fps": 120,
+     "frameMs": 5.21,
+     "worstMs": 9.9
+    }
+   },
+   "errors": [],
+   "shots": [
+    "shots/18_armor_inventory.png",
+    "shots/19_armor_hud.png"
+   ]
+  },
+  {
+   "name": "Dieren fokken: zaden uit gras, twee kippen voeren",
+   "ok": false,
+   "seconds": 250.3,
+   "notes": [
+    "seeds 0 from 0 grass tufts in 250s",
+    "damage taken: [('mob', 'Zombie', 3, 3.33), ('mob', 'Zombie', 3, 0.33), ('magic', '', 0.33, 0)]",
+    "end: clock 08:37 day 2, hp 0, food 20, mobs<64: 6 hostile / 14 passive"
+   ],
+   "frame": {
+    "samples": 7,
+    "fps_min": 120,
+    "fps_p10": 120,
+    "fps_median": 120,
+    "cpu_ms_avg": 5.41,
+    "worst_frame_ms": 10.3,
+    "now": {
+     "fps": 120,
+     "frameMs": 6.94,
+     "worstMs": 10.2
+    }
+   },
+   "errors": [],
+   "shots": []
+  },
+  {
+   "name": "Onverwachte dood vóór fase bed",
+   "ok": false,
+   "seconds": 1.5,
+   "notes": [
+    "death message: Player was killed by magic",
+    "damage taken: [('poison', '', 1, 19)]",
+    "end: clock 08:39 day 2, hp 20, food 20, mobs<64: 6 hostile / 14 passive"
+   ],
+   "frame": {
+    "samples": 4,
+    "fps_min": 97,
+    "fps_p10": 97,
+    "fps_median": 119,
+    "cpu_ms_avg": 7.75,
+    "worst_frame_ms": 17.2,
+    "now": {
+     "fps": 120,
+     "frameMs": 6.83,
+     "worstMs": 10.2
+    }
+   },
+   "errors": [],
+   "shots": [
+    "shots/death_before_bed.png"
+   ]
+  },
+  {
+   "name": "Bed: wol van schapen, bed maken, slapen",
+   "ok": false,
+   "seconds": 0.0,
+   "notes": [
+    "EXCEPTION Error: Page.evaluate: Error: Unknown item white_wool\n    at Module.itemId (http://localhost:5241/src/items/ItemRegistry.ts:322:30)\n    at qa.count (eval at evaluate (:290:30), <anonymous>:66:59)\n    at eval (eval at evaluate (:290:30), <anonymous>:1:4)\n    at eval (<anonymous>)\n    at UtilityScript.evaluat",
+    "navigations so far: ['19:59:12 http://localhost:5241/']",
+    "end: clock 08:39 day 2, hp 20, food 20, mobs<64: 6 hostile / 14 passive"
+   ],
+   "frame": {
+    "now": {
+     "fps": 116,
+     "frameMs": 7.26,
+     "worstMs": 15.9
+    }
+   },
+   "errors": [],
+   "shots": []
+  },
+  {
+   "name": "Redstone-basis: hendel maken, deur maken, hendel naast de deur zet hem open",
+   "ok": false,
+   "seconds": 42.2,
+   "notes": [
+    "craft: \"Oak Planks\" click did nothing (disabled=True, tip=4× Oak Planks ← 1 Oak Log (any))",
+    "craft: \"Crafting Table\" click did nothing (disabled=True, tip=Crafting Table ← 4 Oak Planks (any))",
+    "place_near: no crafting_table in inventory",
+    "craft: \"Stick\" click did nothing (disabled=True, tip=4× Stick ← 2 Oak Planks (any))",
+    "EXCEPTION TimeoutError: Page.fill: Timeout 30000ms exceeded.\nCall log:\n  - waiting for locator(\".screen.inventory:not(.hidden) .recipe-search\")\n",
+    "navigations so far: ['19:59:12 http://localhost:5241/']",
+    "damage taken: [('poison', '', 1, 19), ('poison', '', 1, 18.83), ('magic', '', 5, 14.17), ('poison', '', 1, 13.5), ('poison', '', 1, 12.83), ('magic', '', 6, 6.83), ('poison', '', 1, 5.83), ('poison', '', 1, 5.83), ('magic', '', 5, 0.83), ('magic', '', 0.83, 0)]",
+    "end: clock 09:30 day 2, hp 0, food 19, mobs<64: 5 hostile / 12 passive"
+   ],
+   "frame": {
+    "samples": 9,
+    "fps_min": 108,
+    "fps_p10": 108,
+    "fps_median": 116,
+    "cpu_ms_avg": 7.37,
+    "worst_frame_ms": 24.7,
+    "now": {
+     "fps": 120,
+     "frameMs": 7.2,
+     "worstMs": 10.2
+    }
+   },
+   "errors": [],
+   "shots": []
+  },
+  {
+   "name": "Onverwachte dood vóór fase cave",
+   "ok": false,
+   "seconds": 2.1,
+   "notes": [
+    "death message: Player was killed by magic",
+    "end: clock 09:34 day 2, hp 20, food 20, mobs<64: 5 hostile / 12 passive"
+   ],
+   "frame": {
+    "samples": 5,
+    "fps_min": 116,
+    "fps_p10": 116,
+    "fps_median": 120,
+    "cpu_ms_avg": 6.9,
+    "worst_frame_ms": 15.9,
+    "now": {
+     "fps": 120,
+     "frameMs": 6.44,
+     "worstMs": 10.1
+    }
+   },
+   "errors": [],
+   "shots": [
+    "shots/death_before_cave.png"
+   ]
+  },
+  {
+   "name": "Grotingang zoeken, naar binnen, fakkels plaatsen, ertsen hakken",
+   "ok": false,
+   "seconds": 37.8,
+   "notes": [
+    "cave entrance candidate: [2, 52.53251179632529, -6, 72, 63.53251179632529]",
+    "walked to the entrance: True in 3s, now y=62.3 (cave floor y=52.53251179632529, surface 63.53251179632529)",
+    "pickaxe gone (broke without a sound/particle cue?) - making a new wooden pickaxe; inventory []",
+    "craft: \"Oak Planks\" click did nothing (disabled=True, tip=4× Oak Planks ← 1 Oak Log (any))",
+    "EXCEPTION TimeoutError: Locator.inner_text: Timeout 30000ms exceeded.\nCall log:\n  - waiting for locator(\".screen.inventory:not(.hidden) .mc-tooltip\")\n",
+    "navigations so far: ['19:59:12 http://localhost:5241/']",
+    "damage taken: [('lava', '', 4, 16), ('lava', '', 4, 12.83), ('lava', '', 4, 9.5), ('lava', '', 4, 6), ('lava', '', 4, 2.33), ('lava', '', 2.67, 0)]",
+    "end: clock 10:19 day 2, hp 0, food 20, mobs<64: 5 hostile / 16 passive"
+   ],
+   "frame": {
+    "samples": 20,
+    "fps_min": 96,
+    "fps_p10": 109,
+    "fps_median": 120,
+    "cpu_ms_avg": 7.16,
+    "worst_frame_ms": 18.1,
+    "now": {
+     "fps": 120,
+     "frameMs": 4.43,
+     "worstMs": 10.1
+    }
+   },
+   "errors": [],
+   "shots": []
+  },
+  {
+   "name": "Onverwachte dood vóór fase enchant",
+   "ok": false,
+   "seconds": 1.3,
+   "notes": [
+    "death message: Player tried to swim in lava",
+    "end: clock 10:22 day 2, hp 20, food 20, mobs<64: 5 hostile / 13 passive"
+   ],
+   "frame": {
+    "samples": 4,
+    "fps_min": 120,
+    "fps_p10": 120,
+    "fps_median": 120,
+    "cpu_ms_avg": 4.59,
+    "worst_frame_ms": 10.2,
+    "now": {
+     "fps": 120,
+     "frameMs": 5.21,
+     "worstMs": 10.1
+    }
+   },
+   "errors": [],
+   "shots": [
+    "shots/death_before_enchant.png"
+   ]
+  },
+  {
+   "name": "Betoveren (enchanting table) - SETUP SHORTCUT: tafel, lapis en levels gegeven",
+   "ok": false,
+   "seconds": 2.8,
+   "notes": [
+    "XP level earned by playing so far: 0",
+    "table at (6, 65, -2), level now 10",
+    "offers: [('ench-offer empty', None), ('ench-offer empty', None), ('ench-offer empty', None)]",
+    "item after enchanting: None; level 10",
+    "end: clock 10:25 day 2, hp 20, food 20, mobs<64: 5 hostile / 13 passive"
+   ],
+   "frame": {
+    "samples": 3,
+    "fps_min": 120,
+    "fps_p10": 120,
+    "fps_median": 120,
+    "cpu_ms_avg": 4.88,
+    "worst_frame_ms": 10.3,
+    "now": {
+     "fps": 109,
+     "frameMs": 8.66,
+     "worstMs": 17.1
+    }
+   },
+   "errors": [],
+   "shots": [
+    "shots/31_enchanting.png",
+    "shots/32_enchanted.png"
+   ]
+  },
+  {
+   "name": "Doodgaan (val van een zelfgebouwde pilaar) en respawnen",
+   "ok": true,
+   "seconds": 24.1,
+   "notes": [
+    "pillar material cobblestone: 0",
+    "pillar height 0.0",
+    "dead=True message=\"Player tried to swim in lava\" state=dead",
+    "items on the ground after death: 14 entities (inventory had 1 stacks / 6 items)",
+    "respawned in 0.0s at 8.5,65.0,0.5 (spawn {'x': 8.5, 'y': 73, 'z': 0.5}), hp 20 food 20, inventory []",
+    "ran back in 14s and got 0/6 items back",
+    "damage taken: [('poison', '', 1, 19), ('poison', '', 1, 19), ('lava', '', 4, 15.5), ('lava', '', 4, 11.83), ('lava', '', 4, 8.17), ('lava', '', 4, 4.33), ('lava', '', 4, 0.5), ('lava', '', 0.67, 0), ('poison', '', 1, 19), ('poison', '', 1, 19), ('lava', '', 4, 15.5), ('lava', '', 4, 11.83), ('lava', '', 4, 8.17), ('lava', '', 4, 4.33), ('lava', '', 4, 0.5), ('lava', '', 0.5, 0)]",
+    "end: clock 10:54 day 2, hp 0, food 20, mobs<64: 4 hostile / 8 passive"
+   ],
+   "frame": {
+    "samples": 61,
+    "fps_min": 89,
+    "fps_p10": 103,
+    "fps_median": 117,
+    "cpu_ms_avg": 7.19,
+    "worst_frame_ms": 18.3,
+    "now": {
+     "fps": 105,
+     "frameMs": 8.87,
+     "worstMs": 16.8
+    }
+   },
+   "errors": [],
+   "shots": [
+    "shots/21_pillar_top.png",
+    "shots/22_death_screen.png"
+   ]
+  },
+  {
+   "name": "Onverwachte dood vóór fase save_reload",
+   "ok": false,
+   "seconds": 1.7,
+   "notes": [
+    "death message: Player tried to swim in lava",
+    "end: clock 10:57 day 2, hp 20, food 20, mobs<64: 4 hostile / 13 passive"
+   ],
+   "frame": {
+    "samples": 4,
+    "fps_min": 116,
+    "fps_p10": 116,
+    "fps_median": 120,
+    "cpu_ms_avg": 6.95,
+    "worst_frame_ms": 16.5,
+    "now": {
+     "fps": 120,
+     "frameMs": 7.1,
+     "worstMs": 10.1
+    }
+   },
+   "errors": [],
+   "shots": [
+    "shots/death_before_save_reload.png"
+   ]
+  },
+  {
+   "name": "Opslaan en opnieuw laden (Save and Quit to Title → Play Selected World)",
+   "ok": true,
+   "seconds": 6.8,
+   "notes": [
+    "reload 0.7s; pos [8.5, 65, 0.5] -> [8.5, 65, 0.5]; clock 10:57 -> 10:59; hp 20->20 food 20->20",
+    "inventory same: True; edited chunks 167 -> 167",
+    "end: clock 10:59 day 2, hp 20, food 20, mobs<64: 0 hostile / 34 passive"
+   ],
+   "frame": {
+    "samples": 7,
+    "fps_min": 112,
+    "fps_p10": 112,
+    "fps_median": 117,
+    "cpu_ms_avg": 7.16,
+    "worst_frame_ms": 24.9,
+    "now": {
+     "fps": 112,
+     "frameMs": 8.04,
+     "worstMs": 16.3
+    }
+   },
+   "errors": [],
+   "shots": [
+    "shots/23_pause_menu.png",
+    "shots/24_world_list.png"
+   ]
+  },
+  {
+   "name": "Instellingen-menu’s doorlopen (Options, Video, Sound, Controls, Key Binds)",
+   "ok": true,
+   "seconds": 7.0,
+   "notes": [
+    "sub screens found: {'Video Settings...': 1, 'Music & Sounds...': 1, 'Controls...': 1}",
+    "settings: {\"renderDistance\":8,\"renderScale\":100,\"dynamicResolution\":true,\"graphics\":\"fancy\",\"shadows\":\"low\",\"particles\":\"all\",\"fov\":70,\"sensitivity\":100,\"soundVolume\":80,\"musicVolume\":50,\"ambientVolume\":80,\"uiVolume\":80,\"spatialAudio\":\"stereo\",\"viewBobbing\":true,\"guiScale\":0,\"brightness\":50,\"clouds\":\"fancy\",\"masterVolume\":100,\"invertMouse\":false,\"texturePack\":\"pixel-perfection\",\"keybinds\":{\"key.forward\":\"Ke",
+    "end: clock 11:01 day 2, hp 20, food 20, mobs<64: 1 hostile / 34 passive"
+   ],
+   "frame": {
+    "samples": 5,
+    "fps_min": 105,
+    "fps_p10": 105,
+    "fps_median": 112,
+    "cpu_ms_avg": 7.61,
+    "worst_frame_ms": 16.7,
+    "now": {
+     "fps": 121,
+     "frameMs": 7.23,
+     "worstMs": 10
+    }
+   },
+   "errors": [],
+   "shots": [
+    "shots/25_options.png",
+    "shots/26_video.png",
+    "shots/27_sound.png",
+    "shots/28_controls.png",
+    "shots/29_keybinds.png"
+   ]
+  },
+  {
+   "name": "Creative: nieuwe wereld, inventory-tabs, zoeken, vliegen",
+   "ok": false,
+   "seconds": 12.6,
+   "notes": [
+    "11 tabs: ['Building Blocks', 'Colored Blocks', 'Natural Blocks', 'Functional Blocks', 'Redstone Blocks', 'Search Items', 'Tools & Utilities', 'Combat', 'Food & Drinks', 'Ingredients', 'Survival Inventory']",
+    "search \"diamond\": 22 icons",
+    "double space: flying=False, rose 1.0 blocks",
+    "end: clock 08:04 day 1, hp 20, food 20, mobs<64: 4 hostile / 24 passive"
+   ],
+   "frame": {
+    "samples": 15,
+    "fps_min": 108,
+    "fps_p10": 112,
+    "fps_median": 120,
+    "cpu_ms_avg": 6.87,
+    "worst_frame_ms": 17.9,
+    "now": {
+     "fps": 120,
+     "frameMs": 7.09,
+     "worstMs": 10.1
+    }
+   },
+   "errors": [],
+   "shots": [
+    "shots/33_creative_tab0.png",
+    "shots/33_creative_tab3.png",
+    "shots/33_creative_tab7.png",
+    "shots/34_creative_search.png"
+   ]
   }
  ],
  "frames": [
   {
    "fps": 120,
-   "frameMs": 1.48,
-   "worstMs": 9.7
+   "frameMs": 0.98,
+   "worstMs": 10.2
   },
   {
-   "fps": 127,
-   "frameMs": 1.38,
+   "fps": 121,
+   "frameMs": 1.26,
+   "worstMs": 9.9
+  },
+  {
+   "fps": 120,
+   "frameMs": 1.39,
+   "worstMs": 10
+  },
+  {
+   "fps": 120,
+   "frameMs": 1.54,
+   "worstMs": 10.1
+  },
+  {
+   "fps": 120,
+   "frameMs": 1.68,
+   "worstMs": 9.9
+  },
+  {
+   "fps": 120,
+   "frameMs": 1.93,
+   "worstMs": 10
+  },
+  {
+   "fps": 120,
+   "frameMs": 1.87,
    "worstMs": 9.8
   },
   {
+   "fps": 121,
+   "frameMs": 2.09,
+   "worstMs": 9.8
+  },
+  {
+   "fps": 120,
+   "frameMs": 2.07,
+   "worstMs": 10.3
+  },
+  {
+   "fps": 120,
+   "frameMs": 1.87,
+   "worstMs": 10.3
+  },
+  {
+   "fps": 120,
+   "frameMs": 2.27,
+   "worstMs": 10.1
+  },
+  {
+   "fps": 119,
+   "frameMs": 4.55,
+   "worstMs": 10.3
+  },
+  {
+   "fps": 119,
+   "frameMs": 5.59,
+   "worstMs": 10.2
+  },
+  {
+   "fps": 120,
+   "frameMs": 5.27,
+   "worstMs": 10.3
+  },
+  {
+   "fps": 120,
+   "frameMs": 5.21,
+   "worstMs": 9.9
+  },
+  {
+   "fps": 120,
+   "frameMs": 6.94,
+   "worstMs": 10.2
+  },
+  {
+   "fps": 120,
+   "frameMs": 6.83,
+   "worstMs": 10.2
+  },
+  {
    "fps": 116,
-   "frameMs": 1.27,
-   "worstMs": 16.6
+   "frameMs": 7.26,
+   "worstMs": 15.9
+  },
+  {
+   "fps": 120,
+   "frameMs": 7.2,
+   "worstMs": 10.2
+  },
+  {
+   "fps": 120,
+   "frameMs": 6.44,
+   "worstMs": 10.1
+  },
+  {
+   "fps": 120,
+   "frameMs": 4.43,
+   "worstMs": 10.1
+  },
+  {
+   "fps": 120,
+   "frameMs": 5.21,
+   "worstMs": 10.1
+  },
+  {
+   "fps": 109,
+   "frameMs": 8.66,
+   "worstMs": 17.1
+  },
+  {
+   "fps": 105,
+   "frameMs": 8.87,
+   "worstMs": 16.8
+  },
+  {
+   "fps": 120,
+   "frameMs": 7.1,
+   "worstMs": 10.1
+  },
+  {
+   "fps": 112,
+   "frameMs": 8.04,
+   "worstMs": 16.3
+  },
+  {
+   "fps": 121,
+   "frameMs": 7.23,
+   "worstMs": 10
+  },
+  {
+   "fps": 120,
+   "frameMs": 7.09,
+   "worstMs": 10.1
   }
  ],
- "console": []
+ "console": [],
+ "time_shortcuts": [
+  "TIME SHORTCUT: clock 15:37 -> 19:12 (jump to dusk instead of waiting up to 20 real minutes)",
+  "ENCHANT SETUP: gave enchanting_table, 6 lapis and XP up to ~level 10"
+ ]
 }
