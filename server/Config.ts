@@ -19,6 +19,8 @@ export interface Config {
   maxRooms: number;
   roomMaxPlayers: number;
   roomExpireDays: number;
+  /** Minutes an empty game stays in memory before it is saved and unloaded (default 5). */
+  roomIdleUnloadMin: number;
   roomCreateLimit: number;
   /** Bearer token for /api/admin/* and /admin; unset = admin API disabled. */
   adminToken?: string;
@@ -67,6 +69,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     maxRooms: num(env.MAX_ROOMS, 200),
     roomMaxPlayers: num(env.ROOM_MAX_PLAYERS, 8),
     roomExpireDays: num(env.ROOM_EXPIRE_DAYS, 60),
+    roomIdleUnloadMin: Math.max(0.1, num(env.ROOM_IDLE_UNLOAD_MIN, 5)),
     roomCreateLimit: num(env.ROOM_CREATE_LIMIT, 6),
     adminToken: env.ADMIN_TOKEN || undefined,
     metricsToken: env.METRICS_TOKEN || undefined,

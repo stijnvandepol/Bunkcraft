@@ -86,7 +86,7 @@ async function startServer(dataDir: string, label: string): Promise<{ proc: Chil
     env: {
       ...process.env,
       PORT: String(PORT), DATA_DIR: join(dataDir, 'data'), STATIC_DIR: join(dataDir, 'nostatic'),
-      ROOM_CREATE_LIMIT: '10000', MAX_ROOMS: '10000', MAX_CONNECTIONS: '20000', MAX_CONN_PER_IP: '50',
+      ROOM_CREATE_LIMIT: '10000', ROOM_MAX_PLAYERS: '16', MAX_ROOMS: '10000', MAX_CONNECTIONS: '20000', MAX_CONN_PER_IP: '50',
       // Every bot sends its own X-Forwarded-For, so the per-address limits behave like with real households.
       TRUST_PROXY: '1', MAIN_WORLD: 'off', BACKUP_KEEP: '0', LOG_LEVEL: 'warn', LOG_FORMAT: 'json',
     },
@@ -247,6 +247,7 @@ async function runStep(kind: StepKind, roomCount: number, BOTS: number): Promise
         if (j.level === 'warn' || j.level === 'error') result.serverWarnings[`${j.level}: ${j.msg}`] = (result.serverWarnings[`${j.level}: ${j.msg}`] ?? 0) + 1;
       } catch { /* not JSON */ }
     }
+    if (args.has('log-dir')) { mkdirSync(args.get('log-dir')!, { recursive: true }); writeFileSync(join(args.get('log-dir')!, `${label}.log`), readFileSync(logFile)); }
     if (PROFILE) result.profile = join(PROF_DIR, `${label}.cpuprofile`);
     print(result);
     return result;

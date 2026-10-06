@@ -97,7 +97,7 @@ export async function startServer(config: Config): Promise<RunningServer> {
       maxRooms: config.maxRooms,
       maxPlayers: config.roomMaxPlayers,
       motd: config.motd === 'Welcome to BunkCraft!' ? 'Welcome to BunkCraft! Share the game code with your friends.' : config.motd,
-      idleUnloadMs: 5 * 60_000,
+      idleUnloadMs: config.roomIdleUnloadMin * 60_000,
       expireDays: config.roomExpireDays,
       adminToken: config.adminToken,
       failLimiter,

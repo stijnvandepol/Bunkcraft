@@ -18,6 +18,7 @@ import { type ClientMessage, type MobEntry, PROTOCOL_VERSION, type ServerMessage
 import { blockDrop, getItemDef } from '../../src/items/ItemRegistry';
 import { BLOCK, getBlockDef } from '../../src/world/BlockRegistry';
 import { traceBlocks } from '../../server/Combat';
+import { type AABB, boxIntersectsSolid } from '../../src/player/Collision';
 import { ServerWorld } from '../../server/ServerWorld';
 import type { Stats } from './stats';
 
@@ -216,6 +217,7 @@ export abstract class Bot {
       case 'teleport':
         this.stats.inc('teleport');
         this.x = m.x; this.y = m.y; this.z = m.z; this.vy = 0;
+        this.target = null;
         return;
       case 'hurt': this.stats.inc('hurt'); return;
       default: this.onOther(m);
@@ -245,7 +247,7 @@ export abstract class Bot {
         const nx = this.x + (dx / d) * step, nz = this.z + (dz / d) * step;
         const next = this.room.ground(nx, nz);
         const feet = next + 1;
-        if (next < 0 || feet > this.y + 1.25) {
+        if (next < 0 || feet > this.y + 1.25 || !this.free(nx, Math.max(this.y, feet), nz)) {
           if (++this.stuck > 10) { this.stuck = 0; result = 'blocked'; }
         } else if (feet > this.y + 0.01) {
           // A one-block step: jump and move on once we are high enough.
@@ -263,6 +265,11 @@ export abstract class Bot {
     this.y += this.vy * dt;
     if (this.y <= floor) { this.y = floor; this.vy = 0; this.onGround = true; } else this.onGround = false;
     return result;
+  }
+
+  /** Is the player box free of solid blocks here? (Arena: the server's movement check kicks for walking into walls.) */
+  protected free(_x: number, _y: number, _z: number): boolean {
+    return true;
   }
 
   stop(): void {
@@ -482,6 +489,17 @@ export class ArenaBot extends Bot {
   private firePending = 0;
   private aimAt: number | null = null;
   private ffa = false;
+  private readonly box: AABB = { minX: 0, minY: 0, minZ: 0, maxX: 0, maxY: 0, maxZ: 0 };
+
+  protected free(x: number, y: number, z: number): boolean {
+    const arena = this.room.arena;
+    if (!arena) return true;
+    const b = this.box, m = 0.05;
+    b.minX = x - 0.3 - m; b.maxX = x + 0.3 + m; b.minZ = z - 0.3 - m; b.maxZ = z + 0.3 + m;
+    b.minY = y + 0.01; b.maxY = y + 1.8;
+    const { map, variant } = arena;
+    return !boxIntersectsSolid(b, (bx, by, bz) => map.blockAt(variant, bx, by, bz));
+  }
 
   protected welcome(m: Extract<ServerMessage, { t: 'welcome' }>): void {
     this.ffa = m.match?.type === 'ffa';
@@ -548,7 +566,9 @@ export class ArenaBot extends Bot {
     this.nextFire = now + this.fireEvery + rand(0, 30);
     this.stats.inc('fires');
     if (!this.firePending) this.firePending = now;
-    this.send({ t: 'fire', slot: 0, ox: this.x, oy: eye, oz: this.z, dx: dx + rand(-err, err) * bestD, dy: dy + rand(-err, err) * bestD, dz: dz + rand(-err, err) * bestD, ads: Math.random() < 0.3 });
+    // The server only accepts a unit aim vector.
+    const ax = dx + rand(-err, err) * bestD, ay = dy + rand(-err, err) * bestD, az = dz + rand(-err, err) * bestD, al = Math.hypot(ax, ay, az);
+    this.send({ t: 'fire', slot: 0, ox: this.x, oy: eye, oz: this.z, dx: ax / al, dy: ay / al, dz: az / al, ads: Math.random() < 0.3 });
   }
 
   protected onSnap(players: SnapshotEntry[]): void {
