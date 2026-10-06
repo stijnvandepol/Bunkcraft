@@ -306,11 +306,11 @@ compose() { (cd "$DIR" && docker compose "$@"); }
 if [ "$START" = 1 ]; then
   if [ "$MODE" = build ]; then
     say "building and starting (the first build takes a few minutes)"
-    run compose up -d --build --remove-orphans
+    run compose up -d --build --remove-orphans || warn "not every container started (see the health check below)"
   else
     say "pulling the images and starting"
     run compose pull --quiet
-    run compose up -d --remove-orphans
+    run compose up -d --remove-orphans || warn "not every container started (see the health check below)"
   fi
   if [ "$DRY" = 0 ]; then
     ok=0

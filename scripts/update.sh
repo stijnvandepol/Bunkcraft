@@ -118,7 +118,7 @@ main() {
 
   # ---- 5./6. recreate and check
   say "restarting on $(short "$new_id") (worlds are saved on shutdown)"
-  docker compose up -d --remove-orphans
+  recreate
   if wait_healthy; then
     say "healthy: $(health)"
     docker image prune -f >/dev/null 2>&1 || true
@@ -137,7 +137,7 @@ main() {
   case "$ref" in *@*) ;; *) docker tag "$old_id" "$ref" ;; esac
   # 'bunkcraft rollback' keeps pointing at the version before this one.
   if [ -n "$prev_before" ]; then docker tag "$prev_before" bunkcraft:previous; fi
-  docker compose up -d --remove-orphans
+  recreate
   if wait_healthy; then
     say "rolled back, healthy again: $(health)"
     echo "The update was undone; the next 'bunkcraft update' tries again. Report the log above." >&2
@@ -175,6 +175,8 @@ running_image_id() {
   local cid; cid="$(docker compose ps -q bunkcraft 2>/dev/null | head -n1)"
   [ -n "$cid" ] && docker inspect --format '{{.Image}}' "$cid" 2>/dev/null || true
 }
+# Caddy waits for a healthy game server, so 'up' itself fails when the new one is unhealthy: wait_healthy decides.
+recreate() { docker compose up -d --remove-orphans || true; }
 health() { docker compose exec -T bunkcraft wget -qO- http://127.0.0.1:3000/health 2>/dev/null; }
 wait_healthy() {
   local deadline=$(( $(date +%s) + ${BUNKCRAFT_HEALTH_TIMEOUT:-120} ))
@@ -198,7 +200,7 @@ manual_rollback() {
   if [ "${dry:-0}" = 1 ]; then echo "  [dry-run] docker tag $(short "$prev") $ref; docker compose up -d; health check"; return 0; fi
   [ -n "$cur" ] && docker tag "$cur" bunkcraft:previous
   docker tag "$prev" "$ref"
-  docker compose up -d --remove-orphans
+  recreate
   wait_healthy || die "not healthy after the rollback: see 'bunkcraft logs' ('bunkcraft rollback' again switches back)."
   say "healthy: $(health)"
   echo "Note: the next 'bunkcraft update' pulls the newest version again; pin one with --tag to stay on it."
