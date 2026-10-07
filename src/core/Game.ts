@@ -623,6 +623,7 @@ export class Game {
     if (s.reducedMotion) this.renderer.uniforms.uSway.value = 0;
     applyAccessibilityDocument(s);
     this.subtitles.setEnabled(s.subtitles);
+    if (this.arcade) this.arcade.hud.damageNumbers = s.damageNumbers;
     const palette = paletteFor(s.colorBlindSafe);
     TEAM_COLORS.red = palette.teamA;
     TEAM_COLORS.blue = palette.teamB;
@@ -1199,6 +1200,7 @@ export class Game {
       send,
       audio: this.audio, player: p, cam: this.cam, remote: this.remote, particles: this.renderer.particles,
       getBlock: this.getBlock,
+      getMeta: this.getMeta,
       getLight: (x, y, z) => this.world ? this.world.getLight(x, y, z) : 0xf0,
       selfId: welcome.id, selfName: name, info,
       feedback: this.feedback,
@@ -1206,6 +1208,7 @@ export class Game {
       onMapChange: () => this.rejoinServer(),
     });
     this.arcade = session;
+    session.hud.damageNumbers = this.settings.values.damageNumbers;
     session.hud.onLoadoutClose = () => void this.resumeGame();
     session.setBindings(this.input);
     this.renderer.scene.add(session.tracers.mesh);
@@ -1248,7 +1251,7 @@ export class Game {
   private onServerMessage(msg: ServerMessage): void {
     const world = this.world;
     switch (msg.t) {
-      case 'snap': this.remote.snapshot(msg.players, this.net?.id ?? -1, performance.now() / 1000); break;
+      case 'snap': this.remote.snapshot(msg.players, this.net?.id ?? -1, performance.now() / 1000, msg.k ?? -1); break;
       case 'ent': this.netEntities?.apply(msg, performance.now() / 1000); break;
       case 'fall': this.netFalling?.apply(msg.f, performance.now() / 1000); break;
       case 'hurt':

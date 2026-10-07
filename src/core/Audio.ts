@@ -8,6 +8,7 @@ import { SOUND_PROFILES, pickVariant, profileFor, type BlockSound, type BlockSou
 import { MAX_HEAR_DISTANCE, distanceCutoff, distanceGain, occlusionCutoff, occlusionGain, panFor } from './audio/spatial';
 import { type NoiseOpts, Synth, type ToneOpts, type UiSoundName } from './audio/synth';
 import { Priority, VoiceLimiter, remoteStepPriority } from './audio/voiceLimiter';
+import { type ImpactMaterial, impactMaterial } from './audio/impacts';
 import {
   type AnnounceKind, FAR_LEVEL, type MechKind, SUPPRESSED_GAIN, type StingerKind, gunEarshot, gunSound, outdoorShare, reloadSteps,
 } from './audio/weaponSounds';
@@ -736,6 +737,8 @@ export class AudioEngine {
 
   private gunRecipe(weapon: string, v: number, own: boolean, suppressed: boolean): void {
     const p = 0.95 + Math.random() * 0.1;
+    // Per-shot variation: ±1 dB, so a spray is not a machine gun of identical samples.
+    v *= 0.89 + Math.random() * 0.22;
     if (weapon === 'knife') {
       this.noiseBurst(2800, 0.6, 0.11, v * 0.35, 'highpass');
       this.noiseBurst(1400, 0.8, 0.12, v * 0.25, 'bandpass', 0.03);
@@ -761,6 +764,8 @@ export class AudioEngine {
       return;
     }
     if (!own) {
+      // Close by, the click of the muzzle blast carries too.
+      if (level > 0.7) this.noiseBurst(5200 * p, 0.35, 0.008, v * 0.4 * g.crack[3], 'highpass', 0, { attack: 0.0005 });
       // Other players' shots: three voices (a firefight of 16 must not eat the voice budget): the crack, a body
       // that rings out into the room's tail (long and dark outdoors, short indoors) and the thump.
       this.noiseBurst(g.crack[0] * p, g.crack[1], g.crack[2], v * g.crack[3]);
@@ -769,7 +774,8 @@ export class AudioEngine {
       this.voice('sine', g.thump[0] * p, g.thump[1], g.thump[2], v * g.thump[3]);
       return;
     }
-    // Transient, body, thump.
+    // Transient: a few milliseconds of broadband click (the punch), then the band-passed crack; body, thump.
+    this.noiseBurst(5200 * p, 0.35, 0.009, v * 0.55 * g.crack[3], 'highpass', 0, { attack: 0.0005 });
     this.noiseBurst(g.crack[0] * p, g.crack[1], g.crack[2], v * g.crack[3]);
     this.noiseBurst(g.body[0] * p, g.body[1], g.body[2], v * g.body[3], 'lowpass');
     this.voice('sine', g.thump[0] * p, g.thump[1], g.thump[2], v * g.thump[3]);
@@ -803,20 +809,22 @@ export class AudioEngine {
       this.noiseBurst(f * 1.6 * p, 2.2, 0.025, vol * 0.8 * v, 'bandpass', delay);
     };
     const slide = (f: number, dur: number, vol: number, delay = 0) => this.noiseBurst(f * p, 1.6, dur, vol * v, 'bandpass', delay, { grains: 3 });
+    // The weight behind a seated magazine or a closed bolt: a short low knock.
+    const knock = (vol: number, delay = 0) => { this.voice('sine', 190 * p, 95, 0.05, vol * v, delay); this.noiseBurst(420 * p, 1.2, 0.03, vol * 0.6 * v, 'lowpass', delay); };
     switch (kind) {
       case 'magout': slide(1500, 0.08, 0.18); click(900, 0.16, 0.05); break;
-      case 'magin': click(700, 0.22); click(1300, 0.2, 0.035); slide(1000, 0.05, 0.12, 0.01); break;
+      case 'magin': click(700, 0.22); knock(0.3, 0.005); click(1300, 0.2, 0.035); slide(1000, 0.05, 0.12, 0.01); break;
       case 'charge': slide(2200, 0.09, 0.16); click(1500, 0.22, 0.1); break;
       case 'boltup': click(1700, 0.16); break;
       case 'boltback': slide(1900, 0.1, 0.18); click(1200, 0.14, 0.09); break;
-      case 'boltfwd': slide(2100, 0.08, 0.16); click(1000, 0.24, 0.075); break;
+      case 'boltfwd': slide(2100, 0.08, 0.16); click(1000, 0.24, 0.075); knock(0.22, 0.078); break;
       case 'shell': click(2400, 0.14); slide(1300, 0.06, 0.1, 0.01); break;
-      case 'pump': slide(1100, 0.1, 0.24); click(800, 0.22, 0.1); slide(1300, 0.08, 0.2, 0.16); click(1000, 0.2, 0.24); break;
+      case 'pump': slide(1100, 0.1, 0.24); click(800, 0.22, 0.1); knock(0.2, 0.1); slide(1300, 0.08, 0.2, 0.16); click(1000, 0.2, 0.24); knock(0.26, 0.24); break;
       case 'cylopen': click(1600, 0.16); slide(2600, 0.12, 0.08, 0.02); break;
-      case 'cylclose': click(1100, 0.24); break;
+      case 'cylclose': click(1100, 0.24); knock(0.25); break;
       case 'eject': for (let i = 0; i < 4; i++) this.voice('triangle', 3800 + i * 300, 3200, 0.05, 0.05 * v, i * 0.03); break;
       case 'coveropen': click(800, 0.18); slide(900, 0.12, 0.12, 0.03); break;
-      case 'coverclose': click(600, 0.28); break;
+      case 'coverclose': click(600, 0.28); knock(0.3); break;
       case 'belt': slide(2600, 0.25, 0.1); break;
       case 'dry': click(1900, 0.22); break;
       case 'adsin': this.noiseBurst(900 * p, 0.8, 0.14, 0.09 * v, 'bandpass', 0, { attack: 0.03 }); click(2600, 0.04, 0.08); break;
@@ -863,23 +871,84 @@ export class AudioEngine {
     });
   }
 
-  /** Hit marker: a dry tick on a hit; a headshot adds a metallic ding (two inharmonic partials). */
+  /**
+   * Hit confirm: a body hit is a dry, punchy "thwack" (tick on top of a short low knock), a headshot a bright
+   * metallic "tink" that rings on (inharmonic partials, like a helmet). The world dips under it for a moment
+   * so it cuts through a firefight.
+   */
   playHitMarker(head: boolean): void {
     this.emit(head ? 'weapon.hitmarker.head' : 'weapon.hitmarker', NaN, NaN, NaN, 0.35);
+    this.duck(head ? 0.35 : 0.22, head ? 0.1 : 0.05);
     this.placed(undefined, 0, Priority.Ui, () => {
-      this.noiseBurst(4200, 3, 0.025, 0.22);
-      this.voice('square', 1900, 1500, 0.025, 0.12, 0, { lp: 5000 });
+      const p = 0.97 + Math.random() * 0.06;
+      this.noiseBurst(4600 * p, 2.5, 0.022, 0.24, 'bandpass', 0, { attack: 0.0008 });
+      this.voice('square', 2100 * p, 1500, 0.022, 0.1, 0, { lp: 6000, attack: 0.001 });
+      this.voice('sine', 240 * p, 120, 0.05, head ? 0.16 : 0.22, 0, { attack: 0.002 });
       if (head) {
-        this.voice('sine', 2637, 2637, 0.4, 0.2, 0.01);
-        this.voice('sine', 3952, 3952, 0.28, 0.1, 0.01);
-        this.voice('sine', 6100, 6100, 0.12, 0.05, 0.01);
+        this.voice('sine', 2637 * p, 2637 * p, 0.42, 0.22, 0.008, { attack: 0.002 });
+        this.voice('sine', 3952 * p, 3952 * p, 0.3, 0.12, 0.008, { attack: 0.002 });
+        this.voice('sine', 6100 * p, 6100 * p, 0.14, 0.06, 0.008, { attack: 0.002 });
+        this.voice('triangle', 1760 * p, 1760 * p, 0.08, 0.08, 0.008, { lp: 0, attack: 0.001 });
       }
     });
   }
 
-  /** Kill confirm: a low thunk under a bright two-note chime. */
+  /**
+   * Dip the world sounds (and the music, less) by `depth` (0..1) right now and come back after `hold` seconds:
+   * hit confirms, kills, damage and low health stay audible in a 16-player firefight.
+   */
+  duck(depth: number, hold: number): void {
+    const ctx = this.ctx;
+    if (!ctx || !this.running) return;
+    const now = ctx.currentTime;
+    for (const [node, d] of [[this.mix.duck, depth], [this.mix.musicDuck, depth * 0.6]] as const) {
+      const g = node.gain;
+      const target = Math.max(0.2, 1 - d);
+      // Never raise an ongoing deeper dip; just extend it.
+      const cur = g.value;
+      g.cancelScheduledValues(now);
+      g.setValueAtTime(cur, now);
+      g.setTargetAtTime(Math.min(cur, target), now, 0.006);
+      g.setTargetAtTime(1, now + hold, 0.09);
+    }
+  }
+
+  /** Low health: a heartbeat (two low thumps) under a slight dip of everything else. */
+  playHeartbeat(strength: number): void {
+    this.emit('player.heartbeat', NaN, NaN, NaN, 0.3 * strength);
+    if (strength <= 0.02) return;
+    this.duck(0.18 * strength, 0.25);
+    this.placed(undefined, 0, Priority.Ui, () => {
+      this.voice('sine', 62, 42, 0.14, 0.42 * strength, 0, { attack: 0.006 });
+      this.noiseBurst(140, 0.7, 0.08, 0.22 * strength, 'lowpass', 0);
+      this.voice('sine', 56, 38, 0.16, 0.32 * strength, 0.2, { attack: 0.008 });
+    });
+  }
+
+  /**
+   * A bullet passing you: the supersonic crack (a sharp snap) and the whizz (a band of noise falling in pitch
+   * as it goes by), from where it passed. `intensity` 0..1 grows the closer it was.
+   */
+  playBulletWhizz(intensity: number, at: Vec3, weapon: string): void {
+    this.emitAt('weapon.whizz', at, 0.3 * intensity);
+    if (intensity <= 0.03) return;
+    const heavy = weapon === 'sniper' || weapon === 'semisniper' || weapon === 'dmr' || weapon === 'lmg';
+    this.placed(at, 30, Priority.Player, () => {
+      const p = 0.9 + Math.random() * 0.2;
+      const v = 0.25 + 0.75 * intensity;
+      this.noiseBurst(3800 * p, 0.6, 0.012, v * (heavy ? 0.55 : 0.4), 'highpass', 0, { attack: 0.0004 });
+      // The whizz: three overlapping bands stepping down (Doppler) and a faint falling whistle.
+      this.noiseBurst(2600 * p, 3.5, 0.07, v * 0.22, 'bandpass', 0.004, { attack: 0.02 });
+      this.noiseBurst(1700 * p, 3.5, 0.08, v * 0.2, 'bandpass', 0.04, { attack: 0.01 });
+      this.noiseBurst(1100 * p, 3, 0.09, v * 0.14, 'bandpass', 0.08);
+      this.voice('sine', 1500 * p, 650 * p, 0.16, v * 0.05, 0.01, { attack: 0.03 });
+    });
+  }
+
+  /** Kill confirm: a low thunk under a bright two-note chime; everything else dips for a beat. */
   playKillDing(head = false): void {
     this.emit('weapon.kill', NaN, NaN, NaN, 0.35);
+    this.duck(0.45, 0.22);
     this.placed(undefined, 0, Priority.Ui, () => {
       this.voice('sine', 160, 70, 0.12, 0.3);
       this.noiseBurst(4200, 3, 0.03, 0.2);
@@ -970,11 +1039,50 @@ export class AudioEngine {
     this.placed(undefined, 0, Priority.Player, () => this.voice('sine', 300, 900, 0.25, 0.18));
   }
 
-  /** Bullet hitting a block somewhere (own or other players' shots). */
-  playBulletImpact(volume: number, at?: Vec3): void {
-    this.emitAt('weapon.impact', at, volume);
+  /**
+   * Bullet hitting a block (own or other players' shots), by material: stone cracks and chips (now and then a
+   * ricochet whine), wood thocks, metal pings, glass shatters, soil thuds, wool puffs, leaves rustle.
+   */
+  playBulletImpact(volume: number, at?: Vec3, blockId = -1): void {
+    const mat = impactMaterial(blockId);
+    this.emitAt(`weapon.impact.${mat}`, at, volume);
     if (volume <= 0.03) return;
-    this.placed(at, 40, Priority.Ambient, () => this.noiseBurst(1600 + Math.random() * 600, 1.2, 0.05, Math.min(1, volume) * 0.3));
+    this.placed(at, 40, mat === 'glass' ? Priority.Normal : Priority.Ambient, () => this.impactRecipe(mat, Math.min(1, volume)));
+  }
+
+  private impactRecipe(mat: ImpactMaterial, v: number): void {
+    const p = 0.9 + Math.random() * 0.2;
+    switch (mat) {
+      case 'wood':
+        this.noiseBurst(950 * p, 2, 0.05, v * 0.3, 'bandpass', 0, { attack: 0.001 });
+        this.voice('sine', 260 * p, 140, 0.06, v * 0.22, 0, { attack: 0.002 });
+        break;
+      case 'metal':
+        this.noiseBurst(3200 * p, 1.5, 0.02, v * 0.25, 'bandpass', 0, { attack: 0.0006 });
+        this.voice('sine', 2350 * p, 2300 * p, 0.32, v * 0.1, 0.002, { attack: 0.001 });
+        this.voice('sine', 3710 * p, 3680 * p, 0.22, v * 0.06, 0.002, { attack: 0.001 });
+        break;
+      case 'glass':
+        this.noiseBurst(5200 * p, 0.8, 0.2, v * 0.3, 'highpass', 0, { grains: 6, attack: 0.001 });
+        for (let i = 0; i < 3; i++) this.voice('sine', (3900 + Math.random() * 2600) * p, 3800 * p, 0.12, v * 0.06, 0.02 + i * 0.035 + Math.random() * 0.02, { attack: 0.001 });
+        break;
+      case 'soil':
+        this.noiseBurst(650 * p, 0.8, 0.08, v * 0.32, 'lowpass', 0, { grains: 3 });
+        this.noiseBurst(2400 * p, 1.2, 0.05, v * 0.08, 'bandpass', 0.01, { grains: 2 });
+        break;
+      case 'wool':
+        this.noiseBurst(480 * p, 0.7, 0.05, v * 0.22, 'lowpass');
+        break;
+      case 'leaves':
+        this.noiseBurst(3200 * p, 1.1, 0.13, v * 0.16, 'bandpass', 0, { grains: 4 });
+        break;
+      default:
+        // Stone: a sharp crack and a spray of chips; one in five ricochets with a short falling whine.
+        this.noiseBurst(2700 * p, 1.2, 0.035, v * 0.34, 'bandpass', 0, { attack: 0.0006 });
+        this.noiseBurst(5200 * p, 0.9, 0.07, v * 0.12, 'highpass', 0.006, { grains: 3 });
+        if (Math.random() < 0.2) this.voice('triangle', 3600 * p, 1900 * p, 0.22, v * 0.05, 0.01, { lp: 0, attack: 0.004 });
+        break;
+    }
   }
 
   // ---------------------------------------------------------------- per frame

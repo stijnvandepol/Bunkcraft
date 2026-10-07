@@ -8,8 +8,8 @@ import { type ClassSpec, DEFAULT_CLASS, validateClass } from '../src/modes/Loado
 import type {
   ClientMessage, MatchInfo, MatchPhase, ModeEventKind, RosterEntry, ServerMessage,
 } from '../src/net/protocol';
-import { type BlockQuery, rayPlayer, spreadDirection, traceBlocks } from './Combat';
-import { PEEK_LIMIT, bodyVisible, rewindWindow } from './anticheat/LagComp';
+import { type BlockQuery, createBulletTrace, rayPlayer, shotSpread, spreadDirection, spreadRandom, traceBullet } from './Combat';
+import { PEEK_LIMIT, bodyVisible, rewindLimit, rewindWindow } from './anticheat/LagComp';
 import { type MatchResult, type ModeLogic } from './modes/ModeLogic';
 import { createLogic } from './modes';
 
@@ -38,6 +38,8 @@ export { DEFAULT_REWIND, MAX_REWIND } from './anticheat/LagComp';
 /** Fire messages may arrive this much (s) earlier than the weapon's cadence allows (network jitter). */
 const FIRE_SLACK = 0.04;
 const HISTORY_SIZE = 24;
+/** Server ticks whose time is remembered, so a shot's render tick (`rk`) maps back to a moment. */
+const TICK_RING = 64;
 /** The mode state (zones, flags) is re-sent at least this often. */
 const MODE_INTERVAL = 0.25;
 
@@ -77,6 +79,8 @@ export interface ShotReport {
   dx: number; dy: number; dz: number;
   /** Players hit by this shot (any pellet), with the distance and whether a pellet hit the head. */
   hits: { victim: number; dist: number; head: boolean }[];
+  /** Seconds the targets were rewound for this shot. */
+  rewind: number;
 }
 
 interface Slot {
@@ -94,7 +98,7 @@ interface Slot {
   burstStart: number;
 }
 
-interface Sample { t: number; x: number; y: number; z: number }
+interface Sample { t: number; x: number; y: number; z: number; yaw: number; pitch: number }
 
 export interface MatchPlayer {
   id: number;
@@ -129,6 +133,9 @@ export interface MatchPlayer {
   history: Sample[];
   historyHead: number;
   historyCount: number;
+  /** Spread seed (dealt at the join, sent with every spawn) and the index of the next shot: the client derives the same spread. */
+  spreadSeed: number;
+  shotN: number;
 }
 
 const dist2 = (ax: number, az: number, bx: number, bz: number) => Math.hypot(ax - bx, az - bz);
@@ -159,8 +166,13 @@ export class Match {
   /** Player who changes team at their next respawn because the other team lost players (0 = nobody). */
   private moveId = 0;
   private readonly tmpDir: [number, number, number] = [0, 0, 0];
-  private readonly tmpPos: [number, number, number] = [0, 0, 0];
-  private readonly targets: { o: MatchPlayer; x: number; y: number; z: number }[] = [];
+  private readonly tmpPos: Sample = { t: 0, x: 0, y: 0, z: 0, yaw: 0, pitch: 0 };
+  private readonly tmpRand: [number, number] = [0, 0];
+  private readonly trace = createBulletTrace();
+  private readonly targets: { o: MatchPlayer; x: number; y: number; z: number; yaw: number; pitch: number }[] = [];
+  /** Server tick counter (snapshots carry it as `k`) and the time of the last TICK_RING ticks. */
+  tickNo = 0;
+  private readonly tickTimes = new Float64Array(TICK_RING);
 
   /** The arena this match is played on. */
   map: ArenaMap;
@@ -216,7 +228,8 @@ export class Match {
       lastDamageAt: -1e9, lastHpSent: PLAYER_MAX_HEALTH, respawnAt: 0, protectedUntil: 0,
       primary: DEFAULT_PRIMARY, secondary: DEFAULT_SECONDARY, optic: 'iron', perk: 'none', next: { ...DEFAULT_CLASS }, spawnedAt: now, firedThisLife: false,
       slots: [newSlot(DEFAULT_PRIMARY, 'none'), newSlot(DEFAULT_SECONDARY, 'none'), newSlot('knife', 'none')], slot: 0,
-      switchReadyAt: 0, history: Array.from({ length: HISTORY_SIZE }, () => ({ t: 0, x: 0, y: 0, z: 0 })), historyHead: 0, historyCount: 0,
+      switchReadyAt: 0, history: Array.from({ length: HISTORY_SIZE }, () => ({ t: 0, x: 0, y: 0, z: 0, yaw: 0, pitch: 0 })), historyHead: 0, historyCount: 0,
+      spreadSeed: Math.floor(this.host.random() * 0x100000000) >>> 0, shotN: 0,
     };
     this.players.set(id, p);
     this.resetLife(p, now);
@@ -391,52 +404,61 @@ export class Match {
       } else s.nextFireAt = shotAt + fireInterval(w);
     } else s.nextFireAt = shotAt + fireInterval(w);
     p.firedThisLife = true;
+    // Spread: the next index of this player's seeded sequence (the client predicts the same one and is corrected by `ammo`).
+    const n = p.shotN++;
+    const seq = seqOf(m);
     if (s.cap > 0) {
       s.mag--;
-      this.host.send(id, { t: 'ammo', slot: p.slot, mag: s.mag, reloading: false });
+      this.host.send(id, { t: 'ammo', slot: p.slot, mag: s.mag, reloading: false, sn: p.shotN, ...(seq >= 0 ? { seq } : {}) });
     }
 
     const ex = p.x, ey = p.y + EYE_HEIGHT, ez = p.z;
     const trusted = Math.hypot(m.ox - ex, m.oy - ey, m.oz - ez) <= MAX_ORIGIN_DRIFT;
     const ox = trusted ? m.ox : ex, oy = trusted ? m.oy : ey, oz = trusted ? m.oz : ez;
     const dx = m.dx / len, dy = m.dy / len, dz = m.dz / len;
-    const spread = m.ads && w.slot !== 'melee' ? w.adsSpread : w.spread;
+    const spread = shotSpread(w, m.ads === true, m.mv === true, m.air === true);
 
-    // Lag compensation: targets are tested where this shooter saw them.
-    const rewind = rewindWindow(this.host.ping(id), this.host.interpDelay);
-    const at = now - rewind;
+    // Lag compensation: targets are tested where this shooter saw them. The client says which server tick its
+    // screen showed (`rk`); without it (older clients) the round trip plus the interpolation delay estimates it.
+    const ping = this.host.ping(id);
+    const interp = this.host.interpDelay ?? 0.1;
+    const shown = typeof m.rk === 'number' ? this.tickTime(m.rk, now) : NaN;
+    const at = Number.isFinite(shown) ? Math.min(now, Math.max(now - rewindLimit(ping, interp), shown)) : now - rewindWindow(ping, interp);
+    const rewind = now - at;
     const damaging = this.phase === 'live';
     // Where each target is tested. Peeker's advantage limit: a target that was already behind cover
     // PEEK_LIMIT seconds ago (as seen from this shot's origin) is not rewound further back into the open.
     const targets = this.targets;
     targets.length = 0;
+    const pos = this.tmpPos;
     for (const o of this.players.values()) {
       if (o === p || !o.alive) continue;
       if (this.teams && o.team === p.team) continue; // no friendly fire
-      const t = { o, x: 0, y: 0, z: 0 };
-      this.positionAt(o, at, now, this.tmpPos);
-      t.x = this.tmpPos[0]; t.y = this.tmpPos[1]; t.z = this.tmpPos[2];
+      this.positionAt(o, at, now, pos);
       if (rewind > PEEK_LIMIT) {
-        this.positionAt(o, now - PEEK_LIMIT, now, this.tmpPos);
-        if (!bodyVisible(this.host.blocks, ox, oy, oz, this.tmpPos[0], this.tmpPos[1], this.tmpPos[2])) {
-          t.x = this.tmpPos[0]; t.y = this.tmpPos[1]; t.z = this.tmpPos[2];
-        }
+        const x = pos.x, y = pos.y, z = pos.z, yaw = pos.yaw, pitch = pos.pitch;
+        this.positionAt(o, now - PEEK_LIMIT, now, pos);
+        if (bodyVisible(this.host.blocks, ox, oy, oz, pos.x, pos.y, pos.z)) { pos.x = x; pos.y = y; pos.z = z; pos.yaw = yaw; pos.pitch = pitch; }
       }
-      targets.push(t);
+      targets.push({ o, x: pos.x, y: pos.y, z: pos.z, yaw: pos.yaw, pitch: pos.pitch });
     }
 
     const dealt = new Map<number, { damage: number; head: boolean }>();
     let tracer: [number, number, number] | null = null;
     const dir = this.tmpDir;
+    const rand = this.tmpRand;
+    const trace = this.trace;
     const hitList: ShotReport['hits'] = [];
     for (let k = 0; k < w.pellets; k++) {
-      spreadDirection(dx, dy, dz, spread, this.host.random(), this.host.random(), dir);
-      let tEnd = traceBlocks(this.host.blocks, ox, oy, oz, dir[0], dir[1], dir[2], w.maxRange);
+      spreadRandom(p.spreadSeed, n, k, rand);
+      spreadDirection(dx, dy, dz, spread, rand[0], rand[1], dir);
+      traceBullet(this.host.blocks, ox, oy, oz, dir[0], dir[1], dir[2], w.maxRange, trace);
+      let tEnd = trace.t;
       let victim: MatchPlayer | null = null;
       let hitHead = false;
       for (const t of targets) {
-        const hit = rayPlayer(ox, oy, oz, dir[0], dir[1], dir[2], t.x, t.y, t.z);
-        if (hit && hit.t < tEnd) { tEnd = hit.t; victim = t.o; hitHead = hit.head; }
+        const hit = rayPlayer(ox, oy, oz, dir[0], dir[1], dir[2], t.x, t.y, t.z, t.yaw, t.pitch);
+        if (hit && hit.t < tEnd) { tEnd = hit.t; victim = t.o; hitHead = hit.part === 'head'; }
       }
       if (victim) {
         const prevHit = hitList.find((h) => h.victim === victim!.id);
@@ -444,7 +466,10 @@ export class Match {
       }
       if (!tracer) tracer = [ox + dir[0] * tEnd, oy + dir[1] * tEnd, oz + dir[2] * tEnd];
       if (victim && damaging && now >= victim.protectedUntil) {
-        const dmg = damageAt(w, tEnd, s.rangeMul) * (hitHead ? w.headshot : 1);
+        // See-through blocks (glass, leaves, bars) on the way to the victim cost damage.
+        let keep = 1;
+        for (let i = 0; i < trace.thin; i++) if (trace.thinT[i] < tEnd) keep *= trace.thinMul[i];
+        const dmg = damageAt(w, tEnd, s.rangeMul) * (hitHead ? w.headshot : 1) * keep;
         const prev = dealt.get(victim.id);
         if (prev) { prev.damage += dmg; prev.head ||= hitHead; } else dealt.set(victim.id, { damage: dmg, head: hitHead });
       }
@@ -455,16 +480,31 @@ export class Match {
       if (p.perk === 'suppressor') shot.sup = 1;
       this.host.broadcast(shot);
     }
-    for (const [vid, d] of dealt) this.applyDamage(p, this.players.get(vid)!, Math.max(1, Math.round(d.damage)), w, d.head, now);
-    this.host.onShot?.({ shooter: id, weapon: w.id, ox, oy, oz, dx, dy, dz, hits: hitList });
+    for (const [vid, d] of dealt) this.applyDamage(p, this.players.get(vid)!, Math.max(1, Math.round(d.damage)), w, d.head, now, seq);
+    this.host.onShot?.({ shooter: id, weapon: w.id, ox, oy, oz, dx, dy, dz, hits: hitList, rewind });
     return true;
   }
 
-  private applyDamage(killer: MatchPlayer, victim: MatchPlayer, amount: number, w: WeaponDef, head: boolean, now: number): void {
+  /** The server time of a (fractional) tick number from a client's `rk`; NaN when it is not a recent tick. */
+  tickTime(rk: number, now: number): number {
+    if (!Number.isFinite(rk) || this.tickNo === 0) return NaN;
+    const k0 = Math.floor(rk), f = rk - k0;
+    if (k0 > this.tickNo || k0 <= this.tickNo - TICK_RING + 1 || k0 < 1) return NaN;
+    const t0 = this.tickTimes[k0 % TICK_RING];
+    if (k0 === this.tickNo) {
+      // Past the newest tick (the client extrapolates a late packet for a moment): one tick interval further.
+      const prev = k0 > 1 ? this.tickTimes[(k0 - 1) % TICK_RING] : t0;
+      return Math.min(now, t0 + f * Math.max(0, t0 - prev));
+    }
+    const t1 = this.tickTimes[(k0 + 1) % TICK_RING];
+    return t0 + (t1 - t0) * f;
+  }
+
+  private applyDamage(killer: MatchPlayer, victim: MatchPlayer, amount: number, w: WeaponDef, head: boolean, now: number, seq = -1): void {
     victim.health = Math.max(0, victim.health - amount);
     victim.lastDamageAt = now;
     const killed = victim.health <= 0;
-    this.host.send(killer.id, { t: 'hit', victim: victim.id, damage: amount, head, killed });
+    this.host.send(killer.id, { t: 'hit', victim: victim.id, damage: amount, head, killed, ...(seq >= 0 ? { seq } : {}) });
     const hx = killer.x - victim.x, hz = killer.z - victim.z, hl = Math.hypot(hx, hz) || 1;
     this.host.send(victim.id, { t: 'damaged', from: killer.id, damage: amount, dx: r2(hx / hl), dz: r2(hz / hl) });
     if (!killed) {
@@ -492,27 +532,32 @@ export class Match {
 
   // ---------------------------------------------------------------- lag compensation
 
-  /** Where a player was at time `t` (seconds): interpolated between recorded ticks. */
-  private positionAt(p: MatchPlayer, t: number, now: number, out: [number, number, number]): void {
+  /** Where a player was at time `t` (seconds), and where they looked: interpolated between recorded ticks. */
+  private positionAt(p: MatchPlayer, t: number, now: number, out: Sample): void {
     // Newest sample is the live position at `now`.
-    let nx = p.x, ny = p.y, nz = p.z, nt = now;
+    let nx = p.x, ny = p.y, nz = p.z, nyaw = p.yaw, npitch = p.pitch, nt = now;
     for (let i = 0; i < p.historyCount; i++) {
       const s = p.history[(p.historyHead - 1 - i + HISTORY_SIZE * 2) % HISTORY_SIZE];
       if (s.t <= t) {
         const span = nt - s.t;
         const f = span > 1e-6 ? (t - s.t) / span : 0;
-        out[0] = s.x + (nx - s.x) * f; out[1] = s.y + (ny - s.y) * f; out[2] = s.z + (nz - s.z) * f;
+        out.x = s.x + (nx - s.x) * f; out.y = s.y + (ny - s.y) * f; out.z = s.z + (nz - s.z) * f;
+        // Shortest way round, like the client's interpolation.
+        let dyaw = nyaw - s.yaw;
+        dyaw = Math.atan2(Math.sin(dyaw), Math.cos(dyaw));
+        out.yaw = s.yaw + dyaw * f;
+        out.pitch = s.pitch + (npitch - s.pitch) * f;
         return;
       }
-      nx = s.x; ny = s.y; nz = s.z; nt = s.t;
+      nx = s.x; ny = s.y; nz = s.z; nyaw = s.yaw; npitch = s.pitch; nt = s.t;
     }
     // Older than anything recorded: the oldest known position.
-    out[0] = nx; out[1] = ny; out[2] = nz;
+    out.x = nx; out.y = ny; out.z = nz; out.yaw = nyaw; out.pitch = npitch;
   }
 
   private record(p: MatchPlayer, now: number): void {
     const s = p.history[p.historyHead];
-    s.t = now; s.x = p.x; s.y = p.y; s.z = p.z;
+    s.t = now; s.x = p.x; s.y = p.y; s.z = p.z; s.yaw = p.yaw; s.pitch = p.pitch;
     p.historyHead = (p.historyHead + 1) % HISTORY_SIZE;
     if (p.historyCount < HISTORY_SIZE) p.historyCount++;
   }
@@ -523,6 +568,8 @@ export class Match {
     const now = this.host.now();
     const dt = Math.min(0.25, Math.max(0, now - this.lastTick));
     this.lastTick = now;
+    this.tickNo++;
+    this.tickTimes[this.tickNo % TICK_RING] = now;
     if (this.players.size === 0) return;
     for (const p of this.players.values()) if (p.alive) this.record(p, now);
 
@@ -764,8 +811,9 @@ export class Match {
     this.host.moveTo(p.id, p.x, p.y, p.z);
     this.host.send(p.id, {
       t: 'spawn', x: p.x, y: p.y, z: p.z, yaw: p.yaw, team: p.team, primary: p.primary, secondary: p.secondary, optic: p.optic, perk: p.perk, health: p.health,
+      ss: p.spreadSeed,
     });
-    for (let i = 0; i < 3; i++) this.host.send(p.id, { t: 'ammo', slot: i as 0 | 1 | 2, mag: p.slots[i].mag, reloading: false });
+    for (let i = 0; i < 3; i++) this.host.send(p.id, { t: 'ammo', slot: i as 0 | 1 | 2, mag: p.slots[i].mag, reloading: false, sn: p.shotN });
   }
 
   /**
@@ -885,3 +933,8 @@ function isSlot(v: unknown): v is 0 | 1 | 2 {
 }
 
 const r2 = (v: number) => Math.round(v * 100) / 100;
+
+/** The client's shot counter from a `fire` message, −1 when absent. */
+function seqOf(m: Extract<ClientMessage, { t: 'fire' }>): number {
+  return typeof m.seq === 'number' && Number.isInteger(m.seq) && m.seq >= 0 ? m.seq : -1;
+}

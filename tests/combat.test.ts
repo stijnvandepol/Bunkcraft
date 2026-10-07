@@ -116,8 +116,8 @@ describe('traceBlocks (voxel ray march)', () => {
     expect(hit).toBeCloseTo(4.5, 6);
   });
 
-  it('glass stops bullets, plants and water let them through', () => {
-    expect(blocksBullet(BLOCK.GLASS)).toBe(true);
+  it('full blocks stop bullets; glass, plants and water let them through', () => {
+    expect(blocksBullet(BLOCK.GLASS)).toBe(false);
     expect(blocksBullet(BLOCK.STONE)).toBe(true);
     expect(blocksBullet(BLOCK.AIR)).toBe(false);
     expect(blocksBullet(BLOCK.WATER)).toBe(false);
@@ -154,15 +154,24 @@ describe('rayBox and rayPlayer', () => {
     }), { numRuns: 1000 });
   });
 
-  it('rayPlayer reports headshots only in the top 0.4 of the hitbox', () => {
+  it('rayPlayer follows the drawn model: head from 1.35 to 1.8, torso below, legs, nothing above or below', () => {
+    // A target facing the shooter (yaw 90°: looking along −x, towards it), shot along +x.
     const feet = { x: 10, y: 64, z: 10 };
-    const at = (h: number) => rayPlayer(0, feet.y + h, 10, 1, 0, 0, feet.x, feet.y, feet.z);
-    expect(at(0.5)).toMatchObject({ head: false });
-    expect(at(HITBOX.height - HITBOX.head - 0.01)).toMatchObject({ head: false });
-    expect(at(HITBOX.height - 0.05)).toMatchObject({ head: true });
-    expect(at(HITBOX.height + 0.05)).toBeNull();
+    const at = (h: number, z = 10) => rayPlayer(0, feet.y + h, z, 1, 0, 0, feet.x, feet.y, feet.z, Math.PI / 2, 0);
+    expect(at(0.3)).toMatchObject({ part: 'legs' });
+    expect(at(1.0)).toMatchObject({ part: 'body' });
+    expect(at(1.3)).toMatchObject({ part: 'body' });
+    expect(at(1.45)).toMatchObject({ part: 'head' });
+    expect(at(1.78)).toMatchObject({ part: 'head' });
+    expect(at(HITBOX.height + 0.06)).toBeNull();
     expect(at(-0.1)).toBeNull();
-    expect(at(0.5)!.t).toBeCloseTo(10 - HITBOX.width / 2, 9);
+    // The raised arms reach in front of the chest: the torso face is further back than the hands.
+    expect(at(0.9)!.t).toBeCloseTo(10 - 2 * 0.9 / 16 - 0.04, 6);
+    expect(Math.min(at(1.2, 10 + 0.33)!.t, at(1.2, 10 - 0.33)!.t)).toBeLessThan(10 - 0.3);
+    // The raised arms reach out to 0.45 sideways at shoulder height; 0.55 is past them.
+    expect(at(1.24, 10 + 0.4) ?? at(1.24, 10 - 0.4)).not.toBeNull();
+    expect(at(1.24, 10 + 0.55)).toBeNull();
+    expect(at(1.0, 10 + 0.4)).toBeNull();
   });
 });
 

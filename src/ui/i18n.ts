@@ -315,6 +315,7 @@ const EN = {
   'video.maxFps.unlimited': 'Unlimited',
   'video.entityDistance': 'Entity Distance: {0}%',
   'video.attackIndicator': 'Attack Indicator',
+  'video.damageNumbers': 'Damage Numbers',
   'video.attackIndicator.crosshair': 'Crosshair',
   'video.attackIndicator.hotbar': 'Hotbar',
 
@@ -772,6 +773,7 @@ const NL: Record<I18nKey, string> = {
   'video.maxFps.unlimited': 'Onbeperkt',
   'video.entityDistance': 'Entiteitsafstand: {0}%',
   'video.attackIndicator': 'Aanvalsindicator',
+  'video.damageNumbers': 'Schadegetallen',
   'video.attackIndicator.crosshair': 'Dradenkruis',
   'video.attackIndicator.hotbar': 'Hotbar',
 

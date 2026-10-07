@@ -339,17 +339,45 @@ describe('hitscan', () => {
     expect(s3.host.of('shot')).toHaveLength(1);
   });
 
-  it('a wall (or glass) stops the bullet, plants do not', () => {
-    for (const [id, blocked] of [[BLOCK.STONE_BRICKS, true], [BLOCK.GLASS, true], [BLOCK.TALL_GRASS, false]] as const) {
+  it('a wall stops the bullet; glass, leaves, bars and plants do not', () => {
+    for (const [id, blocked] of [[BLOCK.STONE_BRICKS, true], [BLOCK.GLASS, false], [BLOCK.STAINED_GLASS, false], [BLOCK.GLASS_PANE, false],
+      [BLOCK.OAK_LEAVES, false], [BLOCK.IRON_BARS, false], [BLOCK.TALL_GRASS, false]] as const) {
       const { host, match } = liveDuel();
       for (const y of [65, 66, 67]) host.blockMap.set(`0,${y},5`, id);
       match.fire(1, aim(match.players.get(1)!, body(10.5)));
-      expect(host.of('hit', 1).length).toBe(blocked ? 0 : 1);
+      expect(host.of('hit', 1).length, `block ${id}`).toBe(blocked ? 0 : 1);
       if (blocked) {
         const shot = host.of('shot')[0];
         expect(shot.ez).toBeCloseTo(5, 1);
       }
     }
+  });
+
+  it('a shot through a window costs a fifth of the damage per pane, and a wall of glass still stops it', () => {
+    const open = liveDuel();
+    open.match.fire(1, aim(open.match.players.get(1)!, body(10.5)));
+    const full = open.host.of('hit', 1)[0].damage;
+    const one = liveDuel();
+    for (const y of [65, 66, 67]) one.host.blockMap.set(`0,${y},5`, BLOCK.GLASS);
+    one.match.fire(1, aim(one.match.players.get(1)!, body(10.5)));
+    expect(one.host.of('hit', 1)[0].damage).toBe(Math.round(full * 0.8));
+    const thick = liveDuel();
+    for (let z = 3; z <= 7; z++) for (const y of [65, 66, 67]) thick.host.blockMap.set(`0,${y},${z}`, BLOCK.GLASS);
+    thick.match.fire(1, aim(thick.match.players.get(1)!, body(10.5)));
+    expect(thick.host.of('hit', 1)).toHaveLength(0);
+  });
+
+  it('slabs stop bullets only where the slab is', () => {
+    // A bottom slab (state 0) at chest height of nobody: a shot at the head passes over it.
+    const { host, match } = liveDuel();
+    host.blockMap.set('0,66,5', BLOCK.STONE_SLAB);
+    match.fire(1, aim(match.players.get(1)!, { x: 0.5, y: 66.62, z: 10.5 }));
+    expect(host.of('hit', 1)).toHaveLength(1);
+    const low = liveDuel();
+    low.host.blockMap.set('0,65,5', BLOCK.STONE_SLAB);
+    // Aimed into the lower half of that cell: the slab is in the way.
+    low.match.fire(1, aim(low.match.players.get(1)!, { x: 0.5, y: 65.25, z: 5.5 }));
+    expect(low.host.of('hit', 1)).toHaveLength(0);
   });
 
   it('friendly fire is off in tdm but on in free for all; bullets pass teammates', () => {

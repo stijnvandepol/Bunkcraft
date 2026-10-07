@@ -311,7 +311,8 @@ function playerType(kind: MobKind, shirt: string[], band?: string[]): MobType {
   } }];
   if (band) headBoxes.push({ from: [-4.5, 28, -4.5], to: [4.5, 30.5, 4.5], colors: band });
   return {
-    kind, name: 'Player', health: 20, width: 0.6, height: 1.8, walkSpeed: 0, runSpeed: 0, hostile: false, attack: 0,
+    // Drawn at 0.9: the 32 px model is then exactly the 1.8 block player (Hitscan.PLAYER_MODEL_SCALE, the hitboxes follow it).
+    kind, name: 'Player', health: 20, width: 0.6, height: 1.8, scale: 0.9, walkSpeed: 0, runSpeed: 0, hostile: false, attack: 0,
     parts: [
       { anim: 'head', pivot: [0, 24, 0], boxes: headBoxes },
       { anim: 'none', pivot: [0, 0, 0], boxes: [{ from: [-4, 12, -2], to: [4, 24, 2], colors: shirt }] },

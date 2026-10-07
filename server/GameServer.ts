@@ -179,6 +179,8 @@ interface Session {
   bin: boolean;
   /** Arcade: receives snapshots in the quantised binary format (binary version 2). */
   binq: boolean;
+  /** Arcade: the quantised snapshot with the server tick (binary version 3). */
+  bink: boolean;
   guard: InventoryGuard;
   /** Arcade: fire, reload, weapon and loadout requests. */
   fires: Bucket;
@@ -792,7 +794,8 @@ export class GameServer {
     const session: Session = {
       id: this.nextId++, name, ws, ip, op, owner: who.owner, verified: who.verified, keyHash,
       bin: hello.bin === true && this.opts.binary !== false,
-      binq: hello.bin === true && this.opts.binary !== false && !!this.match && Number(hello.binv) >= BINARY_VERSION,
+      binq: hello.bin === true && this.opts.binary !== false && !!this.match && Number(hello.binv) >= 2,
+      bink: hello.bin === true && this.opts.binary !== false && !!this.match && Number(hello.binv) >= BINARY_VERSION,
       guard: new InventoryGuard(initial.error ? [] : initial.slots),
       x: start.x, y: start.y, z: start.z, yaw: 0, pitch: 0, flags: 0, held: 0,
       hasPos: false, lastPosTime: Date.now(),
@@ -821,7 +824,7 @@ export class GameServer {
       motd: this.opts.motd,
       ...(op ? { op: true } : {}),
       ...(session.bin ? { binary: true } : {}),
-      ...(session.binq ? { binaryVersion: BINARY_VERSION } : {}),
+      ...(session.binq ? { binaryVersion: session.bink ? BINARY_VERSION : 2 } : {}),
       ...(this.match ? { tickHz: this.tickHz } : {}),
       ...(this.survival ? this.survival.welcome() : {}),
       ...(this.containers ? { containers: true } : {}),
@@ -1405,7 +1408,7 @@ export class GameServer {
         if (this.match || !s.trail.sample(at, pose)) { pose.x = s.x; pose.y = s.y; pose.z = s.z; pose.yaw = s.yaw; pose.pitch = s.pitch; }
         players.push([s.id, round(pose.x), round(pose.y), round(pose.z), round(pose.yaw), round(pose.pitch), s.flags, s.held]);
       }
-      if (players.length > 0) this.broadcast({ t: 'snap', players });
+      if (players.length > 0) this.broadcast(this.match ? { t: 'snap', players, k: this.match.tickNo } : { t: 'snap', players });
     }
     if (this.tickCount % 100 === 0 && !this.match) this.broadcast({ t: 'time', time: this.world.time, day: this.world.day ?? 0 });
   }
@@ -1441,7 +1444,7 @@ export class GameServer {
           players.push([s.id, round(a.x), round(a.y), round(a.z), round(s.yaw), round(s.pitch), (s.flags & ~SNAP_FLAG_STALE) | SNAP_FLAG_STALE, s.held]);
         }
       }
-      if (players.length > 0) this.send(r, { t: 'snap', players });
+      if (players.length > 0) this.send(r, { t: 'snap', players, k: match.tickNo });
     }
   }
 
@@ -1479,7 +1482,7 @@ export class GameServer {
     // Using an item on a mob can hand one back (milking a cow gives a milk bucket).
     if (msg.t === 'mobused' && msg.give) s.guard.creditPickup(msg.give, 1);
     if (s.bin) {
-      const frame = s.binq && msg.t === 'snap' ? encodeSnapQ(msg.players, 0, ARENA_FLOOR_Y, 0) : encodeBinary(msg);
+      const frame = s.binq && msg.t === 'snap' ? encodeSnapQ(msg.players, 0, ARENA_FLOOR_Y, 0, s.bink ? msg.k ?? -1 : -1) : encodeBinary(msg);
       if (frame) {
         s.ws.send(frame);
         metrics.sent(frame.byteLength);
@@ -1496,12 +1499,15 @@ export class GameServer {
     let data: string | undefined;
     let frame: ArrayBuffer | null | undefined;
     let frameQ: ArrayBuffer | undefined;
+    let frameQK: ArrayBuffer | undefined;
     for (const s of this.sessions.values()) {
       if (s.id === except || s.ws.readyState !== s.ws.OPEN || this.overloaded(s)) continue;
       if (s.binq && msg.t === 'snap') {
-        frameQ ??= encodeSnapQ(msg.players, 0, ARENA_FLOOR_Y, 0);
-        s.ws.send(frameQ);
-        metrics.sent(frameQ.byteLength);
+        const f = s.bink && msg.k !== undefined
+          ? (frameQK ??= encodeSnapQ(msg.players, 0, ARENA_FLOOR_Y, 0, msg.k))
+          : (frameQ ??= encodeSnapQ(msg.players, 0, ARENA_FLOOR_Y, 0));
+        s.ws.send(f);
+        metrics.sent(f.byteLength);
         continue;
       }
       if (s.bin && (msg.t === 'snap' || msg.t === 'ent')) {

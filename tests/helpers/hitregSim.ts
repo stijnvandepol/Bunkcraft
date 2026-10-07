@@ -14,6 +14,7 @@ import { ARCADE_SPEED_MULT, arcadeInterpDelay } from '../../src/modes/ArcadeLogi
 import { PHYSICS } from '../../src/player/Physics';
 import { BLOCK } from '../../src/world/BlockRegistry';
 import { Match, type MatchHost, SPAWN_PROTECTION, WARMUP_SECONDS, type ShotReport } from '../../server/Match';
+import { rayBox } from '../../src/modes/Hitscan';
 import { rng } from './clientSim';
 
 export type Part = 'head' | 'body' | 'arm' | 'leg';
@@ -37,7 +38,8 @@ export interface SimOptions {
   blocks?: (x: number, y: number, z: number) => number;
 }
 
-export interface SimShot { part: Part; hit: boolean; head: boolean }
+/** One shot: the part aimed at, the verdict, and how far (blocks) the tested target was from the drawn one. */
+export interface SimShot { part: Part; hit: boolean; head: boolean; err: number; rewind: number; aim: { o: V3; d: V3; drawn: Drawn } }
 
 export interface SimResult {
   shots: SimShot[];
@@ -47,6 +49,8 @@ export interface SimResult {
   /** Aimed at the head but counted as a body hit, and the other way round. */
   headLost: number;
   headFalse: number;
+  /** Mean distance between where the target was drawn and where the server tested it (blocks). */
+  meanErr: number;
 }
 
 const FLOOR = 64;
@@ -82,11 +86,11 @@ class Link {
 
 // ---------------------------------------------------------------- the drawn model
 
-type V3 = [number, number, number];
+export type V3 = [number, number, number];
 const rotY = (v: V3, a: number): V3 => [v[0] * Math.cos(a) + v[2] * Math.sin(a), v[1], -v[0] * Math.sin(a) + v[2] * Math.cos(a)];
 const rotX = (v: V3, a: number): V3 => [v[0], v[1] * Math.cos(a) - v[2] * Math.sin(a), v[1] * Math.sin(a) + v[2] * Math.cos(a)];
 
-interface Drawn { x: number; y: number; z: number; yaw: number; pitch: number; limbSwing: number; limbAmount: number }
+export interface Drawn { x: number; y: number; z: number; yaw: number; pitch: number; limbSwing: number; limbAmount: number }
 
 /**
  * A random point inside one part of the drawn player model (inset 15 % from the box edges: "on target").
@@ -111,6 +115,41 @@ export function modelPoint(d: Drawn, part: Part, r: () => number): V3 {
   v = [(v[0] + pv[0]) * scale, (v[1] + pv[1]) * scale, (v[2] + pv[2]) * scale];
   v = rotY(v, d.yaw);
   return [d.x + v[0], d.y + v[1], d.z + v[2]];
+}
+
+/** Which part of the drawn model a ray meets first (the exact boxes, no margin), or null: what the shooter saw. */
+export function drawnHit(d: Drawn, o: V3, dir: V3): Part | null {
+  const type = MOB_TYPES.player;
+  const scale = type.scale ?? 1;
+  const legSwing = Math.cos(d.limbSwing * 0.6662) * 1.4 * d.limbAmount;
+  let best = Infinity;
+  let bestPart: Part | null = null;
+  for (const mp of type.parts) {
+    const anim = mp.anim;
+    const part: Part = anim === 'head' ? 'head' : anim === 'none' ? 'body' : anim === 'armL' || anim === 'armR' ? 'arm' : 'leg';
+    const pv: V3 = [mp.pivot[0] / 16, mp.pivot[1] / 16, mp.pivot[2] / 16];
+    // World → model: undo position, yaw, scale, then the part rotation about its pivot.
+    const toLocal = (v: V3, point: boolean): V3 => {
+      let w: V3 = point ? [v[0] - d.x, v[1] - d.y, v[2] - d.z] : [v[0], v[1], v[2]];
+      w = rotY(w, -d.yaw);
+      w = [w[0] / scale, w[1] / scale, w[2] / scale];
+      if (point) w = [w[0] - pv[0], w[1] - pv[1], w[2] - pv[2]];
+      if (anim === 'head') w = rotX(w, -d.pitch);
+      else if (anim === 'armR') w = rotX(w, -(Math.PI / 2 + d.pitch));
+      else if (anim === 'armL') w = rotX(rotY(w, 0.5), -(Math.PI / 2 + d.pitch - 0.25));
+      else if (anim === 'legA') w = rotX(w, -legSwing);
+      else if (anim === 'legB') w = rotX(w, legSwing);
+      if (point) w = [w[0] + pv[0], w[1] + pv[1], w[2] + pv[2]];
+      return w;
+    };
+    const lo = toLocal(o, true), ld = toLocal(dir, false);
+    for (const b of mp.boxes.slice(0, 1)) {
+      const t = rayBox(lo[0], lo[1], lo[2], ld[0], ld[1], ld[2], b.from[0] / 16, b.from[1] / 16, b.from[2] / 16, b.to[0] / 16, b.to[1] / 16, b.to[2] / 16);
+      // The map is affine (local = A·world + b), so the ray parameter is the world distance.
+      if (t >= 0 && t < best) { best = t; bestPart = part; }
+    }
+  }
+  return bestPart;
 }
 
 // ---------------------------------------------------------------- target movement
@@ -197,7 +236,6 @@ export function runHitregSim(o: SimOptions): SimResult {
     });
   }
   // Server ticks: history, then a snapshot (positions quantised to 1/32 block like the binary format).
-  let tick = 0;
   const clock = new SnapshotClock();
   const buffer: InterpState[] = [];
   for (let t = 0; t < o.seconds + 1; t += 1 / tickHz) {
@@ -205,7 +243,7 @@ export function runHitregSim(o: SimOptions): SimResult {
       match.tick();
       const p = match.players.get(2)!;
       p.health = 100;
-      const k = ++tick;
+      const k = match.tickNo;
       const snap = { x: Math.round(p.x * 32) / 32, y: Math.round(p.y * 32) / 32, z: Math.round(p.z * 32) / 32, yaw: p.yaw, pitch: p.pitch };
       down.send(host.t, () => {
         const st = clock.stamp(host.t, k);
@@ -216,7 +254,7 @@ export function runHitregSim(o: SimOptions): SimResult {
   }
   // Shooter client: 60 fps; draws the target and fires every `fireEvery` seconds at a point on the drawn model.
   const shots: SimShot[] = [];
-  const pending: { part: Part }[] = [];
+  const pending: { part: Part; drawn: [number, number, number]; aim: SimShot['aim'] }[] = [];
   const span: Span = { a: 0, c: 0, f: 1 };
   const drawn: Drawn = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, limbSwing: 0, limbAmount: 0 };
   let nextFire = t0 + 1.5;
@@ -246,10 +284,12 @@ export function runHitregSim(o: SimOptions): SimResult {
       const ox = shooter.x, oy = shooter.y + 1.62, oz = shooter.z;
       const dx = aim[0] - ox, dy = aim[1] - oy, dz = aim[2] - oz, len = Math.hypot(dx, dy, dz);
       const msg = {
-        t: 'fire' as const, slot: 1 as const, ox, oy, oz, dx: dx / len, dy: dy / len, dz: dz / len, ads: true,
+        t: 'fire' as const, slot: 0 as const, ox, oy, oz, dx: dx / len, dy: dy / len, dz: dz / len, ads: true,
         rk: clock.renderTick(renderTime),
       };
-      pending.push({ part });
+      // What the shooter saw along that line (an arm can cover the face): that is the claim.
+      const seen = drawnHit(drawn, [ox, oy, oz], [dx / len, dy / len, dz / len]) ?? part;
+      pending.push({ part: seen, drawn: [drawn.x, drawn.y, drawn.z], aim: { o: [ox, oy, oz], d: [dx / len, dy / len, dz / len], drawn: { ...drawn } } });
       up.send(now, () => {
         const before = host.reports.length;
         const pl = match.players.get(1)!;
@@ -259,7 +299,13 @@ export function runHitregSim(o: SimOptions): SimResult {
         const shot = pending.shift()!;
         const rep = host.reports[before];
         const hit = rep?.hits.find((h) => h.victim === 2);
-        shots.push({ part: shot.part, hit: !!hit, head: !!hit?.head });
+        // Where the server tested the target (the same history lookup the shot used).
+        const tested = { t: 0, x: 0, y: 0, z: 0, yaw: 0, pitch: 0 };
+        const rewind = rep?.rewind ?? 0;
+        (match as unknown as { positionAt(p: unknown, t: number, now: number, out: unknown): void })
+          .positionAt(match.players.get(2), host.t - rewind, host.t, tested);
+        const err = Math.hypot(tested.x - shot.drawn[0], tested.y - shot.drawn[1], tested.z - shot.drawn[2]);
+        shots.push({ part: shot.part, hit: !!hit, head: !!hit?.head, err, rewind, aim: shot.aim });
       });
     });
   }
@@ -275,5 +321,6 @@ export function runHitregSim(o: SimOptions): SimResult {
     if (s.hit && s.part === 'head' && !s.head) headLost++;
     if (s.hit && s.part !== 'head' && s.head) headFalse++;
   }
-  return { shots, missRate: shots.length ? misses / shots.length : 0, byPart, headLost, headFalse };
+  const meanErr = shots.length ? shots.reduce((a, s) => a + s.err, 0) / shots.length : 0;
+  return { shots, missRate: shots.length ? misses / shots.length : 0, byPart, headLost, headFalse, meanErr };
 }

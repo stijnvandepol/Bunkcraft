@@ -924,16 +924,42 @@ html, body {
 .arc-xh .dot { width: 2px; height: 2px; left: -1px; top: -1px; }
 
 /* Hit marker: four diagonal ticks. */
-.arc-hit { position: absolute; left: 50%; top: 50%; width: 0; height: 0; opacity: 0; }
-.arc-hit i { position: absolute; width: calc(var(--s) * 6); height: calc(var(--s) * 1.5); background: #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.7); }
-.arc-hit i:nth-child(1) { transform: translate(calc(var(--s) * 3), calc(var(--s) * 3)) rotate(45deg); }
-.arc-hit i:nth-child(2) { transform: translate(calc(var(--s) * -8), calc(var(--s) * 3)) rotate(-45deg); }
-.arc-hit i:nth-child(3) { transform: translate(calc(var(--s) * 3), calc(var(--s) * -4)) rotate(-45deg); }
-.arc-hit i:nth-child(4) { transform: translate(calc(var(--s) * -8), calc(var(--s) * -4)) rotate(45deg); }
+.arc-aim { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; }
+/* Hit marker: an X of four bars starting a small gap away from the aim point (GUI-scaled, whole pixels). */
+.arc-hit { position: absolute; left: 50%; top: 50%; width: 0; height: 0; opacity: 0; --hl: calc(var(--s) * 5); --hw: max(2px, calc(var(--s) * 1)); --hg: calc(var(--s) * 3); }
+.arc-hit i {
+  position: absolute; left: 0; top: 0; width: var(--hl); height: var(--hw); margin-top: calc(var(--hw) / -2);
+  transform-origin: 0 50%; background: #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.75);
+}
+.arc-hit .a { transform: rotate(45deg) translateX(var(--hg)); }
+.arc-hit .b { transform: rotate(135deg) translateX(var(--hg)); }
+.arc-hit .c { transform: rotate(225deg) translateX(var(--hg)); }
+.arc-hit .d { transform: rotate(315deg) translateX(var(--hg)); }
+.arc-hit.head { --hl: calc(var(--s) * 6.5); --hw: max(2px, calc(var(--s) * 1.25)); }
 .arc-hit.head i { background: #ffd23f; }
-.arc-hit.kill i { background: #ff3b30; width: calc(var(--s) * 8); height: calc(var(--s) * 2); }
-.arc-hit.show { animation: arc-hit 0.28s ease-out; }
-@keyframes arc-hit { 0% { opacity: 1; transform: scale(1.35); } 100% { opacity: 0; transform: scale(1); } }
+.arc-hit.kill { --hl: calc(var(--s) * 7.5); --hw: max(3px, calc(var(--s) * 1.5)); --hg: calc(var(--s) * 3.5); }
+.arc-hit.kill i { background: #ff3b30; }
+.arc-hit.show { animation: arc-hit 0.3s ease-out; }
+.arc-hit.show.kill { animation: arc-hit-kill 0.55s ease-out; }
+/* Pop: at full size and opacity at once (no delay beyond the network), shrinking back and fading. */
+@keyframes arc-hit { 0% { opacity: 1; transform: scale(1.45); } 25% { opacity: 1; transform: scale(1); } 100% { opacity: 0; transform: scale(0.92); } }
+@keyframes arc-hit-kill { 0% { opacity: 1; transform: scale(1.6) rotate(0deg); } 20% { opacity: 1; transform: scale(1.05); } 60% { opacity: 1; } 100% { opacity: 0; transform: scale(1); } }
+/* Damage numbers: up and to the right of the aim point, floating and fading. */
+.arc-dnum {
+  position: absolute; left: 50%; top: 50%; font-size: calc(var(--s) * 7); line-height: 1; color: #fff; white-space: nowrap;
+  text-shadow: calc(var(--s) * 0.75) calc(var(--s) * 0.75) 0 rgba(0, 0, 0, 0.8); animation: arc-dnum 0.7s ease-out forwards;
+  --dx: calc(var(--s) * 10); --dy: calc(var(--s) * -8);
+}
+.arc-dnum.k1 { --dx: calc(var(--s) * 14); --dy: calc(var(--s) * -4); }
+.arc-dnum.k2 { --dx: calc(var(--s) * 9); --dy: calc(var(--s) * -13); }
+.arc-dnum.k3 { --dx: calc(var(--s) * 16); --dy: calc(var(--s) * -10); }
+.arc-dnum.head { color: #ffd23f; font-size: calc(var(--s) * 8); }
+.arc-dnum.kill { color: #ff3b30; font-size: calc(var(--s) * 9); }
+@keyframes arc-dnum {
+  0% { opacity: 1; transform: translate(var(--dx), var(--dy)) scale(1.3); }
+  20% { opacity: 1; transform: translate(var(--dx), var(--dy)) scale(1); }
+  100% { opacity: 0; transform: translate(var(--dx), calc(var(--dy) - var(--s) * 10)) scale(1); }
+}
 
 /* Damage indicators: red wedges around the crosshair pointing at the shooter. */
 .arc-damage { position: absolute; left: 50%; top: 50%; width: 0; height: 0; }

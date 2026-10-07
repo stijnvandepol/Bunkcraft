@@ -26,6 +26,8 @@ import { MatchLobby } from '../ui/MatchLobby';
 import { ModeVisuals } from '../rendering/ModeVisuals';
 import { BLOCK } from '../world/BlockRegistry';
 import { type RayHit, createRayHit, raycast } from '../world/Raycast';
+import { type BulletTrace, type HitPart, createBulletTrace, rayPlayer, shotSpread, spreadDirection, spreadRandom, traceBullet } from '../modes/Hitscan';
+import { HitregStats } from '../modes/HitregStats';
 import type { AudioEngine } from './Audio';
 import { type SurfaceLookup, surfaceLookup } from './audio/playerSounds';
 import { BOLT_DELAY, MULTI_KILL_WINDOW, type MechKind, gunEarshot, medalFor, medalText, reloadSteps } from './audio/weaponSounds';
@@ -51,6 +53,8 @@ export interface ArcadeDeps {
   remote: RemotePlayers;
   particles: Particles;
   getBlock(x: number, y: number, z: number): number;
+  /** Block state (slab half, stair facing): bullets stop only where a partial block's shape is. */
+  getMeta?(x: number, y: number, z: number): number;
   getLight(x: number, y: number, z: number): number;
   selfId: number;
   selfName: string;
@@ -93,6 +97,8 @@ const EQUIP_SEC = 0.28;
 /** Enemy footsteps: blocks of travel per footfall (running) and how far away they are tracked at all. */
 const STRIDE = 2.1;
 const STEP_TRACK_RANGE = 30;
+/** Below this health the heartbeat plays. */
+const LOW_HEALTH = 35;
 /** At most this many scope glints at once. */
 const MAX_GLINTS = 4;
 
@@ -122,6 +128,11 @@ function glintTexture(): THREE.CanvasTexture {
   return t;
 }
 const tmpAim = { x: 0, y: 0, z: 0 };
+const tmpDir: [number, number, number] = [0, 0, 0];
+const tmpRand: [number, number] = [0, 0];
+const tmpPose = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0 };
+/** Tracers drawn per shot at most (a shotgun's pellets are thinned out evenly). */
+const MAX_TRACERS = 5;
 /** Position handed to the audio engine for gunshots and impacts (read synchronously). */
 const gunAt = { x: 0, y: 0, z: 0 };
 
@@ -199,6 +210,20 @@ export class ArcadeSession {
   private readonly stepAt = { x: 0, y: 0, z: 0 };
   private glintCount = 0;
   private frameNow = 0;
+  /** Low health heartbeat: time of the next beat. */
+  private nextBeat = 0;
+  /**
+   * Seeded spread (the server deals `ss` at the spawn): the index of the next shot, the client's shot counter (`seq`)
+   * and whether the server sent a seed at all (an older server rolls its own spread; tracers are then a guess).
+   */
+  private spreadSeed = 0;
+  private seeded = false;
+  private shotN = 0;
+  private fireSeq = 0;
+  private readonly trace: BulletTrace = createBulletTrace();
+  private readonly blocks = { getBlock: (x: number, y: number, z: number) => this.d.getBlock(x, y, z), getMeta: (x: number, y: number, z: number) => this.d.getMeta?.(x, y, z) ?? 0 };
+  /** Shots this client fired at what its screen showed, and what the server said (hit registration statistics, F3 and QA). */
+  readonly hitreg = new HitregStats();
   /** 0..1 camera hurt strength after taking damage, decaying. */
   hurt = 0;
   /** Side of the last hit (−1 left, 1 right) for the camera tilt. */
@@ -347,11 +372,15 @@ export class ArcadeSession {
         a.mag = msg.mag;
         a.reloading = msg.reloading;
         if (msg.slot === this.slot) this.pending = 0;
+        // The server's spread index after the shot `seq`, plus our shots still on the way.
+        if (msg.sn !== undefined) this.shotN = msg.sn + (msg.seq !== undefined ? Math.max(0, this.fireSeq - 1 - msg.seq) : 0);
+        if (msg.seq !== undefined) this.hitreg.acked(msg.seq, now);
         break;
       }
       case 'shot': this.onShot(msg); break;
       case 'hit':
-        this.hud.showHit(msg.killed ? 'kill' : msg.head ? 'head' : 'hit');
+        if (msg.seq !== undefined) this.hitreg.confirmed(msg.seq, msg.head);
+        this.hud.showHit(msg.killed ? 'kill' : msg.head ? 'head' : 'hit', msg.damage, now);
         if (msg.killed) {
           this.d.audio.playKillDing(msg.head);
           this.onOwnKill(now);
@@ -363,6 +392,7 @@ export class ArcadeSession {
         this.hurt = 1;
         this.hurtSide = Math.sin(Math.atan2(msg.dx, msg.dz) - this.d.player.yaw) >= 0 ? 1 : -1;
         this.d.audio.playHurt();
+        this.d.audio.duck(0.3, 0.1);
         this.d.feedback?.haptic(0.7, 0.5, 200);
         break;
       }
@@ -466,6 +496,8 @@ export class ArcadeSession {
     this.endSpectate();
     this.hud.setDeath(null);
     this.applyGear(msg.primary, msg.secondary, msg.optic, msg.perk);
+    this.seeded = msg.ss !== undefined;
+    this.spreadSeed = msg.ss ?? 0;
     this.health = msg.health;
     this.hud.setHealth(this.health);
     this.protect = SPAWN_PROTECTION;
@@ -690,7 +722,26 @@ export class ArcadeSession {
     const rl = Math.hypot(rx, rz) || 1;
     const sx = msg.ox + dx * 0.8 + (rx / rl) * 0.22, sy = msg.oy + dy * 0.8 - 0.28, sz = msg.oz + dz * 0.8 + (rz / rl) * 0.22;
     this.tracers.spawn(sx, sy, sz, msg.ex, msg.ey, msg.ez);
-    this.impact(msg.ex, msg.ey, msg.ez, dx, dy, dz, dist);
+    // Glass on the way (the same trace the server ran) and the impact where it ended.
+    const tr = traceBullet(this.blocks, msg.ox, msg.oy, msg.oz, dx, dy, dz, len + 0.05, this.trace);
+    this.passFx(tr, len + 0.01, msg.ox, msg.oy, msg.oz, dx, dy, dz, Math.hypot(msg.ex - p.x, msg.ey - p.eyeY, msg.ez - p.z));
+    this.impact(msg.ex, msg.ey, msg.ez, dx, dy, dz, Math.hypot(msg.ex - p.x, msg.ey - p.eyeY, msg.ez - p.z));
+    // A bullet passing close by: crack and whizz.
+    this.nearMiss(msg.ox, msg.oy, msg.oz, dx, dy, dz, len, msg.weapon);
+  }
+
+  /** Supersonic crack and whizz when another player's bullet passes within a couple of blocks of your head. */
+  private nearMiss(ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, len: number, weapon: string): void {
+    if (this.dead) return;
+    const p = this.d.player;
+    const hx = p.x - ox, hy = p.eyeY - oy, hz = p.z - oz;
+    const along = hx * dx + hy * dy + hz * dz;
+    if (along < 1.5 || along > len + 0.5) return; // behind the shooter, or the bullet stopped before reaching us
+    const cx = hx - dx * along, cy = hy - dy * along, cz = hz - dz * along;
+    const miss = Math.hypot(cx, cy, cz);
+    if (miss > 2.2) return;
+    gunAt.x = ox + dx * along; gunAt.y = oy + dy * along; gunAt.z = oz + dz * along;
+    this.d.audio.playBulletWhizz(1 - miss / 2.2, gunAt, weapon);
   }
 
   /** Puff of block fragments where a bullet ended on a block. */
@@ -702,7 +753,7 @@ export class ArcadeSession {
     this.d.particles.spawnFace(bx, by, bz, tmpAim.x, tmpAim.y, tmpAim.z, id, this.d.getLight(bx + tmpAim.x, by + tmpAim.y, bz + tmpAim.z), 3);
     if (listenerDistance < 40) {
       gunAt.x = ex; gunAt.y = ey; gunAt.z = ez;
-      this.d.audio.playBulletImpact(1 - listenerDistance / 40, gunAt);
+      this.d.audio.playBulletImpact(1 - listenerDistance / 40, gunAt, id);
     }
   }
 
@@ -790,25 +841,32 @@ export class ArcadeSession {
     out.z = -Math.cos(p.yaw) * c;
   }
 
+  /** What the shooter's screen shows right now: the moving / airborne flags of the spread. */
+  private get moving(): boolean {
+    const p = this.d.player;
+    return Math.hypot(p.vx, p.vz) > 0.5;
+  }
+
   private shoot(now: number): void {
     const w = this.weapon;
     const p = this.d.player;
     this.aim(tmpAim);
     const ox = p.x, oy = p.eyeY, oz = p.z;
-    this.d.send({ t: 'fire', slot: this.slot, ox, oy, oz, dx: tmpAim.x, dy: tmpAim.y, dz: tmpAim.z, ads: this.ads > 0.5 });
+    const ads = this.ads > 0.5, mv = this.moving, air = !p.onGround;
+    const n = this.shotN++, seq = this.fireSeq++;
+    // The server rewinds the targets to the snapshot moment this screen shows (lag compensation).
+    const rk = this.d.remote.renderTick(now);
+    this.d.send({
+      t: 'fire', slot: this.slot, ox, oy, oz, dx: tmpAim.x, dy: tmpAim.y, dz: tmpAim.z, ads, seq,
+      ...(rk >= 0 ? { rk: Math.round(rk * 1000) / 1000 } : {}), ...(mv ? { mv } : {}), ...(air ? { air } : {}),
+    });
     this.pending++;
     // Predicted effects.
     const sup = this.cls.perk === 'suppressor';
     this.d.audio.playGun(w.id, 1, undefined, sup);
     this.viewmodel.fire();
     this.kick = Math.min(0.12, this.kick + (w.recoil * Math.PI) / 180 * 0.8);
-    // The aim climbs along the weapon's pattern (after the shot went out with the old aim).
-    const r = this.recoil.kick(now, w.recoil, w.recoilX, w.pattern, this.ads, AIM_CLIMB, w.auto ? fireInterval(w) : 0);
-    p.pitch = Math.min(Math.PI / 2 - 0.001, p.pitch + r.pitch * DEG);
-    p.yaw -= r.yaw * DEG;
     if (w.bolt) { this.boltAt = now + BOLT_DELAY; this.boltStage = 0; }
-    const spread = currentSpread(w, this.ads, Math.hypot(p.vx, p.vz) > 0.5, !p.onGround);
-    const pellets = Math.min(w.pellets, 5);
     // Muzzle in the world: the weapon model's muzzle transformed by the view model's pose is close
     // enough to a fixed offset from the camera.
     const cam = this.d.cam.camera;
@@ -820,31 +878,70 @@ export class ArcadeSession {
     tmpV.set((0.18 * (1 - e) + mz[0] * 0.85) * k, (-0.18 * (1 - e) - sightY * e * 0.85 + mz[1] * 0.85) * k, -0.62 * (1 - e) + this.viewmodel.adsZ() * e + mz[2] * 0.85);
     cam.localToWorld(tmpV);
     const sx = tmpV.x, sy = tmpV.y, sz = tmpV.z;
-    for (let i = 0; i < pellets; i++) {
-      let dx = tmpAim.x, dy = tmpAim.y, dz = tmpAim.z;
-      if (spread > 0.3 || w.pellets > 1) {
-        const t = Math.tan((spread * Math.PI) / 180);
-        const r = Math.sqrt(Math.random()) * t, ang = Math.random() * Math.PI * 2;
-        const jx = Math.cos(ang) * r, jy = Math.sin(ang) * r;
-        // Right and up of the view.
-        const rx = Math.cos(p.yaw), rz = -Math.sin(p.yaw);
-        dx += rx * jx; dz += rz * jx; dy += jy;
-        const l = Math.hypot(dx, dy, dz);
-        dx /= l; dy /= l; dz /= l;
+    // The same pellets the server will test (seeded spread), each traced through the same blocks and against the
+    // other players as drawn: the tracer ends where the bullet does.
+    const spread = shotSpread(w, ads, mv, air);
+    const every = Math.max(1, Math.ceil(w.pellets / MAX_TRACERS));
+    let claimed = -1, claimedHead = false;
+    for (let i = 0; i < w.pellets; i++) {
+      if (this.seeded) spreadRandom(this.spreadSeed, n, i, tmpRand);
+      else { tmpRand[0] = Math.random(); tmpRand[1] = Math.random(); }
+      spreadDirection(tmpAim.x, tmpAim.y, tmpAim.z, spread, tmpRand[0], tmpRand[1], tmpDir);
+      const dx = tmpDir[0], dy = tmpDir[1], dz = tmpDir[2];
+      const tr = traceBullet(this.blocks, ox, oy, oz, dx, dy, dz, Math.min(w.maxRange, 160), this.trace);
+      const body = this.firstPlayer(ox, oy, oz, dx, dy, dz, tr.t);
+      const dist = body ? body.t : tr.t;
+      if (body && claimed < 0) { claimed = body.id; claimedHead = body.part === 'head'; }
+      if (i % every === 0) this.tracers.spawn(sx, sy, sz, ox + dx * dist, oy + dy * dist, oz + dz * dist);
+      // Glass and leaves on the way burst; the block that stopped the bullet puffs.
+      this.passFx(tr, dist, ox, oy, oz, dx, dy, dz, 0);
+      if (!body && tr.blocked) {
+        this.d.particles.spawnFace(tr.x, tr.y, tr.z, tr.nx, tr.ny, tr.nz, tr.id, this.d.getLight(tr.x + tr.nx, tr.y + tr.ny, tr.z + tr.nz), 3);
+        if (i % every === 0) {
+          gunAt.x = ox + dx * dist; gunAt.y = oy + dy * dist; gunAt.z = oz + dz * dist;
+          this.d.audio.playBulletImpact(Math.max(0.2, 1 - dist / 40), gunAt, tr.id);
+        }
       }
-      const hit = raycast(this.d.getBlock, ox, oy, oz, dx, dy, dz, Math.min(w.maxRange, 160), this.ray);
-      const dist = hit.hit ? hit.distance : Math.min(w.maxRange, 160);
-      this.tracers.spawn(sx, sy, sz, ox + dx * dist, oy + dy * dist, oz + dz * dist);
-      if (hit.hit) {
-        this.d.particles.spawnFace(hit.x, hit.y, hit.z, hit.nx, hit.ny, hit.nz, hit.id, this.d.getLight(hit.x + hit.nx, hit.y + hit.ny, hit.z + hit.nz), 3);
+    }
+    this.hitreg.fired(seq, now, claimed, claimedHead);
+    // The aim climbs along the weapon's pattern (after the shot went out with the old aim).
+    const r = this.recoil.kick(now, w.recoil, w.recoilX, w.pattern, this.ads, AIM_CLIMB, w.auto ? fireInterval(w) : 0);
+    p.pitch = Math.min(Math.PI / 2 - 0.001, p.pitch + r.pitch * DEG);
+    p.yaw -= r.yaw * DEG;
+  }
+
+  /** The nearest other player (as drawn now) on the ray before `maxT`, or null. Teammates block bullets too here: they do not on the server. */
+  private firstPlayer(ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, maxT: number): { id: number; t: number; part: HitPart } | null {
+    let best: { id: number; t: number; part: HitPart } | null = null;
+    for (const [id, info] of this.players) {
+      if (id === this.d.selfId || (this.teams && info.team === this.team) || !this.d.remote.isAlive(id) || !this.d.remote.pose(id, tmpPose)) continue;
+      const hit = rayPlayer(ox, oy, oz, dx, dy, dz, tmpPose.x, tmpPose.y, tmpPose.z, tmpPose.yaw, tmpPose.pitch);
+      if (hit && hit.t < maxT && (!best || hit.t < best.t)) best = { id, t: hit.t, part: hit.part };
+    }
+    return best;
+  }
+
+  /** Glass shards, leaf bits and a clink where a bullet went through see-through blocks before `end`. */
+  private passFx(tr: BulletTrace, end: number, ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, listener: number): void {
+    for (let j = 0; j < tr.thin; j++) {
+      if (tr.thinT[j] >= end) break;
+      const bx = tr.thinX[j], by = tr.thinY[j], bz = tr.thinZ[j], id = tr.thinId[j];
+      impactNormal(ox + dx * tr.thinT[j], oy + dy * tr.thinT[j], oz + dz * tr.thinT[j], dx, dy, dz, tmpAim);
+      this.d.particles.spawnFace(bx, by, bz, tmpAim.x, tmpAim.y, tmpAim.z, id, this.d.getLight(bx, by, bz), 6);
+      if (listener < 40) {
+        gunAt.x = ox + dx * tr.thinT[j]; gunAt.y = oy + dy * tr.thinT[j]; gunAt.z = oz + dz * tr.thinT[j];
+        this.d.audio.playBulletImpact(Math.max(0.2, 1 - listener / 40), gunAt, id);
       }
     }
   }
 
-  private melee(): void {
+  private melee(now: number): void {
     const p = this.d.player;
     this.aim(tmpAim);
-    this.d.send({ t: 'fire', slot: this.slot, ox: p.x, oy: p.eyeY, oz: p.z, dx: tmpAim.x, dy: tmpAim.y, dz: tmpAim.z, ads: false });
+    this.shotN++; // the server counts every shot, the knife's too
+    const seq = this.fireSeq++;
+    const rk = this.d.remote.renderTick(now);
+    this.d.send({ t: 'fire', slot: this.slot, ox: p.x, oy: p.eyeY, oz: p.z, dx: tmpAim.x, dy: tmpAim.y, dz: tmpAim.z, ads: false, seq, ...(rk >= 0 ? { rk: Math.round(rk * 1000) / 1000 } : {}) });
     this.viewmodel.swingKnife();
     this.d.audio.playGun('knife', 1);
   }
@@ -878,7 +975,7 @@ export class ArcadeSession {
     const w = this.weapon;
     if (canAct) {
       if (w.slot === 'melee') {
-        if (this.trigger.tryFire(now, fireInterval(w), false, input.leftDown, input.leftClicked)) this.melee();
+        if (this.trigger.tryFire(now, fireInterval(w), false, input.leftDown, input.leftClicked)) this.melee(now);
       } else if (!ammo.reloading) {
         const mag = ammo.mag - this.pending;
         if (mag <= 0) {
@@ -909,8 +1006,14 @@ export class ArcadeSession {
     this.updateMechanics(now, w, ammo);
     this.updateRemotes(f);
     this.kick *= Math.exp(-9 * dt);
-    cam.kick = this.kick;
+    // Aimed down the sights the sights are the aim point: the kick goes into the weapon model, not the view.
+    cam.kick = this.kick * (1 - eased);
     this.hurt = Math.max(0, this.hurt - dt * 2);
+    // Low health: a heartbeat that cuts through (and quickens below 20).
+    if (!this.dead && !this.ended && this.health > 0 && this.health < LOW_HEALTH && now >= this.nextBeat) {
+      this.d.audio.playHeartbeat(0.45 + 0.55 * (1 - this.health / LOW_HEALTH));
+      this.nextBeat = now + (this.health < 20 ? 0.72 : 0.95);
+    }
     this.protect = Math.max(0, this.protect - dt);
 
     const reload = ammo.reloading ? reloadProgress(now - ammo.since, w.reloadSec) : -1;
@@ -933,6 +1036,10 @@ export class ArcadeSession {
     const spread = w.magazine === 0 ? 0.5 : currentSpread(w, this.ads, Math.hypot(p.vx, p.vz) > 0.5, !p.onGround);
     // Aimed down the sights the sights (or the reticle) are the crosshair.
     hud.setCrosshair(2 + spreadPixels(spread, this.d.cam.camera.fov, window.innerHeight), !scoped && !this.dead && this.ads < 0.6);
+    // The camera kick tilts the view up while the aim stays: draw the crosshair (and hit marker) where bullets go.
+    const kick = this.d.cam.appliedKick;
+    hud.setAimOffset(kick > 0 ? (Math.tan(kick) / Math.tan((this.d.cam.camera.fov * Math.PI) / 360)) * (window.innerHeight / 2) : 0);
+    this.hitreg.update(now);
     hud.setProtection(this.protect);
     hud.frame(now, p.yaw);
     if (this.feed.prune(now)) hud.setKillFeed(this.feed.entries, this.d.selfName);

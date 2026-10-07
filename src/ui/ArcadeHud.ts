@@ -10,6 +10,9 @@ import { h } from './dom';
 import { t } from './i18n';
 
 const MAX_DAMAGE_MARKERS = 6;
+/** Damage numbers on screen at once and how long each floats (s; the CSS animation matches). */
+const DAMAGE_NUMBERS = 6;
+const DAMAGE_NUMBER_LIFETIME = 0.7;
 const DAMAGE_LIFETIME = 1.6;
 /** Health below this flashes red. */
 const LOW_HEALTH = 30;
@@ -73,6 +76,13 @@ export class ArcadeHud {
   private readonly slotEls: HTMLDivElement[] = [];
   private readonly crosshair: HTMLDivElement;
   private readonly hit: HTMLDivElement;
+  /** Crosshair + hit marker + damage numbers, moved together to the aim point. */
+  private readonly aimLayer: HTMLDivElement;
+  private aimOffset = 0;
+  private readonly numbers: { el: HTMLDivElement; born: number; shown: boolean }[] = [];
+  private numberSeq = 0;
+  /** Options > Video > Damage Numbers. */
+  damageNumbers = false;
   private readonly damageLayer: HTMLDivElement;
   private readonly markers: DamageMarker[] = [];
   private readonly feed: HTMLDivElement;
@@ -160,7 +170,15 @@ export class ArcadeHud {
 
     // -- crosshair, hit marker, damage indicators
     this.crosshair = h('div', { class: 'arc-xh' }, h('i', { class: 't' }), h('i', { class: 'b' }), h('i', { class: 'l' }), h('i', { class: 'r' }), h('i', { class: 'dot' }));
-    this.hit = h('div', { class: 'arc-hit' }, h('i'), h('i'), h('i'), h('i'));
+    // Hit marker: four bars from the centre on the diagonals (a crisp X at every GUI scale), popping in and fading.
+    this.hit = h('div', { class: 'arc-hit' }, h('i', { class: 'a' }), h('i', { class: 'b' }), h('i', { class: 'c' }), h('i', { class: 'd' }));
+    // Crosshair, hit marker and damage numbers sit where the bullets go (see setAimOffset).
+    this.aimLayer = h('div', { class: 'arc-aim' }, this.crosshair, this.hit);
+    for (let i = 0; i < DAMAGE_NUMBERS; i++) {
+      const el = h('div', { class: 'arc-dnum hidden' });
+      this.numbers.push({ el, born: -10, shown: false });
+      this.aimLayer.append(el);
+    }
     this.damageLayer = h('div', { class: 'arc-damage' });
     for (let i = 0; i < MAX_DAMAGE_MARKERS; i++) {
       const el = h('div', { class: 'arc-dmg hidden' });
@@ -207,7 +225,7 @@ export class ArcadeHud {
     this.end = h('div', { class: 'arc-end hidden' }, this.endTitle, this.endBoard, this.endCount);
 
     this.el = h('div', { class: 'arc-hud hidden' },
-      this.scope, this.crosshair, this.hit, this.damageLayer, this.protect, this.medal,
+      this.scope, this.aimLayer, this.damageLayer, this.protect, this.medal,
       this.top, this.banner, this.feed, this.healthBox, ammo,
       this.board, this.death, this.end,
     );
@@ -395,12 +413,35 @@ export class ArcadeHud {
 
   // ---------------------------------------------------------------- feedback
 
-  /** White tick, gold for a headshot, red for a kill. */
-  showHit(kind: 'hit' | 'head' | 'kill'): void {
+  /**
+   * Server-confirmed hit: a white X, gold and bigger for a headshot, red and held longer for a kill. With damage
+   * numbers on, the damage floats up beside the crosshair.
+   */
+  showHit(kind: 'hit' | 'head' | 'kill', damage = 0, now = 0): void {
     const el = this.hit;
     el.classList.remove('show', 'hit', 'head', 'kill');
     void el.offsetWidth; // restart the animation
     el.classList.add('show', kind);
+    if (!this.damageNumbers || damage <= 0) return;
+    // The oldest number is reused; consecutive hits fan out a little so they do not stack on one spot.
+    let n = this.numbers[0];
+    for (const c of this.numbers) if (c.born < n.born) n = c;
+    n.born = now;
+    n.shown = true;
+    this.numberSeq = (this.numberSeq + 1) % 4;
+    n.el.textContent = String(Math.round(damage));
+    n.el.className = `arc-dnum ${kind} k${this.numberSeq}`;
+  }
+
+  /**
+   * Moves the crosshair, hit marker and damage numbers to where the bullets really go: the camera's recoil kick
+   * tilts the view up for a moment while the aim stays put, so the aim point sits `px` pixels below the centre.
+   */
+  setAimOffset(px: number): void {
+    const q = Math.round(px);
+    if (q === this.aimOffset) return;
+    this.aimOffset = q;
+    this.aimLayer.style.transform = q === 0 ? '' : `translateY(${q}px)`;
   }
 
   /** Red wedge around the crosshair towards the shooter; (dx, dz) points from you to them. */
@@ -416,8 +457,15 @@ export class ArcadeHud {
     m.el.classList.remove('hidden');
   }
 
-  /** Per frame: turns the damage wedges with the view and fades them. */
+  /** Per frame: turns the damage wedges with the view and fades them; retires old damage numbers. */
   frame(now: number, yaw: number): void {
+    for (let i = 0; i < this.numbers.length; i++) {
+      const n = this.numbers[i];
+      if (n.shown && now - n.born > DAMAGE_NUMBER_LIFETIME) {
+        n.shown = false;
+        n.el.classList.add('hidden');
+      }
+    }
     if (this.medalUntil > 0 && now >= this.medalUntil) {
       this.medalUntil = 0;
       this.medal.classList.add('hidden');

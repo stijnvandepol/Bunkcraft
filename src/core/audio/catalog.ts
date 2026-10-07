@@ -2,6 +2,7 @@ import { AudioEngine } from '../Audio';
 import { BLOCK_SOUND_KINDS, SOUND_PROFILES } from './profiles';
 import { UI_SOUND_NAMES } from './synth';
 import { BIOME } from '../../world/Biomes';
+import { BLOCK } from '../../world/BlockRegistry';
 import { WEAPONS } from '../../modes/Weapons';
 import { type AnnounceKind, MECH_KINDS, MEDAL_TEXT, gunEarshot } from './weaponSounds';
 
@@ -98,6 +99,12 @@ export function buildCatalog(): CatalogEntry[] {
   add('weapon.hitmarker.head', 0.4, (e) => e.playHitMarker(true));
   add('weapon.kill', 0.7, (e) => e.playKillDing());
   add('weapon.impact', 0.3, (e) => e.playBulletImpact(1));
+  for (const [mat, id] of [['stone', BLOCK.STONE], ['wood', BLOCK.OAK_PLANKS], ['metal', BLOCK.IRON_BARS], ['glass', BLOCK.GLASS], ['soil', BLOCK.DIRT], ['wool', BLOCK.WHITE_WOOL], ['leaves', BLOCK.OAK_LEAVES]] as const) {
+    add(`weapon.impact.${mat}`, 0.5, (e) => e.playBulletImpact(1, undefined, id));
+  }
+  add('weapon.whizz', 0.4, (e) => { setupEnv(e, () => {}); e.playBulletWhizz(1, at(1, -1), 'rifle'); });
+  add('weapon.whizz.sniper', 0.4, (e) => { setupEnv(e, () => {}); e.playBulletWhizz(1, at(-1, -1), 'sniper'); });
+  add('player.heartbeat', 0.6, (e) => e.playHeartbeat(1));
   add('player.spawn', 0.5, (e) => e.playSpawn());
   for (const n of UI_SOUND_NAMES) add(`ui.${n}`, 1.0, (e) => e.playUi(n));
 
