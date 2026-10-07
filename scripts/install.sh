@@ -265,7 +265,8 @@ fi
 
 # ---------------------------------------------------------------- DNS sanity check (warning only)
 if have getent; then
-  resolved="$(getent ahosts "$DOMAIN" 2>/dev/null | awk '{ print $1 }' | sort -u | tr '\n' ' ')"
+  # getent fails for a name that does not resolve yet; with pipefail that must not end the install.
+  resolved="$(getent ahosts "$DOMAIN" 2>/dev/null | awk '{ print $1 }' | sort -u | tr '\n' ' ' || true)"
   local_ips="$(hostname -I 2>/dev/null || true)"
   if [ -z "$resolved" ]; then
     warn "$DOMAIN does not resolve yet: create an A/AAAA record to this server, Caddy retries the certificate."
