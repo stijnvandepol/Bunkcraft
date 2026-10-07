@@ -92,6 +92,10 @@ export function quickPlayName(mode: GameType, code: string): string {
 /** Players and public lobbies per mode, for the playlist cards. */
 export interface ModeStats { gameType: GameType; players: number; lobbies: number }
 
+/** Skill of the server-side bots (server/bots/BotSkill.ts holds what each level means). */
+export type BotLevel = 'easy' | 'normal' | 'hard' | 'veteran';
+export const BOT_LEVELS: BotLevel[] = ['easy', 'normal', 'hard', 'veteran'];
+
 /** Lobby sizes a private lobby may choose. */
 export const LOBBY_SIZES = [2, 4, 6, 8, 10, 12, 16];
 export const LOBBY_SIZE_RANGE = { min: 2, max: 16 };

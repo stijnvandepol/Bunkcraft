@@ -17,6 +17,7 @@ import { gameTypeDef, parseGameType } from '../src/modes/GameTypes';
 import { parseListingKind } from '../src/modes/Realms';
 import { RateLimiter, bearer, hashPassword, hashToken, newToken, safeEqual } from './Security';
 import { ChunkGenPool } from './chunkgen/ChunkGenPool';
+import { prewarmNavGraphs } from './bots/BotWorld';
 import { ProfileService } from './progression/ProfileService';
 
 const MIME: Record<string, string> = {
@@ -119,6 +120,8 @@ export async function startServer(config: Config): Promise<RunningServer> {
       failLimiter,
       backupDir: config.backupKeep > 0 ? backupDir : undefined,
       listMax: config.listMax,
+      quickPlayBots: config.quickPlayBots,
+      quickPlayBotDifficulty: config.quickPlayBotDifficulty,
       profiles,
       ...guard,
     })
@@ -139,6 +142,8 @@ export async function startServer(config: Config): Promise<RunningServer> {
   const every = (ms: number, fn: () => void) => { const t = setInterval(fn, ms); t.unref(); timers.push(t); };
   every(600_000, () => { createLimit.prune(); lookupLimit.prune(); listLimit.prune(); quickLimit.prune(); profileLimit.prune(); profileCreateLimit.prune(); failLimiter.prune(); adminFailures.prune(); });
   every(5000, () => metrics.rollWindow());
+  // Bot navigation for every arena, built in the background before the first lobby needs it.
+  if (rooms && config.botPrewarm) prewarmNavGraphs((ms, n) => log.info('bot nav graphs ready', { graphs: n, ms: Math.round(ms) }));
   if (config.backupKeep > 0) {
     const run = () => backupAll(config.dataDir, backupDir, config.backupKeep);
     setTimeout(run, 2000).unref();
@@ -223,7 +228,10 @@ export async function startServer(config: Config): Promise<RunningServer> {
       const passwordHash = password ? await hashPassword(password) : undefined;
       const code = rooms.create(String(body.name ?? ''), typeof body.gameMode === 'string' ? body.gameMode : undefined,
         typeof body.seed === 'string' ? body.seed : undefined,
-        { gameType: body.gameType, scoreLimit: body.scoreLimit, timeLimitSec: body.timeLimitSec, mapId: body.mapId, maxPlayers: body.maxPlayers },
+        {
+          gameType: body.gameType, scoreLimit: body.scoreLimit, timeLimitSec: body.timeLimitSec, mapId: body.mapId, maxPlayers: body.maxPlayers,
+          bots: body.bots, botDifficulty: body.botDifficulty,
+        },
         { ownerHash: hashToken(ownerToken), passwordHash, listed: body.listed === true });
       // The owner token is shown exactly once: only its hash is stored.
       return code ? json(res, 201, { code, ownerToken, locked: !!passwordHash }) : json(res, 503, { error: 'This server has reached its game limit' });
