@@ -1,6 +1,7 @@
 import { type AABB, type BlockGetter, boxIntersectsSolid } from '../../src/player/Collision';
+import { JUMP_PAD_VELOCITY, SLIDE, slideExtra } from '../../src/player/ArcadeMove';
 import { PHYSICS } from '../../src/player/Physics';
-import { BLOCK } from '../../src/world/BlockRegistry';
+import { BLOCK, SOLID } from '../../src/world/BlockRegistry';
 
 /**
  * Server-side movement validation (DOM-free). The client simulates its own movement with `Player.step`
@@ -27,6 +28,13 @@ import { BLOCK } from '../../src/world/BlockRegistry';
  * time by more than CLOCK_SECONDS (what a lag spike legitimately banks). A report without `step` (old
  * clients, scripts) falls back on arrival times; once a player has sent `step`, a report without it
  * counts as no time passed.
+ *
+ * Arcade movement (src/player/ArcadeMove.ts). A slide is the only thing that lifts the horizontal speed above
+ * the run speed, and the client physics decays that excess at least at SLIDE.AIR_DRAG in every state. Clients
+ * report the physics step of their latest slide start (`slide`); a start inside the report window and at
+ * least the slide cooldown after the previous one raises the speed budget by exactly the envelope
+ * maxSpeed · BOOST · e^(−AIR_DRAG·t). Jump pads (BLOCK.JUMP_PAD) launch with JUMP_PAD_VELOCITY: the jump
+ * curve uses that speed only when a pad lay under the player's path at the take-off height.
  */
 
 export type Rule = 'noclip' | 'wall' | 'speed' | 'teleport' | 'rise' | 'fall' | 'fly' | 'clock';
@@ -99,7 +107,8 @@ export const STEPS_PER_SECOND = Math.round(1 / PHYSICS.STEP);
 
 /** Highest point of a jump from the ground (continuous model; the 60 Hz integration stays below it). */
 export const JUMP_APEX = (PHYSICS.JUMP_VELOCITY * PHYSICS.JUMP_VELOCITY) / (2 * PHYSICS.GRAVITY);
-const APEX_TIME = PHYSICS.JUMP_VELOCITY / PHYSICS.GRAVITY;
+const JV = PHYSICS.JUMP_VELOCITY;
+const apexOf = (v: number): number => (v * v) / (2 * PHYSICS.GRAVITY);
 /** Stepping onto a 0.6 ledge happens within one report. */
 const STEP_HEIGHT = 0.6;
 
@@ -115,29 +124,33 @@ export interface MovementOptions {
   canFly?: boolean;
   /** Inside the walkable area (x, z); outside is a violation reported as 'wall'. */
   inBounds?: (x: number, z: number) => boolean;
+  /** Arcade: seconds between two slide starts (the player's perk decides; default SLIDE.COOLDOWN). */
+  slideCooldown?: number;
 }
 
 const hw = PHYSICS.WIDTH / 2;
 
-/** Height (above the launch point) the jump curve allows after `tau` seconds, tolerating `jitter` seconds of timing error. */
-export function jumpCeiling(tau: number, jitter: number = MOVE.JITTER): number {
+/**
+ * Height (above the launch point) the jump curve allows after `tau` seconds, tolerating `jitter` seconds of
+ * timing error; `v` is the launch speed (a jump, or a jump pad).
+ */
+export function jumpCeiling(tau: number, jitter: number = MOVE.JITTER, v: number = JV): number {
   const lo = Math.max(0, tau - jitter), hi = Math.max(0, tau + jitter);
-  return jumpHeight(Math.min(hi, Math.max(lo, APEX_TIME)));
+  return jumpHeight(Math.min(hi, Math.max(lo, v / PHYSICS.GRAVITY)), v);
 }
 
-/** Time at which a jump's fall reaches terminal velocity; after it the descent is linear. */
-const TERMINAL_TIME = (PHYSICS.JUMP_VELOCITY + PHYSICS.TERMINAL_VELOCITY) / PHYSICS.GRAVITY;
-
-function jumpHeight(t: number): number {
-  if (t <= TERMINAL_TIME) return PHYSICS.JUMP_VELOCITY * t - 0.5 * PHYSICS.GRAVITY * t * t;
-  const h = PHYSICS.JUMP_VELOCITY * TERMINAL_TIME - 0.5 * PHYSICS.GRAVITY * TERMINAL_TIME * TERMINAL_TIME;
-  return h - PHYSICS.TERMINAL_VELOCITY * (t - TERMINAL_TIME);
+function jumpHeight(t: number, v: number): number {
+  // Time at which the fall reaches terminal velocity; after it the descent is linear.
+  const terminal = (v + PHYSICS.TERMINAL_VELOCITY) / PHYSICS.GRAVITY;
+  if (t <= terminal) return v * t - 0.5 * PHYSICS.GRAVITY * t * t;
+  const h = v * terminal - 0.5 * PHYSICS.GRAVITY * terminal * terminal;
+  return h - PHYSICS.TERMINAL_VELOCITY * (t - terminal);
 }
 
-/** Seconds a jump needs to reach `h` blocks above the launch point (ascent branch). */
-function riseTime(h: number): number {
-  const d = PHYSICS.JUMP_VELOCITY * PHYSICS.JUMP_VELOCITY - 2 * PHYSICS.GRAVITY * Math.max(0, h);
-  return d <= 0 ? APEX_TIME : (PHYSICS.JUMP_VELOCITY - Math.sqrt(d)) / PHYSICS.GRAVITY;
+/** Seconds a launch at `v` needs to reach `h` blocks above the launch point (ascent branch). */
+function riseTime(h: number, v: number = JV): number {
+  const d = v * v - 2 * PHYSICS.GRAVITY * Math.max(0, h);
+  return d <= 0 ? v / PHYSICS.GRAVITY : (v - Math.sqrt(d)) / PHYSICS.GRAVITY;
 }
 
 /** Per-player movement state and checks. Times are seconds on any monotonic clock. */
@@ -169,7 +182,15 @@ export class MovementValidator {
   /** Air phase: anchor of the jump curve and the lowest point so far. */
   private anchorY = 0;
   private anchorT = 0;
+  /** Launch speed of the current air phase (a jump, or a jump pad). */
+  private anchorV: number = JV;
   private lowY = 0;
+  /** Vertical budget of a jump pad launch (filled at the pad's speed; only spent when a pad is under the path). */
+  private bucketVPad = 0;
+  /** Slide envelope: physics time and client step of the last accepted slide start, the speed limit then. */
+  private slideAt = -1e9;
+  private slideStep = NaN;
+  private slideBase = 0;
   private started = false;
   private readonly box: AABB = { minX: 0, minY: 0, minZ: 0, maxX: 0, maxY: 0, maxZ: 0 };
 
@@ -197,6 +218,8 @@ export class MovementValidator {
     this.clock = MOVE.CLOCK_SECONDS;
     this.bucketH = this.capH();
     this.bucketV = this.capV();
+    this.bucketVPad = this.capV(JUMP_PAD_VELOCITY);
+    this.anchorV = JV;
     this.stallUntil = -1e9;
     this.grounded = true;
     this.groundY = this.anchorY = this.lowY = y;
@@ -226,13 +249,31 @@ export class MovementValidator {
     return (this.inGrace(t) ? Math.max(this.maxSpeed, this.prevMaxSpeed) : this.maxSpeed) * MOVE.SPEED_ALLOWANCE;
   }
 
-  private capH(t = -1e9): number {
+  private capH(t = -1e9, tp = -1e9): number {
     const seconds = this.stepMode ? MOVE.CLOCK_BURST_SECONDS : MOVE.BURST_SECONDS;
-    return this.limit(t) * seconds + MOVE.BURST_BLOCKS;
+    return (this.limit(t) + this.slideSpeed(tp)) * seconds + MOVE.BURST_BLOCKS;
   }
 
-  private capV(): number {
-    return PHYSICS.JUMP_VELOCITY * MOVE.SPEED_ALLOWANCE * 0.3 + STEP_HEIGHT + 0.3;
+  /** Speed above the limit the slide envelope allows at physics time `tp` (0 without a slide). */
+  private slideSpeed(tp: number): number {
+    const age = tp - this.slideAt;
+    return age < 0 || age > 30 ? 0 : this.slideBase * SLIDE.BOOST * Math.exp(-SLIDE.AIR_DRAG * age);
+  }
+
+  private capV(v: number = JV): number {
+    return v * MOVE.SPEED_ALLOWANCE * 0.3 + STEP_HEIGHT + 0.3;
+  }
+
+  /** Accepts a reported slide start (client step `at`) if it lies in this report's window and respects the cooldown. */
+  private grantSlide(at: number, step: number, tp: number, resync: boolean, t: number): void {
+    if (!Number.isFinite(at) || at === this.slideStep || at > step) return;
+    // New since the last report (after a resync: within the last two seconds).
+    if (resync ? step - at > 2 * STEPS_PER_SECOND : !(at > this.lastStep)) return;
+    const cooldown = Math.round((this.opts.slideCooldown ?? SLIDE.COOLDOWN) * STEPS_PER_SECOND) - 1;
+    if (this.slideStep === this.slideStep && at - this.slideStep < cooldown) return;
+    this.slideStep = at;
+    this.slideAt = tp - (step - at) / STEPS_PER_SECOND;
+    this.slideBase = this.limit(t);
   }
 
   // ------------------------------------------------------------ geometry (shared collision code)
@@ -268,6 +309,57 @@ export class MovementValidator {
     return NaN;
   }
 
+  /**
+   * Highest floor within `r` of (x, z) that is at most STEP_HEIGHT above y (a step a player walks up without
+   * jumping), or y when there is none.
+   */
+  private stepFloorNear(x: number, y: number, z: number, r: number): number {
+    let best = y;
+    for (let k = 0; k < 9; k++) {
+      const a = (k / 8) * Math.PI * 2, d = k === 8 ? 0 : r;
+      const g = this.floorBelow(x + Math.cos(a) * d, y + STEP_HEIGHT + 0.05, z + Math.sin(a) * d);
+      if (g === g && g > best && g <= y + STEP_HEIGHT + 1e-6 && !this.inSolid(x + Math.cos(a) * d, g, z + Math.sin(a) * d)) best = g;
+    }
+    return best;
+  }
+
+  /** Is a jump pad the floor right below (x, z) at feet height y (the client's own test)? */
+  private padAt(x: number, y: number, z: number): boolean {
+    return this.world.getBlock(Math.floor(x), Math.floor(y - 0.05), Math.floor(z)) === BLOCK.JUMP_PAD;
+  }
+
+  /** Does the path (two reports back → last → this one) cross a jump pad at feet height y? */
+  private padOnPath(x: number, z: number, y: number): boolean {
+    for (let k = 0; k <= 8; k++) {
+      const f = k / 4;
+      const gx = f <= 1 ? this.px + (this.x - this.px) * f : this.x + (x - this.x) * (f - 1);
+      const gz = f <= 1 ? this.pz + (this.z - this.pz) * f : this.z + (z - this.z) * (f - 1);
+      if (this.padAt(gx, y, gz)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Top of the highest jump pad that is the first solid block under the path within a pad launch's height
+   * below y, or NaN (a launch from a pad, seen somewhere up its flight).
+   */
+  private padBelowPath(x: number, y: number, z: number): number {
+    const g = this.world.getBlock;
+    let best = NaN;
+    const lowest = Math.floor(y - apexOf(JUMP_PAD_VELOCITY) - 1);
+    for (let k = 0; k <= 8; k++) {
+      const f = k / 4;
+      const bx = Math.floor(f <= 1 ? this.px + (this.x - this.px) * f : this.x + (x - this.x) * (f - 1));
+      const bz = Math.floor(f <= 1 ? this.pz + (this.z - this.pz) * f : this.z + (z - this.z) * (f - 1));
+      for (let by = Math.floor(y - 0.05); by >= lowest; by--) {
+        const id = g(bx, by, bz);
+        if (id === BLOCK.JUMP_PAD) { if (!(by + 1 <= best)) best = by + 1; break; }
+        if (SOLID[id]) break;
+      }
+    }
+    return best;
+  }
+
   /** In water or lava, or on a ladder: movement rules that replace the jump curve. */
   private inLiquidOrLadder(x: number, y: number, z: number): boolean {
     const bx = Math.floor(x), bz = Math.floor(z);
@@ -287,10 +379,12 @@ export class MovementValidator {
     return !this.inSolid(bx, by, bz);
   }
 
-  /** Is there any collision-free route (vertical/horizontal in either order, straight or around a corner)? */
+  /** Is there any collision-free route (straight, vertical/horizontal in either order, or around a corner)? */
   private pathFree(x1: number, y1: number, z1: number): boolean {
     const x0 = this.x, y0 = this.y, z0 = this.z;
     const horizontal = Math.abs(x1 - x0) + Math.abs(z1 - z0) > 1e-6;
+    // The straight line itself (a jump arcing off a crate seen across a frame hitch: neither L shape is free).
+    if (horizontal && Math.abs(y1 - y0) > 1e-6 && this.segmentFree(x0, y0, z0, x1, y1, z1)) return true;
     for (let order = 0; order < 2; order++) {
       // Rising: up first is the natural order (step-up, jump), falling: sideways first (walking off a ledge).
       const upFirst = (order === 0) === (y1 >= y0);
@@ -306,6 +400,13 @@ export class MovementValidator {
         else if (shape === 1) { go(x1, cy, cz); go(x1, cy, z1); } else { go(cx, cy, z1); go(x1, cy, z1); }
         if (!upFirst) go(cx, y1, cz);
         if (ok) return true;
+      }
+    }
+    // Two straight pieces via the horizontal midpoint at either height (a jump that grazed a ceiling or a slab edge).
+    if (horizontal && Math.abs(y1 - y0) > 1e-6) {
+      const mx = (x0 + x1) / 2, mz = (z0 + z1) / 2;
+      for (const my of [y0, y1]) {
+        if (this.segmentFree(x0, y0, z0, mx, my, mz) && this.segmentFree(mx, my, mz, x1, y1, z1)) return true;
       }
     }
     return horizontal && this.detourFree(x0, y0, z0, x1, y1, z1);
@@ -365,9 +466,10 @@ export class MovementValidator {
    * Checks a position report that arrived at (real) time `t`, with the client's simulation clock `step`
    * (60 Hz physics steps, see the header) when it sent one. On `ok` the position becomes the new last
    * valid one; on a violation nothing changes (apart from the clocks), and the caller rubber-bands the
-   * player to (x, y, z) of this validator and calls `reset` once the client has been told.
+   * player to (x, y, z) of this validator and calls `reset` once the client has been told. `slide` is the
+   * client step of its latest slide start (arcade; with the client clock only).
    */
-  check(x: number, y: number, z: number, t: number, step?: number): Verdict {
+  check(x: number, y: number, z: number, t: number, step?: number, slide?: number): Verdict {
     const hasStep = typeof step === 'number' && Number.isFinite(step);
     if (hasStep) this.stepMode = true;
     if (!this.started) {
@@ -398,13 +500,18 @@ export class MovementValidator {
       if (dct < 0) return fail('clock', 2);
       if (!resync && dct > this.clock + 1e-6) return fail('clock', 1, lagging);
       tp = this.tp + dct;
+      if (hasStep && typeof slide === 'number') this.grantSlide(slide, step, tp, resync, t);
     }
     const jitter = resync ? Math.max(MOVE.JITTER, tp - this.tp) : stepMode ? MOVE.CLOCK_JITTER : MOVE.JITTER;
     // Time-based budget: tokens accrue with elapsed (physics) time, never with the number of packets.
     const dtBucket = Math.max(0, tp - this.refillAt);
+    const from = this.refillAt;
     this.refillAt = tp;
-    this.bucketH = Math.min(this.capH(t), this.bucketH + dtBucket * this.limit(t));
-    this.bucketV = Math.min(this.capV(), this.bucketV + dtBucket * PHYSICS.JUMP_VELOCITY * MOVE.SPEED_ALLOWANCE);
+    // The slide envelope: exactly the extra distance a slide (and its slide-hop momentum) can cover.
+    const extra = this.slideBase > 0 ? this.slideBase * slideExtra(from - this.slideAt, tp - this.slideAt) : 0;
+    this.bucketH = Math.min(this.capH(t, Math.max(from, this.slideAt)), this.bucketH + dtBucket * this.limit(t) + extra);
+    this.bucketV = Math.min(this.capV(), this.bucketV + dtBucket * JV * MOVE.SPEED_ALLOWANCE);
+    this.bucketVPad = Math.min(this.capV(JUMP_PAD_VELOCITY), this.bucketVPad + dtBucket * JUMP_PAD_VELOCITY * MOVE.SPEED_ALLOWANCE);
 
     if (this.opts.inBounds && !this.opts.inBounds(x, z)) return fail('wall', 2);
     const dx = x - this.x, dz = z - this.z, dy = y - this.y;
@@ -419,8 +526,14 @@ export class MovementValidator {
     }
     // Vertical budget (flight trusts the vertical axis, the walls still apply).
     const vLag = lagging && !stepMode;
+    // A rise beyond a jump's budget is a pad launch, and only with a pad below the path.
+    let padRise = false;
     if (!this.opts.canFly) {
-      if (dy > 0 && dy > this.bucketV + 1e-6) return fail('rise', 2, vLag);
+      if (dy > 0 && dy > this.bucketV + 1e-6) {
+        const pad = this.padBelowPath(x, y, z);
+        padRise = dy <= this.bucketVPad + 1e-6 && pad === pad;
+        if (!padRise) return fail('rise', 2, vLag);
+      }
       if (dy < 0) {
         const fallLimit = PHYSICS.TERMINAL_VELOCITY * (Math.max(0, tp - this.tp) + jitter) + 0.5;
         if (-dy > fallLimit) return fail('fall', 1, vLag);
@@ -436,14 +549,25 @@ export class MovementValidator {
       || this.inLiquidOrLadder((x + this.x) / 2, (y + this.y) / 2, (z + this.z) / 2)
       || this.inLiquidOrLadder(this.x * 0.75 + x * 0.25, this.y * 0.75 + y * 0.25, this.z * 0.75 + z * 0.25)
       || this.inLiquidOrLadder(this.x * 0.25 + x * 0.75, this.y * 0.25 + y * 0.75, this.z * 0.25 + z * 0.75);
+    let anchorV = this.anchorV;
     if (grounded) {
       this.groundY = this.anchorY = this.lowY = y;
       this.groundT = this.anchorT = tp;
+      anchorV = JV;
     } else {
       let anchorY = this.anchorY, anchorT = this.anchorT, lowY = this.lowY;
       if (this.grounded) {
         anchorY = lowY = this.groundY;
         anchorT = this.groundT;
+        // A long gap (frame hitch) may hide a step up (slab, stair) before the take-off, off the straight line.
+        const gap = tp - this.groundT;
+        if (gap > 2 * MOVE.REPORT_GAP) {
+          const reach = (this.limit(t) + this.slideSpeed(this.groundT)) * gap / 2, half = Math.hypot(x - this.x, z - this.z) / 2;
+          const r = Math.min(1.5, Math.sqrt(Math.max(0, reach * reach - half * half)));
+          anchorY = Math.max(anchorY, this.stepFloorNear((this.x + x) / 2, this.groundY, (this.z + z) / 2, r + half));
+        }
+        // Left the ground: from a jump pad when one lay under the path at ground height.
+        anchorV = this.padOnPath(x, z, this.groundY) ? JUMP_PAD_VELOCITY : JV;
         if (y < lowY) lowY = y;
       } else {
         if (y < lowY) lowY = y;
@@ -451,7 +575,7 @@ export class MovementValidator {
         // Falling but above the old curve: the same, with the new jump already past its top (or cut short
         // by a ceiling: a head bump under a lamp or a deck).
         const rising = dy > 0.001;
-        if (rising || y > anchorY + jumpCeiling(tp - anchorT, jitter) + MOVE.HEIGHT_SLACK) {
+        if (rising || y > anchorY + jumpCeiling(tp - anchorT, jitter, anchorV) + MOVE.HEIGHT_SLACK) {
           // Take-off happened somewhere between the two reports: ground below either end counts.
           // The take-off may lie up to two reports back (a report can catch the rise before it is above the last one).
           let gy = NaN;
@@ -467,19 +591,31 @@ export class MovementValidator {
           if (gy === gy && riseTime(y - gy) <= window + MOVE.BOUNCE_SLACK) {
             anchorY = lowY = gy;
             anchorT = tp - riseTime(y - gy);
+            anchorV = JV;
+          }
+          // A jump pad further down: a new launch from it (landed on it between two reports).
+          const pad = this.padBelowPath(x, y, z);
+          if (pad === pad && riseTime(y - pad, JUMP_PAD_VELOCITY) <= window + MOVE.BOUNCE_SLACK) {
+            anchorY = lowY = pad;
+            anchorT = tp - riseTime(y - pad, JUMP_PAD_VELOCITY);
+            anchorV = JUMP_PAD_VELOCITY;
           }
         }
       }
-      const ceiling = anchorY + jumpCeiling(tp - anchorT, jitter) + MOVE.HEIGHT_SLACK;
-      if (y > ceiling || y > lowY + JUMP_APEX + STEP_HEIGHT + MOVE.HEIGHT_SLACK) return fail('fly', 2, vLag);
+      const ceiling = anchorY + jumpCeiling(tp - anchorT, jitter, anchorV) + MOVE.HEIGHT_SLACK;
+      if (y > ceiling || y > lowY + apexOf(anchorV) + STEP_HEIGHT + MOVE.HEIGHT_SLACK) return fail('fly', 2, vLag);
       // After a resync the take-off time is unknown: the latest one that fits keeps the next reports honest.
-      if (resync) anchorT = Math.max(anchorT, tp - riseTime(y - anchorY));
+      if (resync) anchorT = Math.max(anchorT, tp - riseTime(y - anchorY, anchorV));
       this.anchorY = anchorY; this.anchorT = anchorT; this.lowY = lowY;
     }
     this.grounded = grounded;
+    this.anchorV = anchorV;
 
     this.bucketH -= dist;
-    if (dy > 0) this.bucketV -= dy;
+    if (dy > 0) {
+      this.bucketVPad = Math.max(0, this.bucketVPad - dy);
+      this.bucketV = padRise ? 0 : this.bucketV - dy;
+    }
     if (stepMode) {
       if (!resync) this.clock -= tp - this.tp;
       if (hasStep) this.lastStep = step;
