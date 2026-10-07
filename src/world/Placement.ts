@@ -7,6 +7,7 @@ import {
 } from './BlockStates';
 import { BED_HEAD_BIT, BOX_ANVIL, BOX_BED, BOX_CARPET, BOX_GATE, BOX_GRINDSTONE, BOX_LADDER, BOX_TRAPDOOR, TRAPDOOR_TOP_BIT, ladderSide } from './BoxShapes';
 import { CHUNK_HEIGHT } from './constants';
+import { CROP_STYLE } from './Crops';
 import { redstonePlacement } from './RedstonePlacement';
 import { LEAVES } from './PlantRules';
 
@@ -93,15 +94,17 @@ export function resolveBucketTarget(
   let x = c.hitX + c.nx, y = c.hitY + c.ny, z = c.hitZ + c.nz;
   if (SHAPE[c.getBlock(c.hitX, c.hitY, c.hitZ)] === SHAPE_CROSS) { x = c.hitX; y = c.hitY; z = c.hitZ; }
   const existing = c.getBlock(x, y, z);
-  if (existing === BLOCK.UNLOADED || !isReplaceable(existing)) return null;
+  // Liquids wash plants away, crops included (Minecraft: a non-solid block can be replaced by a fluid).
+  const s = SHAPE[existing];
+  if (existing === BLOCK.UNLOADED || !(s === SHAPE_NONE || s === SHAPE_LIQUID || s === SHAPE_CROSS)) return null;
   if (existing === kind && c.getMeta(x, y, z) === 0) return null;
   return { x, y, z };
 }
 
-/** Blocks that give way to whatever is placed into them. */
+/** Blocks that give way to whatever is placed into them (crops and stems do not, like Minecraft's). */
 export function isReplaceable(id: number): boolean {
   const s = SHAPE[id];
-  return s === SHAPE_NONE || s === SHAPE_LIQUID || s === SHAPE_CROSS;
+  return s === SHAPE_NONE || s === SHAPE_LIQUID || (s === SHAPE_CROSS && CROP_STYLE[id] === 0);
 }
 
 /**
