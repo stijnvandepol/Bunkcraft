@@ -62,7 +62,7 @@ export class ProfileScreens {
             h('span', { class: 'rp-name' }, `${p.name} `, h('span', { class: 'rp-title', text: t(`ptitle.${p.equip.title}` as I18nKey) })),
             h('span', { class: 'rp-level', text: `${r.prestige > 0 ? `${t('prog.prestige', r.prestige)} - ` : ''}${t('prog.level', r.level)}` }),
           ),
-          h('div', { class: `xp-bar${lv.need === 0 ? ' max' : ''}` }, h('i', { style: `width:${fill}%` })),
+          h('div', { class: `prog-bar${lv.need === 0 ? ' max' : ''}` }, h('i', { style: `width:${fill}%` })),
           h('div', { class: 'rp-xp', text: lv.need > 0 ? t('prog.xp', lv.into, lv.need) : canPrestige(r) ? t('prog.max') : t('prog.maxed') }),
         ),
       );
@@ -152,7 +152,7 @@ export class ProfileScreens {
           return h('div', { class: `prog-row${done ? ' done' : ''}`, 'data-challenge': c.id },
             h('div', { class: 'grow' },
               h('span', { text: challengeText(c) }),
-              h('div', { class: 'xp-bar' }, h('i', { style: `width:${Math.round((have / c.target) * 100)}%` }))),
+              h('div', { class: 'prog-bar' }, h('i', { style: `width:${Math.round((have / c.target) * 100)}%` }))),
             h('div', { class: 'right' },
               h('div', { class: done ? 'good' : '', text: done ? t('chal.done') : `${have} / ${c.target}` }),
               h('div', { class: 'muted', text: t('chal.reward', c.xp) })),
@@ -199,7 +199,7 @@ export class ProfileScreens {
         h('div', { class: 'grow' },
           h('span', { text: w.name }),
           h('span', { class: open ? 'muted' : 'bad', text: open ? `${t('armory.level', lv.level)} - ${t('armory.kills', rec?.kills ?? 0)}` : t('armory.locked', unlockLevel(kind, id)) }),
-          h('div', { class: `xp-bar${lv.need === 0 ? ' max' : ''}` }, h('i', { style: `width:${lv.need > 0 ? Math.round((lv.into / lv.need) * 100) : 100}%` })),
+          h('div', { class: `prog-bar${lv.need === 0 ? ' max' : ''}` }, h('i', { style: `width:${lv.need > 0 ? Math.round((lv.into / lv.need) * 100) : 100}%` })),
           swatches,
         ),
       ));

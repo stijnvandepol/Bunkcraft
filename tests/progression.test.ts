@@ -95,16 +95,16 @@ describe('unlocks', () => {
     expect(isUnlocked('optic', 'reddot', r1)).toBe(true);
     expect(isUnlocked('perk', 'extmag', r1)).toBe(true);
     // Every weapon unlocks within the first 20 levels.
-    expect(Math.max(...EQUIPMENT_UNLOCKS.map((u) => u.level))).toBeLessThanOrEqual(20);
+    expect(Math.max(...EQUIPMENT_UNLOCKS.map((u) => u.level))).toBeLessThanOrEqual(12);
   });
 
   it('every listed unlock refers to a real item, and levels gate them', () => {
     for (const u of EQUIPMENT_UNLOCKS) {
       if (u.kind === 'primary' || u.kind === 'secondary') expect(WEAPONS.some((w) => w.id === u.id && w.slot === u.kind)).toBe(true);
     }
-    expect(unlockLevel('primary', 'sniper')).toBe(16);
-    expect(isUnlocked('primary', 'sniper', { level: 15, prestige: 0 })).toBe(false);
-    expect(isUnlocked('primary', 'sniper', { level: 16, prestige: 0 })).toBe(true);
+    expect(unlockLevel('primary', 'sniper')).toBe(12);
+    expect(isUnlocked('primary', 'sniper', { level: 11, prestige: 0 })).toBe(false);
+    expect(isUnlocked('primary', 'sniper', { level: 12, prestige: 0 })).toBe(true);
     // Prestige keeps everything.
     expect(isUnlocked('primary', 'sniper', { level: 1, prestige: 1 })).toBe(true);
   });
@@ -115,23 +115,23 @@ describe('unlocks', () => {
       .toEqual({ primary: 'rifle', optic: 'iron', secondary: 'pistol', perk: 'none' });
     expect(lockClass({ primary: 'smg', optic: 'holo', secondary: 'pistol', perk: 'extmag' }, r1))
       .toEqual({ primary: 'smg', optic: 'iron', secondary: 'pistol', perk: 'extmag' });
-    expect(lockClass({ primary: 'smg', optic: 'holo', secondary: 'mpistol', perk: 'quickdraw' }, { level: 4, prestige: 0 }))
+    expect(lockClass({ primary: 'smg', optic: 'holo', secondary: 'mpistol', perk: 'quickdraw' }, { level: 3, prestige: 0 }))
       .toEqual({ primary: 'smg', optic: 'holo', secondary: 'mpistol', perk: 'quickdraw' });
     // A scope-only weapon that is unlocked keeps its scope even before the scope unlock (it has no other sights).
-    expect(lockClass({ primary: 'sniper', optic: 'scope', secondary: 'pistol', perk: 'none' }, { level: 16, prestige: 0 }).optic).toBe('scope');
+    expect(lockClass({ primary: 'sniper', optic: 'scope', secondary: 'pistol', perk: 'none' }, { level: 12, prestige: 0 }).optic).toBe('scope');
     expect(lockClass('garbage', r1)).toEqual({ primary: 'rifle', optic: 'iron', secondary: 'pistol', perk: 'none' });
   });
 
-  it('presets unlock along the way; the first one early', () => {
-    expect(classUnlocked(LOADOUT_PRESETS[0], { level: 2, prestige: 0 })).toBe(true);
-    for (const p of LOADOUT_PRESETS) expect(classUnlocked(p, { level: 20, prestige: 0 })).toBe(true);
+  it('presets unlock along the way; a new player already has two', () => {
+    expect(LOADOUT_PRESETS.filter((p) => classUnlocked(p, { level: 1, prestige: 0 })).length).toBeGreaterThanOrEqual(2);
+    for (const p of LOADOUT_PRESETS) expect(classUnlocked(p, { level: 12, prestige: 0 })).toBe(true);
     expect(classUnlocked(LOADOUT_PRESETS.find((p) => p.id === 'sniper')!, { level: 1, prestige: 0 })).toBe(false);
   });
 
   it('unlocksBetween lists what a level-up brings', () => {
-    const got = unlocksBetween(4, 6, 0).map((u) => `${u.kind}:${u.id}`);
-    expect(got).toEqual(['primary:dmr', 'perk:ninja']);
-    expect(unlocksBetween(9, 10, 0).map((u) => u.id)).toEqual(expect.arrayContaining(['revolver', 'soldier']));
+    const got = unlocksBetween(3, 5, 0).map((u) => `${u.kind}:${u.id}`);
+    expect(got).toEqual(['primary:dmr', 'primary:lmg']);
+    expect(unlocksBetween(9, 10, 0).map((u) => u.id)).toEqual(expect.arrayContaining(['semisniper', 'soldier']));
     expect(unlocksBetween(5, 5, 0)).toEqual([]);
   });
 });

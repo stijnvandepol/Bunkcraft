@@ -4,8 +4,8 @@ import { MAX_LEVEL, type Rank } from './Levels';
 
 /**
  * What unlocks with the player level. Level 1 already has a full, competitive kit (assault rifle, SMG,
- * shotgun, pistol, red dot, Extended Mags) so a new player is never outgunned; the rest are side-grades that
- * arrive over the first ~20 levels. Once unlocked, always unlocked: a prestiged player keeps everything.
+ * shotgun, pistol, red dot, Extended Mags, Quickdraw, Ninja: the Assault and Breacher presets) so a new player is never outgunned; the rest are side-grades that
+ * arrive over the first 12 levels (about a dozen matches), and every Create-a-Class preset is usable once its parts are. Once unlocked, always unlocked: a prestiged player keeps everything.
  *
  * The same table runs on the server (a locked class field falls back to the default) and in the menus
  * (Create-a-Class shows locked items with their level).
@@ -25,18 +25,16 @@ export interface Unlock {
 
 /** Equipment unlocks; anything not listed is available from level 1. */
 export const EQUIPMENT_UNLOCKS: readonly Unlock[] = [
-  { kind: 'perk', id: 'quickdraw', level: 2 },
-  { kind: 'optic', id: 'holo', level: 3 },
-  { kind: 'secondary', id: 'mpistol', level: 4 },
-  { kind: 'primary', id: 'dmr', level: 5 },
-  { kind: 'perk', id: 'ninja', level: 6 },
-  { kind: 'primary', id: 'lmg', level: 7 },
-  { kind: 'optic', id: 'scope', level: 8 },
-  { kind: 'primary', id: 'burst', level: 9 },
-  { kind: 'secondary', id: 'revolver', level: 10 },
-  { kind: 'perk', id: 'suppressor', level: 12 },
-  { kind: 'primary', id: 'semisniper', level: 14 },
-  { kind: 'primary', id: 'sniper', level: 16 },
+  { kind: 'optic', id: 'holo', level: 2 },
+  { kind: 'secondary', id: 'mpistol', level: 3 },
+  { kind: 'primary', id: 'dmr', level: 4 },
+  { kind: 'primary', id: 'lmg', level: 5 },
+  { kind: 'optic', id: 'scope', level: 6 },
+  { kind: 'perk', id: 'suppressor', level: 7 },
+  { kind: 'primary', id: 'burst', level: 8 },
+  { kind: 'secondary', id: 'revolver', level: 9 },
+  { kind: 'primary', id: 'semisniper', level: 10 },
+  { kind: 'primary', id: 'sniper', level: 12 },
 ];
 
 /** Titles shown under your name in the Realms hub. */

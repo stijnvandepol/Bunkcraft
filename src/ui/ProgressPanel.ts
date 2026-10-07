@@ -46,7 +46,7 @@ export class ProgressPanel {
           h('b', { text: `${l.xp >= 0 ? '+' : ''}${l.xp}` }))),
         h('div', { class: 'xr-line total' }, h('span', { text: t('xp.total') }), h('b', { text: `+${r.xp}` })),
       ),
-      h('div', { class: `xp-bar${after.need === 0 ? ' max' : ''}` }, fill),
+      h('div', { class: `prog-bar${after.need === 0 ? ' max' : ''}` }, fill),
       ...notes,
     );
     this.el.classList.remove('hidden');
