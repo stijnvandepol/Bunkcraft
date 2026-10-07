@@ -1149,10 +1149,9 @@ export class GameServer {
       const outside = !this.match.inBounds(m.x, m.z) || m.y < ARENA_FLOOR_Y - 2 || m.y > ARENA_FLOOR_Y + 40;
       const p = this.match.players.get(s.id);
       if (p) {
-        // The weapon in the hands sets the pace; a flag carrier (capture the flag) is params.carrySlow slower.
-        const logic = this.match.logic as { isCarrier?(p: unknown): boolean };
-        const carry = logic.isCarrier?.(p) ? 1 - (gameTypeDef(this.match.info.type).params?.carrySlow ?? 0.1) : 1;
-        this.guard!.setMoveSpeed(s.id, p.slots[p.slot].def.moveSpeed * carry, now / 1000);
+        // The weapon in the hands sets the pace; the mode may change it (a flag carrier is slower, the infected faster).
+        const mul = this.match.logic.speedMul?.(this.match, p) ?? 1;
+        this.guard!.setMoveSpeed(s.id, p.slots[p.slot].def.moveSpeed * mul, now / 1000);
       }
       const r = outside ? this.guard!.flag(s.id, 'bounds', 2, now / 1000) : this.guard!.move(s.id, m.x, m.y, m.z, now / 1000, typeof m.step === 'number' ? m.step : undefined);
       if (!r.ok) {

@@ -30,6 +30,8 @@ export const SUBURB: ArenaMapDef = {
       { name: 'East Corner', x: 8.5, z: -12.5, r: 4 },
     ],
     dominationZones: [0, 1, 2],
+    // Search and destroy: bomb sites in the blue half (see scripts/site-scan.ts).
+    sites: [{ name: 'A', x: 12.5, z: -12.5, r: 3 }, { name: 'B', x: 12.5, z: 12.5, r: 3 }],
   },
   build(_variant, b) {
     const { box, paint } = b;

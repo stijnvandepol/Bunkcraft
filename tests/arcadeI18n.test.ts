@@ -116,7 +116,7 @@ describe('arcade HUD i18n: tables', () => {
     // Labels that stay the same in Dutch gamer speak (product names, loan words, numbers).
     const same = new Set([
       'arc.headshot', 'arc.board.kills', 'arc.board.level', 'arc.cac.title', 'arc.cac.perk', 'arc.class',
-      'arc.medal.streak3', 'arc.medal.headshot', 'mode.ladder.level',
+      'arc.medal.streak3', 'arc.medal.headshot', 'mode.ladder.level', 'arc.board.tags', 'mode.ev.weaponRotate',
     ]);
     const keys = i18nKeys().filter((k) => k.startsWith('arc.') || k.startsWith('mode.'));
     expect(keys.length).toBeGreaterThan(100);
