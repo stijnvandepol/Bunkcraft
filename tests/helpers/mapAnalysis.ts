@@ -1,5 +1,6 @@
 import { traceBlocks } from '../../server/Combat';
 import { ARENA_FLOOR_Y, type ArenaMap } from '../../src/modes/maps';
+import { padLandings } from '../../src/player/ArcadeMove';
 import { BLOCK, SOLID, TALL } from '../../src/world/BlockRegistry';
 
 /** Geometry helpers shared by the map tests and the scan scripts: standing spots, walking reachability, sight lines. */
@@ -16,7 +17,10 @@ export function standable(map: ArenaMap, variant: number, x: number, y: number, 
   return SOLID[at(x, y, z)] === 1 && at(x, y + 1, z) === BLOCK.AIR && at(x, y + 2, z) === BLOCK.AIR;
 }
 
-/** Every standing spot (x, z, surface y) reachable on foot from a start cell: 1-block step ups, free drops. */
+/** Solid and not a fence/wall: something to land on. */
+export const landable = (id: number): boolean => SOLID[id] === 1 && !TALL[id];
+
+/** Every standing spot (x, z, surface y) reachable on foot from a start cell: 1-block step ups, free drops, jump pads. */
 export function reachable(map: ArenaMap, variant: number, sx: number, sz: number, sy = ARENA_FLOOR_Y): Set<number> {
   const at = blockFn(map, variant);
   const b = map.bounds;
@@ -25,8 +29,18 @@ export function reachable(map: ArenaMap, variant: number, sx: number, sz: number
   const ok = (x: number, y: number, z: number) => SOLID[at(x, y, z)] === 1 && !TALL[at(x, y, z)] && air(x, y + 1, z) && air(x, y + 2, z);
   const seen = new Set<number>([keyOf(sx, sz, sy)]);
   const queue: [number, number, number][] = [[sx, sz, sy]];
+  const pads: [number, number, number][] = [];
   while (queue.length) {
     const [x, z, y] = queue.pop()!;
+    if (at(x, y, z) === BLOCK.JUMP_PAD) {
+      pads.length = 0;
+      padLandings(at, landable, x, y, z, pads);
+      for (const [nx, nz, ny] of pads) {
+        if (seen.has(keyOf(nx, nz, ny)) || nx < b.minX || nx >= b.maxX || nz < b.minZ || nz >= b.maxZ) continue;
+        seen.add(keyOf(nx, nz, ny));
+        queue.push([nx, nz, ny]);
+      }
+    }
     for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
       const nx = x + dx, nz = z + dz;
       if (nx < b.minX || nx >= b.maxX || nz < b.minZ || nz >= b.maxZ) continue;

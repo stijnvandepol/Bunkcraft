@@ -19,6 +19,7 @@ export class CameraController {
   private bobAmount = 0;
   private fov = 70;
   private landDip = 0;
+  private slideLean = 0;
   private lastStepIndex = 0;
   /** Set when a footstep should be played this frame. */
   stepped = false;
@@ -65,20 +66,29 @@ export class CameraController {
     const bobSide = Math.cos(phase) * 0.028 * amt;
     // Minecraft hurt cam: a quick tilt towards the side of the hit.
     const hurtRoll = this.hurt > 0 && !this.reducedMotion ? -Math.sin(this.hurt ** 4 * Math.PI) * 0.24 * this.hurtSide : 0;
-    const roll = Math.cos(phase) * 0.0045 * amt + hurtRoll;
+    // Arcade slide: a slight lean while low (Reduced Motion keeps the horizon level).
+    this.slideLean = approach(this.slideLean, p.sliding && !this.reducedMotion ? 0.045 : 0, 10, dt);
+    const roll = Math.cos(phase) * 0.0045 * amt + hurtRoll + this.slideLean;
     this.bobPhase = phase;
     this.bobStrength = amt;
 
     const cam = this.camera;
     cam.rotation.set(p.pitch + (this.reducedMotion ? this.kick * 0.25 : this.kick), p.yaw, roll, 'YXZ');
     const cos = Math.cos(p.yaw), sin = Math.sin(p.yaw);
-    cam.position.set(x + cos * bobSide, y + PHYSICS.EYE_HEIGHT + bobY - this.landDip, z - sin * bobSide);
+    const eye = p.prevEye + (p.eye - p.prevEye) * alpha;
+    cam.position.set(x + cos * bobSide, y + eye + bobY - this.landDip, z - sin * bobSide);
 
     let fovTarget = this.baseFov;
     // FOV effects scale between 1 (none) and the full change.
     const fe = this.fovEffects;
     if (p.sprinting && this.sprintFov) fovTarget *= 1 + (p.flying ? 0.18 : 0.12) * fe;
     if (p.headInWater) fovTarget *= 1 - 0.1 * fe;
+    // Arcade: a FOV kick while sliding and with speed above the run pace (slide-hop momentum).
+    if (p.arcadeMove) {
+      const run = PHYSICS.SPRINT_SPEED * p.speedMultiplier;
+      const over = run > 0 ? Math.max(0, Math.min(0.5, hSpeed / run - 1)) : 0;
+      fovTarget *= 1 + ((p.sliding ? 0.06 : 0) + over * 0.16) * fe;
+    }
     // Drawing a bow zooms in (Minecraft: up to 15% at full draw).
     if (this.bowPull > 0) fovTarget *= 1 - this.bowPull * this.bowPull * 0.15 * fe;
     fovTarget *= this.zoom;

@@ -31,6 +31,7 @@ export const LOADOUT_PRESETS: LoadoutPreset[] = [
   { id: 'marksman', name: 'Marksman', primary: 'dmr', optic: 'scope', secondary: 'revolver', perk: 'none', description: 'Scoped, precise at medium and long range' },
   { id: 'burst', name: 'Burst', primary: 'burst', optic: 'holo', secondary: 'pistol', perk: 'suppressor', description: 'Tight, quiet three-round bursts' },
   { id: 'sniper', name: 'Sniper', primary: 'sniper', optic: 'scope', secondary: 'mpistol', perk: 'quickdraw', description: 'One shot, one kill' },
+  { id: 'scout', name: 'Scout', primary: 'smg', optic: 'iron', secondary: 'pistol', perk: 'lightfoot', description: 'Fastest on foot: slide in, knife or spray, slide out' },
 ];
 
 /** A class picked within this many seconds of spawning (and before the first shot) applies at once in a live round. */

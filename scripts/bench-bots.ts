@@ -27,12 +27,16 @@ for (let i = 0; i < lobbies; i++) {
 // Fill up (bots join a few per second) and build the nav graphs before measuring.
 const hz = 30;
 for (let i = 0; i < hz * 5; i++) { clock.ms += 1000 / hz; for (const l of list) l.tick(); }
+const threadCpu = (process as { threadCpuUsage?: () => NodeJS.CpuUsage }).threadCpuUsage;
+const cpuMs = () => { const u = threadCpu ? threadCpu.call(process) : process.cpuUsage(); return (u.user + u.system) / 1000; };
+let cpuTotal = 0;
 const times: number[] = [];
 const roundTimes: number[] = [];
 const botTimes: number[] = [];
 for (let i = 0; i < seconds * hz; i++) {
   clock.ms += 1000 / hz;
   const r0 = performance.now();
+  const c0 = cpuMs();
   for (const l of list) {
     const b0 = l.bots.perf.totalMs;
     const t0 = performance.now();
@@ -41,6 +45,7 @@ for (let i = 0; i < seconds * hz; i++) {
     botTimes.push(l.bots.perf.totalMs - b0);
   }
   roundTimes.push(performance.now() - r0);
+  cpuTotal += cpuMs() - c0;
   if (i % hz === 0) for (const l of list) for (const ws of l.humans) ws.sent.length = 0;
 }
 times.sort((a, b) => a - b);
@@ -51,6 +56,8 @@ const avg = (a: number[]) => a.reduce((s, v) => s + v, 0) / a.length;
 console.log(`${lobbies} lobbies × (1 person + ${list[0].bots.count} bots), ${mode} on ${map}, ${difficulty}, ${seconds}s at ${hz} Hz`);
 console.log(`per lobby tick: avg ${avg(times).toFixed(3)} ms, p50 ${pct(times, 0.5).toFixed(3)}, p99 ${pct(times, 0.99).toFixed(3)}, max ${times[times.length - 1].toFixed(2)} ms`);
 console.log(`  of which bots: avg ${avg(botTimes).toFixed(3)} ms, p50 ${pct(botTimes, 0.5).toFixed(3)}, p99 ${pct(botTimes, 0.99).toFixed(3)}, max ${botTimes[botTimes.length - 1].toFixed(2)} ms`);
+// Thread CPU time: what the lobbies cost regardless of other processes on the machine (wall times above swing with load).
+console.log(`per lobby tick CPU: mean ${(cpuTotal / (seconds * hz) / lobbies).toFixed(3)} ms`);
 console.log(`all lobbies per tick: avg ${avg(roundTimes).toFixed(3)} ms, p99 ${pct(roundTimes, 0.99).toFixed(3)} ms (budget ${(1000 / hz).toFixed(1)} ms)`);
 for (const l of list) {
   const p = l.server.botPerf()!;

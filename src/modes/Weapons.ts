@@ -246,7 +246,7 @@ export function opticZoom(w: WeaponDef, optic: OpticId): number {
   return w.zoom;
 }
 
-export type PerkId = 'none' | 'extmag' | 'quickdraw' | 'ninja' | 'suppressor';
+export type PerkId = 'none' | 'extmag' | 'quickdraw' | 'ninja' | 'suppressor' | 'lightfoot';
 
 export interface PerkDef {
   id: PerkId;
@@ -260,7 +260,13 @@ export const PERKS: Record<PerkId, PerkDef> = {
   quickdraw: { id: 'quickdraw', name: 'Quickdraw', desc: 'Aim 40% faster, switch weapons twice as fast' },
   ninja: { id: 'ninja', name: 'Ninja', desc: 'Enemies hear your footsteps only up close' },
   suppressor: { id: 'suppressor', name: 'Suppressor', desc: 'Quiet shots heard only nearby; 20% shorter damage range' },
+  lightfoot: { id: 'lightfoot', name: 'Lightfoot', desc: '8% faster on foot, slides recharge 28% sooner' },
 };
+
+/** Movement speed multiplier of a perk (Lightfoot); the server's speed limit uses the same number. */
+export function perkMoveSpeed(perk: PerkId): number {
+  return perk === 'lightfoot' ? 1.08 : 1;
+}
 export const PERK_IDS = Object.keys(PERKS) as PerkId[];
 
 export function isPerk(v: unknown): v is PerkId {
@@ -298,6 +304,6 @@ export const PLAYER_MAX_HEALTH = 100;
 /** Health regenerates after this many seconds without damage, at this rate per second. */
 export const REGEN_DELAY = 5;
 export const REGEN_PER_SECOND = 25;
-export const RESPAWN_SECONDS = 3;
+export const RESPAWN_SECONDS = 2.5;
 /** Player hitbox (blocks): width, total height; the head is the top 0.4. */
 export const HITBOX = { width: 0.6, height: 1.8, head: 0.4 };

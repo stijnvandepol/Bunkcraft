@@ -34,6 +34,14 @@ const MAX_VOICES = 64;
 const PROBES_PER_FRAME = 6;
 /** Other players' gunshots built per frame; more in one frame are masked by these anyway (caps node churn in big firefights). */
 const REMOTE_SHOTS_PER_FRAME = 3;
+/**
+ * ...and per second beyond NEAR_SHOT blocks (a token bucket): the per-frame cap alone let a 120 Hz display build twice
+ * the gunshots of a 60 Hz one, ~11 audio nodes each (node creation was the largest audio cost in a 16-player
+ * firefight). Shots close by always count; they are the ones that tell you where an enemy is.
+ */
+const REMOTE_SHOTS_PER_SECOND = 60;
+const REMOTE_SHOT_BURST = 4;
+const NEAR_SHOT = 16;
 
 /**
  * Fully procedural audio (no audio assets). The engine owns the Web Audio graph; the sound design lives in
@@ -69,6 +77,7 @@ export class AudioEngine {
   private probe: OcclusionProbe | null = null;
   private probeBudget = PROBES_PER_FRAME;
   private shotBudget = REMOTE_SHOTS_PER_FRAME;
+  private shotTokens = REMOTE_SHOT_BURST;
   private armor: ArmorMaterial | null = null;
   private readonly lastVariant = new Map<string, number>();
   private readonly listeners = new Set<SoundListener>();
@@ -731,7 +740,16 @@ export class AudioEngine {
     this.emitAt(suppressed ? `weapon.${weapon}.suppressed` : `weapon.${weapon}`, at, volume);
     if (volume <= 0.02) return;
     const own = !at;
-    if (!own && this.shotBudget-- <= 0) return;
+    if (!own) {
+      if (this.shotBudget <= 0) return;
+      const l = this.listener;
+      const dx = at.x - l.x, dy = at.y - l.y, dz = at.z - l.z;
+      if (dx * dx + dy * dy + dz * dz > NEAR_SHOT * NEAR_SHOT) {
+        if (this.shotTokens < 1) return;
+        this.shotTokens--;
+      }
+      this.shotBudget--;
+    }
     this.placed(at, gunEarshot(weapon, suppressed), own ? Priority.Player : Priority.Normal, () => this.gunRecipe(weapon, Math.min(1, volume), own, suppressed));
   }
 
@@ -965,6 +983,26 @@ export class AudioEngine {
     });
   }
 
+  /** Arcade slide: a gritty scrape that fades with the slide, under a short whoosh. */
+  playSlide(): void {
+    this.emit('player.slide', NaN, NaN, NaN, 0.3);
+    this.placed(undefined, 0, Priority.Player, () => {
+      this.noiseBurst(2300, 0.7, 0.55, 0.22, 'bandpass', 0, { attack: 0.02 });
+      this.noiseBurst(600, 0.9, 0.35, 0.18, 'lowpass', 0.01);
+      this.synth.whoosh(0.9);
+    });
+  }
+
+  /** Jump pad launch: a rising electric thump. */
+  playJumpPad(): void {
+    this.emit('player.jumppad', NaN, NaN, NaN, 0.4);
+    this.placed(undefined, 0, Priority.Player, () => {
+      this.voice('sine', 140, 520, 0.28, 0.3);
+      this.voice('square', 420, 1250, 0.18, 0.06, 0.02, { lp: 2600 });
+      this.noiseBurst(900, 0.8, 0.2, 0.15, 'bandpass', 0.01);
+    });
+  }
+
   /** Little whoosh when you respawn. */
   playSpawn(): void {
     this.emit('player.spawn', NaN, NaN, NaN, 0.2);
@@ -984,6 +1022,7 @@ export class AudioEngine {
   update(dt: number): void {
     this.probeBudget = PROBES_PER_FRAME;
     this.shotBudget = REMOTE_SHOTS_PER_FRAME;
+    this.shotTokens = Math.min(REMOTE_SHOT_BURST, this.shotTokens + dt * REMOTE_SHOTS_PER_SECOND);
     const ctx = this.ctx;
     if (!ctx || !this.running) return;
     const env = this.env;

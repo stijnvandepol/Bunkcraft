@@ -25,7 +25,7 @@ export const QUARTER: ArenaMapDef = {
   wallBlock: BLOCK.BRICKS,
   floorBlock: BLOCK.COBBLESTONE,
   variants: 1,
-  teamSpawns: [[34, 3], [36, 6], [33, 8], [37, 9]],
+  teamSpawns: [[34, 3], [36, 6], [33, 8], [38, 4]],
   ffaSpawns: [[8, 4], [22, 5], [22, 20], [34, 18], [5, 22]],
   highGround: [[5, 20], [20, 5], [20, 20], [13, 20], [34, 20]],
   objectives: {

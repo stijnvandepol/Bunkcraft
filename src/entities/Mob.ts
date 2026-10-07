@@ -126,6 +126,10 @@ export class Mob extends Entity implements DamageTarget {
   get invulnerableTicks(): number { return this.hurtTime; }
   set invulnerableTicks(v: number) { this.hurtTime = v; }
   deathTime = 0;
+  /** Arcade players: whole-body lean (radians, + = backwards around the feet), drop (blocks) and extra leg angle for crouch and slide. */
+  lean = 0;
+  drop = 0;
+  legLean = 0;
   limbSwing = 0;
   limbAmount = 0;
   prevLimbSwing = 0;

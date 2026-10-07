@@ -172,6 +172,9 @@ export type SnapshotEntry = [number, number, number, number, number, number, num
 export const SNAP_FLAG_STALE = 8;
 /** Arcade: the player is aiming down the sights (scope glint for enemies). Set by the client in `pos`, passed on as is. */
 export const SNAP_FLAG_ADS = 16;
+/** Arcade: crouching (lower hitbox) and sliding (lower still). Set by the client in `pos`; the server checks them (see Match.poseFlags). */
+export const SNAP_FLAG_CROUCH = 32;
+export const SNAP_FLAG_SLIDE = 64;
 
 /**
  * Mob snapshot: [id, kind, x, y, z, yaw, headYaw, headPitch, flags, hurtTime, fuse, deathTime]. flags: MOB_FLAG bits.
@@ -239,7 +242,7 @@ export type ClientMessage =
    * `step` (optional, older clients leave it out): the client's physics clock, 60 Hz steps simulated so far. The
    * arcade movement validator times the jump curve and the speed budget with it (arrival times bunch up under load).
    */
-  | { t: 'pos'; x: number; y: number; z: number; yaw: number; pitch: number; flags: number; held: number; step?: number }
+  | { t: 'pos'; x: number; y: number; z: number; yaw: number; pitch: number; flags: number; held: number; step?: number; sl?: number }
   /** `meta` is the block state byte (see BlockStates); absent = 0. */
   /**
    * `prev` (optional, older clients leave it out) is the block id this client saw there before its edit. When the
@@ -388,6 +391,11 @@ export type ServerMessage =
   | { t: 'hit'; victim: number; damage: number; head: boolean; killed: boolean }
   /** You took damage from `from` at direction (dx, dz) relative to the world. */
   | { t: 'damaged'; from: number; damage: number; dx: number; dz: number }
+  /**
+   * Arcade killstreak reward (radar sweep): where the living opponents of `by`'s side stood, as flat x, z pairs,
+   * shown for `sec` seconds. Sent to `by` (and its team in team modes).
+   */
+  | { t: 'radar'; by: number; pts: number[]; sec: number }
   /** Kill feed entry (also tells everyone a player is down until the next spawn). */
   | { t: 'kill'; killer: number; victim: number; weapon: string; head: boolean }
   /** The match ended; a new one starts after `restartIn` seconds. winner: team, a player id or 0 for a draw. */

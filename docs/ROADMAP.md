@@ -264,6 +264,13 @@ regenereert, respawns en een scoreboard. Beschrijving, besturing en wapentabel: 
   binaire snapshots (v2). Tests: client-physics-replay over alle kaarten, `scripts/cheat-bots.ts`.
 - **Vier nieuwe vrije kaarten in BO2-stijl: Gedaan.** Skyline Villa (villa met zwembad), Riptide (jacht), Sundown (dorp) en
   Terminus (station), puntsymmetrisch met per helft een eigen palet; alle met zones en vlaggen (zie `docs/GAMEMODES.md`).
+- **Kaarten leuker (Nuketown-gevoel): Gedaan (oktober 2026).** Atomic Lane opnieuw opgebouwd (72 × 48, huizen met volledig
+  interieur, doorloopbare bus en verhuiswagen, dichte straat: zichtbare vloer 30% → 11%, gevechtsafstand 38 → 25 blokken),
+  zes nieuwe kleine kaarten met drie lanes en een landmark: Fountain Square, Rebar, Flight Deck, Tin Roofs, Galleria
+  (binnen, ook voor verstoppen) en Scrapyard; jump pads op trage routes; bomplaatsen op alle nieuwe kaarten; geen spawn
+  meer zichtbaar vanaf de vijandelijke helft (behalve Classic). Analyse en metingen: [`research/MAPS.md`](research/MAPS.md),
+  meetscripts `scripts/qa/map-flow.ts` en `scripts/map-metrics.ts`. **Volgende stap:** Classic uit de rotatie of compacter,
+  Villa/Terminus/Harbor Yard inkorten of jump pads op de lange routes, playtest per kaart.
 - **BunkCraft Realms: Gedaan.** Multiplayer is alleen Minecraft; de arcade-modes zitten onder *BunkCraft Realms*: playlist
   met live spelersaantallen, **Snel spelen** (server-side matchmaking `POST /api/quickplay`: volste open lobby die niet bijna
   klaar is, anders een nieuwe), *Lobby's bekijken* (fase, tijd, kaart), *Privélobby* (mode, kaart, limieten, max. spelers,
@@ -282,6 +289,14 @@ regenereert, respawns en een scoreboard. Beschrijving, besturing en wapentabel: 
   Meting 16 spelers (15 bots + Chromium `--use-angle=metal`, M1 Pro, classic): 120 fps (vsync) vóór en na, frame p99 10,3 → 10,4 ms,
   JS-tijd per frame 0,57 → 0,58 ms, zonder vsync-cap 650 → 637 fps (−2%); server (`bench-arena.ts 16 30`): tick 0,074 → 0,085 ms,
   0,84 → 0,93% van een core. Audio worst case 0,26 ms/frame (budget 0,3).
+- **Krunker-beweging en tempo: Gedaan (oktober 2026).** Onderzoek in [`research/KRUNKER.md`](research/KRUNKER.md). Slide (crouch
+  tijdens rennen, 1,45× burst die uitdooft), slide-hop, bunny hop met momentum, air strafe, crouch, trap-slide, jump pads
+  (`BLOCK.JUMP_PAD` + `jumpPad()`; plaatsing op kaarten door de kaart-agent), perk Lightfoot + preset Scout, crouch/slide-pose voor
+  anderen en als server-hitbox. Anticheat modelleert de slide-envelop exact (geen algemene marge); replaytests op alle kaarten,
+  `scripts/cheat-bots.ts` vangt een slide-claimende speedhack. Tempo: respawn 2,5 s (tdm/ffa) en 3 s (objective), bescherming
+  eindigt bij je eerste schot, spawnkeuze weg van zichtlijnen en recente schoten, radarscan bij 5 kills op rij, rode schermrand bij
+  lage health. Gemeten met `scripts/flow-metrics.ts` (+8%/+11% kills per minuut TDM/FFA, zie `GAMEMODES.md`). Frametijd
+  ongewijzigd: 16 spelers zonder vsync-cap 663 → 659 fps, JS-tijd per frame 1,27 → 1,21 ms (M1 Pro, `--use-angle=metal`).
 
 - **Vijf nieuwe modes: Gedaan (oktober 2026).** Kill Confirmed, Search & Destroy (bomsites A/B op alle elf kaarten, zijwissel),
   Infected, Sharpshooter en King of the Hill: server-autoritaire regels, HUD, wereldmodellen (tags, bom), cues, Realms-kaarten
@@ -289,6 +304,12 @@ regenereert, respawns en een scoreboard. Beschrijving, besturing en wapentabel: 
   (`teamFor`, `keepTeams`, `speedMul`, `damageMul`, `objectives` voor server-bots). Details: [`GAMEMODES.md`](GAMEMODES.md).
 
 **Open:**
+
+0. **Beweging vervolg:** crouch-jump en wall-jump (vergen een variabele botsingsbox in client én validator), richting-jump pads
+   met horizontale impuls (validator moet die impuls modelleren), touch-knop voor crouch/slide, slide in de dev-preview-bots,
+   bots die sliden in `flow-metrics.ts`/`cheat-bots.ts` (nu lopen ze), een kleine kans op een valse correctie onder extreme
+   frame-hitches (≥ 0,35 s) met een sprong over een rand (≈ 5 per 700k meldingen in de replaytest met 80 seeds), en
+   spawnkills in FFA na de snellere respawn verder omlaag (6,4% in botmatches, 2,7% vóór; passief ~0%).
 
 1. **Integratie met de serverbranch** verifiëren: zie de checklist in de overdracht (arena-wereld via `worldType`,
    snelheidscontrole voor 1,3× sprint, `damaged.dx/dz`-richting, `holds` bij joinen).
@@ -304,7 +325,7 @@ regenereert, respawns en een scoreboard. Beschrijving, besturing en wapentabel: 
 4. **Objective-afwerking:** dragerpijl met interval voor de vijand, MVP-punten (dragerkill, terugbrengen), overtime bij een
    gelijkspel in ctf, rondes met zijwissel, granaten voor elimination, de vlag als echt derde-persoonsmodel op de rug.
 5. **Na Create-a-Class:** meerdere opgeslagen custom-klassen (nu één), attachments per slot (grip, laser) en een
-   tweede perk; scorestreaks (UAV, die de medailles al voorbereiden), kill cam, headshot-statistieken, teamchat; een
+   tweede perk; meer scorestreaks (de radarscan bij 5 is er), kill cam, headshot-statistieken, teamchat; een
    variabele zoom op de bolt-action; een granaat/launcher pas als de server projectielen kan (nu alles hitscan); de
    glinstering ook in de dev-preview (de nep-bots sturen nog geen ADS-vlag); een echte TTS- of ingesproken announcer als
    iemand stemmen opneemt (nu muzikale cues + tekst).

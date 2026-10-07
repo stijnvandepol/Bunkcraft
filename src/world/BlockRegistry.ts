@@ -212,6 +212,8 @@ export const BLOCK = {
   ENCHANTING_TABLE: 250,
   ANVIL: 251,
   GRINDSTONE: 252,
+  /** Arcade maps: a floor block that launches whoever stands on it straight up (see player/ArcadeMove.ts). */
+  JUMP_PAD: 253,
   /** Sentinel returned for blocks in chunks that are not loaded (treated as solid). */
   UNLOADED: 255,
 } as const;
@@ -319,6 +321,8 @@ export const BLOCK_DEFS: BlockDef[] = [
   cube(B.CRAFTING_TABLE, 'crafting_table', 'Crafting Table', { top: 'crafting_table_top', bottom: 'oak_planks', side: 'crafting_table_side' }, 0.8, 'wood'),
   cube(B.FURNACE, 'furnace', 'Furnace', { top: 'furnace_top', bottom: 'furnace_top', side: 'furnace_side', front: 'furnace_front' }, 1.2, 'stone', { facing: true }),
   cube(B.TNT, 'tnt', 'TNT', { top: 'tnt_top', bottom: 'tnt_bottom', side: 'tnt_side' }, 0, 'grass'),
+  // One texture layer of its own (the array is nearly full): iron sides.
+  cube(B.JUMP_PAD, 'jump_pad', 'Jump Pad', { top: 'jump_pad', bottom: 'iron_block', side: 'iron_block' }, -1, 'metal', { light: 7, inInventory: false }),
 ];
 
 // Doors: the lower half uses the "side" texture slot and the upper half the "top" slot; the wood is the variant.

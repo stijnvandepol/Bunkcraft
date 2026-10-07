@@ -325,9 +325,9 @@ interface Totals { reports: number; violations: Verdict[]; lagForgiven: number; 
 
 function replay(
   getBlock: (x: number, y: number, z: number) => number, getMeta: ((x: number, y: number, z: number) => number) | undefined,
-  reports: Report[], maxSpeed: number, canFly: boolean, inBounds?: (x: number, z: number) => boolean, clientClock = false,
+  reports: Report[], maxSpeed: number, canFly: boolean, inBounds?: (x: number, z: number) => boolean, clientClock = false, slideCooldown?: number,
 ): Totals {
-  const v = new MovementValidator({ getBlock, getMeta }, { maxSpeed, canFly, inBounds });
+  const v = new MovementValidator({ getBlock, getMeta }, { maxSpeed, canFly, inBounds, slideCooldown });
   const tot: Totals = { reports: reports.length, violations: [], lagForgiven: 0, maxSpeedRatio: 0, context: '' };
   let prev: Report | null = null;
   for (const r of reports) {
@@ -336,7 +336,7 @@ function replay(
       tot.maxSpeedRatio = Math.max(tot.maxSpeedRatio, s / maxSpeed);
     }
     prev = r;
-    const verdict = v.check(r.x, r.y, r.z, r.arrive, clientClock ? r.step : undefined);
+    const verdict = v.check(r.x, r.y, r.z, r.arrive, clientClock ? r.step : undefined, clientClock ? r.slide : undefined);
     if (verdict.ok) continue;
     if (verdict.weight === 0) tot.lagForgiven++;
     else {
@@ -534,4 +534,46 @@ describe('movement validator: the real client physics never trips it', () => {
     expect(mk().check(b.maxX + 3, sp.y, sp.z, 1, 60).ok).toBe(false);
     expect(mk().check(sp.x + 25, sp.y, sp.z, 1, 60).ok).toBe(false);
   });
+});
+
+// ------------------------------------------------------------ arcade movement: slides, slide-hops, bunny hops, pads
+
+describe('movement validator: arcade slides, slide-hops, bunny hop chains and air strafe', () => {
+  const seeds = Array.from({ length: Number(process.env.MOVE_SEEDS ?? 24) }, (_, i) => 2000 + i * 53);
+  const arcadeRun = (id: (typeof MAP_IDS)[number], seed: number, nets: typeof NETS | typeof LOAD, cooldown?: number) => {
+    const map = getMap(id);
+    const variant = map.variantFor(7);
+    const getBlock = (x: number, y: number, z: number) => map.blockAt(variant, x, y, z);
+    const getMeta = () => 0;
+    const r = rng(seed);
+    const w = WEAPONS[Math.floor(r() * WEAPONS.length)];
+    const sp = map.spawns.ffa[Math.floor(r() * map.spawns.ffa.length)];
+    const net = nets[seed % nets.length];
+    const reports = recordClient(getBlock, getMeta, seed, {
+      speedMultiplier: ARCADE_SPEED_MULT * w.moveSpeed, airAccel: ARCADE_AIR_ACCEL, canFly: false, seconds: 40,
+      interval: seed % 2 ? [0.033, 0.05] : [0.05, 0.067], bunnyHop: true, start: { x: sp.x, y: sp.y, z: sp.z },
+      arcade: true, slideCooldown: cooldown, hitches: nets === LOAD ? 0.04 : 0,
+    });
+    const tot = replay(getBlock, getMeta, throughNetwork(reports, seed, net), arcadeMaxSpeed(w.moveSpeed), false, (x, z) => map.inBounds(x, z), true, cooldown);
+    const slides = new Set(reports.map((q) => q.slide).filter((q) => q === q)).size;
+    return { tot, slides, label: `${id} ${w.id} seed ${seed} ${net.name}` };
+  };
+
+  for (const id of MAP_IDS) {
+    it(`arcade movement on map ${id}: ${seeds.length} runs × 40 s with the client clock, never corrected`, () => {
+      const bad: string[] = [];
+      let total = 0, slides = 0, worst = 0;
+      for (const [i, seed] of seeds.entries()) {
+        const { tot, slides: n, label } = arcadeRun(id, seed, i % 2 ? NETS : LOAD, i % 5 === 4 ? 0.65 : undefined);
+        total += tot.reports; slides += n; worst = Math.max(worst, tot.maxSpeedRatio);
+        for (const v of tot.violations.slice(0, 2)) bad.push(`${label}: ${(v as { rule: string }).rule} (${tot.violations.length})`);
+        if (tot.lagForgiven) bad.push(`${label}: ${tot.lagForgiven} forgiven lag corrections`);
+      }
+      expect(bad).toEqual([]);
+      expect(total).toBeGreaterThan(seeds.length * 600);
+      // The runs really slide and slide-hop: well past the run speed.
+      expect(slides).toBeGreaterThan(seeds.length * 8);
+      expect(worst).toBeGreaterThan(1.3);
+    });
+  }
 });
