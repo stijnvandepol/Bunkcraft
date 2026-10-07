@@ -855,7 +855,7 @@ const NL: Record<I18nKey, string> = {
   'unlock.perk': 'Perk',
   'unlock.title': 'Titel',
   'unlock.card': 'Visitekaartje',
-  'arc.cac.locked': 'Lv {0}',
+  'arc.cac.locked': 'Niv. {0}',
 
   'arc.health': 'GEZONDHEID',
   'arc.scope.steady': 'Houd Shift vast voor een vaste hand',
