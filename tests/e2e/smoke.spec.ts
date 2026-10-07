@@ -1,7 +1,7 @@
 import { expect, hidePanorama, openSandbox, openTitle, test } from './fixtures';
 
 /** What changes between runs on the home screen: live player counts, the background map's name, the build. */
-const HOME_MASKS = ['.bc-play-sub', '.mode-count', '.home-foot-meta'];
+const HOME_MASKS = ['.bc-play-sub', '.mode-count', '.home-foot-meta', '.home-playlist .bc-panel-head .bc-dim'];
 
 test('home screen loads without errors and matches the baseline @webkit', async ({ page }) => {
   await openTitle(page);

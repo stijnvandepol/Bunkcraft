@@ -85,7 +85,7 @@ def menu_screens(page):
 
     def worlds(*then):
         def go():
-            page.evaluate("window.game.menu.showTitle()")
+            page.evaluate("window.game.menu.showTitle(); window.game.menu.showBuild()")
             page.evaluate("window.__click('Singleplayer')")
             settle(page, 0.4)
             for p in then:

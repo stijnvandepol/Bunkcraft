@@ -58,11 +58,14 @@ class Player:
         self.page.screenshot(path=f'{SHOTS}/{self.name}-{label}.png')
 
     def click(self, text, exact=True):
+        # The sandbox menus sit behind the home screen's Build & Survival door.
+        if text in ('Multiplayer', 'Singleplayer') and self.page.locator('.home:visible').count() and not self.page.get_by_role('button', name=text, exact=exact).count():
+            self.page.locator('.home-build').click()
         self.page.get_by_role('button', name=text, exact=exact).first.click()
 
     def open_title(self, url=BASE):
         self.page.goto(url)
-        self.page.wait_for_function('() => window.game && document.querySelector(".mc-btn")', timeout=30000)
+        self.page.wait_for_function('() => window.game && document.querySelector("#screens button")', timeout=30000)
 
     def wait_playing(self, timeout=60):
         end = time.time() + timeout

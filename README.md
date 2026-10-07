@@ -2,13 +2,14 @@
 
 # BUNKCRAFT
 
-**Een Minecraft-geïnspireerde voxel-game die volledig in de browser draait.**
+**Voxel-arenashooter in je browser.**
 
-Een echte, kleine voxel-engine in TypeScript met WebGL2 en Three.js: procedurele werelden,
-chunk-streaming via Web Workers, greedy meshing, smooth lighting, schaduwen en een
-dag/nachtcyclus. Geen installatie nodig, en geen Minecraft-assets.
+Druk op Play en je zit in een wedstrijd: 12 modi (Team Deathmatch, Search & Destroy, Hardpoint, Gun Game en meer),
+17 maps, bots die lege plekken vullen, levels, uitdagingen, camo's en privéwedstrijden met vrienden via een code.
+Gebouwd op een eigen voxel-engine in TypeScript met WebGL2 en Three.js. Geen installatie nodig.
+De voxel-sandbox waar het mee begon zit er nog in, onder **Bouwen & Survival (bèta)**.
 
-![BunkCraft titelscherm](docs/screenshots/title.png)
+![BunkCraft home](docs/screenshots/identity/home-chromium.png)
 
 </div>
 
@@ -30,6 +31,17 @@ dag/nachtcyclus. Geen installatie nodig, en geen Minecraft-assets.
 - [Credits en licenties](#credits-en-licenties)
 
 ## Screenshots
+
+| Home: Play, playlist en je profiel | Einde wedstrijd met XP en kaartstemming |
+|---|---|
+| ![Home](docs/screenshots/identity/home-chromium.png) | ![Einde wedstrijd](docs/screenshots/identity/match-end-chromium.png) |
+
+| Privéwedstrijd | Loadouts |
+|---|---|
+| ![Privéwedstrijd](docs/screenshots/identity/private-chromium.png) | ![Loadouts](docs/screenshots/identity/loadouts-chromium.png) |
+
+Alle schermen van de nieuwe look (Chromium en WebKit) staan in [`docs/screenshots/identity/`](docs/screenshots/identity/),
+de keuzes erachter in [`docs/research/IDENTITY.md`](docs/research/IDENTITY.md). Hieronder de survival-sandbox.
 
 | Overdag | 's Nachts met glowstone |
 |---|---|
@@ -123,7 +135,8 @@ Options → Controls → Key Binds, ook naar muisknoppen (zoals in Minecraft).
 - Blokwolken, geanimeerd water met reflecties en golfjes, onderwatereffect, view bobbing en sprint-FOV.
 
 **Menu's**
-- Opgebouwd zoals Minecraft 1.21: titelscherm met panorama, wereldselectie met screenshots, Options-hub met submenu's (Video, Music & Sounds, Controls, Mouse, Chat, Language), pauzemenu met Statistics en een F3-scherm. Zie [`docs/UI.md`](docs/UI.md).
+- De home is de voordeur van de shooter (eigen look: inkt, één volt accent, een strakke sans; zie [`docs/research/IDENTITY.md`](docs/research/IDENTITY.md)), met een live vlucht over een arenamap op de achtergrond.
+- De survival-menu's achter Bouwen & Survival zijn nog opgebouwd zoals Minecraft 1.21: wereldselectie met screenshots, pauzemenu met Statistics en een F3-scherm. Zie [`docs/UI.md`](docs/UI.md).
 - In het Engels en Nederlands (Options → Language), met toetsenbordnavigatie (pijltjes, Tab, Enter, Esc).
 - In de inventory: <kbd>1</kbd>–<kbd>9</kbd> boven een slot wisselt met de hotbar, <kbd>Q</kbd> gooit een item weg, dubbelklik verzamelt.
 - Procedurele geluidseffecten en generatieve achtergrondmuziek.
@@ -131,12 +144,12 @@ Options → Controls → Key Binds, ook naar muisknoppen (zoals in Minecraft).
 ## Multiplayer
 
 BunkCraft draait als één Node.js-server die de game én de multiplayer-WebSocket op dezelfde poort
-aanbiedt. **Multiplayer → Create Game** geeft je een code en een link om te delen; vrienden openen de
-link of typen de code onder **Join Game**.
+aanbiedt. In de shooter maakt **Privéwedstrijd** een code en een link; vrienden openen de link of plakken de code
+bij **Speel met vrienden** op de home. Voor de sandbox: **Bouwen & Survival → Multiplayer → Create Game**.
 
 ```bash
 npm run build
-npm start                     # http://localhost:3000 → Multiplayer → Create Game
+npm start                     # http://localhost:3000 → Play, of Bouwen & Survival → Multiplayer
 # Op je eigen Linux-server met automatische HTTPS (Docker + Caddy), zie docs/SERVER.md:
 sudo ./scripts/install.sh --domain play.example.com
 ```

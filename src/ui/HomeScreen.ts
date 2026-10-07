@@ -63,6 +63,8 @@ export class HomeScreen {
   private readonly challengesEl: HTMLElement;
   private readonly onlineEls: HTMLElement[] = [];
   private readonly codeInput: HTMLInputElement;
+  /** "12 modes · 9 online" in the playlist header. */
+  private readonly playlistMeta: HTMLSpanElement;
   private stats: ModeStats[] = [];
   private server: ServerState = 'connecting';
 
@@ -129,10 +131,9 @@ export class HomeScreen {
       this.cards.set(mode, { el, count });
       grid.append(el);
     }
+    this.playlistMeta = h('span', { class: 'bc-dim', text: t('home.modes', REALMS_MODES.length) });
     const playlist = h('section', { class: 'bc-panel home-playlist', 'aria-label': t('home.playlist') },
-      h('div', { class: 'bc-panel-head' },
-        h('h2', { class: 'bc-h2', text: t('home.playlist') }),
-        h('span', { class: 'bc-dim', text: t('home.modes', REALMS_MODES.length) })),
+      h('div', { class: 'bc-panel-head' }, h('h2', { class: 'bc-h2', text: t('home.playlist') }), this.playlistMeta),
       grid);
 
     this.challengesEl = h('section', { class: 'bc-panel home-challenges', 'aria-label': t('home.challenges') });
@@ -221,6 +222,8 @@ export class HomeScreen {
       c.count.textContent = n > 0 ? t('home.online', n) : '';
       c.el.classList.toggle('busy', n > 0);
     }
+    const total = stats.reduce((sum, s) => sum + s.players, 0);
+    this.playlistMeta.textContent = total > 0 ? `${t('home.modes', REALMS_MODES.length)} · ${t('home.online', total)}` : t('home.modes', REALMS_MODES.length);
     this.renderPlaySub();
   }
 
