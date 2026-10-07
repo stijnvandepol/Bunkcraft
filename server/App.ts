@@ -111,6 +111,8 @@ export async function startServer(config: Config): Promise<RunningServer> {
       failLimiter,
       backupDir: config.backupKeep > 0 ? backupDir : undefined,
       listMax: config.listMax,
+      quickPlayBots: config.quickPlayBots,
+      quickPlayBotDifficulty: config.quickPlayBotDifficulty,
       ...guard,
     })
     : null;
@@ -210,7 +212,10 @@ export async function startServer(config: Config): Promise<RunningServer> {
       const passwordHash = password ? await hashPassword(password) : undefined;
       const code = rooms.create(String(body.name ?? ''), typeof body.gameMode === 'string' ? body.gameMode : undefined,
         typeof body.seed === 'string' ? body.seed : undefined,
-        { gameType: body.gameType, scoreLimit: body.scoreLimit, timeLimitSec: body.timeLimitSec, mapId: body.mapId, maxPlayers: body.maxPlayers },
+        {
+          gameType: body.gameType, scoreLimit: body.scoreLimit, timeLimitSec: body.timeLimitSec, mapId: body.mapId, maxPlayers: body.maxPlayers,
+          bots: body.bots, botDifficulty: body.botDifficulty,
+        },
         { ownerHash: hashToken(ownerToken), passwordHash, listed: body.listed === true });
       // The owner token is shown exactly once: only its hash is stored.
       return code ? json(res, 201, { code, ownerToken, locked: !!passwordHash }) : json(res, 503, { error: 'This server has reached its game limit' });

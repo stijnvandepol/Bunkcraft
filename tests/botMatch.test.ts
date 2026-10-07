@@ -1,4 +1,8 @@
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { Rooms } from '../server/Rooms';
 import type { GameType } from '../src/modes/GameTypes';
 import type { MapSetting } from '../src/modes/maps';
 import { SUSPICION } from '../server/anticheat/Suspicion';
@@ -180,5 +184,30 @@ describe('bot fill rules', () => {
     l.join('Friend');
     l.run(2);
     expect(l.bots.count).toBe(3);
+  });
+});
+
+describe('bot settings of rooms', () => {
+  it('quick play lobbies fill with bots, private lobbies keep the host\'s choice, sandbox games never get any', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'bunk-botrooms-'));
+    const rooms = new Rooms({ dataDir: dir, maxRooms: 20, maxPlayers: 12, motd: '', idleUnloadMs: 60_000, expireDays: 0, quickPlayBots: 8, quickPlayBotDifficulty: 'hard' });
+    try {
+      const q = rooms.quickPlay('tdm', () => true);
+      expect('code' in q).toBe(true);
+      const code = (q as { code: string }).code;
+      expect(rooms.get(code)!.server.botSettings).toEqual({ fill: 8, difficulty: 'hard' });
+      const priv = rooms.create('Mine', undefined, undefined, { gameType: 'ctf', maxPlayers: 6, bots: 9, botDifficulty: 'veteran' })!;
+      expect(rooms.get(priv)!.server.botSettings).toEqual({ count: 5, difficulty: 'veteran' });
+      const none = rooms.create('None', undefined, undefined, { gameType: 'ffa' })!;
+      expect(rooms.get(none)!.server.botSettings).toBeNull();
+      const mc = rooms.create('Sandbox', 'survival', undefined, { bots: 4 })!;
+      expect(rooms.get(mc)!.server.botSettings).toBeNull();
+      // Saved with the world: a reloaded lobby keeps its bots.
+      rooms.shutdown();
+      expect(JSON.parse(readFileSync(join(dir, priv, 'world.json'), 'utf8')).bots).toEqual({ count: 5, difficulty: 'veteran' });
+    } finally {
+      rooms.shutdown();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

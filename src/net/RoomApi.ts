@@ -1,7 +1,7 @@
 import { type GameType, parseGameType } from '../modes/GameTypes';
 import { type MapSetting } from '../modes/maps';
 import { type MatchPhase, formatCode } from './protocol';
-import { type ListingKind, type ModeStats, filterRooms } from '../modes/Realms';
+import { type BotLevel, type ListingKind, type ModeStats, filterRooms } from '../modes/Realms';
 
 export interface RoomInfo {
   code: string;
@@ -26,6 +26,8 @@ export interface ListedRoom extends RoomInfo {
   phase?: MatchPhase;
   timeLeft?: number;
   currentMap?: string;
+  /** Bots playing besides the people counted in `players`. */
+  bots?: number;
 }
 
 /** Match settings sent when creating an arcade game (ignored for Minecraft games). */
@@ -41,6 +43,9 @@ export interface RoomOptions {
   mapId?: MapSetting;
   /** Realms lobbies: how many players the game takes (the server clamps it; older servers ignore it). */
   maxPlayers?: number;
+  /** Realms lobbies: server-side bots that play along (they give up their seat when a player needs it). */
+  bots?: number;
+  botDifficulty?: BotLevel;
 }
 
 export interface ServerInfo {
@@ -88,6 +93,7 @@ export async function createRoom(name: string, gameMode: string, seed: string, o
       timeLimitSec: options?.timeLimitSec ?? 0,
       ...(options?.mapId ? { mapId: options.mapId } : {}),
       ...(options?.maxPlayers ? { maxPlayers: options.maxPlayers } : {}),
+      ...(options?.bots ? { bots: options.bots, botDifficulty: options.botDifficulty ?? 'normal' } : {}),
       ...(options?.password ? { password: options.password } : {}),
       ...(options?.listed ? { listed: true } : {}),
     }),

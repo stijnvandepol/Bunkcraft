@@ -1,3 +1,5 @@
+import { BOT_LEVELS, type BotLevel } from '../../src/modes/Realms';
+
 /**
  * Bot difficulty: human-like limits on perception and aim. Every number is a *limit* a person has too
  * (reaction time, how fast and how precisely the mouse moves, how wide they look), never extra knowledge:
@@ -7,8 +9,8 @@
  * The values are tuned by the simulated duels in tests/botBalance.test.ts: easy loses clearly to an average
  * player, veteran is strong but loses to a skilled one.
  */
-export type BotDifficulty = 'easy' | 'normal' | 'hard' | 'veteran';
-export const BOT_DIFFICULTIES: BotDifficulty[] = ['easy', 'normal', 'hard', 'veteran'];
+export type BotDifficulty = BotLevel;
+export const BOT_DIFFICULTIES: BotDifficulty[] = BOT_LEVELS;
 
 export function parseBotDifficulty(v: unknown): BotDifficulty | null {
   return BOT_DIFFICULTIES.includes(v as BotDifficulty) ? (v as BotDifficulty) : null;
