@@ -526,6 +526,20 @@ export class GameServer {
     return this.sessions.size;
   }
 
+  /**
+   * Players a restart would interrupt (auto-update waits for 0): everyone in a Minecraft world, and in an
+   * arcade game only while a match runs (not in warmup, between matches or after the end).
+   */
+  get playersInPlay(): number {
+    const phase = this.match?.phase;
+    return !phase || phase === 'countdown' || phase === 'live' || phase === 'roundend' ? this.sessions.size : 0;
+  }
+
+  /** A server message in every player's chat (admin announcements such as an upcoming restart). */
+  announce(text: string): void {
+    this.broadcast({ t: 'chat', from: '', text, system: true });
+  }
+
   get listed(): boolean {
     return !!this.world.listed;
   }
