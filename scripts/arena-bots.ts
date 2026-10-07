@@ -176,8 +176,9 @@ async function main(): Promise<void> {
   check('the last hit killed', hits.at(-1)?.killed === true);
   check('bob was told he was damaged', bob.of('damaged').length >= 3 && bob.of('damaged')[0].from === alice.id);
   check('everyone sees the kill feed entry', [alice, bob].every((b) => b.of('kill').some((k) => k.killer === alice.id && k.victim === bob.id)));
-  check('tracers were broadcast to both', alice.of('shot').length > shotsBefore && bob.of('shot').length >= 5);
-  check('alice\'s magazine counts down', alice.of('ammo').some((a) => a.slot === 0 && a.mag <= 25));
+  // A kill takes 3 (three headshots) to 5 hits, so count against the hits, not a fixed 5 shots.
+  check('tracers were broadcast to both', alice.of('shot').length > shotsBefore && bob.of('shot').length >= hits.length);
+  check('alice\'s magazine counts down', alice.of('ammo').some((a) => a.slot === 0 && a.mag <= 30 - hits.length));
   check('bob\'s health went to zero', bob.of('hp').at(-1)?.health === 0);
   const roster = alice.of('roster').at(-1)!.players;
   check('the roster shows the kill and the death',

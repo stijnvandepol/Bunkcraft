@@ -121,7 +121,8 @@ describe('server: experience orbs over the network', () => {
     const { client, welcome } = await joinGame(t, code, 'Fighter', { key: KEY_A });
     const sp = welcome.spawn;
     for (let i = 0; i < 3; i++) client.send({ t: 'pos', x: sp.x, y: sp.y, z: sp.z, yaw: 0, pitch: 0, flags: 4, held: ITEM.DIAMOND_SWORD });
-    await new Promise((r) => setTimeout(r, 300));
+    // Taking the sword restarts the attack cooldown (the server notices it on a tick): wait for a full charge, also on a loaded machine.
+    await new Promise((r) => setTimeout(r, 1500));
     const entities = (t.server.rooms!.get(code)!.server as unknown as { entities: ServerEntities }).entities;
     const pig = entities.manager.spawnMob('pig', sp.x + 1.5, sp.y, sp.z);
     pig.persistent = true;
