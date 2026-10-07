@@ -7,12 +7,15 @@ import { CARDS, TITLES, hasUnlock, isUnlocked, unlockLevel } from '../modes/prog
 import { REALMS_MODES } from '../modes/Realms';
 import { PRIMARY_WEAPONS, SECONDARY_WEAPONS, weaponDef } from '../modes/Weapons';
 import { currentProfile, equip, onProfile, prestige } from '../net/ProfileApi';
-import { button, h, menuScreen } from './dom';
+import { button, h, menuScreen as baseScreen } from './dom';
 import { type I18nKey, t } from './i18n';
 import { camoName, challengeText, duration, lockText } from './ProgressText';
 import { cardBackground, rankBadge } from './RankBadge';
 import { realmsModeName } from './RealmsMenu';
 import type { ScreenStack } from './Screens';
+
+/** Progression screens use the shell look (docs/research/IDENTITY.md). */
+const menuScreen: typeof baseScreen = (title, body, footer, opts = {}) => baseScreen(title, body, footer, { ...opts, cls: `bc ${opts.cls ?? ''}` });
 
 /** CSS swatch of a camo: its palette as hard stripes (the real pattern is painted on the 3D model). */
 function camoSwatch(c: CamoDef): string {

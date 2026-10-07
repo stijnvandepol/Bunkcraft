@@ -49,7 +49,6 @@ import { applyGuiScale } from '../ui/GuiScale';
 import { HUD } from '../ui/HUD';
 import { Hotbar } from '../ui/Hotbar';
 import { Inventory } from '../ui/Inventory';
-import { createLogo } from '../ui/Logo';
 import { AdvancementTracker, showsToast } from '../player/Advancements';
 import { AdvancementToasts } from '../ui/AdvancementToasts';
 import { advancementsScreen } from '../ui/AdvancementsScreen';
@@ -72,7 +71,7 @@ import { pointInLiquid } from '../world/Liquids';
 import { CHUNK_VOLUME, blockIndex, chunkKey } from '../world/constants';
 import { hashString } from '../world/Noise';
 import { BIOME_NAMES } from '../world/TerrainGenerator';
-import { DEFAULT_MAP, getMap, parseMapId } from '../modes/maps';
+import { ARENA_FLOOR_Y, DEFAULT_MAP, type MapId, getMap, parseMapId } from '../modes/maps';
 import { GEN_VERSION_CURRENT, normalizeGenVersion } from '../world/GenVersion';
 import { type WorldType, arenaWorldType } from '../world/WorldGenerator';
 import { createRayHit, raycast } from '../world/Raycast';
@@ -116,6 +115,22 @@ const DEFAULT_HOTBAR = [
   BLOCK.OAK_LOG, BLOCK.GLASS, BLOCK.TORCH, BLOCK.GLOWSTONE,
 ];
 const MENU_SEED = hashString('BunkCraft');
+/** Arena maps that fly by behind the home screen, one per visit in turn (the best-looking from above). */
+const MENU_MAPS: MapId[] = ['atomic', 'dockyard', 'villa', 'town', 'yacht', 'plaza', 'carrier', 'suburb'];
+const MENU_MAP_KEY = 'bunkcraft.menuMap';
+
+/** The next background map (rotates per visit; `?menuMap=id` picks one, for screenshots). */
+function nextMenuMap(): MapId {
+  const forced = parseMapId(new URLSearchParams(location.search).get('menuMap'));
+  if (forced) return forced;
+  try {
+    const i = (Number(localStorage.getItem(MENU_MAP_KEY)) + 1) % MENU_MAPS.length || 0;
+    localStorage.setItem(MENU_MAP_KEY, String(i));
+    return MENU_MAPS[i];
+  } catch {
+    return MENU_MAPS[0];
+  }
+}
 const AUTOSAVE_INTERVAL = 30;
 /** Physics runs at 60 Hz; game logic (entities, health) every 3rd step = 20 ticks/s like Minecraft. */
 const STEPS_PER_TICK = 3;
@@ -235,6 +250,9 @@ export class Game {
   private stepCount = 0;
   private autosave = 0;
   private menuOrbit = new THREE.Vector3();
+  /** The arena map behind the home screen and the radii of the camera's loop over it. */
+  private menuMap: MapId = MENU_MAPS[0];
+  private readonly menuRadius = new THREE.Vector2();
 
   private readonly move: MoveInput = { forward: 0, strafe: 0, jump: false, jumpPressed: false, sprint: false, descend: false };
   /** Bound once: avoids allocating a closure per frame for physics. */
@@ -384,14 +402,14 @@ export class Game {
       listWorlds: () => this.save.listWorlds(),
       playWorld: (m) => void this.enterWorld(m),
       createWorld: (name, seed, mode, extra) => void this.createWorld(name, seed, mode, extra),
-      openLanguage: () => this.stack.push(languageScreen(this.settings, { ...this.optionsNav(), languageChanged: () => this.menu.showTitle() })),
+      openLanguage: () => this.pushShell(languageScreen(this.settings, { ...this.optionsNav(), languageChanged: () => this.menu.showTitle() })),
+      backgroundMap: () => getMap(this.menuMap).name,
       tipKeys: () => this.tipKeys(),
       deleteWorld: (id) => this.save.deleteWorld(id),
       saveWorld: (meta) => this.save.saveWorld(meta),
       transfer: new WorldTransfer(this.save),
       openOptions: () => this.openOptions(),
-      joinServer: (name, address, room) => void this.joinServer(name, address, room),
-      logo: () => createLogo('BUNKCRAFT', this.renderer.textures.canvas('stone')),
+      joinServer: (name, address, room, arena) => void this.joinServer(name, address, room, arena),
       defaultWorldIcon: () => this.icons.get(BLOCK.GRASS),
     });
 
@@ -490,12 +508,18 @@ export class Game {
   // ---------------------------------------------------------------- settings
 
   private openOptions(): void {
-    this.stack.push(optionsScreen(this.settings, this.optionsNav()));
+    this.pushShell(optionsScreen(this.settings, this.optionsNav()));
+  }
+
+  /** Settings and the arena's menus wear the shell look (docs/research/IDENTITY.md); the survival menus keep theirs. */
+  private pushShell(el: HTMLElement): void {
+    el.classList.add('bc');
+    this.stack.push(el);
   }
 
   private optionsNav(): OptionsNav {
     return {
-      push: (el) => this.stack.push(el),
+      push: (el) => this.pushShell(el),
       pop: () => this.stack.pop(),
       openResourcePacks: () => this.openResourcePacks(),
       padName: () => (this.pad.connected ? cleanName(this.pad.name) : ''),
@@ -813,13 +837,16 @@ export class Game {
     this.hud.setVisible(false);
     this.inventory.close();
     this.survivalInventory.close();
-    const world = this.createWorldInstance(MENU_SEED);
+    // The home screen flies over an arena map: the game it opens on.
+    this.menuMap = nextMenuMap();
+    const map = getMap(this.menuMap);
+    const world = this.createWorldInstance(MENU_SEED, undefined, arenaWorldType(this.menuMap));
     world.chunks.renderDistance = Math.min(this.settings.values.renderDistance, 6);
-    // The menu panorama shows animals but no monsters.
     this.entities!.hostileSpawning = false;
-    const spawn = world.findSpawn();
-    this.menuOrbit.set(spawn.x, world.generator.heightAt(spawn.x, spawn.z) + 14, spawn.z);
-    this.cycle.time = 0.09;
+    const b = map.bounds;
+    this.menuOrbit.set((b.minX + b.maxX) / 2, ARENA_FLOOR_Y + map.wallHeight + 9, (b.minZ + b.maxZ) / 2);
+    this.menuRadius.set((b.maxX - b.minX) * 0.32, (b.maxZ - b.minZ) * 0.32);
+    this.cycle.time = 0.11;
     this.menu.showTitle();
   }
 
@@ -1048,14 +1075,12 @@ export class Game {
 
   private async quitToTitle(): Promise<void> {
     window.clearTimeout(this.reconnectTimer);
-    // Leaving a Realms match goes back to the Realms playlist, like Minecraft returns to the server list.
-    const fromRealms = !!this.arcade && !!this.roomCode && !this.previewServer;
     await this.saveGame(true);
     this.disconnect();
     this.input.exitLock();
     this.stack.clear();
+    // Every way out ends on the home screen, which is also the arena hub (like a server list after a match).
     this.enterMenu();
-    if (fromRealms) void this.menu.showRealms();
   }
 
   // ---------------------------------------------------------------- multiplayer
@@ -1073,10 +1098,10 @@ export class Game {
     }, delayMs);
   }
 
-  private async joinServer(name: string, address: string, room?: string): Promise<boolean> {
+  private async joinServer(name: string, address: string, room?: string, arena = false): Promise<boolean> {
     window.clearTimeout(this.reconnectTimer);
     this.audio.unlock();
-    const progress = this.menu.showLoading('Connecting to the server...');
+    const progress = this.menu.showLoading(arena ? t('home.connecting') : 'Connecting to the server...', arena);
     progress('Logging in...', 0);
     // Load the arcade client first: the welcome may start a match, and messages arriving while a
     // module still loads would have no handler yet.
@@ -1371,7 +1396,7 @@ export class Game {
     await this.loadArcade();
     this.audio.unlock();
     this.disconnect();
-    this.loadingProgress = this.menu.showLoading('Loading arena preview');
+    this.loadingProgress = this.menu.showLoading('Loading arena preview', true);
     const meta: WorldMeta = {
       id: 'arcade-preview', name: 'Arcade preview', seed: 4242, seedText: '', created: 0, lastPlayed: Date.now(),
       player: null, hotbar: [...DEFAULT_HOTBAR], selectedSlot: 0, time: 0.3, gameMode: 'creative', spawn: { x: 8, y: 100, z: 8 },
@@ -1552,7 +1577,7 @@ export class Game {
 
   private showPauseMenu(): void {
     this.stack.clear();
-    this.stack.push(pauseScreen({
+    const pause = pauseScreen({
       resume: () => void this.resumeGame(),
       options: () => this.openOptions(),
       quit: () => void this.quitToTitle(),
@@ -1568,11 +1593,14 @@ export class Game {
         locked: this.net !== null || this.mode === 'hardcore' || this.meta?.gameMode === 'hardcore',
       },
       gameRules: this.net || this.arcade ? undefined : () => this.stack.push(gameRulesScreen(this.worldRules.rules, () => this.stack.pop(), () => this.worldRules.apply())),
-    }));
+    });
+    // The arena's pause menu wears the shell; the survival pause menu keeps its look for now.
+    if (this.arcade) this.pushShell(pause);
+    else this.stack.push(pause);
   }
 
   private openInvite(code: string): void {
-    this.stack.push(inviteScreen(code, inviteLink(code), inviteText(code), () => this.stack.pop()));
+    this.stack.push(inviteScreen(code, inviteLink(code), inviteText(code), () => this.stack.pop(), !!this.arcade));
   }
 
   /** Crafting stations within 4 blocks of the player. */
@@ -1740,7 +1768,7 @@ export class Game {
     const world = this.world!;
     this.cycle.time = (this.cycle.time + dt / 2400) % 1;
     this.cycle.compute();
-    this.cam.orbit(this.menuOrbit.x, this.menuOrbit.y, this.menuOrbit.z, this.time);
+    this.cam.flyover(this.menuOrbit.x, this.menuOrbit.y, this.menuOrbit.z, this.menuRadius.x, this.menuRadius.y, this.time);
     world.chunks.update(this.menuOrbit.x, this.menuOrbit.z);
     this.renderer.clouds.update(dt, this.cycle);
     this.underwater = false;
