@@ -248,7 +248,20 @@ export const BREATH_SPENT_SEC = 2.5;
 /** Breath comes back this fast (fraction per second) when not holding. */
 export const BREATH_REGEN = 0.35;
 /** Sway amplitude through a scope (degrees): idle, holding the breath, out of breath, moving (multiplier). */
-export const SCOPE_SWAY = { idle: 0.32, held: 0.035, spent: 0.6, moving: 1.7 } as const;
+export const SCOPE_SWAY = { idle: 0.24, held: 0.035, spent: 0.55, moving: 1.6 } as const;
+/**
+ * Quickscope window: right after the scope comes up the sway is only SCOPE_SETTLE.start of its amplitude, growing to the
+ * full amplitude between `calm` and `full` seconds scoped. A fast scope-in and shot lands where the reticle is; camping
+ * in the scope needs the breath (Shift). QA round 3: "snipers are bad" (0.32° sway at once missed heads at 40 blocks).
+ */
+export const SCOPE_SETTLE = { start: 0.2, calm: 0.45, full: 1.4 } as const;
+
+/** Sway amplitude share after `scoped` seconds in the scope (SCOPE_SETTLE). */
+export function scopeSettle(scoped: number): number {
+  const { start, calm, full } = SCOPE_SETTLE;
+  if (scoped <= calm) return start;
+  return Math.min(1, start + ((scoped - calm) / (full - calm)) * (1 - start));
+}
 
 /**
  * Scope sway with breath control (hold Shift): holding steadies the aim for up to BREATH_HOLD_SEC, then the
@@ -261,7 +274,9 @@ export class ScopeBreath {
   holding = false;
   /** Out of breath until this time (seconds). */
   spentUntil = 0;
-  amp: number = SCOPE_SWAY.idle;
+  amp: number = SCOPE_SWAY.idle * SCOPE_SETTLE.start;
+  /** Seconds in the scope without a break (the quickscope window). */
+  scopedFor = 0;
   private now = 0;
 
   /** Returns 'hold' / 'release' when the breath sound should play this frame, else ''. */
@@ -281,8 +296,12 @@ export class ScopeBreath {
         cue = 'release';
       }
     } else if (!spent) this.breath = Math.min(1, this.breath + dt * BREATH_REGEN);
-    const target = (this.holding ? SCOPE_SWAY.held : now < this.spentUntil ? SCOPE_SWAY.spent : SCOPE_SWAY.idle) * (moving ? SCOPE_SWAY.moving : 1);
-    this.amp += (target - this.amp) * Math.min(1, dt * 6);
+    this.scopedFor = scoped ? this.scopedFor + dt : 0;
+    const settle = this.holding ? 1 : scopeSettle(this.scopedFor);
+    const target = (this.holding ? SCOPE_SWAY.held : now < this.spentUntil ? SCOPE_SWAY.spent : SCOPE_SWAY.idle * settle) * (moving ? SCOPE_SWAY.moving : 1);
+    // Out of the scope the amplitude snaps back to the calm start, so the next scope-in is steady at once.
+    if (!scoped) this.amp = SCOPE_SWAY.idle * SCOPE_SETTLE.start;
+    else this.amp += (target - this.amp) * Math.min(1, dt * 6);
     return cue;
   }
 
@@ -295,7 +314,8 @@ export class ScopeBreath {
     this.breath = 1;
     this.holding = false;
     this.spentUntil = 0;
-    this.amp = SCOPE_SWAY.idle;
+    this.scopedFor = 0;
+    this.amp = SCOPE_SWAY.idle * SCOPE_SETTLE.start;
   }
 }
 
@@ -306,6 +326,17 @@ export function swayOffset(t: number, amp: number, out: { x: number; y: number }
 }
 
 // ---------------------------------------------------------------- recoil
+
+/**
+ * Camera part of the visual kick (radians). The camera kick is not in the aim, so a kicked camera puts the crosshair
+ * or reticle above where the next bullet goes: none of it when aimed (the reticle is the truth), a little from the hip
+ * for automatics (a rifle spray sat 1.2° low under the crosshair with the full kick), the full kick for slow single
+ * shots (shotgun, bolt action) whose next shot comes after it has died down. The weapon model shows the rest.
+ */
+export function viewKick(kick: number, adsEased: number, w: Pick<WeaponDef, 'pellets' | 'bolt' | 'rpm'>): number {
+  const share = w.pellets > 1 || w.bolt || w.rpm <= 150 ? 1 : 0.35;
+  return kick * share * (1 - Math.min(1, Math.max(0, adsEased)));
+}
 
 /** Shortest pause after a shot before the aim recovers. */
 export const RECOIL_REST_SEC = 0.09;

@@ -3,7 +3,7 @@
  * keys a player presses in warm-up (B, Tab, Esc, number keys, R, right-click, Shift).
  *   QA_ENGINE=webkit QA_URL=http://localhost:3471 npx tsx scripts/qa/r3-explore.ts
  */
-import { type Engine, clickButton, key, launch, lock, newPlayer, openRealms, openTitle, quickPlay, shot, text, visible, wait } from './human';
+import { type Engine, key, launch, lock, newPlayer, openRealms, openTitle, quickPlay, shot, text, visible, wait } from './human';
 
 const engine = (process.env.QA_ENGINE ?? 'chromium') as Engine;
 const mode = process.env.QA_MODE ?? 'tdm';

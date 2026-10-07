@@ -386,7 +386,7 @@ describe('hitscan', () => {
     s.advance(0.5);
     s.host.rng = () => 0;
     s.match.fire(1, aim(s.match.players.get(1)!, body(4.5)));
-    expect(s.host.of('hit', 1)[0].damage).toBe(130); // 10 pellets × 13 at point blank: one shot kills
+    expect(s.host.of('hit', 1)[0].damage).toBe(144); // 8 pellets × 18 at point blank: one shot kills
 
     const k = liveDuel('ffa');
     k.place(2, 0.5, 65, 2.2);
@@ -401,6 +401,35 @@ describe('hitscan', () => {
     k.advance(1);
     k.match.fire(1, aim(k.match.players.get(1)!, { x: 0.5, y: 65.9, z: 6.5 }, 2));
     expect(k.host.of('hit', 1)).toHaveLength(0);
+  });
+
+  it('one-shot weapons kill in one server hit: bolt-action sniper to the body at 60 blocks, shotgun at 8 blocks every time', () => {
+    const duel = (primary: string, dist: number) => {
+      const d = setup('ffa');
+      d.match.join(1, 'a');
+      d.match.join(2, 'b');
+      d.match.setLoadout(1, primary); // warm-up: applies at once
+      d.match.ready(1);
+      d.match.ready(2);
+      d.advance(WARMUP_SECONDS + 0.2 + SPAWN_PROTECTION + 0.2);
+      d.match.setPosition(1, 0.5, 65, 0.5, 0, 0);
+      d.match.setPosition(2, 0.5, 65, 0.5 + dist, 0, 0);
+      d.advance(0.5);
+      d.host.clear();
+      return d;
+    };
+    const sn = duel('sniper', 60);
+    sn.match.fire(1, aim(sn.match.players.get(1)!, body(60.5), 0, true));
+    expect(sn.host.of('hit', 1)[0]).toMatchObject({ killed: true, head: false });
+    // The shotgun's fixed pellet pattern: whatever the turn of the pattern and the jitter, a centred pump at 8 blocks kills.
+    // (A random cone, the old way, left a pump at 8 blocks without a kill in about a third of these seeds.)
+    for (let seed = 1; seed <= 30; seed++) {
+      const sg = duel('shotgun', 8);
+      let x = seed * 7919;
+      sg.host.rng = () => { x = (x * 48271) % 2147483647; return x / 2147483647; };
+      sg.match.fire(1, aim(sg.match.players.get(1)!, body(8.5)));
+      expect(sg.host.of('hit', 1)[0], `seed ${seed}`).toMatchObject({ killed: true });
+    }
   });
 
   it('lag compensation tests where the shooter saw the target', () => {

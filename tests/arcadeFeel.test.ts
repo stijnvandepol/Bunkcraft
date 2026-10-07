@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BREATH_HOLD_SEC, BREATH_SPENT_SEC, RecoilState, SCOPE_SWAY, ScopeBreath, swayOffset } from '../src/modes/ArcadeLogic';
+import { BREATH_HOLD_SEC, BREATH_SPENT_SEC, RecoilState, SCOPE_SETTLE, SCOPE_SWAY, ScopeBreath, swayOffset, viewKick } from '../src/modes/ArcadeLogic';
 import { AIM_CLIMB, WEAPONS, fireInterval, weaponDef } from '../src/modes/Weapons';
 import {
   GUN_SOUNDS, MECH_KINDS, MULTI_KILL_WINDOW, RELOAD_STEPS, SUPPRESSED_EARSHOT, gunEarshot, medalFor, outdoorShare, reloadSteps,
@@ -16,7 +16,7 @@ describe('scope breath and sway', () => {
       for (let i = 0; i < sec * 60; i++) { t += 1 / 60; const c = b.update(1 / 60, t, scoped, hold, false); if (c) cues.push(c); }
       return cues;
     };
-    step(1, false);
+    step(2, false);
     expect(b.amp).toBeCloseTo(SCOPE_SWAY.idle, 2);
     expect(step(1, true)).toEqual(['hold']);
     expect(b.amp).toBeLessThan(SCOPE_SWAY.idle * 0.2);
@@ -32,6 +32,22 @@ describe('scope breath and sway', () => {
     expect(step(1, true, false)).toEqual([]);
   });
 
+  it('quickscope window: the scope is steady right after scoping in and sways fully only after a while (QA round 3)', () => {
+    const b = new ScopeBreath();
+    let t = 0;
+    const step = (sec: number, scoped: boolean) => { for (let i = 0; i < sec * 60; i++) { t += 1 / 60; b.update(1 / 60, t, scoped, false, false); } };
+    step(0.4, true);
+    expect(b.amp).toBeLessThanOrEqual(SCOPE_SWAY.idle * SCOPE_SETTLE.start + 1e-9);
+    // 0.24° × 0.2 ≈ 0.05°: a head (0.4 blocks) at 60 blocks is 0.38° tall, so a quickscope lands where the reticle is.
+    expect(b.amp).toBeLessThan(0.06);
+    step(2, true);
+    expect(b.amp).toBeCloseTo(SCOPE_SWAY.idle, 2);
+    // Out of the scope and back in: steady again at once.
+    step(0.2, false);
+    step(0.1, true);
+    expect(b.amp).toBeLessThanOrEqual(SCOPE_SWAY.idle * SCOPE_SETTLE.start + 1e-9);
+  });
+
   it('sway stays within its amplitude', () => {
     const o = { x: 0, y: 0 };
     for (let t = 0; t < 20; t += 0.05) {
@@ -43,6 +59,13 @@ describe('scope breath and sway', () => {
 });
 
 describe('recoil', () => {
+  it('the camera kick never moves the reticle off the aim when aimed, and only a little from the hip for automatics', () => {
+    for (const w of WEAPONS) expect(viewKick(0.05, 1, w), w.id).toBe(0);
+    expect(viewKick(0.05, 0, weaponDef('rifle')!)).toBeLessThan(0.02);
+    expect(viewKick(0.05, 0, weaponDef('shotgun')!)).toBe(0.05);
+    expect(viewKick(0.05, 0, weaponDef('sniper')!)).toBe(0.05);
+  });
+
   it('follows the weapon pattern, climbs less when aiming and recovers most of the climb after the trigger', () => {
     const lmg = weaponDef('lmg')!;
     const r = new RecoilState();

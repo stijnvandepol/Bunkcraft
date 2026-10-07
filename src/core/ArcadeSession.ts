@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import {
   ARCADE_AIR_ACCEL, ARCADE_SPEED_MULT, FireControl, KillFeed, RecoilState, SPAWN_PROTECTION, SPECTATE_KILLER_SECONDS, ScopeBreath, currentSpread,
-  cycleSlot, cycleTarget, impactNormal, reloadProgress, spectateCandidates, spreadPixels, swayOffset,
+  cycleSlot, cycleTarget, impactNormal, reloadProgress, spectateCandidates, spreadPixels, swayOffset, viewKick,
 } from '../modes/ArcadeLogic';
 import { type GameTypeDef, type Team, TEAM_COLORS, gameTypeDef } from '../modes/GameTypes';
 import { carriesFlag, eventView, localizeServerText, phaseBanner } from '../modes/ModeView';
@@ -909,7 +909,7 @@ export class ArcadeSession {
     this.updateMechanics(now, w, ammo);
     this.updateRemotes(f);
     this.kick *= Math.exp(-9 * dt);
-    cam.kick = this.kick;
+    cam.kick = viewKick(this.kick, eased, w);
     this.hurt = Math.max(0, this.hurt - dt * 2);
     this.protect = Math.max(0, this.protect - dt);
 

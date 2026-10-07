@@ -30,7 +30,7 @@ export const LOADOUT_PRESETS: LoadoutPreset[] = [
   { id: 'support', name: 'Support', primary: 'lmg', optic: 'holo', secondary: 'pistol', perk: 'extmag', description: 'Holds a lane, wins multi-kills' },
   { id: 'marksman', name: 'Marksman', primary: 'dmr', optic: 'scope', secondary: 'revolver', perk: 'none', description: 'Scoped, precise at medium and long range' },
   { id: 'burst', name: 'Burst', primary: 'burst', optic: 'holo', secondary: 'pistol', perk: 'suppressor', description: 'Tight, quiet three-round bursts' },
-  { id: 'sniper', name: 'Sniper', primary: 'sniper', optic: 'scope', secondary: 'mpistol', perk: 'quickdraw', description: 'One headshot, one kill' },
+  { id: 'sniper', name: 'Sniper', primary: 'sniper', optic: 'scope', secondary: 'mpistol', perk: 'quickdraw', description: 'One shot, one kill' },
 ];
 
 /** A valid class from anything (saved JSON, a network message): unknown or disallowed fields become the default. */

@@ -35,11 +35,13 @@ describe('weapon table', () => {
     expect(weaponDef('nope')).toBeUndefined();
   });
 
-  it('every weapon needs at least two body hits to kill from full health, headshots included, except the sniper head', () => {
+  it('every bullet weapon needs at least two body hits to kill, except the one-shot weapons (bolt-action sniper)', () => {
+    const ONE_SHOT = new Set(['sniper']);
     for (const w of WEAPONS) {
       const body = Math.ceil(PLAYER_MAX_HEALTH / (w.damage * w.pellets));
       const head = Math.ceil(PLAYER_MAX_HEALTH / (w.damage * w.headshot * w.pellets));
       if (w.id === 'knife') expect(body, 'knife needs two stabs').toBe(2);
+      else if (ONE_SHOT.has(w.id)) expect(body, w.id).toBe(1);
       else if (w.pellets === 1) expect(body, w.id).toBeGreaterThanOrEqual(2);
       expect(head, w.id).toBeLessThanOrEqual(body);
     }

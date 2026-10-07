@@ -25,7 +25,9 @@ describe('arcade balance', () => {
     const fastest = Math.max(...primaries.map((w) => w.moveSpeed));
     for (const w of primaries) {
       const ranges = BALANCE_RANGES.filter((d) => fastestAt(d) === w);
-      const niche = ranges.length > 0 || killsPerMag(w, 20) === bestMag || perfectTtk(w, 60, true).stk === 1 || w.moveSpeed === fastest;
+      // One-shot kills are a niche of their own: the model's average TTK never favours a single precise shot.
+      const oneShot = perfectTtk(w, 60).stk === 1 || perfectTtk(w, 60, true).stk === 1;
+      const niche = ranges.length > 0 || killsPerMag(w, 20) === bestMag || oneShot || w.moveSpeed === fastest;
       expect(niche, w.id).toBe(true);
     }
   });
@@ -59,13 +61,34 @@ describe('arcade balance', () => {
     }
   });
 
-  it('only the bolt-action sniper (and the revolver, up close) kill with one headshot; nothing kills with one body shot', () => {
+  it('one-shot kills are deliberate: the bolt-action sniper to the body within its range, sniper and revolver with a headshot', () => {
+    const ONE_BODY = new Set(['sniper']);
+    const ONE_HEAD = new Set(['sniper', 'revolver']);
     for (const w of WEAPONS) {
       if (w.slot === 'melee' || w.pellets > 1) continue;
-      expect(perfectTtk(w, 10).stk, w.id).toBeGreaterThanOrEqual(2);
-      expect(perfectTtk(w, 10, true).stk === 1, w.id).toBe(w.id === 'sniper' || w.id === 'revolver');
+      expect(perfectTtk(w, 10).stk === 1, `${w.id} body`).toBe(ONE_BODY.has(w.id));
+      expect(perfectTtk(w, 10, true).stk === 1, `${w.id} head`).toBe(ONE_HEAD.has(w.id));
       if (w.id !== 'sniper') expect(perfectTtk(w, 90, true).stk, w.id).toBeGreaterThanOrEqual(2);
     }
+    // The sniper's body one-shot ends at its range (70): past it the drawback is a second shot.
+    const sniper = weaponDef('sniper')!;
+    expect(perfectTtk(sniper, 70).stk).toBe(1);
+    expect(perfectTtk(sniper, 90).stk).toBe(2);
+    expect(perfectTtk(sniper, 90, true).stk).toBe(1);
+  });
+
+  it('the shotgun kills with one pump out to 8 blocks when the pattern is centred (QA round 3: "shotguns are bad")', () => {
+    const sg = weaponDef('shotgun')!;
+    expect(perfectTtk(sg, 8).stk).toBe(1);
+    expect(realisticTtk(sg, 4).ms).toBeLessThan(400);
+    expect(fastestAt(4).id).toBe('shotgun');
+  });
+
+  it('the bolt-action sniper is quickscope friendly: aims faster than every other scoped weapon, but has no hip fire', () => {
+    const sniper = weaponDef('sniper')!;
+    expect(sniper.adsTime).toBeLessThanOrEqual(0.3);
+    for (const w of WEAPONS) if (w !== sniper && w.optics.includes('scope')) expect(adsTimeFor(sniper, 'scope', 'none'), w.id).toBeLessThanOrEqual(adsTimeFor(w, 'scope', 'none'));
+    expect(sniper.spread).toBeGreaterThanOrEqual(8);
   });
 
   it('heavier weapons aim and move slower: the LMG is the slowest to aim and to move with among automatics', () => {

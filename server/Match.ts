@@ -8,7 +8,7 @@ import { type ClassSpec, DEFAULT_CLASS, validateClass } from '../src/modes/Loado
 import type {
   ClientMessage, MatchInfo, MatchPhase, ModeEventKind, RosterEntry, ServerMessage,
 } from '../src/net/protocol';
-import { type BlockQuery, rayPlayer, spreadDirection, traceBlocks } from './Combat';
+import { type BlockQuery, pelletPattern, rayPlayer, spreadDirection, traceBlocks } from './Combat';
 import { PEEK_LIMIT, bodyVisible, rewindWindow } from './anticheat/LagComp';
 import { type MatchResult, type ModeLogic } from './modes/ModeLogic';
 import { createLogic } from './modes';
@@ -159,6 +159,7 @@ export class Match {
   /** Player who changes team at their next respawn because the other team lost players (0 = nobody). */
   private moveId = 0;
   private readonly tmpDir: [number, number, number] = [0, 0, 0];
+  private readonly tmpPellet: [number, number] = [0, 0];
   private readonly tmpPos: [number, number, number] = [0, 0, 0];
   private readonly targets: { o: MatchPlayer; x: number; y: number; z: number }[] = [];
 
@@ -429,8 +430,13 @@ export class Match {
     let tracer: [number, number, number] | null = null;
     const dir = this.tmpDir;
     const hitList: ShotReport['hits'] = [];
+    const rot = w.pellets > 1 ? this.host.random() : 0;
+    const pp = this.tmpPellet;
     for (let k = 0; k < w.pellets; k++) {
-      spreadDirection(dx, dy, dz, spread, this.host.random(), this.host.random(), dir);
+      if (w.pellets > 1) {
+        pelletPattern(k, w.pellets, rot, this.host.random(), pp);
+        spreadDirection(dx, dy, dz, spread, pp[0], pp[1], dir);
+      } else spreadDirection(dx, dy, dz, spread, this.host.random(), this.host.random(), dir);
       let tEnd = traceBlocks(this.host.blocks, ox, oy, oz, dir[0], dir[1], dir[2], w.maxRange);
       let victim: MatchPlayer | null = null;
       let hitHead = false;

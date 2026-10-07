@@ -76,6 +76,25 @@ export function rayPlayer(
  * A direction inside a cone of `degrees` half-angle around (dx, dy, dz) (normalised), uniform over
  * the cone's disc. `r1` and `r2` are random numbers in [0, 1).
  */
+/**
+ * Pellet pattern of a multi-pellet shot (shotgun): pellet `k` of `n` gets a fixed place in the cone instead of a random
+ * one, so the damage at a distance is consistent (a random cone sometimes put half the pellets beside a target at
+ * arm's length). One pellet in the centre, about 40% on an inner ring at 45% of the cone, the rest on an outer ring
+ * at 85%; `rot` (0..1) turns the whole pattern per shot and `jitter` (0..1) moves each pellet a little.
+ * Returns the (r1, r2) pair for `spreadDirection` in `out`.
+ */
+export function pelletPattern(k: number, n: number, rot: number, jitter: number, out: [number, number]): [number, number] {
+  if (k === 0 || n <= 1) { out[0] = 0.0064 * jitter; out[1] = rot; return out; }
+  const inner = Math.max(1, Math.round((n - 1) * 0.4));
+  const ring = k <= inner ? 0 : 1;
+  const count = ring === 0 ? inner : n - 1 - inner;
+  const i = ring === 0 ? k - 1 : k - 1 - inner;
+  const radius = (ring === 0 ? 0.45 : 0.85) + (jitter - 0.5) * 0.12;
+  out[0] = radius * radius; // spreadDirection takes sqrt(r1) as the share of the cone
+  out[1] = (rot + (i + (ring === 0 ? 0 : 0.5)) / count + (jitter - 0.5) * 0.04 + 1) % 1;
+  return out;
+}
+
 export function spreadDirection(
   dx: number, dy: number, dz: number, degrees: number, r1: number, r2: number, out: [number, number, number],
 ): [number, number, number] {

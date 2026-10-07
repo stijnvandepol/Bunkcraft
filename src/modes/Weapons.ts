@@ -89,10 +89,10 @@ export const WEAPONS: WeaponDef[] = [
     role: 'Fastest on its feet; shreds up close, fades past 20 blocks',
   },
   {
-    id: 'shotgun', name: 'Shotgun', slot: 'primary', auto: false, damage: 13, headshot: 1.5, pellets: 10, rpm: 70,
-    magazine: 6, reloadSec: 2.4, spread: 4.5, adsSpread: 3.5, range: 7, falloffEnd: 22, minDamage: 0.15, maxRange: 40,
-    zoom: 0.9, moveSpeed: 0.97, recoil: 4, adsTime: 0.2, recoilX: 0.3, pattern: PAT_RIGHT, optics: ['iron', 'reddot'],
-    role: 'One pump at arm\'s length; useless past 15 blocks',
+    id: 'shotgun', name: 'Shotgun', slot: 'primary', auto: false, damage: 18, headshot: 1.5, pellets: 8, rpm: 80,
+    magazine: 6, reloadSec: 2.4, spread: 3.2, adsSpread: 2.6, range: 9, falloffEnd: 24, minDamage: 0.2, maxRange: 40,
+    zoom: 0.9, moveSpeed: 0.97, recoil: 4.5, adsTime: 0.2, recoilX: 0.3, pattern: PAT_RIGHT, optics: ['iron', 'reddot'],
+    role: 'One pump kills out to 8 blocks; useless past 15',
   },
   {
     id: 'lmg', name: 'LMG', slot: 'primary', auto: true, damage: 19, headshot: 1.7, pellets: 1, rpm: 720,
@@ -119,10 +119,10 @@ export const WEAPONS: WeaponDef[] = [
     role: 'Two quick body shots at any range; no one-shot headshot',
   },
   {
-    id: 'sniper', name: 'Bolt-Action Sniper', slot: 'primary', auto: false, damage: 85, headshot: 1.6, pellets: 1, rpm: 45,
-    magazine: 4, reloadSec: 2.2, spread: 9, adsSpread: 0, range: 300, falloffEnd: 300, minDamage: 1, maxRange: 400,
-    zoom: 0.25, moveSpeed: 0.92, recoil: 3, bolt: true, adsTime: 0.42, recoilX: 0.2, pattern: PAT_RIGHT, optics: ['scope'], scopeZoom: 0.22,
-    role: 'One headshot, one kill at any range; slow bolt, weak up close',
+    id: 'sniper', name: 'Bolt-Action Sniper', slot: 'primary', auto: false, damage: 100, headshot: 1.5, pellets: 1, rpm: 45,
+    magazine: 4, reloadSec: 2.2, spread: 9, adsSpread: 0, range: 70, falloffEnd: 160, minDamage: 0.85, maxRange: 400,
+    zoom: 0.25, moveSpeed: 0.92, recoil: 3, bolt: true, adsTime: 0.3, recoilX: 0.2, pattern: PAT_RIGHT, optics: ['scope'], scopeZoom: 0.22,
+    role: 'One body shot kills out to 70 blocks: quickscope it; slow bolt, no hip fire',
   },
   {
     id: 'pistol', name: 'Pistol', slot: 'secondary', auto: false, damage: 18, headshot: 2, pellets: 1, rpm: 400,
