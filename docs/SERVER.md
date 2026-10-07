@@ -165,6 +165,9 @@ limieten per bezoeker werken in plaats van per proxy.
 | `ARCADE_TICK_HZ` | `30` | Tickrate van arcade-kamers (10-60); Minecraft-werelden blijven 20 Hz |
 | `ARCADE_CULLING` | `on` | Anti-wallhack: arcade-snapshots per speler zonder onzichtbare vijanden (`off` = iedereen naar iedereen) |
 | `ARCADE_AUTOKICK_SCORE` | `0` | Kick bij deze aim-verdenkingsscore (0-100; `0` = nooit, alleen loggen) |
+| `QUICKPLAY_BOTS` | `8` | Nieuwe Snel spelen-lobby's vullen met server-bots tot zoveel spelers; bots maken plaats voor wie erbij komt (`0` = geen bots). Zie GAMEMODES.md §Bots. |
+| `QUICKPLAY_BOT_DIFFICULTY` | `normal` | Niveau van die bots: `easy`, `normal`, `hard` of `veteran` |
+| `BOT_PREWARM` | `on` | Bouwt bij het opstarten op de achtergrond de navigatiegrafen van alle kaarten (~1 s CPU, ~20 MB), zodat een lobby nooit midden in een potje hapert |
 | `BACKUP_KEEP` | `12` | Aantal back-ups per wereld (`0` = geen back-ups) |
 | `BACKUP_INTERVAL_MIN` | `60` | Minuten tussen back-ups |
 | `RECONNECT_HINT_MS` | `8000` | Bij afsluiten (SIGTERM) krijgen spelers de hint om zoveel milliseconden later opnieuw te verbinden |
@@ -487,6 +490,7 @@ Een game aanmaken (`POST /api/rooms`) accepteert `{ name, gameMode, seed, gameTy
 - `GET /api/rooms?public=1&kind=minecraft|arcade`: de serverlijst voor Multiplayer of Realms; zonder `kind` beide (oudere
   clients). Arcade-lobby's met spelers hebben ook `phase`, `timeLeft` en `currentMap`.
 - `POST /api/rooms` accepteert ook `maxPlayers` (2 tot `ROOM_MAX_PLAYERS`, alleen arcade); dat staat in `world.json`.
+- `POST /api/rooms` accepteert voor arcade ook `bots` (0 tot lobbygrootte − 1) en `botDifficulty`; dat staat als `bots` in `world.json`. De publieke lijst meldt `bots` naast `players` (mensen).
 - Na een potje in een lobby met `rotate` stemmen de spelers over de volgende kaart (`vote`-berichten, zie `docs/GAMEMODES.md`).
 - Arcade-games zonder eigenaar (Snel spelen) bewaren geen naamclaims; een tweede speler met dezelfde naam wordt geweigerd
   zolang de eerste speelt.

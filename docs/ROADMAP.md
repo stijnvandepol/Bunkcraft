@@ -302,7 +302,11 @@ regenereert, respawns en een scoreboard. Beschrijving, besturing en wapentabel: 
    zodat ook kleine speedhacks en lage zweefhacks opvallen; drempels van de verdenkingsscore kalibreren met echte
    spelersdata; tracers alleen naar wie de schutter mag zien; delta-snapshots (alleen wat veranderde) voor de overige
    bytes (ammo/tracers zijn nu groter dan de snapshots); client-side tracer-voorspelling tegen spelers.
-7. **Bots** voor lege Realms-lobby's (Snel spelen zet je nu bij echte spelers of in een lege lobby die wacht).
+7. **Bots** voor lege Realms-lobby's: **Gedaan** (server-side bots, zie GAMEMODES.md §Bots). Vervolg: adaptieve
+   moeilijkheid in Snel spelen (niveau naar de K/D van de mensen in de lobby), bots die granaten/perks gebruiken zodra die er
+   zijn, bunny-hop- en slide-bewegingen als de Krunker-beweging landt (bots gebruiken nu `Player.step` met lopen en
+   springen), en een host-commando om bots tijdens het potje bij te stellen. (Een nieuwe kaart met een onbereikbare spawn,
+   zone of vlag laat `tests/botNav.test.ts` al falen.)
 8. **Mobiel:** touchbediening voor schieten en richten (hoort bij de touch-taak in 6).
 9. **Realms vervolg:** party's (samen met vrienden in één lobby via Snel spelen), skill-based matchmaking (K/D per naam),
    een playlist-rotatie met tijdelijke modes (bijv. "Gun Game weekend"), lege open lobby's na een dag opruimen (nu na

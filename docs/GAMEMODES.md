@@ -141,6 +141,61 @@ De regels draaien op de server (`server/modes/<logic>.ts`, zie `docs/SERVER.md`)
 
 Screenshots: `docs/screenshots/modes/` (gemaakt met `python3 scripts/mode-shots.py <map> [poort]`).
 
+## Bots
+
+Server-side bots (`server/bots/`) zorgen dat een speler alleen (of met een paar vrienden) altijd een volle, leuke match
+heeft. Ze zijn **echte matchspelers**: een sessie zonder socket in `GameServer`, met dezelfde rate limits, en alles wat ze
+doen gaat als gewoon clientbericht (`pos`, `fire`, `reload`, `weapon`, `loadout`) door `handleArcade`. Dus dezelfde
+bewegingscontrole (`ArcadeGuard`/`MovementValidator`, ook de `step`-klok), dezelfde schotcontrole (eenheidsvector, oorsprong
+binnen 0,6 blok), dezelfde schade, spawnlogica, lag-compensatie en aim-statistiek als mensen. Ze weten niet meer dan een
+client: hun eigen staat, zichtlijnen (kogeldoorlatende blokken, dus niet door glas), de HUD-modusstatus, schoten binnen
+gehoorsafstand (40 blokken, met demper 12) en wie hen raakt.
+
+- **Herkenbaar:** naam `[BOT] Viper` enz. (haken mogen niet in spelersnamen, dus niemand kan zich als bot voordoen) en
+  `bot: 1` in de roster. Scorebord, killfeed en naamtags tonen de tag vanzelf. Bots komen en gaan zonder chatregel.
+- **Vullen:** Snel spelen-lobby's vullen tot `QUICKPLAY_BOTS` spelers (standaard 8, niveau `QUICKPLAY_BOT_DIFFICULTY`).
+  Elke seconde stelt de server bij: komt er een mens bij, dan gaat er eerst een bot weg (uit het grotere team, liefst een
+  dode, nooit een vlagdrager als het anders kan); een volle lobby met bots weigert nooit een mens. Teams blijven gelijk: bij
+  twee of meer verschil verlaat een bot het grote team en komt er een terug in het kleine. Met de laatste mens gaan ook
+  de bots weg (de kamer wordt leeg en laadt uit). Matchmaking en lijsten tellen alleen mensen; de lijst toont `+N bots`.
+- **Privélobby:** *Bots* (0 tot lobbygrootte − 1) en *Botniveau* in het scherm *Privélobby maken*; die bots blijven,
+  maar maken ook plaats als een mens een plek nodig heeft. Opgeslagen als `bots` in `world.json`.
+- **Niveaus** (`server/bots/BotSkill.ts`): reactietijd (0,7 / 0,45 / 0,32 / 0,25 s), draaisnelheid (170-450 °/s, altijd
+  onder de 600 °/s waarop de aim-controle een "snap" ziet), een zwevende richtfout die na het oppakken van een doel uitdooft
+  (Ornstein-Uhlenbeck), volgvertraging op bewegende doelen, kans op hoofd i.p.v. borst (4-28 %), blikveld en
+  waarneemafstand, terugtrekken bij weinig health, strafe-neiging en richten door het vizier. Elke bot varieert ±10 %.
+  Terugslag duwt hun blik omhoog zoals bij een speler; ze vuren pas als hun blik op het punt staat waar ze *denken* dat het
+  doel is, dus de fout wordt echte missers.
+- **Balans** (`tests/botBalance.test.ts`, gesimuleerde duels met echte `Match`-gevechten tegen twee referentiespelers in
+  `tests/helpers/humanProfiles.ts`): makkelijk wint ~14 % tegen een gemiddelde speler, normaal ~38 %, moeilijk ~58 %,
+  veteraan ~79 %; tegen een geoefende speler wint moeilijk ~17 % en veteraan ~34 %.
+- **Bewegen:** dezelfde `Player`-fysica als de browser (botsing, step-up, springen, luchtcontrole), op 60 Hz op de echte
+  klok, met `step` in elk positierapport. Paden over een **navigatiegraaf** per kaartvariant (`NavGraph.ts`): staanplekken
+  per halve blokhoogte en bewegingen (lopen, diagonaal, halve trede, springen tot 1 blok, vallen tot 4, ladders), allemaal
+  getoetst met `MovementValidator.inSolid`, dus elke route is er een die de anti-cheat accepteert. De graaf bouwt uit elke
+  blokbron (nieuwe kaarten werken zonder aanpassing), wordt per kaartvariant gedeeld door alle lobby's en bij het opstarten
+  op de achtergrond voorgebouwd (`BOT_PREWARM`). A* met typed arrays; bochten afsnijden alleen waar het hele lijf past.
+- **Spelen per mode:** tdm/ffa/gun game/elimination: jagen (geluid, geraakt worden, laatst gezien), anders zwerven richting
+  de vijandelijke helft. Hardpoint: naar de actieve heuvel en daarbinnen telkens een andere plek. Domination: het goedkoopste
+  punt om te nemen of te verdedigen, verspreid over het team. CTF: een derde verdedigt de eigen basis, de rest haalt de
+  vlag; de drager rent naar huis (eerst de eigen vlag terughalen als die ligt), anderen jagen op de vijandelijke drager of
+  escorteren de eigen. Gun game: altijd het ladderwapen, mes-niveau = erop af. Tijdens warm-up lopen ze rond zonder te
+  vechten, in intermission/countdown/roundend staan ze stil.
+- **Gevecht:** doelkeuze (dichtbij, in het vizier, wie schiet, vlagdrager), afstand houden per wapen (shotgun 5, smg 9,
+  geweren 18, sniper/DMR 35), strafen op begaanbare plekken, af en toe springen (moeilijk/veteraan), wisselen naar het
+  secundaire wapen als het primaire leeg is op korte afstand, herladen als het rustig is. **Dekking:** onder de
+  terugtrekgrens (of herladend op afstand) zoekt een bot een plek binnen 11 blokken die de dreiging niet kan zien, wacht tot
+  de health terug is en gaat weer.
+- **Klassen:** een preset naar kaartgrootte (grote kaarten meer DMR/sniper, kleine meer smg/shotgun) via het gewone
+  `loadout`-bericht.
+- **Kosten** (`scripts/bench-bots.ts`, M1 Pro): 1 mens + 11 bots ≈ 0,1 ms per lobbytick van 33 ms; 6 zulke lobby's samen
+  0,7 ms per tick (p99 1,7 ms). Denken (waarnemen, kiezen, paden) loopt gespreid op ~10 Hz per bot met een budget van
+  1,5 ms per tick per lobby en hooguit 3 padzoektochten per tick; bewegen en richten elke tick.
+- **Tests:** `botNav` (graaf op elke kaart en variant, alle spawns/zones/vlaggen bereikbaar, elke kant een geldige move),
+  `botDecisions` (aim, klasse, CTF/hardpoint-doelen, dekking, vulregels), `botMatch` (hele TDM- en CTF-matches tot het
+  einde, hardpoint/domination/gun game, elke kaart, vulregels, kamerinstellingen, en **nul** anti-cheat-meldingen:
+  geen correcties, geen vervangen schotoorsprong, aim-verdenking onder de waarschuwingsgrens), `botBalance`, `botPerf`.
+
 ## Wat anders is dan in de sandbox
 
 - Geen hotbar, hartjes, honger of lucht: een eigen HUD (`src/ui/ArcadeHud.ts`).
