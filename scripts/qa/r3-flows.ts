@@ -234,6 +234,8 @@ try {
     const other = await a.ctx.newPage();
     await other.goto('about:blank');
     await other.bringToFront();
+    // Headless pages stay "visible" and focused: send the window blur a real tab switch causes (the shim ends the lock).
+    await a.page.evaluate('window.dispatchEvent(new Event("blur"))');
     await a.page.waitForTimeout(800);
     await a.page.bringToFront();
     await a.page.waitForTimeout(500);

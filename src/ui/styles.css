@@ -944,8 +944,16 @@ html, body {
   border-radius: 50%;
 }
 
-.arc-feed { position: absolute; top: calc(var(--s) * 8); right: calc(var(--s) * 8); display: flex; flex-direction: column; align-items: flex-end; gap: calc(var(--s) * 1); }
-.arc-feed-row { display: flex; gap: calc(var(--s) * 4); padding: calc(var(--s) * 1) calc(var(--s) * 4); background: rgba(0, 0, 0, 0.45); border: var(--s) solid transparent; }
+.arc-feed {
+  position: absolute; top: calc(var(--s) * 8); right: calc(var(--s) * 8); display: flex; flex-direction: column; align-items: flex-end; gap: calc(var(--s) * 1);
+  /* Only the room right of the score bar (QA round 3: a long row covered the blue score at 1280x720); a long row wraps. */
+  max-width: calc(50% - var(--s) * 104);
+}
+.arc-feed-row {
+  display: flex; flex-wrap: wrap; justify-content: flex-end; column-gap: calc(var(--s) * 4); max-width: 100%;
+  padding: calc(var(--s) * 1) calc(var(--s) * 4); background: rgba(0, 0, 0, 0.45); border: var(--s) solid transparent;
+}
+.arc-feed-row > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .arc-feed-row.self { border-color: rgba(255, 255, 255, 0.7); background: rgba(0, 0, 0, 0.6); }
 .arc-feed-weapon { color: #c0c0c0; }
 .arc-feed-head { color: #ffd23f; }
@@ -990,7 +998,8 @@ html, body {
 .mode-ladder-steps i.done { background: #9a8a3a; }
 .mode-ladder-steps i.now { background: #ffd23f; }
 .mode-toast { position: absolute; top: calc(var(--s) * 60); left: 50%; transform: translateX(-50%); font-size: calc(var(--fs) * 1.3); white-space: nowrap; }
-.arc-protect { position: absolute; top: calc(var(--s) * 70); left: 50%; transform: translateX(-50%); color: #7ec8ff; background: rgba(20, 60, 120, 0.5); padding: calc(var(--s) * 2) calc(var(--s) * 6); border: var(--s) solid #7ec8ff; white-space: nowrap; }
+/* Under the crosshair, clear of the banner, the round toast and the lobby panel at the top (they piled up between rounds). */
+.arc-protect { position: absolute; top: calc(50% + var(--s) * 48); left: 50%; transform: translateX(-50%); color: #7ec8ff; background: rgba(20, 60, 120, 0.5); padding: calc(var(--s) * 2) calc(var(--s) * 6); border: var(--s) solid #7ec8ff; white-space: nowrap; }
 
 /* Scope: black surround with a soft lens edge and vignette, duplex reticle with mil-dots, breath meter. */
 .arc-scope {

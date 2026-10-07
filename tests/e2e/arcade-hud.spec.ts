@@ -42,6 +42,20 @@ test('arcade: the end screen shows the final score that arrives right after matc
   await expect(page.locator('.arc-end .arc-board-scores')).toContainText('1 BLUE');
 });
 
+test('arcade: a long kill feed row stays clear of the score bar (it covered the blue score at 1280x720)', async ({ page }) => {
+  await startPreview(page, 'tdm', 'atomic');
+  await page.evaluate(() => {
+    const g = (window as any).game;
+    g.arcade.addPlayer(901, 'LongNameKiller16', 'blue');
+    g.arcade.addPlayer(902, 'AnotherLongName1', 'red');
+    g.onServerMessage({ t: 'kill', killer: 901, victim: 902, weapon: 'semisniper', head: true });
+  });
+  await expect(page.locator('.arc-feed-row')).toHaveCount(1);
+  const feed = (await page.locator('.arc-feed-row').boundingBox())!;
+  const top = (await page.locator('.arc-top-row').boundingBox())!;
+  expect(feed.x).toBeGreaterThanOrEqual(top.x + top.width);
+});
+
 test('arcade: an objective marker at the screen edge keeps its whole caption on screen (wide "CONTESTED" label)', async ({ page }) => {
   await startPreview(page, 'domination', 'villa');
   // Three contested points, the player turning around: markers stick to the left and right edges.
