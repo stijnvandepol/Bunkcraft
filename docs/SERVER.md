@@ -150,6 +150,10 @@ limieten per bezoeker werken in plaats van per proxy.
 | `ROOM_MAX_PLAYERS` | `12` | Spelers per game |
 | `ROOM_CREATE_LIMIT` | `6` | Games die één bezoeker per uur mag aanmaken |
 | `ROOM_EXPIRE_DAYS` | `60` | Games zonder bezoek worden na zoveel dagen verwijderd (`0` = nooit) |
+| `PROFILES` | `on` | Realms-voortgang: profielen, XP, levels en ontgrendelingen (`off` = geen XP, alles vrij) |
+| `MAX_PROFILES` | `50000` | Maximum aantal profielen in `DATA_DIR/profiles/`; daarna maakt de server geen nieuwe meer aan |
+| `PROFILE_CREATE_LIMIT` | `10` | Nieuwe profielen per bezoeker per uur |
+| `PROFILE_SECRET` | niet gezet | HMAC-geheim voor profieltokens (minstens 16 tekens). Leeg = een willekeurig geheim in `DATA_DIR/profiles/secret.key` (mode 0600). Zet het als meerdere servers dezelfde profielen delen. |
 | `ROOM_IDLE_UNLOAD_MIN` | `5` | Minuten dat een lege game in het geheugen blijft voordat hij wordt opgeslagen en uitgeladen |
 | `CHUNK_WORKERS` | `min(2, cores − 1)` | Threads die nieuw terrein genereren voor alle survival-games samen, zodat verkennende spelers de ticks niet ophouden. `0` = op de main thread (het oude pad, ook de standaard met één core). Cores = die van de machine, of minder als Docker een CPU-limiet zet (`BUNKCRAFT_CPUS`). Elke thread kost ~20-25 MB RSS. Meer dan 2 helpt pas bij honderden verkennende spelers. |
 | `ADMIN_TOKEN` | niet gezet | Geheim voor `/admin` en `/api/admin/*`. Leeg = beheer staat uit. Minstens 16 willekeurige tekens (`openssl rand -hex 24`). Wie dit token als `owner` meestuurt, is ook operator in elke game. |
@@ -198,6 +202,36 @@ Voorbeeld: `SEED=bunk GAMEMODE=creative WORLD_NAME="Bouwserver" npm start`
   Wie later dezelfde naam met een andere sleutel gebruikt, wordt geweigerd. Zo kan niemand zich voordoen als operator.
   Oude clients zonder sleutel kunnen nog joinen onder namen die niemand claimde, maar zijn nooit operator. Een claim is
   geen account: wie zijn browserdata wist, verliest zijn naam (vraag de eigenaar `/unban`/een nieuwe naam).
+
+## Realms-profielen (XP en levels zonder accounts)
+
+Realms houdt per speler een profiel bij: level 1-55 met 10 prestiges, statistieken, wapen-XP met camo's, dagelijkse en
+wekelijkse uitdagingen en de gekozen titel en visitekaartjes. Er zijn geen accounts: de server geeft een browser één keer
+een **ondertekend profieltoken** (`v1.<id>.<hmac>`, HMAC-SHA256 met `PROFILE_SECRET` of `profiles/secret.key`), de
+browser bewaart het in `localStorage` per serverhost (`bunkcraft.profile.<host>`), net als de owner-tokens van games.
+
+- **API** (token in de `Authorization: Bearer`-header, nooit in een URL):
+  `POST /api/profile` (`{name}`; het profiel van het token, of een nieuw profiel + token met `201`),
+  `GET /api/profile`, `POST /api/profile/equip` (`{title?, card?, camos?}`; alleen wat ontgrendeld is, anders `409`),
+  `POST /api/profile/prestige` (alleen op level 55). Limieten: 60 verzoeken per minuut en `PROFILE_CREATE_LIMIT` nieuwe
+  profielen per uur per adres. `GET /api/server` meldt `features.profiles`.
+- **XP is server-authoritative.** Er bestaat geen bericht waarmee een client XP kan geven. De client stuurt het token mee
+  in `hello` (`profile`); de server telt tijdens een live match kills, assists, headshots, treffers, vlaggen en zones
+  (`server/progression/MatchRecorder.ts`) en geeft de XP precies één keer: bij het einde van de match, of bij vertrek
+  halverwege (zonder voltooiings- en winstbonus). Daarna krijgt de speler een `progress`-bericht met de opbouw.
+  Bots en gasten zonder profiel krijgen niets. Een vals of aangepast token wordt genegeerd (geen profiel, geen XP).
+- **Tegen farmen:** maximaal 6000 XP per match (uitdagingen komen erbovenop), kills op hetzelfde slachtoffer leveren na
+  6 keer nog 25 XP op, voltooiings- en winstbonus pas na 45 s in de match, en één profiel telt maar één keer per lobby
+  (twee tabbladen in dezelfde lobby verdubbelen niets). XP komt uit openbare en privé-lobby's.
+- **Ontgrendelingen** gelden ook op de server: een `loadout` met een wapen, vizier of perk boven je level wordt het
+  standaardonderdeel (`lockClass` in `src/modes/progression/Unlocks.ts`).
+
+**Bestanden:** `DATA_DIR/profiles/secret.key` (het geheim; kwijt = alle tokens ongeldig) en
+`DATA_DIR/profiles/<xx>/<id>.json`, één klein JSON-bestand per profiel (enkele kB; `<xx>` = de eerste twee tekens van het
+id). De server schrijft gewijzigde profielen elke 5 s en bij afsluiten (tmp + rename), houdt er hooguit 2000 in het
+geheugen en weigert bestanden groter dan 32 kB. Alles wat van schijf komt gaat door `sanitizeProfile` (onbekende velden
+weg, getallen begrensd, laatste 10 matches). De ingebouwde back-ups (`BACKUP_KEEP`) dekken alleen `world.json`: neem
+`profiles/` (vooral `secret.key`) mee in je eigen back-up van `DATA_DIR`.
 
 ## Operators en commando's
 

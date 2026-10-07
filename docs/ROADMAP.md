@@ -307,7 +307,13 @@ regenereert, respawns en een scoreboard. Beschrijving, besturing en wapentabel: 
 9. **Realms vervolg:** party's (samen met vrienden in één lobby via Snel spelen), skill-based matchmaking (K/D per naam),
    een playlist-rotatie met tijdelijke modes (bijv. "Gun Game weekend"), lege open lobby's na een dag opruimen (nu na
    `ROOM_EXPIRE_DAYS`), en de lobbylijst pagineren als er meer dan `LIST_MAX` zijn. (De match-HUD is sinds QA-ronde 2 NL/EN.)
-10. **Uit QA-ronde 2** (`docs/qa/ARCADE.md`): `ROOM_MAX_PLAYERS` standaard 12 voor 6v6 (nu 8); eerlijke vlagdrager op Riptide
+10. **Realms-voortgang: gedaan** (oktober 2026, zie [`GAMEMODES.md`](GAMEMODES.md#voortgang-xp-levels-ontgrendelingen)):
+    XP en levels 1-55 met prestige, ontgrendelingen, wapen-XP en camo's, dagelijkse/wekelijkse uitdagingen, titels en
+    visitekaartjes, statistiekenscherm en rangicoon; identiteit via een ondertekend profieltoken, XP alleen van de server.
+    **Vervolg:** `profiles/` in de ingebouwde back-ups; profiel overzetten naar een ander apparaat (token als QR/code
+    exporteren); camo's ook voor anderen zichtbaar (`holds` met `camo`); leaderboards per seizoen; XP-curve en
+    farm-limieten bijstellen met echte speeldata; bots (zodra ze er zijn) als slachtoffer minder XP laten opleveren.
+11. **Uit QA-ronde 2** (`docs/qa/ARCADE.md`): `ROOM_MAX_PLAYERS` standaard 12 voor 6v6 (nu 8); eerlijke vlagdrager op Riptide
     nog gecorrigeerd door de anti-cheat onder last (`lag`/`speed`); Riptide-spawns zichtbaar vanaf de andere helft; botpaden
     met traptreden (Terminus); audio-worst-case 0,59 ms/frame opnieuw meten op een rustige machine.
 
