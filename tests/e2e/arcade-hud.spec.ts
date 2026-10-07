@@ -78,6 +78,22 @@ test('arcade: with the map vote up, your own row stays on the end screen in a fu
   expect(row.y + row.height).toBeLessThanOrEqual(board.y + board.height + 1);
 });
 
+test('arcade: the spawn protection label overlaps neither the chat, the weapon slots nor the banners', async ({ page }) => {
+  await startPreview(page, 'tdm', 'atomic');
+  await page.evaluate(() => {
+    const g = (window as any).game;
+    for (let i = 0; i < 6; i++) g.chat.add(`a long chat line number ${i} that runs well into the middle of the screen`, true);
+    const p = g.player;
+    g.onServerMessage({ t: 'spawn', x: p.x, y: p.y, z: p.z, yaw: 0, team: 'red', primary: 'rifle', health: 100 });
+  });
+  await expect(page.locator('.arc-protect')).toBeVisible();
+  const box = async (sel: string) => (await page.locator(sel).first().boundingBox())!;
+  const prot = await box('.arc-protect');
+  const clear = (b: { x: number; y: number; width: number; height: number }) =>
+    prot.x + prot.width <= b.x || b.x + b.width <= prot.x || prot.y + prot.height <= b.y || b.y + b.height <= prot.y;
+  for (const sel of ['.chat-log', '.arc-slots', '.arc-top']) expect(clear(await box(sel)), sel).toBe(true);
+});
+
 test('arcade: gun game shows one knife slot, not "2 Knife 3 Knife"', async ({ page }) => {
   await startPreview(page, 'gungame', 'atomic');
   await page.evaluate(() => (window as any).game.onServerMessage({ t: 'gear', primary: 'rifle', secondary: 'knife', optic: 'iron', perk: 'none' }));
