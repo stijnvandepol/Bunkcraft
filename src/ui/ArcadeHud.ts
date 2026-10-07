@@ -66,6 +66,7 @@ export class ArcadeHud {
   readonly loadoutEl: HTMLDivElement;
 
   private readonly healthNum: HTMLSpanElement;
+  private readonly healthLabel: HTMLSpanElement;
   private readonly healthFill: HTMLDivElement;
   private readonly healthBox: HTMLDivElement;
   private readonly weaponName: HTMLDivElement;
@@ -100,12 +101,12 @@ export class ArcadeHud {
   private readonly endBoard: HTMLDivElement;
   private readonly endCount: HTMLDivElement;
   private readonly presetCards = new Map<string, HTMLDivElement>();
-  private readonly customCard: HTMLDivElement;
-  private readonly customDesc: HTMLDivElement;
+  private customCard!: HTMLDivElement;
+  private customDesc!: HTMLDivElement;
   /** Create-a-Class editor buttons per field and value. */
   private readonly pick = { primary: new Map<string, HTMLElement>(), optic: new Map<string, HTMLElement>(), secondary: new Map<string, HTMLElement>(), perk: new Map<string, HTMLElement>() };
-  private readonly statsEl: HTMLDivElement;
-  private readonly loadoutNote: HTMLDivElement;
+  private statsEl!: HTMLDivElement;
+  private loadoutNote!: HTMLDivElement;
   private custom: ClassSpec = validateClass(null);
   /**
    * The class the editor shows: the one picked last (a preset or the custom class). Editing starts from it and makes it
@@ -142,10 +143,11 @@ export class ArcadeHud {
 
   constructor() {
     // -- health
+    this.healthLabel = h('span', { class: 'arc-health-label', text: t('arc.health') });
     this.healthNum = h('span', { class: 'arc-health-num', text: String(PLAYER_MAX_HEALTH) });
     this.healthFill = h('div', { class: 'arc-health-fill' });
     this.healthBox = h('div', { class: 'arc-health' },
-      h('div', { class: 'arc-health-row' }, h('span', { class: 'arc-health-label', text: t('arc.health') }), this.healthNum),
+      h('div', { class: 'arc-health-row' }, this.healthLabel, this.healthNum),
       h('div', { class: 'arc-health-bar' }, this.healthFill),
     );
 
@@ -224,8 +226,16 @@ export class ArcadeHud {
       this.board, this.death, this.end,
     );
 
-    // -- Create-a-Class menu (clickable): quick-pick presets, the custom class and its editor.
-    this.loadoutNote = h('div', { class: 'arc-loadout-note' });
+    // -- Create-a-Class menu (clickable): quick-pick presets, the custom class and its editor (built in the language of the moment).
+    this.loadoutEl = h('div', { class: 'arc-loadout hidden' });
+    this.buildLoadout();
+  }
+
+  /** Builds (or rebuilds, after a language change) the Create-a-Class menu inside `loadoutEl`. */
+  private buildLoadout(): void {
+    this.loadoutNote = h('div', { class: 'arc-loadout-note', text: this.loadoutNote?.textContent ?? '' });
+    this.presetCards.clear();
+    for (const m of Object.values(this.pick)) m.clear();
     const presets = h('div', { class: 'arc-loadout-cards presets' });
     LOADOUT_PRESETS.forEach((pr, i) => {
       const card = h('div', { class: 'arc-chip', title: `${classLine(pr)} · ${perkName(pr.perk)}: ${t(`arc.class.${pr.id}`, pr.description)}` },
@@ -261,7 +271,7 @@ export class ArcadeHud {
       column(t('arc.cac.perk'), 'perk', PERK_IDS.map((p) => ({ id: p, label: perkName(p), desc: t(`arc.perk.${p}`, PERKS[p].desc) }))),
       this.statsEl,
     );
-    this.loadoutEl = h('div', { class: 'arc-loadout hidden' },
+    this.loadoutEl.replaceChildren(
       h('div', { class: 'arc-loadout-panel' },
         h('div', { class: 'arc-loadout-title', text: t('arc.cac.title') }),
         presets,
@@ -273,6 +283,21 @@ export class ArcadeHud {
       ),
     );
     this.renderCustom();
+    this.markClass(this.shown);
+  }
+
+  /**
+   * The language changed in a match: everything drawn once in the old language is drawn again (the health label, the
+   * scope hint, Create-a-Class); the rest follows with the next update. (QA round 3: switching to Dutch in a match left
+   * "HEALTH" and the whole Create-a-Class menu in English.)
+   */
+  relabel(): void {
+    this.healthLabel.textContent = t('arc.health');
+    this.lastBreath = -1;
+    this.lastCount = -1;
+    this.lastRespawnPending = '\0';
+    this.lastProtect = -1;
+    this.buildLoadout();
   }
 
   /** The custom class (from storage). */

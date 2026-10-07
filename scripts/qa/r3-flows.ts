@@ -28,6 +28,19 @@ async function esc(p: Player): Promise<void> {
   await until(p, 'pause menu', () => visible(p, 'button:has-text("Disconnect"), button:has-text("Verbinding verbreken")'), 5000).catch(() => undefined);
 }
 
+/** Done/Klaar out of the option screens, then Back to Game, then click into the game. */
+async function backToGame(p: Player): Promise<void> {
+  for (let i = 0; i < 5; i++) {
+    const back = p.page.getByRole('button', { name: /^(Back to Game|Terug naar spel)$/ });
+    if (await back.count()) { await back.first().click(); break; }
+    const done = p.page.getByRole('button', { name: /^(Done|Klaar)$/ });
+    if (await done.count()) await done.last().click();
+    await wait(p, 300);
+  }
+  await wait(p, 300);
+  await lock(p);
+}
+
 async function leave(p: Player): Promise<void> {
   if (!(await visible(p, 'button:has-text("Disconnect")'))) await esc(p);
   await p.page.getByRole('button', { name: /Disconnect|Verbinding verbreken|Verbreek/ }).first().click();
@@ -166,8 +179,7 @@ try {
     const nl = a.page.getByText(/Nederlands/).first();
     if (await nl.count()) await nl.click();
     await wait(a, 500);
-    for (let i = 0; i < 4 && !(await inMatch(a) && !(await visible(a, '.screen:not(.click-to-play)'))); i++) await key(a, 'Escape');
-    await lock(a);
+    await backToGame(a);
     await wait(a, 1000);
     await shot(a, 'r3-f-lang-nl-hud');
     const hud = await a.page.locator('.arc-hud').innerText();
@@ -263,8 +275,7 @@ try {
       await wait(a, 300);
       check('FOV slider moved', /FOV: (1[01]\d|Quake)/i.test(await fov.innerText()), await fov.innerText());
     }
-    for (let i = 0; i < 4 && (await visible(a, '.screen')) && !(await visible(a, 'button:has-text("Back to Game")')); i++) await key(a, 'Escape');
-    await clickButton(a, 'Back to Game');
+    await backToGame(a);
     await wait(a, 600);
     await shot(a, 'r3-f-settings-fov-applied');
     await leave(a);

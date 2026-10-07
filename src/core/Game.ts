@@ -104,7 +104,8 @@ import { announce, clearAnnouncement } from '../ui/Announcer';
 import { MenuNav } from '../ui/MenuNav';
 import { Subtitles } from '../ui/Subtitles';
 import { setSurvivalColorBlind } from '../ui/SurvivalHud';
-import { detectLanguage, setLanguage, t } from '../ui/i18n';
+import { detectLanguage, type I18nKey, setLanguage, t } from '../ui/i18n';
+import { realmsModeName } from '../ui/RealmsMenu';
 import { StatTracker } from '../player/StatTracker';
 import { LOCAL_COMMAND_USAGE, SERVER_COMMAND_USAGE } from '../ui/chatLogic';
 
@@ -575,6 +576,7 @@ export class Game {
     this.cam.baseFov = s.fov;
     this.cam.viewBobbing = s.viewBobbing && !s.reducedMotion;
     setLanguage(s.language);
+    if (key === 'language') this.arcade?.relabel();
     this.chat.applySettings(s);
     this.hud.setAttackIndicator(s.attackIndicator);
     this.input.rawInput = s.rawInput;
@@ -1159,7 +1161,7 @@ export class Game {
     this.chat.setVisible(true);
     if (welcome.motd) this.chat.add(welcome.motd, true);
     if (this.arcade) this.chat.add(this.arcadeHint, true);
-    if (room) this.chat.add(`Game code: ${formatCode(room)}. Press Esc, then Invite Friends, to share it.`, true);
+    if (room) this.chat.add(t('chat.gameCode', formatCode(room)), true);
     return true;
   }
 
@@ -1217,7 +1219,7 @@ export class Game {
     this.root.append(session.hud.el, session.hud.loadoutEl);
     session.setHudVisible(false);
     for (const pl of welcome.players) session.addPlayer(pl.id, pl.name, pl.team ?? '');
-    this.arcadeHint = `${def.name}: ${def.description}. Tab = scoreboard,${def.loadout === 'ladder' ? '' : ' B = loadout,'} R = reload.`;
+    this.arcadeHint = `${realmsModeName(def.id)}: ${t(`realms.desc.${def.id}` as I18nKey)}. ${t(def.loadout === 'ladder' ? 'arc.keysLadder' : 'arc.keys')}`;
   }
 
   private stopArcade(): void {

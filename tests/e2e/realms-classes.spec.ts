@@ -46,3 +46,20 @@ test('create-a-class: a picked preset shows in the editor, applies at once in th
   await expect(page.locator('.arc-weapon-name')).toHaveText('Shotgun');
   await expect(page.locator('.chat')).toBeVisible();
 });
+
+test('language: switching to Dutch in a match redraws the HUD, the lobby panel and Create-a-Class', async ({ page }) => {
+  test.setTimeout(120_000);
+  await quickPlay(page, 'taal_e2e');
+  await expect(page.locator('.arc-health-label')).toHaveText('HEALTH');
+  // The same settings change the Language screen makes.
+  await page.evaluate(() => (window as any).game.settings.set('language', 'nl'));
+  await play(page, 300);
+  // Before the fix these stayed English until the next match.
+  await expect(page.locator('.arc-health-label')).toHaveText('GEZONDHEID');
+  await expect(page.locator('.mlobby-hint')).toHaveText('Houd Tab ingedrukt voor het scorebord');
+  await page.keyboard.press('KeyB');
+  await expect(page.locator('.arc-cac-head').first()).toHaveText('Primair');
+  await expect(page.locator('.arc-loadout button.mc-btn')).toHaveText('Klaar');
+  await page.locator('.arc-loadout button.mc-btn').click();
+  await page.evaluate(() => (window as any).game.settings.set('language', 'en'));
+});

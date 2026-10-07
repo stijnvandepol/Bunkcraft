@@ -152,6 +152,8 @@ export class ArcadeSession {
   readonly lobby: MatchLobby;
   private modeState: ModeState | null = null;
   private matchText = '';
+  /** The server's match line as sent (English), localized into `matchText`. */
+  private matchRaw = '';
   private selfPts = 0;
   private carrying = false;
   phase: MatchPhase = 'warmup';
@@ -430,7 +432,8 @@ export class ArcadeSession {
       this.d.feedback?.caption(t('arc.cap.matchStarts'), this.d.player.x, this.d.player.z);
     }
     this.phase = msg.phase;
-    this.matchText = localizeServerText(msg.text ?? '');
+    this.matchRaw = msg.text ?? '';
+    this.matchText = localizeServerText(this.matchRaw);
     this.timeLeft = msg.timeLeft;
     this.timeStamp = now;
     this.scores = msg.scores;
@@ -1123,6 +1126,17 @@ export class ArcadeSession {
   /** Draws the first-person weapon (after the world pass). */
   render(three: THREE.WebGLRenderer): void {
     this.viewmodel.render(three);
+  }
+
+  /** The language changed: redraw the texts that were drawn once (HUD labels, Create-a-Class, lobby panel). */
+  relabel(): void {
+    this.hud.relabel();
+    this.lobby.relabel();
+    this.matchText = localizeServerText(this.matchRaw);
+    this.matchDirty = true;
+    this.lastClockSec = -1;
+    this.hud.markClass(this.nextClass);
+    if (this.loadoutOpen) this.hud.setClassApply(this.classApplies());
   }
 
   /** Hide all HUD pieces (F1) without losing state. */
