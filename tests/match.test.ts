@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { GLASS_PASSES_DEFAULT, setGlassPasses } from '../src/modes/Hitscan';
 import { ARENA_SPAWNS } from '../src/modes/arena';
 import { getMap } from '../src/modes/maps';
-import { WEAPONS, fireInterval, weaponDef } from '../src/modes/Weapons';
+import { TACTICAL_RELOAD, WEAPONS, fireInterval, reloadTimeFor, weaponDef } from '../src/modes/Weapons';
 import type { ClientMessage, MatchInfo, ServerMessage } from '../src/net/protocol';
 import { BLOCK } from '../src/world/BlockRegistry';
 import { ENDED_SECONDS, Match, type MatchHost, SPAWN_PROTECTION, WARMUP_SECONDS } from '../server/Match';
@@ -340,17 +341,51 @@ describe('hitscan', () => {
     expect(s3.host.of('shot')).toHaveLength(1);
   });
 
-  it('a wall (or glass) stops the bullet, plants do not', () => {
-    for (const [id, blocked] of [[BLOCK.STONE_BRICKS, true], [BLOCK.GLASS, true], [BLOCK.TALL_GRASS, false]] as const) {
+  it('a wall stops the bullet; glass, leaves and plants do not', () => {
+    setGlassPasses(true);
+    try {
+    for (const [id, blocked] of [[BLOCK.STONE_BRICKS, true], [BLOCK.GLASS, false], [BLOCK.STAINED_GLASS, false], [BLOCK.GLASS_PANE, false],
+      [BLOCK.OAK_LEAVES, false], [BLOCK.TALL_GRASS, false]] as const) {
       const { host, match } = liveDuel();
       for (const y of [65, 66, 67]) host.blockMap.set(`0,${y},5`, id);
       match.fire(1, aim(match.players.get(1)!, body(10.5)));
-      expect(host.of('hit', 1).length).toBe(blocked ? 0 : 1);
+      expect(host.of('hit', 1).length, `block ${id}`).toBe(blocked ? 0 : 1);
       if (blocked) {
         const shot = host.of('shot')[0];
         expect(shot.ez).toBeCloseTo(5, 1);
       }
     }
+    } finally { setGlassPasses(GLASS_PASSES_DEFAULT); }
+  });
+
+  it('a shot through a window costs a fifth of the damage, and a wall of glass still stops it', () => {
+    setGlassPasses(true);
+    try {
+    const open = liveDuel();
+    open.match.fire(1, aim(open.match.players.get(1)!, body(10.5)));
+    const full = open.host.of('hit', 1)[0].damage;
+    const one = liveDuel();
+    for (const y of [65, 66, 67]) one.host.blockMap.set(`0,${y},5`, BLOCK.GLASS);
+    one.match.fire(1, aim(one.match.players.get(1)!, body(10.5)));
+    expect(one.host.of('hit', 1)[0].damage).toBe(Math.round(full * 0.8));
+    const thick = liveDuel();
+    for (let z = 3; z <= 7; z++) for (const y of [65, 66, 67]) thick.host.blockMap.set(`0,${y},${z}`, BLOCK.GLASS);
+    thick.match.fire(1, aim(thick.match.players.get(1)!, body(10.5)));
+    expect(thick.host.of('hit', 1)).toHaveLength(0);
+    } finally { setGlassPasses(GLASS_PASSES_DEFAULT); }
+  });
+
+  it('slabs stop bullets only where the slab is', () => {
+    // A bottom slab (state 0) at chest height of nobody: a shot at the head passes over it.
+    const { host, match } = liveDuel();
+    host.blockMap.set('0,66,5', BLOCK.STONE_SLAB);
+    match.fire(1, aim(match.players.get(1)!, { x: 0.5, y: 66.62, z: 10.5 }));
+    expect(host.of('hit', 1)).toHaveLength(1);
+    const low = liveDuel();
+    low.host.blockMap.set('0,65,5', BLOCK.STONE_SLAB);
+    // Aimed into the lower half of that cell: the slab is in the way.
+    low.match.fire(1, aim(low.match.players.get(1)!, { x: 0.5, y: 65.25, z: 5.5 }));
+    expect(low.host.of('hit', 1)).toHaveLength(0);
   });
 
   it('friendly fire is off in tdm but on in free for all; bullets pass teammates', () => {
@@ -387,7 +422,7 @@ describe('hitscan', () => {
     s.advance(0.5);
     s.host.rng = () => 0;
     s.match.fire(1, aim(s.match.players.get(1)!, body(4.5)));
-    expect(s.host.of('hit', 1)[0].damage).toBe(130); // 10 pellets × 13 at point blank: one shot kills
+    expect(s.host.of('hit', 1)[0].damage).toBe(144); // 8 pellets × 18 at point blank: one shot kills
 
     const k = liveDuel('ffa');
     k.place(2, 0.5, 65, 2.2);
@@ -395,13 +430,42 @@ describe('hitscan', () => {
     k.match.switchWeapon(1, 2);
     k.advance(0.3);
     k.match.fire(1, aim(k.match.players.get(1)!, { x: 0.5, y: 65.9, z: 2.2 }, 2));
-    expect(k.host.of('hit', 1)[0]).toMatchObject({ damage: 55 });
+    expect(k.host.of('hit', 1)[0]).toMatchObject({ damage: 100, killed: true }); // one stab
     k.place(2, 0.5, 65, 6.5);
     k.advance(0.5);
     k.host.clear();
     k.advance(1);
     k.match.fire(1, aim(k.match.players.get(1)!, { x: 0.5, y: 65.9, z: 6.5 }, 2));
     expect(k.host.of('hit', 1)).toHaveLength(0);
+  });
+
+  it('one-shot weapons kill in one server hit: bolt-action sniper to the body at 60 blocks, shotgun at 8 blocks every time', () => {
+    const duel = (primary: string, dist: number) => {
+      const d = setup('ffa');
+      d.match.join(1, 'a');
+      d.match.join(2, 'b');
+      d.match.setLoadout(1, primary); // warm-up: applies at once
+      d.match.ready(1);
+      d.match.ready(2);
+      d.advance(WARMUP_SECONDS + 0.2 + SPAWN_PROTECTION + 0.2);
+      d.match.setPosition(1, 0.5, 65, 0.5, 0, 0);
+      d.match.setPosition(2, 0.5, 65, 0.5 + dist, 0, 0);
+      d.advance(0.5);
+      d.host.clear();
+      return d;
+    };
+    const sn = duel('sniper', 60);
+    sn.match.fire(1, aim(sn.match.players.get(1)!, body(60.5), 0, true));
+    expect(sn.host.of('hit', 1)[0]).toMatchObject({ killed: true, head: false });
+    // The shotgun's fixed pellet pattern: whatever the turn of the pattern and the jitter, a centred pump at 8 blocks kills.
+    // (A random cone, the old way, left a pump at 8 blocks without a kill in about a third of these seeds.)
+    for (let seed = 1; seed <= 30; seed++) {
+      const sg = duel('shotgun', 8);
+      let x = seed * 7919;
+      sg.host.rng = () => { x = (x * 48271) % 2147483647; return x / 2147483647; };
+      sg.match.fire(1, aim(sg.match.players.get(1)!, body(8.5)));
+      expect(sg.host.of('hit', 1)[0], `seed ${seed}`).toMatchObject({ killed: true });
+    }
   });
 
   it('lag compensation tests where the shooter saw the target', () => {
@@ -454,11 +518,38 @@ describe('weapon handling', () => {
     match.reload(1, 0);
     expect(host.of('ammo', 1).at(-1)).toMatchObject({ slot: 0, mag: 27, reloading: true });
     expect(match.fire(1, aim(alice, body(10.5)))).toBe(false);
-    advance(1.5);
+    // A tactical reload (rounds left): 75% of the rifle's 1.3 s empty reload.
+    const tactical = reloadTimeFor(weaponDef('rifle')!, 27);
+    expect(tactical).toBeCloseTo(1.3 * TACTICAL_RELOAD, 9);
+    advance(tactical - 0.15);
     expect(host.of('ammo', 1).at(-1)).toMatchObject({ mag: 27, reloading: true });
     advance(0.2);
     expect(host.of('ammo', 1).at(-1)).toMatchObject({ mag: 30, reloading: false });
     expect(match.fire(1, aim(alice, body(10.5)))).toBe(true);
+  });
+
+  it('reload timing matches the client: empty is slower than tactical, and a shot right at the end of the animation counts', () => {
+    const { host, match, advance } = liveDuel('ffa');
+    const alice = match.players.get(1)!;
+    for (let i = 0; i < 30; i++) { match.fire(1, aim(alice, { x: 8.5, y: 65, z: 0.5 })); advance(0.11); }
+    match.reload(1, 0);
+    expect(host.of('ammo', 1).at(-1)).toMatchObject({ mag: 0, reloading: true });
+    const empty = reloadTimeFor(weaponDef('rifle')!, 0);
+    expect(empty).toBe(weaponDef('rifle')!.reloadSec);
+    // The client ends its animation on its own clock and fires: that shot arrives a little before the server's timer
+    // (jitter). It must not be thrown away (QA round 3: "a visible wait after the animation").
+    advance(empty - 0.08);
+    expect(host.of('ammo', 1).at(-1)).toMatchObject({ reloading: true });
+    expect(match.fire(1, aim(alice, body(10.5)))).toBe(true);
+    expect(host.of('ammo', 1).at(-1)).toMatchObject({ mag: 29, reloading: false });
+  });
+
+  it('reloads are arcade fast: at most 2.1 s, except the heavy LMG and anti-materiel rifle; the LMG and bolt-actions are the slowest', () => {
+    const guns = WEAPONS.filter((w) => w.magazine > 0);
+    for (const w of guns) if (w.id !== 'lmg' && w.id !== 'antimat') expect(w.reloadSec, w.id).toBeLessThanOrEqual(2.1);
+    const slowest = [...guns].sort((a, b) => b.reloadSec - a.reloadSec).slice(0, 3).map((w) => w.id);
+    expect(slowest.sort()).toEqual(['antimat', 'lmg', 'sniper']);
+    for (const w of guns) expect(reloadTimeFor(w, 1), w.id).toBeLessThan(reloadTimeFor(w, 0));
   });
 
   it('an empty magazine starts a reload instead of firing', () => {
@@ -634,7 +725,7 @@ describe('maps in the match', () => {
 describe('weapon data', () => {
   it('has the contract weapons', () => {
     expect(WEAPONS.map((w) => w.id)).toEqual([
-      'rifle', 'smg', 'shotgun', 'lmg', 'burst', 'dmr', 'semisniper', 'sniper', 'pistol', 'mpistol', 'revolver', 'knife',
+      'rifle', 'smg', 'shotgun', 'lmg', 'burst', 'dmr', 'semisniper', 'sniper', 'battle', 'lever', 'antimat', 'pistol', 'mpistol', 'revolver', 'knife',
     ]);
   });
 });

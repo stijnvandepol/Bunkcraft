@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { ARCADE_AIR_ACCEL, ARCADE_SPEED_MULT, arcadeMaxSpeed } from '../src/modes/ArcadeLogic';
 import { ARENA_FLOOR_Y, MAP_IDS, getMap } from '../src/modes/maps';
-import { WEAPONS } from '../src/modes/Weapons';
+import { weaponDef } from '../src/modes/Weapons';
+
+/**
+ * The weapons whose move speeds the seeded runs below sample, by index. Pinned (the arsenal of October 2026) so that adding
+ * a weapon does not reshuffle which seed runs with which speed: a new weapon list once moved station seed 1333 onto the
+ * revolver and showed a `wall` correction for an honest flag carrier (reported to the movement work, QA round 3).
+ */
+const WEAPONS = ['rifle', 'smg', 'shotgun', 'lmg', 'burst', 'dmr', 'semisniper', 'sniper', 'pistol', 'mpistol', 'revolver', 'knife']
+  .map((id) => weaponDef(id)!);
 import { PHYSICS } from '../src/player/Physics';
 import { EAST, NORTH, SLAB_BOTTOM, stairMeta } from '../src/world/BlockStates';
 import { BLOCK } from '../src/world/BlockRegistry';

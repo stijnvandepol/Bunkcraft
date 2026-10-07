@@ -90,6 +90,14 @@ export class ModeHud {
     this.dirty = true;
   }
 
+  /** Is the round live? Before it (warm-up, countdown) the hill has no timer yet: "Hill moves in 0" is not shown. */
+  setLive(live: boolean): void {
+    if (live === this.live) return;
+    this.live = live;
+    this.dirty = true;
+  }
+  private live = false;
+
   get current(): ModeState | null {
     return this.state;
   }
@@ -187,7 +195,8 @@ export class ModeHud {
         const show = st.variant === 'domination' || z.active || (st.gap && i === this.nextHill(st.zones));
         if (show) this.setZoneMarker(this.markers[i], z, i, st, self);
       });
-      this.panel.replaceChildren(...(st.variant !== 'domination' ? [h('div', { class: 'mode-line', text: t(st.gap ? 'mode.hill.next' : 'mode.hill.moves', Math.ceil(st.rotateIn)) })] : []));
+      this.panel.replaceChildren(...(st.variant !== 'domination' && this.live
+        ? [h('div', { class: 'mode-line', text: t(st.gap ? 'mode.hill.next' : 'mode.hill.moves', Math.ceil(st.rotateIn)) })] : []));
     } else if (st.kind === 'ctf') {
       st.flags.forEach((f, i) => this.setFlagMarker(this.markers[i], f, self));
       this.panel.replaceChildren(...st.flags.map((f) => h('div', { class: 'mode-line', style: `color:${TEAM_COLORS[f.team]}`, text: flagLine(f, nameOf) })));

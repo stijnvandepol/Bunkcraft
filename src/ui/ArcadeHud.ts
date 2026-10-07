@@ -13,9 +13,15 @@ import { classUnlocked, isUnlocked, unlockLevel } from '../modes/progression/Unl
 import { rankBadge } from './RankBadge';
 
 const MAX_DAMAGE_MARKERS = 6;
+/** Damage numbers on screen at once and how long each floats (s; the CSS animation matches). */
+const DAMAGE_NUMBERS = 6;
+const DAMAGE_NUMBER_LIFETIME = 0.7;
 const DAMAGE_LIFETIME = 1.6;
 /** Health below this flashes red. */
 const LOW_HEALTH = 30;
+
+/** When a class picked in Create-a-Class applies: at once, at the respawn (dead), or from the next life (mid-fight). */
+export type ClassApply = 'now' | 'respawn' | 'nextLife';
 
 export interface ScoreboardContext {
   selfId: number;
@@ -69,6 +75,7 @@ export class ArcadeHud {
   readonly loadoutEl: HTMLDivElement;
 
   private readonly healthNum: HTMLSpanElement;
+  private readonly healthLabel: HTMLSpanElement;
   private readonly healthFill: HTMLDivElement;
   private readonly healthBox: HTMLDivElement;
   private readonly weaponName: HTMLDivElement;
@@ -79,6 +86,13 @@ export class ArcadeHud {
   private readonly slotEls: HTMLDivElement[] = [];
   private readonly crosshair: HTMLDivElement;
   private readonly hit: HTMLDivElement;
+  /** Crosshair + hit marker + damage numbers, moved together to the aim point. */
+  private readonly aimLayer: HTMLDivElement;
+  private aimOffset = 0;
+  private readonly numbers: { el: HTMLDivElement; born: number; shown: boolean }[] = [];
+  private numberSeq = 0;
+  /** Options > Video > Damage Numbers. */
+  damageNumbers = false;
   private readonly damageLayer: HTMLDivElement;
   private readonly markers: DamageMarker[] = [];
   private readonly feed: HTMLDivElement;
@@ -103,13 +117,19 @@ export class ArcadeHud {
   private readonly endBoard: HTMLDivElement;
   private readonly endCount: HTMLDivElement;
   private readonly presetCards = new Map<string, HTMLDivElement>();
-  private readonly customCard: HTMLDivElement;
-  private readonly customDesc: HTMLDivElement;
+  private customCard!: HTMLDivElement;
+  private customDesc!: HTMLDivElement;
   /** Create-a-Class editor buttons per field and value. */
   private readonly pick = { primary: new Map<string, HTMLElement>(), optic: new Map<string, HTMLElement>(), secondary: new Map<string, HTMLElement>(), perk: new Map<string, HTMLElement>() };
-  private readonly statsEl: HTMLDivElement;
-  private readonly loadoutNote: HTMLDivElement;
+  private statsEl!: HTMLDivElement;
+  private loadoutNote!: HTMLDivElement;
   private custom: ClassSpec = validateClass(null);
+  /**
+   * The class the editor shows: the one picked last (a preset or the custom class). Editing starts from it and makes it
+   * the custom class. (QA round 3: after picking a preset the editor still showed the old custom class, so a pick looked
+   * like it did nothing.)
+   */
+  private shown: ClassSpec = validateClass(null);
   private readonly scopeBreath: HTMLDivElement;
   private readonly scopeBreathFill: HTMLDivElement;
   private readonly scopeHint: HTMLDivElement;
@@ -121,6 +141,7 @@ export class ArcadeHud {
   private lastGap = -1;
   private crosshairVisible = true;
   private scopeOn = false;
+  private scopeKind: 'scope' | 'combat' = 'scope';
   private lastRespawnPending = '';
   private lastRespawnClass: ClassSpec | null = null;
   private lastMag = -1;
@@ -138,10 +159,11 @@ export class ArcadeHud {
 
   constructor() {
     // -- health
+    this.healthLabel = h('span', { class: 'arc-health-label', text: t('arc.health') });
     this.healthNum = h('span', { class: 'arc-health-num', text: String(PLAYER_MAX_HEALTH) });
     this.healthFill = h('div', { class: 'arc-health-fill' });
     this.healthBox = h('div', { class: 'arc-health' },
-      h('div', { class: 'arc-health-row' }, h('span', { class: 'arc-health-label', text: t('arc.health') }), this.healthNum),
+      h('div', { class: 'arc-health-row' }, this.healthLabel, this.healthNum),
       h('div', { class: 'arc-health-bar' }, this.healthFill),
     );
 
@@ -166,7 +188,15 @@ export class ArcadeHud {
 
     // -- crosshair, hit marker, damage indicators
     this.crosshair = h('div', { class: 'arc-xh' }, h('i', { class: 't' }), h('i', { class: 'b' }), h('i', { class: 'l' }), h('i', { class: 'r' }), h('i', { class: 'dot' }));
-    this.hit = h('div', { class: 'arc-hit' }, h('i'), h('i'), h('i'), h('i'));
+    // Hit marker: four bars from the centre on the diagonals (a crisp X at every GUI scale), popping in and fading.
+    this.hit = h('div', { class: 'arc-hit' }, h('i', { class: 'a' }), h('i', { class: 'b' }), h('i', { class: 'c' }), h('i', { class: 'd' }));
+    // Crosshair, hit marker and damage numbers sit where the bullets go (see setAimOffset).
+    this.aimLayer = h('div', { class: 'arc-aim' }, this.crosshair, this.hit);
+    for (let i = 0; i < DAMAGE_NUMBERS; i++) {
+      const el = h('div', { class: 'arc-dnum hidden' });
+      this.numbers.push({ el, born: -10, shown: false });
+      this.aimLayer.append(el);
+    }
     this.damageLayer = h('div', { class: 'arc-damage' });
     for (let i = 0; i < MAX_DAMAGE_MARKERS; i++) {
       const el = h('div', { class: 'arc-dmg hidden' });
@@ -192,8 +222,10 @@ export class ArcadeHud {
     // Scope: black surround, the lens edge, a duplex reticle with mil-dots and a centre gap, the breath meter.
     const dots = h('div', { class: 'arc-scope-dots' });
     for (let i = -4; i <= 4; i++) if (i !== 0) dots.append(h('b', { style: `--i:${i}` }), h('b', { class: 'dv', style: `--i:${i}` }));
+    // The combat scope (2.5x) shares the overlay: a wider lens, a thin vignette and a lit chevron instead of the duplex.
     this.scope = h('div', { class: 'arc-scope hidden' },
-      h('div', { class: 'arc-scope-lens' }, h('i', { class: 'h' }), h('i', { class: 'v' }), h('i', { class: 'hl' }), h('i', { class: 'hr' }), h('i', { class: 'vb' }), dots),
+      h('div', { class: 'arc-scope-lens' }, h('i', { class: 'h' }), h('i', { class: 'v' }), h('i', { class: 'hl' }), h('i', { class: 'hr' }), h('i', { class: 'vb' }), dots,
+        h('div', { class: 'arc-scope-chev' }), h('div', { class: 'arc-scope-stadia' })),
       this.scopeBreath, this.scopeHint);
     this.medal = h('div', { class: 'arc-medal hidden' });
     this.board = h('div', { class: 'arc-board hidden' });
@@ -213,13 +245,21 @@ export class ArcadeHud {
     this.end = h('div', { class: 'arc-end hidden' }, this.endTitle, this.endBoard, this.endCount);
 
     this.el = h('div', { class: 'arc-hud hidden' },
-      this.scope, this.crosshair, this.hit, this.damageLayer, this.protect, this.medal,
+      this.scope, this.aimLayer, this.damageLayer, this.protect, this.medal,
       this.top, this.banner, this.feed, this.healthBox, ammo,
       this.board, this.death, this.end,
     );
 
-    // -- Create-a-Class menu (clickable): quick-pick presets, the custom class and its editor.
-    this.loadoutNote = h('div', { class: 'arc-loadout-note' });
+    // -- Create-a-Class menu (clickable): quick-pick presets, the custom class and its editor (built in the language of the moment).
+    this.loadoutEl = h('div', { class: 'arc-loadout hidden' });
+    this.buildLoadout();
+  }
+
+  /** Builds (or rebuilds, after a language change) the Create-a-Class menu inside `loadoutEl`. */
+  private buildLoadout(): void {
+    this.loadoutNote = h('div', { class: 'arc-loadout-note', text: this.loadoutNote?.textContent ?? '' });
+    this.presetCards.clear();
+    for (const m of Object.values(this.pick)) m.clear();
     const presets = h('div', { class: 'arc-loadout-cards presets' });
     LOADOUT_PRESETS.forEach((pr, i) => {
       const card = h('div', { class: 'arc-chip', title: `${classLine(pr)} · ${perkName(pr.perk)}: ${t(`arc.class.${pr.id}`, pr.description)}` },
@@ -255,7 +295,7 @@ export class ArcadeHud {
       column(t('arc.cac.perk'), 'perk', PERK_IDS.map((p) => ({ id: p, label: perkName(p), desc: t(`arc.perk.${p}`, PERKS[p].desc) }))),
       this.statsEl,
     );
-    this.loadoutEl = h('div', { class: 'arc-loadout hidden' },
+    this.loadoutEl.replaceChildren(
       h('div', { class: 'arc-loadout-panel' },
         h('div', { class: 'arc-loadout-title', text: t('arc.cac.title') }),
         presets,
@@ -267,9 +307,25 @@ export class ArcadeHud {
       ),
     );
     this.renderCustom();
+    this.markClass(this.shown);
   }
 
-  /** The custom class (from storage); the editor shows it. */
+  /**
+   * The language changed in a match: everything drawn once in the old language is drawn again (the health label, the
+   * scope hint, Create-a-Class); the rest follows with the next update. (QA round 3: switching to Dutch in a match left
+   * "HEALTH" and the whole Create-a-Class menu in English.)
+   */
+  relabel(): void {
+    this.healthLabel.textContent = t('arc.health');
+    this.lastBreath = -1;
+    this.lastCount = -1;
+    this.lastRespawnPending = '\0';
+    this.lastProtect = -1;
+    this.buildLoadout();
+    this.setRank(this.rank);
+  }
+
+  /** The custom class (from storage). */
   setCustomClass(c: ClassSpec): void {
     this.custom = validateClass(c);
     this.renderCustom();
@@ -304,17 +360,19 @@ export class ArcadeHud {
 
   private editCustom(field: keyof typeof this.pick, id: string): void {
     if (!isUnlocked(field, id, this.rank)) return;
-    const next = { ...this.custom, [field]: id };
+    const next = { ...this.shown, [field]: id };
     // A new primary keeps the optic only when it fits; else the weapon's default.
     if (field === 'primary' && !opticAllowed(weaponDef(id)!, next.optic)) next.optic = weaponDef(id)!.optics[0];
     if (field === 'optic' && !opticAllowed(weaponDef(next.primary)!, id)) return;
     this.custom = validateClass(next);
+    this.shown = this.custom;
     this.renderCustom();
     this.onClass?.(this.custom, true);
   }
 
+  /** Draws the editor for the class it shows (`shown`). */
   private renderCustom(): void {
-    const c = this.custom;
+    const c = this.shown;
     const w = weaponDef(c.primary)!;
     for (const [id, el] of this.pick.primary) el.classList.toggle('selected', id === c.primary);
     for (const [id, el] of this.pick.secondary) el.classList.toggle('selected', id === c.secondary);
@@ -350,10 +408,14 @@ export class ArcadeHud {
     const sig = `${names.join('|')}#${selected}#${keys.join('|')}`;
     if (sig === this.lastSlots) return;
     this.lastSlots = sig;
+    // Gun game hands out the knife as the secondary too: one "Knife" slot, not "2 Knife 3 Knife".
+    const twin = names[1] !== undefined && names[1] === names[2];
+    const shown = twin && selected === 1 ? 2 : selected;
     for (let i = 0; i < 3; i++) {
       const el = this.slotEls[i];
       el.replaceChildren(h('b', { text: keys[i] ?? '' }), ` ${names[i] ?? ''}`);
-      el.classList.toggle('selected', i === selected);
+      el.classList.toggle('selected', i === shown);
+      el.classList.toggle('hidden', twin && i === 1);
     }
   }
 
@@ -391,10 +453,14 @@ export class ArcadeHud {
   }
 
   /** Scope overlay; `breath` 0..1 is the breath left for steadying (-1 hides the meter), `holding` while Shift steadies, `spent` while out of breath. */
-  setScope(on: boolean, breath = -1, holding = false, spent = false): void {
+  setScope(on: boolean, breath = -1, holding = false, spent = false, kind: 'scope' | 'combat' = 'scope'): void {
     if (on !== this.scopeOn) {
       this.scopeOn = on;
       this.scope.classList.toggle('hidden', !on);
+    }
+    if (on && kind !== this.scopeKind) {
+      this.scopeKind = kind;
+      this.scope.classList.toggle('combat', kind === 'combat');
     }
     if (!on) return;
     const q = breath < 0 ? -1 : Math.round(breath * 50);
@@ -429,12 +495,35 @@ export class ArcadeHud {
 
   // ---------------------------------------------------------------- feedback
 
-  /** White tick, gold for a headshot, red for a kill. */
-  showHit(kind: 'hit' | 'head' | 'kill'): void {
+  /**
+   * Server-confirmed hit: a white X, gold and bigger for a headshot, red and held longer for a kill. With damage
+   * numbers on, the damage floats up beside the crosshair.
+   */
+  showHit(kind: 'hit' | 'head' | 'kill', damage = 0, now = 0): void {
     const el = this.hit;
     el.classList.remove('show', 'hit', 'head', 'kill');
     void el.offsetWidth; // restart the animation
     el.classList.add('show', kind);
+    if (!this.damageNumbers || damage <= 0) return;
+    // The oldest number is reused; consecutive hits fan out a little so they do not stack on one spot.
+    let n = this.numbers[0];
+    for (const c of this.numbers) if (c.born < n.born) n = c;
+    n.born = now;
+    n.shown = true;
+    this.numberSeq = (this.numberSeq + 1) % 4;
+    n.el.textContent = String(Math.round(damage));
+    n.el.className = `arc-dnum ${kind} k${this.numberSeq}`;
+  }
+
+  /**
+   * Moves the crosshair, hit marker and damage numbers to where the bullets really go: the camera's recoil kick
+   * tilts the view up for a moment while the aim stays put, so the aim point sits `px` pixels below the centre.
+   */
+  setAimOffset(px: number): void {
+    const q = Math.round(px);
+    if (q === this.aimOffset) return;
+    this.aimOffset = q;
+    this.aimLayer.style.transform = q === 0 ? '' : `translateY(${q}px)`;
   }
 
   /** Red wedge around the crosshair towards the shooter; (dx, dz) points from you to them. */
@@ -450,8 +539,15 @@ export class ArcadeHud {
     m.el.classList.remove('hidden');
   }
 
-  /** Per frame: turns the damage wedges with the view and fades them. */
+  /** Per frame: turns the damage wedges with the view and fades them; retires old damage numbers. */
   frame(now: number, yaw: number): void {
+    for (let i = 0; i < this.numbers.length; i++) {
+      const n = this.numbers[i];
+      if (n.shown && now - n.born > DAMAGE_NUMBER_LIFETIME) {
+        n.shown = false;
+        n.el.classList.add('hidden');
+      }
+    }
     if (this.medalUntil > 0 && now >= this.medalUntil) {
       this.medalUntil = 0;
       this.medal.classList.add('hidden');
@@ -523,7 +619,7 @@ export class ArcadeHud {
     this.board.classList.toggle('hidden', !visible);
     // The objective panels (gun game ladder) step aside while the scoreboard is up.
     this.el.classList.toggle('board-open', visible);
-    if (visible) renderBoard(this.board, roster, ctx);
+    if (visible) fitBoard(this.board, roster, ctx);
   }
 
   // ---------------------------------------------------------------- death, end, loadout
@@ -586,13 +682,21 @@ export class ArcadeHud {
     // A full-screen result: the score bar, kill feed and panels under it showed through its title and the map vote.
     this.el.classList.toggle('end-open', info !== null);
     this.lastEndCount = -1;
-    if (!info) return;
+    this.endInfo = info;
+    if (!info) { window.removeEventListener('resize', this.refitEnd); return; }
+    window.addEventListener('resize', this.refitEnd);
     this.setProtection(0); // nothing of the round shows through the end screen
     this.medal.classList.add('hidden');
     this.endTitle.textContent = info.title;
     this.endTitle.style.color = info.color;
-    renderBoard(this.endBoard, info.roster, info.ctx);
+    fitBoard(this.endBoard, info.roster, info.ctx);
   }
+
+  /** The end screen's board fitted again (window resized). */
+  private endInfo: { roster: readonly RosterEntry[]; ctx: ScoreboardContext } | null = null;
+  private readonly refitEnd = (): void => {
+    if (this.endInfo) fitBoard(this.endBoard, this.endInfo.roster, this.endInfo.ctx);
+  };
 
   setNextMatch(seconds: number): void {
     const n = Math.max(0, Math.ceil(seconds));
@@ -601,17 +705,29 @@ export class ArcadeHud {
     this.endCount.textContent = t('lobby.nextMatch', n);
   }
 
-  /** Opens Create-a-Class with `selected` (the class of the next life) highlighted. */
-  showLoadout(selected: ClassSpec, nextLife: boolean): void {
+  /** Opens Create-a-Class with `selected` (the class of the next life) highlighted; `when` says when a pick applies. */
+  showLoadout(selected: ClassSpec, when: ClassApply): void {
     this.loadoutEl.classList.remove('hidden');
     // A full-screen menu: the match HUD under it (score bar, banners, lobby panel, markers) would show through the title.
     this.el.classList.add('class-open');
+    // The chat lies outside the HUD layer: its lines showed through the editor columns (QA round 3).
+    document.body.classList.add('arc-class-open');
     this.markClass(selected);
-    this.loadoutNote.textContent = nextLife ? t('arc.cac.applyNow') : t('arc.cac.applyRespawn');
+    this.setClassApply(when);
   }
 
-  /** Highlights the chosen class: its preset card, or the custom card. */
+  /** The line under the editor: when the class picked now is put in your hands. */
+  setClassApply(when: ClassApply): void {
+    const text = t(when === 'now' ? 'arc.cac.applyNow' : when === 'respawn' ? 'arc.cac.applyRespawn' : 'arc.cac.applyNextLife');
+    if (this.loadoutNote.textContent !== text) this.loadoutNote.textContent = text;
+  }
+
+  /** Highlights the chosen class (its preset card, or the custom card) and shows it in the editor. */
   markClass(selected: ClassSpec): void {
+    if (!sameClass(selected, this.shown)) {
+      this.shown = validateClass(selected);
+      this.renderCustom();
+    }
     const cur = presetFor(selected);
     for (const [id, card] of this.presetCards) card.classList.toggle('selected', id === cur?.id);
     this.customCard.classList.toggle('selected', !cur && sameClass(selected, this.custom));
@@ -622,6 +738,7 @@ export class ArcadeHud {
   hideLoadout(): void {
     this.loadoutEl.classList.add('hidden');
     this.el.classList.remove('class-open');
+    document.body.classList.remove('arc-class-open');
   }
 
   get loadoutOpen(): boolean {
@@ -672,8 +789,14 @@ function statRows(def: WeaponDef, optic: OpticId = 'iron', perk: PerkId = 'none'
   ];
 }
 
-/** Scoreboard table: rank, name (team colour), kills, deaths, K/D and ping; yours is highlighted. */
-function renderBoard(host: HTMLElement, roster: readonly RosterEntry[], ctx: ScoreboardContext): void {
+/** Renders the board, then drops rows (never your own) until it fits its box: no player is cut off unseen. */
+function fitBoard(host: HTMLElement, roster: readonly RosterEntry[], ctx: ScoreboardContext): void {
+  renderBoard(host, roster, ctx);
+  for (let limit = roster.length - 1; limit >= 3 && host.scrollHeight > host.clientHeight + 1; limit--) renderBoard(host, roster, ctx, limit);
+}
+
+/** Scoreboard table: rank, name (team colour), kills, deaths, K/D and ping; yours is highlighted. At most `limit` players. */
+function renderBoard(host: HTMLElement, roster: readonly RosterEntry[], ctx: ScoreboardContext, limit = Infinity): void {
   const rows: HTMLElement[] = [];
   const cols = ctx.scoreColumn ? ' pts' : '';
   const header = h('div', { class: `arc-row head${cols}` },
@@ -681,7 +804,18 @@ function renderBoard(host: HTMLElement, roster: readonly RosterEntry[], ctx: Sco
     ctx.scoreColumn ? h('span', { text: scoreColumnLabel(ctx.scoreColumn) }) : null,
     h('span', { text: t('arc.board.kills') }), h('span', { text: t('arc.board.deaths') }), h('span', { text: 'K/D' }), h('span', { text: 'Ping' }));
   rows.push(header);
-  sortRoster(roster).forEach((p, i) => {
+  const sorted = sortRoster(roster);
+  const shown: [RosterEntry, number][] = sorted.map((p, i) => [p, i]);
+  let more = 0;
+  if (sorted.length > limit) {
+    // Too many rows for the room: the best ones, and your own row always (it was cut off the end screen, QA round 3).
+    const keep = Math.max(1, limit - 1);
+    const selfAt = sorted.findIndex((p) => p.id === ctx.selfId);
+    shown.length = keep;
+    if (selfAt >= keep) shown[keep - 1] = [sorted[selfAt], selfAt];
+    more = sorted.length - keep;
+  }
+  shown.forEach(([p, i]) => {
     rows.push(h('div', { class: `arc-row${cols}${p.id === ctx.selfId ? ' self' : ''}` },
       h('span', { class: 'rank', text: String(i + 1) }),
       h('span', { class: 'name', style: `color:${teamColor(p.team)}` }, rankBadge(p.rk), p.name),
@@ -689,6 +823,7 @@ function renderBoard(host: HTMLElement, roster: readonly RosterEntry[], ctx: Sco
       h('span', { text: String(p.kills) }), h('span', { text: String(p.deaths) }),
       h('span', { text: kdRatio(p.kills, p.deaths) }), h('span', { text: p.ping > 0 ? String(Math.round(p.ping)) : '-' })));
   });
+  if (more > 0) rows.push(h('div', { class: 'arc-row more', text: t('arc.board.more', more) }));
   const children: HTMLElement[] = [];
   if (ctx.teams) {
     children.push(h('div', { class: 'arc-board-scores' },

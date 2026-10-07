@@ -10,7 +10,7 @@ export type WeaponSlot = 'primary' | 'secondary' | 'melee';
 export type FireMode = 'auto' | 'semi' | 'burst' | 'bolt';
 
 /** Sights a weapon can carry (Create-a-Class). `iron` is the weapon's own sights. */
-export type OpticId = 'iron' | 'reddot' | 'holo' | 'scope';
+export type OpticId = 'iron' | 'reddot' | 'holo' | 'combat' | 'scope';
 
 export interface WeaponDef {
   id: string;
@@ -60,6 +60,8 @@ export interface WeaponDef {
   optics: readonly OpticId[];
   /** Field of view multiplier through a scope (only for weapons that accept one). */
   scopeZoom?: number;
+  /** Field of view multiplier through the 2.5x combat scope (weapons that accept one; default 0.42). */
+  combatZoom?: number;
   /** One line about what the weapon is for (class menu). */
   role: string;
 }
@@ -78,75 +80,95 @@ const PAT_NONE = [0];
 export const WEAPONS: WeaponDef[] = [
   {
     id: 'rifle', name: 'Assault Rifle', slot: 'primary', auto: true, damage: 20, headshot: 2, pellets: 1, rpm: 600,
-    magazine: 30, reloadSec: 1.6, spread: 2.2, adsSpread: 0.4, range: 32, falloffEnd: 80, minDamage: 0.55, maxRange: 150,
-    zoom: 0.8, moveSpeed: 1, recoil: 0.9, adsTime: 0.24, recoilX: 0.18, pattern: PAT_RIFLE, optics: ['iron', 'reddot', 'holo'],
+    magazine: 30, reloadSec: 1.3, spread: 2.2, adsSpread: 0.4, range: 32, falloffEnd: 80, minDamage: 0.55, maxRange: 150,
+    zoom: 0.8, moveSpeed: 1, recoil: 0.9, adsTime: 0.24, recoilX: 0.18, pattern: PAT_RIFLE, optics: ['iron', 'reddot', 'holo', 'combat'], combatZoom: 0.46,
     role: 'All-rounder: wins mid range, holds its own close and far',
   },
   {
     id: 'smg', name: 'SMG', slot: 'primary', auto: true, damage: 15, headshot: 1.8, pellets: 1, rpm: 900,
-    magazine: 25, reloadSec: 1.3, spread: 2.6, adsSpread: 1.2, range: 16, falloffEnd: 50, minDamage: 0.5, maxRange: 100,
+    magazine: 25, reloadSec: 1.1, spread: 2.6, adsSpread: 1.2, range: 16, falloffEnd: 50, minDamage: 0.5, maxRange: 100,
     zoom: 0.85, moveSpeed: 1.08, recoil: 0.6, adsTime: 0.17, recoilX: 0.24, pattern: PAT_SMG, optics: ['iron', 'reddot', 'holo'],
     role: 'Fastest on its feet; shreds up close, fades past 20 blocks',
   },
   {
-    id: 'shotgun', name: 'Shotgun', slot: 'primary', auto: false, damage: 13, headshot: 1.5, pellets: 10, rpm: 70,
-    magazine: 6, reloadSec: 2.4, spread: 4.5, adsSpread: 3.5, range: 7, falloffEnd: 22, minDamage: 0.15, maxRange: 40,
-    zoom: 0.9, moveSpeed: 0.97, recoil: 4, adsTime: 0.2, recoilX: 0.3, pattern: PAT_RIGHT, optics: ['iron', 'reddot'],
-    role: 'One pump at arm\'s length; useless past 15 blocks',
+    id: 'shotgun', name: 'Shotgun', slot: 'primary', auto: false, damage: 18, headshot: 1.5, pellets: 8, rpm: 80,
+    magazine: 6, reloadSec: 1.9, spread: 3.2, adsSpread: 2.6, range: 9, falloffEnd: 24, minDamage: 0.2, maxRange: 40,
+    zoom: 0.9, moveSpeed: 0.97, recoil: 4.5, adsTime: 0.2, recoilX: 0.3, pattern: PAT_RIGHT, optics: ['iron', 'reddot'],
+    role: 'One pump kills out to 8 blocks; useless past 15',
   },
   {
     id: 'lmg', name: 'LMG', slot: 'primary', auto: true, damage: 19, headshot: 1.7, pellets: 1, rpm: 720,
-    magazine: 75, reloadSec: 4.2, spread: 3.2, adsSpread: 0.55, range: 38, falloffEnd: 95, minDamage: 0.62, maxRange: 150,
-    zoom: 0.78, moveSpeed: 0.88, recoil: 0.8, adsTime: 0.42, recoilX: 0.22, pattern: PAT_LMG, optics: ['iron', 'reddot', 'holo'],
+    magazine: 75, reloadSec: 3.4, spread: 3.2, adsSpread: 0.55, range: 38, falloffEnd: 95, minDamage: 0.62, maxRange: 150,
+    zoom: 0.78, moveSpeed: 0.88, recoil: 0.8, adsTime: 0.42, recoilX: 0.22, pattern: PAT_LMG, optics: ['iron', 'reddot', 'holo', 'combat'], combatZoom: 0.5,
     role: 'Huge magazine: holds a lane and wins multi-kills, slow to aim and to reload',
   },
   {
     id: 'burst', name: 'Burst Rifle', slot: 'primary', auto: false, damage: 22, headshot: 1.6, pellets: 1, rpm: 900,
-    magazine: 30, reloadSec: 1.7, spread: 2, adsSpread: 0.25, range: 45, falloffEnd: 85, minDamage: 0.55, maxRange: 160,
+    magazine: 30, reloadSec: 1.35, spread: 2, adsSpread: 0.25, range: 45, falloffEnd: 85, minDamage: 0.55, maxRange: 160,
     zoom: 0.8, moveSpeed: 1, recoil: 1.2, burst: 3, burstCycleSec: 0.34, adsTime: 0.25, recoilX: 0.12, pattern: PAT_LEFT,
-    optics: ['iron', 'reddot', 'holo'], role: 'Tight three-round bursts: rewards accuracy at mid range',
+    optics: ['iron', 'reddot', 'holo', 'combat'], combatZoom: 0.46, role: 'Tight three-round bursts: rewards accuracy at mid range',
   },
   {
     id: 'dmr', name: 'DMR', slot: 'primary', auto: false, damage: 34, headshot: 2, pellets: 1, rpm: 270,
-    magazine: 12, reloadSec: 2, spread: 3.5, adsSpread: 0.1, range: 60, falloffEnd: 140, minDamage: 0.7, maxRange: 250,
-    zoom: 0.7, moveSpeed: 0.96, recoil: 1.6, adsTime: 0.28, recoilX: 0.1, pattern: PAT_RIGHT, optics: ['iron', 'reddot', 'holo', 'scope'],
+    magazine: 12, reloadSec: 1.6, spread: 3.5, adsSpread: 0.1, range: 90, falloffEnd: 160, minDamage: 0.7, maxRange: 250,
+    zoom: 0.7, moveSpeed: 0.96, recoil: 1.6, adsTime: 0.28, recoilX: 0.1, pattern: PAT_RIGHT, optics: ['iron', 'reddot', 'holo', 'combat', 'scope'], combatZoom: 0.5,
     scopeZoom: 0.45, role: 'Three-shot marksman rifle; take the scope for long lanes',
   },
   {
-    id: 'semisniper', name: 'Semi-Auto Sniper', slot: 'primary', auto: false, damage: 55, headshot: 1.7, pellets: 1, rpm: 125,
-    magazine: 6, reloadSec: 2.6, spread: 7, adsSpread: 0.05, range: 70, falloffEnd: 160, minDamage: 0.8, maxRange: 300,
-    zoom: 0.33, moveSpeed: 0.93, recoil: 2.6, adsTime: 0.36, recoilX: 0.15, pattern: PAT_LEFT, optics: ['scope'], scopeZoom: 0.33,
-    role: 'Two quick body shots at any range; no one-shot headshot',
+    id: 'semisniper', name: 'Semi-Auto Sniper', slot: 'primary', auto: false, damage: 55, headshot: 1.85, pellets: 1, rpm: 125,
+    magazine: 6, reloadSec: 1.9, spread: 7, adsSpread: 0.05, range: 70, falloffEnd: 160, minDamage: 0.8, maxRange: 300,
+    zoom: 0.33, moveSpeed: 0.93, recoil: 2.6, adsTime: 0.36, recoilX: 0.15, pattern: PAT_LEFT, optics: ['scope', 'combat'], scopeZoom: 0.33, combatZoom: 0.42,
+    role: 'Two quick body shots or one headshot at any range',
   },
   {
-    id: 'sniper', name: 'Bolt-Action Sniper', slot: 'primary', auto: false, damage: 85, headshot: 1.6, pellets: 1, rpm: 45,
-    magazine: 4, reloadSec: 2.2, spread: 9, adsSpread: 0, range: 300, falloffEnd: 300, minDamage: 1, maxRange: 400,
-    zoom: 0.25, moveSpeed: 0.92, recoil: 3, bolt: true, adsTime: 0.42, recoilX: 0.2, pattern: PAT_RIGHT, optics: ['scope'], scopeZoom: 0.22,
-    role: 'One headshot, one kill at any range; slow bolt, weak up close',
+    id: 'sniper', name: 'Bolt-Action Sniper', slot: 'primary', auto: false, damage: 100, headshot: 1.5, pellets: 1, rpm: 45,
+    magazine: 4, reloadSec: 2.1, spread: 9, adsSpread: 0, range: 70, falloffEnd: 160, minDamage: 0.85, maxRange: 400,
+    zoom: 0.25, moveSpeed: 0.92, recoil: 3, bolt: true, adsTime: 0.3, recoilX: 0.2, pattern: PAT_RIGHT, optics: ['scope'], scopeZoom: 0.22,
+    role: 'One body shot kills out to 70 blocks: quickscope it; slow bolt, no hip fire',
+  },
+  {
+    id: 'battle', name: 'Battle Rifle', slot: 'primary', auto: true, damage: 30, headshot: 1.6, pellets: 1, rpm: 420,
+    magazine: 20, reloadSec: 1.6, spread: 2.8, adsSpread: 0.35, range: 45, falloffEnd: 100, minDamage: 0.6, maxRange: 180,
+    zoom: 0.75, moveSpeed: 0.95, recoil: 1.7, adsTime: 0.32, recoilX: 0.3, pattern: PAT_RIFLE,
+    optics: ['combat', 'iron', 'reddot', 'holo'], combatZoom: 0.44,
+    role: 'Heavy automatic: four hits kill at any range, hard to control, small magazine',
+  },
+  {
+    id: 'lever', name: 'Lever-Action Carbine', slot: 'primary', auto: false, damage: 50, headshot: 2.1, pellets: 1, rpm: 120,
+    magazine: 8, reloadSec: 1.9, spread: 2.4, adsSpread: 0.1, range: 40, falloffEnd: 90, minDamage: 0.7, maxRange: 200,
+    zoom: 0.72, moveSpeed: 1, recoil: 2.6, bolt: true, adsTime: 0.24, recoilX: 0.18, pattern: PAT_LEFT,
+    optics: ['iron', 'reddot', 'combat'], combatZoom: 0.45,
+    role: 'One headshot kills out to 40 blocks, two body shots; quick to aim, slow lever',
+  },
+  {
+    id: 'antimat', name: 'Anti-Materiel Rifle', slot: 'primary', auto: false, damage: 150, headshot: 1.2, pellets: 1, rpm: 30,
+    magazine: 3, reloadSec: 2.4, spread: 12, adsSpread: 0, range: 120, falloffEnd: 300, minDamage: 0.8, maxRange: 450,
+    zoom: 0.2, moveSpeed: 0.85, recoil: 5, bolt: true, adsTime: 0.5, recoilX: 0.3, pattern: PAT_RIGHT, optics: ['scope'], scopeZoom: 0.16,
+    role: 'One hit kills at any range; the slowest to aim, move and cycle',
   },
   {
     id: 'pistol', name: 'Pistol', slot: 'secondary', auto: false, damage: 18, headshot: 2, pellets: 1, rpm: 400,
-    magazine: 12, reloadSec: 1.1, spread: 1.8, adsSpread: 0.5, range: 25, falloffEnd: 60, minDamage: 0.5, maxRange: 100,
+    magazine: 12, reloadSec: 0.95, spread: 1.8, adsSpread: 0.5, range: 25, falloffEnd: 60, minDamage: 0.5, maxRange: 100,
     zoom: 0.9, moveSpeed: 1.04, recoil: 1.1, adsTime: 0.15, recoilX: 0.1, pattern: PAT_RIGHT, optics: ['iron'],
     role: 'Fast, accurate backup',
   },
   {
     id: 'mpistol', name: 'Machine Pistol', slot: 'secondary', auto: true, damage: 12, headshot: 1.6, pellets: 1, rpm: 1000,
-    magazine: 20, reloadSec: 1.5, spread: 3.2, adsSpread: 1.5, range: 9, falloffEnd: 30, minDamage: 0.45, maxRange: 70,
+    magazine: 20, reloadSec: 1.2, spread: 3.2, adsSpread: 1.5, range: 9, falloffEnd: 30, minDamage: 0.45, maxRange: 70,
     zoom: 0.92, moveSpeed: 1.05, recoil: 0.5, adsTime: 0.14, recoilX: 0.3, pattern: PAT_SMG, optics: ['iron'],
     role: 'Full-auto panic button for close quarters',
   },
   {
     id: 'revolver', name: 'Revolver', slot: 'secondary', auto: false, damage: 52, headshot: 2, pellets: 1, rpm: 150,
-    magazine: 6, reloadSec: 2.4, spread: 2.5, adsSpread: 0.15, range: 30, falloffEnd: 70, minDamage: 0.6, maxRange: 120,
+    magazine: 6, reloadSec: 1.8, spread: 2.5, adsSpread: 0.15, range: 30, falloffEnd: 70, minDamage: 0.6, maxRange: 120,
     zoom: 0.85, moveSpeed: 1, recoil: 4.5, adsTime: 0.2, recoilX: 0.25, pattern: PAT_RIGHT, optics: ['iron'],
-    role: 'Two hits to kill, slow to reload',
+    role: 'One headshot kills out to 30 blocks, two to the body; slow to reload',
   },
   {
-    id: 'knife', name: 'Knife', slot: 'melee', auto: false, damage: 55, headshot: 1, pellets: 1, rpm: 120,
+    id: 'knife', name: 'Knife', slot: 'melee', auto: false, damage: 100, headshot: 1, pellets: 1, rpm: 120,
     magazine: 0, reloadSec: 0, spread: 0, adsSpread: 0, range: 2.6, falloffEnd: 2.6, minDamage: 1, maxRange: 2.6,
     zoom: 1, moveSpeed: 1.08, recoil: 0, adsTime: 0.2, recoilX: 0, pattern: PAT_NONE, optics: ['iron'],
-    role: 'Two stabs',
+    role: 'One stab kills; arm\'s length only',
   },
 ];
 
@@ -173,6 +195,17 @@ export function damageAt(w: WeaponDef, distance: number, rangeMul = 1): number {
   return w.damage * (1 - t * (1 - w.minDamage));
 }
 
+/**
+ * A tactical reload (rounds left in the magazine) takes this share of the empty reload: the old magazine comes out
+ * with a round still chambered, so there is no bolt or slide to work.
+ */
+export const TACTICAL_RELOAD = 0.75;
+
+/** Seconds a reload takes, starting with `mag` rounds in the magazine: `reloadSec` when empty, faster when not. Server and client use it. */
+export function reloadTimeFor(w: WeaponDef, mag: number): number {
+  return mag > 0 ? w.reloadSec * TACTICAL_RELOAD : w.reloadSec;
+}
+
 /** Seconds between two shots. */
 export function fireInterval(w: WeaponDef): number {
   return 60 / w.rpm;
@@ -190,6 +223,7 @@ export const OPTICS: Record<OpticId, OpticDef> = {
   iron: { id: 'iron', name: 'Iron Sights', desc: 'The weapon\'s own sights' },
   reddot: { id: 'reddot', name: 'Red Dot', desc: 'Clean dot, slightly more zoom' },
   holo: { id: 'holo', name: 'Holographic', desc: 'Ring reticle, a bit more zoom' },
+  combat: { id: 'combat', name: 'Combat Scope', desc: '2.5x magnified, no sway; a little slower to aim' },
   scope: { id: 'scope', name: 'Scope', desc: 'Magnified, hold Shift to steady; slower to aim' },
 };
 
@@ -206,6 +240,7 @@ export function opticFor(w: WeaponDef, optic: string | undefined): OpticId {
 /** Field of view multiplier when fully aimed with an optic (per weapon). */
 export function opticZoom(w: WeaponDef, optic: OpticId): number {
   if (optic === 'scope') return w.scopeZoom ?? w.zoom;
+  if (optic === 'combat') return w.combatZoom ?? 0.42;
   if (optic === 'holo') return w.zoom * 0.9;
   if (optic === 'reddot') return w.zoom * 0.95;
   return w.zoom;
@@ -250,7 +285,14 @@ export function rangeMulFor(w: WeaponDef, perk: PerkId): number {
 
 /** Seconds to aim with an optic and a perk. */
 export function adsTimeFor(w: WeaponDef, optic: OpticId, perk: PerkId): number {
-  return (w.adsTime + (optic === 'scope' && w.slot === 'primary' && w.optics[0] !== 'scope' ? 0.08 : 0)) * (perk === 'quickdraw' ? 0.6 : 1);
+  // A magnified optic the weapon was not built around is heavier to bring up.
+  const added = w.slot !== 'primary' || w.optics[0] === optic ? 0 : optic === 'scope' ? 0.08 : optic === 'combat' ? 0.05 : 0;
+  return (w.adsTime + added) * (perk === 'quickdraw' ? 0.6 : 1);
+}
+
+/** Magnified optics show the scope overlay when fully aimed (the weapon model is hidden behind it). */
+export function isMagnified(optic: OpticId): boolean {
+  return optic === 'scope' || optic === 'combat';
 }
 
 /** Seconds a weapon switch takes (server cadence and client animation). */

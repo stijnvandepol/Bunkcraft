@@ -2,20 +2,20 @@
   "maxGrowth": 0.1,
   "files": {
     "main": {
-      "bytes": 873862,
-      "gzip": 285768
+      "bytes": 1020259,
+      "gzip": 329785
     },
     "chunkWorker": {
-      "bytes": 143862,
-      "gzip": 44768
+      "bytes": 189283,
+      "gzip": 56949
     },
     "three": {
-      "bytes": 540013,
-      "gzip": 131738
+      "bytes": 540021,
+      "gzip": 131743
     },
     "arcade": {
-      "bytes": 60483,
-      "gzip": 20619
+      "bytes": 85006,
+      "gzip": 28994
     }
   }
 }

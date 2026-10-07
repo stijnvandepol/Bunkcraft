@@ -2,23 +2,36 @@ import { HITBOX } from '../../src/modes/Weapons';
 import { type BlockQuery, traceBlocks } from '../Combat';
 
 /**
- * Lag compensation limits for hitscan (DOM-free). The server tests a shot against where the shooter
- * saw the targets: their latency plus the client's interpolation delay in the past. That window is
- * capped, and a target that had already been behind cover for PEEK_LIMIT seconds cannot be rewound
- * back into the open ("shot around the corner").
+ * Lag compensation limits for hitscan (DOM-free). The server tests a shot against where the shooter saw the
+ * targets. The client says which server tick its screen showed (`rk` in `fire`, see SnapshotClock.renderTick);
+ * that claim is clamped to what its round trip and interpolation delay can explain. Older clients get an estimate
+ * from the measured round trip. A target that had already been behind cover for PEEK_LIMIT seconds cannot be
+ * rewound back into the open ("shot around the corner").
+ *
+ * Why the full round trip: the snapshot the shooter looks at left the server half a round trip before it arrived,
+ * is drawn `interp` later, and the shot needs another half round trip to come back. Rewinding only half the round
+ * trip (the old rule) put a running target 0.3-0.5 blocks ahead of where it was drawn at 100 ms.
  */
 
-/** Never rewind further than this (s). */
-export const MAX_REWIND = 0.25;
+/** Never rewind further than this (s): covers a 250 ms round trip plus the interpolation delay. */
+export const MAX_REWIND = 0.4;
 /** Without a ping measurement, rewind only the interpolation delay. */
 export const DEFAULT_REWIND = 0.1;
 /** Rewinds longer than this need the victim to have been visible at `now - PEEK_LIMIT`. */
 export const PEEK_LIMIT = 0.15;
+/** A client's claimed render time may lie this much further back than its measured round trip explains (jitter, a ping measured seconds ago, a frame of delay; QA saw up to 0.11). */
+export const REWIND_SLACK = 0.15;
 
 /** Seconds to rewind for a shooter with round-trip time `rttMs` (0 = unknown) and interpolation delay `interp`. */
 export function rewindWindow(rttMs: number, interp = DEFAULT_REWIND): number {
   if (!(rttMs > 0)) return Math.min(MAX_REWIND, interp);
-  return Math.min(MAX_REWIND, rttMs / 2000 + interp);
+  return Math.min(MAX_REWIND, rttMs / 1000 + interp);
+}
+
+/** How far back a client's own render-time claim may reach (anti backtracking). */
+export function rewindLimit(rttMs: number, interp = DEFAULT_REWIND): number {
+  if (!(rttMs > 0)) return MAX_REWIND;
+  return Math.min(MAX_REWIND, rttMs / 1000 + interp + REWIND_SLACK);
 }
 
 /** Heights (above the feet) of the three body points used for line of sight. */

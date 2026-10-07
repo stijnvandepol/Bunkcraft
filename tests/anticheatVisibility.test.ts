@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { BLOCK } from '../src/world/BlockRegistry';
+import { BULLET, createBulletTrace, traceBullet } from '../src/modes/Hitscan';
+import { BLOCK, OPAQUE } from '../src/world/BlockRegistry';
 import { Send, VIS, type Viewer, Visibility, sightClear } from '../server/anticheat/Visibility';
 import { TestWorld } from './helpers';
 import { visibilityScenario } from './helpers/visibilityScenario';
@@ -20,6 +21,21 @@ describe('visibility (anti-wallhack culling)', () => {
     expect(sightClear({ getBlock: w.get }, 0.5, 64.5, 0.5, 8.5, 64.5, 0.5)).toBe(true);
     w.set(6, 64, 0, BLOCK.STONE);
     expect(sightClear({ getBlock: w.get }, 0.5, 64.5, 0.5, 8.5, 64.5, 0.5)).toBe(false);
+  });
+
+  it('culling and bullets agree on see-through blocks: whatever a bullet passes (glass, panes, leaves) never hides an enemy', () => {
+    let thin = 0;
+    for (let id = 1; id < 255; id++) {
+      if (BULLET[id] !== 2 /* THIN */) continue;
+      thin++;
+      expect(OPAQUE[id], `block ${id}`).toBe(0);
+    }
+    expect(thin).toBeGreaterThan(10); // glass, stained glass, panes, every leaves type
+    const w = new TestWorld().fill(-40, 63, -40, 40, 63, 40, BLOCK.STONE).fill(0, 64, -10, 0, 66, 10, BLOCK.GLASS);
+    expect(sightClear({ getBlock: w.get }, -5, 65.6, 0.5, 5, 65.6, 0.5)).toBe(true);
+    const trace = traceBullet({ getBlock: w.get }, -5, 65.6, 0.5, 1, 0, 0, 10, createBulletTrace());
+    expect(trace.blocked).toBe(false);
+    expect(trace.thin).toBe(1);
   });
 
   it('hides an enemy behind a wall beyond 12 blocks and shows it in the open', () => {

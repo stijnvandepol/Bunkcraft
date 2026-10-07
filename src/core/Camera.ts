@@ -29,7 +29,10 @@ export class CameraController {
   /** Walk phase and bob strength, exposed for the first-person hand. */
   bobPhase = 0;
   bobStrength = 0;
-  /** Arcade: vertical recoil kick in radians (visual only, aim is unaffected). */
+  /**
+   * Arcade: vertical recoil kick in radians (visual only, aim is unaffected: the HUD moves the crosshair down by
+   * `appliedKick` so it stays on the aim point).
+   */
   kick = 0;
   /** Arcade: field-of-view multiplier while aiming down the sights (1 = none). */
   zoom = 1;
@@ -73,7 +76,7 @@ export class CameraController {
     this.bobStrength = amt;
 
     const cam = this.camera;
-    cam.rotation.set(p.pitch + (this.reducedMotion ? this.kick * 0.25 : this.kick), p.yaw, roll, 'YXZ');
+    cam.rotation.set(p.pitch + this.appliedKick, p.yaw, roll, 'YXZ');
     const cos = Math.cos(p.yaw), sin = Math.sin(p.yaw);
     const eye = p.prevEye + (p.eye - p.prevEye) * alpha;
     cam.position.set(x + cos * bobSide, y + eye + bobY - this.landDip, z - sin * bobSide);
@@ -118,6 +121,11 @@ export class CameraController {
       cam.fov = this.fov = 70;
       cam.updateProjectionMatrix();
     }
+  }
+
+  /** The recoil kick the camera really shows (Reduced Motion keeps a quarter of it). */
+  get appliedKick(): number {
+    return this.reducedMotion ? this.kick * 0.25 : this.kick;
   }
 
   /** Slowly orbiting panorama camera for the main menu. */

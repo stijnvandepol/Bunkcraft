@@ -104,7 +104,8 @@ import { announce, clearAnnouncement } from '../ui/Announcer';
 import { MenuNav } from '../ui/MenuNav';
 import { Subtitles } from '../ui/Subtitles';
 import { setSurvivalColorBlind } from '../ui/SurvivalHud';
-import { detectLanguage, setLanguage, t } from '../ui/i18n';
+import { detectLanguage, type I18nKey, setLanguage, t } from '../ui/i18n';
+import { realmsModeName } from '../ui/RealmsMenu';
 import { StatTracker } from '../player/StatTracker';
 import { LOCAL_COMMAND_USAGE, SERVER_COMMAND_USAGE } from '../ui/chatLogic';
 
@@ -609,6 +610,7 @@ export class Game {
     this.cam.baseFov = s.fov;
     this.cam.viewBobbing = s.viewBobbing && !s.reducedMotion;
     setLanguage(s.language);
+    if (key === 'language') this.arcade?.relabel();
     this.chat.applySettings(s);
     this.hud.setAttackIndicator(s.attackIndicator);
     this.input.rawInput = s.rawInput;
@@ -657,6 +659,7 @@ export class Game {
     if (s.reducedMotion) this.renderer.uniforms.uSway.value = 0;
     applyAccessibilityDocument(s);
     this.subtitles.setEnabled(s.subtitles);
+    if (this.arcade) this.arcade.hud.damageNumbers = s.damageNumbers;
     const palette = paletteFor(s.colorBlindSafe);
     TEAM_COLORS.red = palette.teamA;
     TEAM_COLORS.blue = palette.teamB;
@@ -1199,7 +1202,7 @@ export class Game {
     this.chat.setVisible(true);
     if (welcome.motd) this.chat.add(welcome.motd, true);
     if (this.arcade) this.chat.add(this.arcadeHint, true);
-    if (room) this.chat.add(`Game code: ${formatCode(room)}. Press Esc, then Invite Friends, to share it.`, true);
+    if (room) this.chat.add(t('chat.gameCode', formatCode(room)), true);
     return true;
   }
 
@@ -1239,6 +1242,7 @@ export class Game {
       send,
       audio: this.audio, player: p, cam: this.cam, remote: this.remote, particles: this.renderer.particles,
       getBlock: this.getBlock,
+      getMeta: this.getMeta,
       getLight: (x, y, z) => this.world ? this.world.getLight(x, y, z) : 0xf0,
       selfId: welcome.id, selfName: name, info,
       feedback: this.feedback,
@@ -1246,6 +1250,7 @@ export class Game {
       onMapChange: () => this.rejoinServer(),
     });
     this.arcade = session;
+    session.hud.damageNumbers = this.settings.values.damageNumbers;
     session.hud.onLoadoutClose = () => void this.resumeGame();
     session.setBindings(this.input);
     this.renderer.scene.add(session.tracers.mesh);
@@ -1258,8 +1263,8 @@ export class Game {
     session.setHudVisible(false);
     for (const pl of welcome.players) session.addPlayer(pl.id, pl.name, pl.team ?? '');
     const slideKey = keyDisplayName(this.input.bound(KB.SNEAK)) || 'Sneak';
-    this.arcadeHint = `${def.name}: ${def.description}. Tab = scoreboard,${def.loadout === 'ladder' ? '' : ' B = loadout,'} R = reload,`
-      + ` ${slideKey} while running = slide (jump out of it to keep the speed).`;
+    this.arcadeHint = `${realmsModeName(def.id)}: ${t(`realms.desc.${def.id}` as I18nKey)}. ${t(def.loadout === 'ladder' ? 'arc.keysLadder' : 'arc.keys')}`
+      + ` ${t('arc.keySlide', slideKey)}`;
   }
 
   private stopArcade(): void {
@@ -1290,7 +1295,7 @@ export class Game {
   private onServerMessage(msg: ServerMessage): void {
     const world = this.world;
     switch (msg.t) {
-      case 'snap': this.remote.snapshot(msg.players, this.net?.id ?? -1, performance.now() / 1000); break;
+      case 'snap': this.remote.snapshot(msg.players, this.net?.id ?? -1, performance.now() / 1000, msg.k ?? -1); break;
       case 'ent': this.netEntities?.apply(msg, performance.now() / 1000); break;
       case 'fall': this.netFalling?.apply(msg.f, performance.now() / 1000); break;
       case 'hurt':
@@ -1548,7 +1553,7 @@ export class Game {
 
   private showClickToPlay(): void {
     this.stack.clear();
-    const hint = this.input.touchMode ? 'Tap to play' : this.input.padMode ? 'Press A to play' : 'Click to play';
+    const hint = t(this.input.touchMode ? 'click.tap' : this.input.padMode ? 'click.pad' : 'click.play');
     this.stack.push(h('div', { class: 'screen click-to-play', tabIndex: 0, role: 'button', 'aria-label': hint, onclick: () => void this.resumeGame() },
       h('div', { class: 'click-hint', text: hint })));
   }
@@ -2297,6 +2302,7 @@ export class Game {
       `${GAME_MODE_NAMES[this.mode]} · ${p.flying ? 'Flying' : p.onGround ? 'On ground' : 'Airborne'}${p.sprinting ? ' · Sprinting' : ''}${p.inWater ? ' · In water' : ''}`,
       `Health ${this.stats.health} · Food ${this.stats.hunger} (sat ${this.stats.saturation.toFixed(1)}) · Air ${this.stats.air}`,
       `${this.audio.debugLine()} · enclosure ${this.audio.env.enclosure.toFixed(2)}`,
+      ...(this.arcade ? [this.arcade.hitregLine()] : []),
     ], [
       mem ? `Mem: ${Math.round((mem.usedJSHeapSize / mem.totalJSHeapSize) * 100)}% ${(mem.usedJSHeapSize / 1048576).toFixed(0)}/${(mem.totalJSHeapSize / 1048576).toFixed(0)}MB` : 'Mem: n/a',
       `World blocks: ${(worldBlocks / 1e6).toFixed(2)}M (${(worldBlocks / 1048576).toFixed(1)} MB) · edited chunks ${world.edits.size}`,

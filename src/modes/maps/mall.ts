@@ -23,7 +23,7 @@ interface Side {
 const WEST: Side = { floor: C.POLISHED_DIORITE, sign: BLOCK.YELLOW_WOOL, stall: BLOCK.YELLOW_WOOL };
 const EAST: Side = { floor: C.POLISHED_DIORITE, sign: BLOCK.GREEN_WOOL, stall: BLOCK.GREEN_WOOL };
 
-const RED_SPAWNS: [number, number][] = [[-30, -8], [-27, -5], [-30, -2], [-27, 1], [-30, 4], [-27, 8]];
+const RED_SPAWNS: [number, number][] = [[-30, -8], [-30, -5], [-30, -2], [-30, 1], [-30, 4], [-27, 8]];
 const FFA_WEST: [number, number][] = [[-28, -17], [-26, 16], [-19, -13], [-19, 12], [-8, -6], [-6, 12]];
 
 const WALL = C.CALCITE;
@@ -53,6 +53,9 @@ function half(b: LayoutBuilder, s: 1 | -1, p: Side): void {
   box(-24, -24, -9, -8, 1, 2, AIR);
   box(-24, -24, 6, 7, 1, 2, AIR);
   for (const z of [-5, -2, 1, 4]) mannequin(t, -25, z, 1, z % 2 ? BLOCK.WHITE_WOOL : p.sign);
+  // The windows are display cases: a solid backing wall behind the mannequins (bullets pass glass, so the store
+  // behind it must not be open to the atrium).
+  box(-26, -26, -6, 4, 1, 3, BLOCK.WHITE_WOOL);
   // Clothes racks (baffles behind the entrances), a till, changing booths.
   box(-26, -26, -10, -7, 1, 2, BLOCK.SPRUCE_PLANKS);
   box(-26, -26, 5, 8, 1, 2, BLOCK.SPRUCE_PLANKS);

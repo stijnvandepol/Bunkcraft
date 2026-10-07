@@ -9,6 +9,8 @@ import { PLAYER_MAX_HEALTH, type WeaponDef, damageAt, fireInterval } from './Wea
  *   realistic TTK = aim-down-sights time (beyond hip range) + time for the expected shots:
  *                   expected damage per shot = dmg × pellets × falloff × spread hit % × aim; STK = ceil(100 / that);
  *                   reloads are added when STK exceeds the magazine
+ *   bolt actions    = the aim factor × BOLT_PRECISION: one precise shot through a swaying scope, and a miss costs a
+ *                   whole bolt cycle (without it the one-shot sniper would "win" every long range on paper)
  */
 export const BODY_RADIUS = 0.55; // blocks: a circle with the area of the 0.6 × 1.8 hitbox seen from the front
 /** Up to this distance fights are hip fire; beyond it the shooter aims first. */
@@ -17,6 +19,8 @@ export const HIP_RANGE = 7;
 export const DEFAULT_AIM = 0.75;
 /** Distances (blocks) the balance is judged at: point blank, close, mid, long, very long. */
 export const BALANCE_RANGES = [4, 10, 20, 35, 60, 90] as const;
+/** Share of the aim factor a bolt-action shot keeps (see the model above). */
+export const BOLT_PRECISION = 0.7;
 
 export interface Ttk { stk: number; ms: number }
 
@@ -64,7 +68,7 @@ export function realisticTtk(w: WeaponDef, dist: number, aim = DEFAULT_AIM): Ttk
   const ads = dist > HIP_RANGE;
   const hit = spreadHit(w, dist, ads);
   const perHit = damageAt(w, dist) * (w.pellets > 1 ? w.pellets * hit : 1);
-  const p = w.pellets > 1 ? aim : aim * hit;
+  const p = (w.pellets > 1 ? aim : aim * hit) * (w.bolt ? BOLT_PRECISION : 1);
   if (perHit <= 0 || p <= 0) return { stk: Infinity, ms: Infinity };
   const hits = Math.ceil(PLAYER_MAX_HEALTH / perHit - 1e-9);
   const shots = hits / p;

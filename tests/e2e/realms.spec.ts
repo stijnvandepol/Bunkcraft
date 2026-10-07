@@ -1,4 +1,5 @@
 import { type Browser, type Page } from '@playwright/test';
+import { REALMS_MODES } from '../../src/modes/Realms';
 import { clickButton, expect, forcePlaying, hidePanorama, openSandbox, openTitle, play, test, waitForWorld } from './fixtures';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -65,7 +66,7 @@ test('realms: two players quick play team deathmatch, meet in one lobby and the 
 test('realms: the private match screen matches its baseline and Multiplayer only creates Minecraft games', async ({ page }) => {
   await openTitle(page);
   await page.evaluate(() => localStorage.setItem('bunkcraft.name', 'baseline_p'));
-  await expect(page.locator('.mode-card')).toHaveCount(12);
+  await expect(page.locator('.mode-card')).toHaveCount(REALMS_MODES.length);
   await expect(page.locator('.bc-play')).toBeEnabled();
   await clickButton(page, 'Private match');
   await expect(page.getByRole('heading', { name: 'Create Private Match' })).toBeVisible();

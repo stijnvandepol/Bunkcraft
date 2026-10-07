@@ -8,6 +8,7 @@ import { WEAPON_MODELS } from '../src/rendering/WeaponModels';
 /** Balance invariants: every gun has a niche and nothing dominates (model: src/modes/Balance.ts, table: scripts/ttk-matrix.ts). */
 
 const primaries = PRIMARY_WEAPONS.map((id) => weaponDef(id)!);
+const rifle = () => weaponDef('rifle')!;
 const ttk = (w: WeaponDef, d: number) => realisticTtk(w, d).ms;
 const fastestAt = (d: number) => primaries.reduce((best, w) => (ttk(w, d) < ttk(best, d) ? w : best));
 
@@ -25,7 +26,9 @@ describe('arcade balance', () => {
     const fastest = Math.max(...primaries.map((w) => w.moveSpeed));
     for (const w of primaries) {
       const ranges = BALANCE_RANGES.filter((d) => fastestAt(d) === w);
-      const niche = ranges.length > 0 || killsPerMag(w, 20) === bestMag || perfectTtk(w, 60, true).stk === 1 || w.moveSpeed === fastest;
+      // One-shot kills are a niche of their own: the model's average TTK never favours a single precise shot.
+      const oneShot = perfectTtk(w, 60).stk === 1 || perfectTtk(w, 35, true).stk === 1;
+      const niche = ranges.length > 0 || killsPerMag(w, 20) === bestMag || oneShot || w.moveSpeed === fastest;
       expect(niche, w.id).toBe(true);
     }
   });
@@ -45,7 +48,7 @@ describe('arcade balance', () => {
           if (a === b) continue;
           const dominates = BALANCE_RANGES.every((d) => ttk(a, d) <= ttk(b, d))
             && a.magazine >= b.magazine && a.moveSpeed >= b.moveSpeed && a.adsTime <= b.adsTime && a.reloadSec <= b.reloadSec
-            && perfectTtk(a, 60, true).stk <= perfectTtk(b, 60, true).stk;
+            && perfectTtk(a, 60, true).stk <= perfectTtk(b, 60, true).stk && perfectTtk(a, 60).stk <= perfectTtk(b, 60).stk;
           expect(dominates, `${a.id} dominates ${b.id}`).toBe(false);
         }
       }
@@ -59,13 +62,43 @@ describe('arcade balance', () => {
     }
   });
 
-  it('only the bolt-action sniper (and the revolver, up close) kill with one headshot; nothing kills with one body shot', () => {
+  it('one-shot kills are deliberate: snipers to the body, the semi-auto sniper, lever carbine and revolver with a headshot', () => {
+    const ONE_BODY = new Set(['sniper', 'antimat']);
+    const ONE_HEAD = new Set(['sniper', 'antimat', 'semisniper', 'lever', 'revolver']);
     for (const w of WEAPONS) {
       if (w.slot === 'melee' || w.pellets > 1) continue;
-      expect(perfectTtk(w, 10).stk, w.id).toBeGreaterThanOrEqual(2);
-      expect(perfectTtk(w, 10, true).stk === 1, w.id).toBe(w.id === 'sniper' || w.id === 'revolver');
-      if (w.id !== 'sniper') expect(perfectTtk(w, 90, true).stk, w.id).toBeGreaterThanOrEqual(2);
+      expect(perfectTtk(w, 10).stk === 1, `${w.id} body`).toBe(ONE_BODY.has(w.id));
+      expect(perfectTtk(w, 10, true).stk === 1, `${w.id} head`).toBe(ONE_HEAD.has(w.id));
+      // Only the sniper rifles reach that far with one headshot; the lever and the revolver need two out there.
+      if (!['sniper', 'antimat', 'semisniper'].includes(w.id)) expect(perfectTtk(w, 90, true).stk, w.id).toBeGreaterThanOrEqual(2);
     }
+    // The anti-materiel rifle kills with one body shot at any range; its price is the slowest aim, move and bolt.
+    const am = weaponDef('antimat')!;
+    expect(perfectTtk(am, 200).stk).toBe(1);
+    for (const w of primaries) if (w !== am) {
+      expect(am.adsTime, w.id).toBeGreaterThanOrEqual(w.adsTime);
+      expect(am.moveSpeed, w.id).toBeLessThanOrEqual(w.moveSpeed);
+      expect(am.rpm, w.id).toBeLessThanOrEqual(w.rpm);
+    }
+    // The sniper's body one-shot ends at its range (70): past it the drawback is a second shot.
+    const sniper = weaponDef('sniper')!;
+    expect(perfectTtk(sniper, 70).stk).toBe(1);
+    expect(perfectTtk(sniper, 90).stk).toBe(2);
+    expect(perfectTtk(sniper, 90, true).stk).toBe(1);
+  });
+
+  it('the shotgun kills with one pump out to 8 blocks when the pattern is centred (QA round 3: "shotguns are bad")', () => {
+    const sg = weaponDef('shotgun')!;
+    expect(perfectTtk(sg, 8).stk).toBe(1);
+    expect(realisticTtk(sg, 4).ms).toBeLessThan(400);
+    expect(fastestAt(4).id).toBe('shotgun');
+  });
+
+  it('the bolt-action sniper is quickscope friendly: aims faster than every other scoped weapon, but has no hip fire', () => {
+    const sniper = weaponDef('sniper')!;
+    expect(sniper.adsTime).toBeLessThanOrEqual(0.3);
+    for (const w of WEAPONS) if (w !== sniper && w.optics.includes('scope')) expect(adsTimeFor(sniper, 'scope', 'none'), w.id).toBeLessThanOrEqual(adsTimeFor(w, 'scope', 'none'));
+    expect(sniper.spread).toBeGreaterThanOrEqual(8);
   });
 
   it('heavier weapons aim and move slower: the LMG is the slowest to aim and to move with among automatics', () => {
@@ -89,11 +122,15 @@ describe('optics and perks', () => {
         expect(z, `${w.id}/${o}`).toBeLessThanOrEqual(1);
       }
     }
-    // More magnification with better glass, and the bolt-action zooms furthest.
-    const rifle = weaponDef('rifle')!;
+    // More magnification with better glass: iron < red dot < holo < combat scope < scope; the sniper rifles zoom furthest.
+    const rifle = weaponDef('rifle')!, dmr = weaponDef('dmr')!;
     expect(opticZoom(rifle, 'holo')).toBeLessThan(opticZoom(rifle, 'reddot'));
     expect(opticZoom(rifle, 'reddot')).toBeLessThan(opticZoom(rifle, 'iron'));
-    for (const w of WEAPONS) if (w.id !== 'sniper') expect(opticZoom(weaponDef('sniper')!, 'scope')).toBeLessThanOrEqual(opticZoom(w, w.optics.at(-1)!));
+    expect(opticZoom(rifle, 'combat')).toBeLessThan(opticZoom(rifle, 'holo'));
+    expect(opticZoom(dmr, 'scope')).toBeLessThan(opticZoom(dmr, 'combat'));
+    const deepest = (w: WeaponDef) => Math.min(...w.optics.map((o) => opticZoom(w, o)));
+    for (const w of WEAPONS) if (w.id !== 'sniper' && w.id !== 'antimat') expect(deepest(weaponDef('sniper')!), w.id).toBeLessThanOrEqual(deepest(w));
+    expect(deepest(weaponDef('antimat')!)).toBeLessThan(deepest(weaponDef('sniper')!));
   });
 
   it('perks change what they say: extended mags, quickdraw aim time; a scope is slower to aim than irons', () => {
@@ -104,6 +141,19 @@ describe('optics and perks', () => {
     expect(magazineFor(weaponDef('knife')!, 'extmag')).toBe(0);
     expect(adsTimeFor(rifle, 'iron', 'quickdraw')).toBeCloseTo(rifle.adsTime * 0.6, 9);
     expect(adsTimeFor(dmr, 'scope', 'none')).toBeGreaterThan(adsTimeFor(dmr, 'iron', 'none'));
+  });
+
+  it('the combat scope (2.5x) fits the rifles, the LMG, the battle rifle, the DMR, the semi-auto sniper and the lever carbine', () => {
+    const fits = WEAPONS.filter((w) => w.optics.includes('combat')).map((w) => w.id).sort();
+    expect(fits).toEqual(['battle', 'burst', 'dmr', 'lever', 'lmg', 'rifle', 'semisniper']);
+    for (const id of fits) {
+      const z = opticZoom(weaponDef(id)!, 'combat');
+      expect(z, id).toBeGreaterThanOrEqual(0.4); // about 2-2.5x
+      expect(z, id).toBeLessThanOrEqual(0.5);
+    }
+    // Slower to bring up than irons on a gun built for irons, not on one built around it (battle rifle).
+    expect(adsTimeFor(rifle(), 'combat', 'none')).toBeGreaterThan(adsTimeFor(rifle(), 'iron', 'none'));
+    expect(adsTimeFor(weaponDef('battle')!, 'combat', 'none')).toBe(weaponDef('battle')!.adsTime);
   });
 
   it('every weapon has a model, and every optic a sight', () => {

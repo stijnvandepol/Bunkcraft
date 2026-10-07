@@ -30,9 +30,27 @@ export const LOADOUT_PRESETS: LoadoutPreset[] = [
   { id: 'support', name: 'Support', primary: 'lmg', optic: 'holo', secondary: 'pistol', perk: 'extmag', description: 'Holds a lane, wins multi-kills' },
   { id: 'marksman', name: 'Marksman', primary: 'dmr', optic: 'scope', secondary: 'revolver', perk: 'none', description: 'Scoped, precise at medium and long range' },
   { id: 'burst', name: 'Burst', primary: 'burst', optic: 'holo', secondary: 'pistol', perk: 'suppressor', description: 'Tight, quiet three-round bursts' },
-  { id: 'sniper', name: 'Sniper', primary: 'sniper', optic: 'scope', secondary: 'mpistol', perk: 'quickdraw', description: 'One headshot, one kill' },
+  { id: 'sniper', name: 'Sniper', primary: 'sniper', optic: 'scope', secondary: 'mpistol', perk: 'quickdraw', description: 'One shot, one kill' },
   { id: 'scout', name: 'Scout', primary: 'smg', optic: 'iron', secondary: 'pistol', perk: 'lightfoot', description: 'Fastest on foot: slide in, knife or spray, slide out' },
 ];
+
+/** A class picked within this many seconds of spawning (and before the first shot) applies at once in a live round. */
+export const CLASS_SWAP_WINDOW = 3;
+
+/** Phases without fighting: a class picked then applies at once (warm-up, countdown, between rounds). */
+export function calmPhase(phase: string): boolean {
+  return phase === 'warmup' || phase === 'countdown' || phase === 'roundend' || phase === 'intermission';
+}
+
+/**
+ * When a class picked now is put in your hands (the server's rule in Match.setLoadout): at once outside a live round or
+ * right after spawning before the first shot, at the respawn while dead (or after the match), else from the next life.
+ */
+export function classApplies(phase: string, alive: boolean, firedThisLife: boolean, sinceSpawn: number): 'now' | 'respawn' | 'nextLife' {
+  if (!alive || phase === 'ended') return 'respawn';
+  if (calmPhase(phase) || (!firedThisLife && sinceSpawn <= CLASS_SWAP_WINDOW)) return 'now';
+  return 'nextLife';
+}
 
 /** A valid class from anything (saved JSON, a network message): unknown or disallowed fields become the default. */
 export function validateClass(raw: unknown): ClassSpec {

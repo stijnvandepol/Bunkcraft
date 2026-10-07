@@ -1,6 +1,6 @@
 import { type GameType, type Team, gameTypeDef } from '../modes/GameTypes';
 import { getMap } from '../modes/maps';
-import { PLAYER_MAX_HEALTH, REGEN_DELAY, REGEN_PER_SECOND, RESPAWN_SECONDS, magazineFor, weaponDef } from '../modes/Weapons';
+import { PLAYER_MAX_HEALTH, REGEN_DELAY, REGEN_PER_SECOND, RESPAWN_SECONDS, magazineFor, reloadTimeFor, weaponDef } from '../modes/Weapons';
 import { type ClassSpec, DEFAULT_CLASS, validateClass } from '../modes/Loadouts';
 import type { ClientMessage, MatchInfo, MatchPhase, ModeEventKind, ModeState, RosterEntry, ServerMessage, SnapshotEntry } from '../net/protocol';
 
@@ -141,7 +141,7 @@ export class ArcadePreviewServer {
   private startReload(slot: number): void {
     const w = weaponDef(this.weaponOf(slot))!;
     if (w.magazine === 0 || this.reloadDone[slot] > 0 || this.mags[slot] >= w.magazine) return;
-    this.reloadDone[slot] = this.t + w.reloadSec;
+    this.reloadDone[slot] = this.t + reloadTimeFor(w, this.mags[slot]);
     this.sendAmmo(slot);
   }
 

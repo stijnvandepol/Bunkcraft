@@ -42,6 +42,75 @@ test('arcade: the end screen shows the final score that arrives right after matc
   await expect(page.locator('.arc-end .arc-board-scores')).toContainText('1 BLUE');
 });
 
+test('arcade: a long kill feed row stays clear of the score bar (it covered the blue score at 1280x720)', async ({ page }) => {
+  await startPreview(page, 'tdm', 'atomic');
+  await page.evaluate(() => {
+    const g = (window as any).game;
+    g.arcade.addPlayer(901, 'LongNameKiller16', 'blue');
+    g.arcade.addPlayer(902, 'AnotherLongName1', 'red');
+    g.onServerMessage({ t: 'kill', killer: 901, victim: 902, weapon: 'semisniper', head: true });
+  });
+  await expect(page.locator('.arc-feed-row')).toHaveCount(1);
+  const feed = (await page.locator('.arc-feed-row').boundingBox())!;
+  const top = (await page.locator('.arc-top-row').boundingBox())!;
+  expect(feed.x).toBeGreaterThanOrEqual(top.x + top.width);
+});
+
+test('arcade: with the map vote up, your own row stays on the end screen in a full lobby (it was cut off at the bottom)', async ({ page }) => {
+  await startPreview(page, 'tdm', 'atomic');
+  await page.evaluate(() => {
+    const g = (window as any).game;
+    const self = g.arcade.d.selfId;
+    g.previewServer.phase = 'ended';
+    g.previewServer.endAt = g.previewServer.t + 60;
+    const players = Array.from({ length: 11 }, (_, i) => ({ id: 800 + i, name: `bot${i}`, team: i % 2 ? 'red' : 'blue', kills: 20 - i, deaths: 3, ping: 20, pts: 0 }));
+    players.push({ id: self, name: 'You', team: 'red', kills: 0, deaths: 9, ping: 20, pts: 0 });
+    g.onServerMessage({ t: 'roster', players });
+    g.onServerMessage({ t: 'matchend', winnerTeam: 'blue', winnerId: 0, restartIn: 20 });
+    g.onServerMessage({ t: 'vote', options: ['classic', 'villa', 'town'], counts: [0, 0, 0], endsIn: 15 });
+  });
+  await expect(page.locator('.arc-end')).toBeVisible();
+  await expect(page.locator('.mvote')).toBeVisible();
+  const self = page.locator('.arc-end-board .arc-row.self');
+  await expect(self).toHaveCount(1);
+  const row = (await self.boundingBox())!;
+  const board = (await page.locator('.arc-end-board').boundingBox())!;
+  expect(row.y + row.height).toBeLessThanOrEqual(board.y + board.height + 1);
+});
+
+test('arcade: the spawn protection label overlaps neither the chat, the weapon slots nor the banners', async ({ page }) => {
+  await startPreview(page, 'tdm', 'atomic');
+  await page.evaluate(() => {
+    const g = (window as any).game;
+    for (let i = 0; i < 6; i++) g.chat.add(`a long chat line number ${i} that runs well into the middle of the screen`, true);
+    const p = g.player;
+    g.onServerMessage({ t: 'spawn', x: p.x, y: p.y, z: p.z, yaw: 0, team: 'red', primary: 'rifle', health: 100 });
+  });
+  await expect(page.locator('.arc-protect')).toBeVisible();
+  const box = async (sel: string) => (await page.locator(sel).first().boundingBox())!;
+  const prot = await box('.arc-protect');
+  const clear = (b: { x: number; y: number; width: number; height: number }) =>
+    prot.x + prot.width <= b.x || b.x + b.width <= prot.x || prot.y + prot.height <= b.y || b.y + b.height <= prot.y;
+  for (const sel of ['.chat-log', '.arc-slots', '.arc-top']) expect(clear(await box(sel)), sel).toBe(true);
+});
+
+test('arcade: gun game shows one knife slot, not "2 Knife 3 Knife"', async ({ page }) => {
+  await startPreview(page, 'gungame', 'atomic');
+  await page.evaluate(() => (window as any).game.onServerMessage({ t: 'gear', primary: 'rifle', secondary: 'knife', optic: 'iron', perk: 'none' }));
+  await expect(page.locator('.arc-slot:visible')).toHaveCount(2);
+  await expect(page.locator('.arc-slot:visible').nth(1)).toContainText('Knife');
+});
+
+test('arcade: the Tab scoreboard hides the objective markers drawn over it', async ({ page }) => {
+  await startPreview(page, 'domination', 'villa');
+  await page.evaluate(() => (window as any).game.previewServer.demo());
+  await page.waitForFunction(() => document.querySelectorAll('.mode-marker:not(.hidden)').length > 0, undefined, { timeout: 30_000 });
+  await page.evaluate(() => (window as any).game.input.down.add('Tab'));
+  await expect(page.locator('.arc-board')).toBeVisible();
+  await expect(page.locator('.mode-markers')).toBeHidden();
+  await page.evaluate(() => (window as any).game.input.down.delete('Tab'));
+});
+
 test('arcade: an objective marker at the screen edge keeps its whole caption on screen (wide "CONTESTED" label)', async ({ page }) => {
   await startPreview(page, 'domination', 'villa');
   // Three contested points, the player turning around: markers stick to the left and right edges.

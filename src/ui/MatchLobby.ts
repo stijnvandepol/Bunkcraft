@@ -31,6 +31,10 @@ export class MatchLobby {
   private readonly teams: HTMLDivElement;
   private readonly voteCards: HTMLDivElement;
   private readonly voteMine: HTMLDivElement;
+  private readonly modeLine: HTMLDivElement;
+  private readonly hint: HTMLDivElement;
+  private readonly voteTitle: HTMLDivElement;
+  private readonly voteHint: HTMLDivElement;
   private vote: VoteMsg | null = null;
   private lastKey = '';
   private lastRoster: readonly RosterEntry[] | null = null;
@@ -39,21 +43,25 @@ export class MatchLobby {
     this.status = h('div', { class: 'mlobby-status' });
     this.mapLine = h('div', { class: 'mlobby-map' });
     this.teams = h('div', { class: `mlobby-teams${def.teams ? ' two' : ''}` });
-    this.el = h('div', { class: 'mlobby hidden' },
-      h('div', { class: 'mlobby-mode', text: realmsModeName(def.id) }),
-      this.mapLine,
-      this.status,
-      this.teams,
-      h('div', { class: 'mlobby-hint', text: t('lobby.tab') }),
-    );
+    this.modeLine = h('div', { class: 'mlobby-mode' });
+    this.hint = h('div', { class: 'mlobby-hint' });
+    this.el = h('div', { class: 'mlobby hidden' }, this.modeLine, this.mapLine, this.status, this.teams, this.hint);
     this.voteCards = h('div', { class: 'mvote-cards' });
     this.voteMine = h('div', { class: 'mvote-mine' });
-    this.voteEl = h('div', { class: 'mvote hidden' },
-      h('div', { class: 'mvote-title', text: t('lobby.vote') }),
-      this.voteCards,
-      this.voteMine,
-      h('div', { class: 'mvote-hint', text: t('lobby.voteKeys', '1, 2, 3') }),
-    );
+    this.voteTitle = h('div', { class: 'mvote-title' });
+    this.voteHint = h('div', { class: 'mvote-hint' });
+    this.voteEl = h('div', { class: 'mvote hidden' }, this.voteTitle, this.voteCards, this.voteMine, this.voteHint);
+    this.relabel();
+  }
+
+  /** Writes the fixed texts in the current language (again after a language change). */
+  relabel(): void {
+    this.modeLine.textContent = realmsModeName(this.def.id);
+    this.hint.textContent = t('lobby.tab');
+    this.voteTitle.textContent = t('lobby.vote');
+    this.voteHint.textContent = t('lobby.voteKeys', '1, 2, 3');
+    this.lastKey = '';
+    if (this.vote) this.setVote(this.vote);
   }
 
   /** The server's vote state (empty options = no vote). */

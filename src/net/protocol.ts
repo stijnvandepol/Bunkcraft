@@ -276,7 +276,13 @@ export type ClientMessage =
    */
   | { t: 'loadout'; primary: string; secondary?: string; optic?: string; perk?: string }
   /** Arcade: fire the weapon in a slot. Origin is the client's eye, dir the aim; the server re-checks both. */
-  | { t: 'fire'; slot: 0 | 1 | 2; ox: number; oy: number; oz: number; dx: number; dy: number; dz: number; ads: boolean }
+  /**
+   * A shot. `rk`: the server tick (fractional) the shooter's screen showed the other players at (snapshots carry
+   * `k`); the server rewinds the targets to exactly that moment, within limits. `seq`: the client's shot counter,
+   * echoed in `ammo` and `hit` (spread seed sync, hit feedback). `mv`/`air`: the shooter was moving / airborne
+   * (spread penalty, see shotSpread).
+   */
+  | { t: 'fire'; slot: 0 | 1 | 2; ox: number; oy: number; oz: number; dx: number; dy: number; dz: number; ads: boolean; rk?: number; seq?: number; mv?: boolean; air?: boolean }
   /** Arcade: start reloading the weapon in a slot. */
   | { t: 'reload'; slot: 0 | 1 | 2 }
   /** Arcade: switch weapon slot (so everyone sees what you hold). */
@@ -332,7 +338,8 @@ export type ServerMessage =
   | { t: 'effect'; action: 'give' | 'clear'; effect?: string; amp?: number; ticks?: number }
   | { t: 'join'; id: number; name: string }
   | { t: 'leave'; id: number; name: string }
-  | { t: 'snap'; players: SnapshotEntry[] }
+  /** `k`: server tick of an arcade snapshot (the client sends back which tick it drew, see `fire.rk`). */
+  | { t: 'snap'; players: SnapshotEntry[]; k?: number }
   | { t: 'block'; x: number; y: number; z: number; id: number; meta?: number }
   /** Many block changes at once (flowing water and lava): x, y, z, id, meta, x, y, z, id, meta, … */
   | { t: 'blocks'; edits: number[] }
@@ -374,7 +381,8 @@ export type ServerMessage =
   /** Who is on which team plus kills/deaths; sent on joins, leaves, kills and every few seconds. */
   | { t: 'roster'; players: RosterEntry[] }
   /** You (re)spawn: position, facing, team, loadout and full health. */
-  | { t: 'spawn'; x: number; y: number; z: number; yaw: number; team: Team | ''; primary: string; health: number; secondary?: string; optic?: string; perk?: string }
+  /** `ss`: this player's spread seed (the client derives the same spread as the server, see Hitscan.spreadRandom). */
+  | { t: 'spawn'; x: number; y: number; z: number; yaw: number; team: Team | ''; primary: string; health: number; secondary?: string; optic?: string; perk?: string; ss?: number }
   /** The mode changed your weapons while you live (gun game level up): primary slot, optional secondary slot. */
   | { t: 'gear'; primary: string; secondary?: string; optic?: string; perk?: string }
   /** Mode-specific HUD state (zones, flags, round wins), about twice a second and on changes. Absent in tdm/ffa/gun game. */
@@ -384,11 +392,18 @@ export type ServerMessage =
   /** Your health changed (damage, regeneration). */
   | { t: 'hp'; health: number }
   /** Your ammo is authoritative: magazine, spare bullets are unlimited, reloading flag per slot. */
-  | { t: 'ammo'; slot: 0 | 1 | 2; mag: number; reloading: boolean }
+  /** `sn`: index of the next shot in the spread sequence; `seq`: the `fire` this answers (the client counts its shots in flight). */
+  | { t: 'ammo'; slot: 0 | 1 | 2; mag: number; reloading: boolean; sn?: number; seq?: number }
   /** Someone fired: draw tracer and play sound. `end` is where the bullet stopped. */
   | { t: 'shot'; id: number; weapon: string; ox: number; oy: number; oz: number; ex: number; ey: number; ez: number; /** Suppressed (perk): quieter, shorter earshot. */ sup?: 1 }
   /** Your shot hit a player: hit marker, damage dealt, headshot, and whether it killed. */
-  | { t: 'hit'; victim: number; damage: number; head: boolean; killed: boolean }
+  /** `seq`: the `fire` that hit (hit registration statistics). */
+  | { t: 'hit'; victim: number; damage: number; head: boolean; killed: boolean; seq?: number }
+  /**
+   * QA only (server env ARCADE_SHOT_DEBUG=1): how the server resolved one of your shots: the rewind (s), the claimed
+   * render tick, and where it tested each target ([id, x, y, z, yaw, pitch]). See scripts/qa/hitreg-browser.ts.
+   */
+  | { t: 'shotdbg'; seq: number; rewind: number; rk: number; tick: number; targets: number[][]; hits: number[]; ray: number[] }
   /** You took damage from `from` at direction (dx, dz) relative to the world. */
   | { t: 'damaged'; from: number; damage: number; dx: number; dz: number }
   /**

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { GAME_TYPES, GUN_GAME_LADDER, gameTypeDef } from '../src/modes/GameTypes';
+import { GAME_TYPES, GUN_GAME_FINALE, GUN_GAME_LADDER, gameTypeDef } from '../src/modes/GameTypes';
+import { perfectTtk } from '../src/modes/Balance';
 import { WEAPONS, weaponDef } from '../src/modes/Weapons';
 import { ENDED_SECONDS, WARMUP_SECONDS } from '../server/Match';
 import { createLogic } from '../server/modes';
@@ -39,6 +40,34 @@ describe('gun game', () => {
     // Every gun of the arsenal shows up.
     for (const w of WEAPONS) expect(GUN_GAME_LADDER).toContain(w.id);
     expect(gameTypeDef('gungame').scoreLimit).toBe(GUN_GAME_LADDER.length);
+  });
+
+  it('ends on one-hit weapons: the last ranged level kills with one body shot, the finale knife with one stab', () => {
+    const tail = GUN_GAME_LADDER.slice(-GUN_GAME_FINALE.length);
+    expect(tail).toEqual(GUN_GAME_FINALE);
+    expect(perfectTtk(weaponDef(GUN_GAME_LADDER.at(-2)!)!, 30).stk).toBe(1);
+    expect(perfectTtk(weaponDef('knife')!, 1).stk).toBe(1);
+    for (const id of GUN_GAME_FINALE) {
+      const w = weaponDef(id)!;
+      const close = Math.min(4, w.range);
+      expect(Math.min(perfectTtk(w, close).stk, perfectTtk(w, close, true).stk), id).toBe(1);
+    }
+  });
+
+  it('the finale knife wins the match in one server stab', () => {
+    const s = live('gungame', 2);
+    const p1 = s.match.players.get(1)!;
+    p1.pts = GUN_GAME_LADDER.length - 1;
+    s.match.giveGear(p1, 'knife', 'knife', 'knife');
+    s.advance(0.5);
+    s.host.clear();
+    const p2 = s.match.players.get(2)!;
+    s.match.setPosition(2, p1.x, p1.y, p1.z + 1.5, 0, 0);
+    s.advance(0.3);
+    const ox = p1.x, oy = p1.y + 1.62, oz = p1.z;
+    s.match.fire(1, { t: 'fire', slot: 0, ox, oy, oz, dx: p2.x - ox, dy: p2.y + 0.9 - oy, dz: p2.z - oz, ads: false });
+    expect(s.host.of('hit', 1)[0]).toMatchObject({ damage: 100, killed: true });
+    expect(s.match.phase).toBe('ended');
   });
 
   it('starts everyone on the first weapon with only a knife besides it, and ignores loadout choices', () => {

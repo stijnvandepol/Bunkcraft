@@ -67,8 +67,9 @@ describe('arena maps', () => {
               expect(at(Math.floor(s.x + ox), ARENA_FLOOR_Y + dy, Math.floor(s.z + oz))).toBe(BLOCK.AIR);
             }
           }
-          // Forward vector of the camera is (-sin yaw, -cos yaw); it must point towards the origin.
-          expect(-Math.sin(s.yaw) * -s.x + -Math.cos(s.yaw) * -s.z).toBeGreaterThan(0.99 * Math.hypot(s.x, s.z));
+          // Forward vector of the camera is (-sin yaw, -cos yaw): towards the centre, turned at most 75° to look at open
+          // space instead of a wall (QA round 3).
+          expect(-Math.sin(s.yaw) * -s.x + -Math.cos(s.yaw) * -s.z).toBeGreaterThan(Math.cos((76 * Math.PI) / 180) * Math.hypot(s.x, s.z));
         }
       });
 

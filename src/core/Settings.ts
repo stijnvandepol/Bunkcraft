@@ -42,6 +42,8 @@ export interface Settings {
   entityDistance: number;
   /** Where the attack cooldown indicator is drawn. */
   attackIndicator: 'crosshair' | 'hotbar' | 'off';
+  /** Arcade: the damage of each confirmed hit floats up beside the crosshair. */
+  damageNumbers: boolean;
   /** Raw (unaccelerated) mouse input where the browser supports it. */
   rawInput: boolean;
   /** Jump automatically onto one-block ledges while moving. */
@@ -127,6 +129,7 @@ export const DEFAULT_SETTINGS: Settings = {
   maxFps: MAX_FPS_UNLIMITED,
   entityDistance: 100,
   attackIndicator: 'crosshair',
+  damageNumbers: false,
   rawInput: true,
   autoJump: false,
   chatOpacity: 100,
@@ -251,7 +254,7 @@ const ENUM_VALUES = {
 } as const satisfies Partial<Record<keyof Settings, readonly string[]>>;
 
 const BOOLEAN_KEYS = [
-  'dynamicResolution', 'viewBobbing', 'invertMouse', 'rawInput', 'autoJump', 'chatColors', 'chatSuggestions',
+  'dynamicResolution', 'viewBobbing', 'invertMouse', 'rawInput', 'autoJump', 'chatColors', 'chatSuggestions', 'damageNumbers',
   'subtitles', 'reducedMotion', 'reduceFlashes', 'colorBlindSafe', 'highContrast',
   'toggleSneak', 'toggleSprint', 'toggleAttack', 'toggleUse',
   'touchAutoJump', 'touchGestures', 'touchLeftHanded', 'touchSprintPush',

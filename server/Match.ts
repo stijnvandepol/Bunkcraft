@@ -2,14 +2,14 @@ import { type ArenaMap, DEFAULT_MAP, type Spawn, getMap, mapFor, parseMapId } fr
 import { type GameTypeDef, type MapFeature, type Team, gameTypeDef } from '../src/modes/GameTypes';
 import {
   DEFAULT_PRIMARY, DEFAULT_SECONDARY, type OpticId, PLAYER_MAX_HEALTH, type PerkId, REGEN_DELAY, REGEN_PER_SECOND,
-  HITBOX, type WeaponDef, damageAt, fireInterval, magazineFor, opticFor, rangeMulFor, switchDelayFor, weaponDef,
+  HITBOX, type WeaponDef, damageAt, fireInterval, magazineFor, opticFor, rangeMulFor, reloadTimeFor, switchDelayFor, weaponDef,
 } from '../src/modes/Weapons';
-import { type ClassSpec, DEFAULT_CLASS, validateClass } from '../src/modes/Loadouts';
+import { CLASS_SWAP_WINDOW, type ClassSpec, DEFAULT_CLASS, calmPhase, validateClass } from '../src/modes/Loadouts';
 import type {
   ClientMessage, MatchInfo, MatchPhase, ModeEventKind, RosterEntry, ServerMessage,
 } from '../src/net/protocol';
-import { type BlockQuery, rayPlayer, spreadDirection, traceBlocks } from './Combat';
-import { PEEK_LIMIT, bodyVisible, rewindWindow } from './anticheat/LagComp';
+import { type BlockQuery, createBulletTrace, rayPlayer, shotRandom, shotSpread, spreadDirection, traceBullet } from './Combat';
+import { PEEK_LIMIT, bodyVisible, rewindLimit, rewindWindow } from './anticheat/LagComp';
 import { type MatchResult, type ModeLogic } from './modes/ModeLogic';
 import { createLogic } from './modes';
 
@@ -24,7 +24,7 @@ export const VOTE_OPTIONS = 3;
 export const SPAWN_PROTECTION = 2;
 export const SWITCH_DELAY = 0.25;
 /** A class picked this soon after spawning (and before the first shot) applies at once instead of next life. */
-export const CLASS_SWAP_WINDOW = 3;
+export { CLASS_SWAP_WINDOW };
 export const EYE_HEIGHT = 1.62;
 /**
  * A client-reported shot origin further than this from the server's eye is replaced by the server's.
@@ -37,7 +37,15 @@ export const HISTORY_SECONDS = 1;
 export { DEFAULT_REWIND, MAX_REWIND } from './anticheat/LagComp';
 /** Fire messages may arrive this much (s) earlier than the weapon's cadence allows (network jitter). */
 const FIRE_SLACK = 0.04;
+/**
+ * A shot this close before the reload ends finishes the reload. The client ends its reload animation on its own clock,
+ * which started when it asked (half a round trip before the server); its next shot travels the same half trip, so it
+ * arrives about when the server's reload is done. The slack covers the jitter, so no shot is lost after the animation.
+ */
+const RELOAD_SLACK = 0.1;
 const HISTORY_SIZE = 24;
+/** Server ticks whose time is remembered, so a shot's render tick (`rk`) maps back to a moment. */
+const TICK_RING = 64;
 /** Killstreak: every this many kills in one life sends a radar sweep, shown this long. */
 export const RADAR_STREAK = 5;
 export const RADAR_SECONDS = 4;
@@ -66,6 +74,8 @@ export interface MatchHost {
   interpDelay?: number;
   /** Every resolved shot, for the anti-cheat statistics (see anticheat/Suspicion.ts). */
   onShot?(shot: ShotReport): void;
+  /** QA: report the tested target positions with every shot (ARCADE_SHOT_DEBUG=1). */
+  debugShots?: boolean;
   /**
    * A new match is about to start on `current`: returns the map to play next (the host swaps its
    * bullet world), or null to keep the map. `requires` is the map data the game type needs.
@@ -97,6 +107,13 @@ export interface ShotReport {
   dx: number; dy: number; dz: number;
   /** Players hit by this shot (any pellet), with the distance and whether a pellet hit the head. */
   hits: { victim: number; dist: number; head: boolean }[];
+  /** Seconds the targets were rewound for this shot. */
+  rewind: number;
+  /** The client's shot counter and claimed render tick (−1 when absent), the server tick, and where each target was tested. */
+  seq: number;
+  rk: number;
+  tick: number;
+  targets: number[][];
 }
 
 interface Slot {
@@ -114,8 +131,8 @@ interface Slot {
   burstStart: number;
 }
 
-/** A lag compensation sample: position and hitbox height (the pose) at time t. */
-interface Sample { t: number; x: number; y: number; z: number; h: number }
+/** A lag compensation sample: position, view and hitbox height (the pose) at time t. */
+interface Sample { t: number; x: number; y: number; z: number; yaw: number; pitch: number; h: number }
 
 export interface MatchPlayer {
   id: number;
@@ -158,6 +175,9 @@ export interface MatchPlayer {
   history: Sample[];
   historyHead: number;
   historyCount: number;
+  /** Spread seed (dealt at the join, sent with every spawn) and the index of the next shot: the client derives the same spread. */
+  spreadSeed: number;
+  shotN: number;
 }
 
 const dist2 = (ax: number, az: number, bx: number, bz: number) => Math.hypot(ax - bx, az - bz);
@@ -188,13 +208,18 @@ export class Match {
   /** Player who changes team at their next respawn because the other team lost players (0 = nobody). */
   private moveId = 0;
   private readonly tmpDir: [number, number, number] = [0, 0, 0];
-  private readonly tmpPos: [number, number, number, number] = [0, 0, 0, 0];
+  private readonly tmpPos: Sample = { t: 0, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, h: HITBOX.height };
+  private readonly tmpRand: [number, number] = [0, 0];
+  private readonly trace = createBulletTrace();
+  private readonly targets: { o: MatchPlayer; x: number; y: number; z: number; yaw: number; pitch: number; h: number }[] = [];
+  /** Server tick counter (snapshots carry it as `k`) and the time of the last TICK_RING ticks. */
+  tickNo = 0;
+  private readonly tickTimes = new Float64Array(TICK_RING);
   /** Recent shots (where and when), for the spawn choice. */
   private readonly fightX = new Float64Array(FIGHT_MEMORY);
   private readonly fightZ = new Float64Array(FIGHT_MEMORY);
   private readonly fightT = new Float64Array(FIGHT_MEMORY).fill(-1e9);
   private fightHead = 0;
-  private readonly targets: { o: MatchPlayer; x: number; y: number; z: number; h: number }[] = [];
 
   /** The arena this match is played on. */
   map: ArenaMap;
@@ -250,7 +275,8 @@ export class Match {
       lastDamageAt: -1e9, lastHpSent: PLAYER_MAX_HEALTH, respawnAt: 0, protectedUntil: 0,
       primary: DEFAULT_PRIMARY, secondary: DEFAULT_SECONDARY, optic: 'iron', perk: 'none', next: { ...DEFAULT_CLASS }, spawnedAt: now, firedThisLife: false, streak: 0,
       slots: [newSlot(DEFAULT_PRIMARY, 'none'), newSlot(DEFAULT_SECONDARY, 'none'), newSlot('knife', 'none')], slot: 0,
-      switchReadyAt: 0, history: Array.from({ length: HISTORY_SIZE }, () => ({ t: 0, x: 0, y: 0, z: 0, h: HITBOX.height })), historyHead: 0, historyCount: 0,
+      switchReadyAt: 0, history: Array.from({ length: HISTORY_SIZE }, () => ({ t: 0, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, h: HITBOX.height })), historyHead: 0, historyCount: 0,
+      spreadSeed: Math.floor(this.host.random() * 0x100000000) >>> 0, shotN: 0,
       height: HITBOX.height,
       ...(bot ? { bot: true } : {}),
     };
@@ -320,7 +346,7 @@ export class Match {
     const now = this.host.now();
     // Outside a live round nobody fights (warm-up, waiting for players, countdown, between rounds): any
     // change applies at once. In a live round only right after spawning and before the first shot.
-    const calm = this.phase === 'warmup' || this.phase === 'countdown' || this.phase === 'roundend' || this.phase === 'intermission';
+    const calm = calmPhase(this.phase);
     const fresh = !p.firedThisLife && now - p.spawnedAt <= CLASS_SWAP_WINDOW;
     if (p.alive && (calm || fresh) && this.phase !== 'ended' && !this.logic.loadoutFor?.(this, p)) {
       this.equip(p, p.next.primary, p.next.secondary, 'knife', p.next.optic, p.next.perk);
@@ -382,10 +408,18 @@ export class Match {
     this.startReload(p, this.host.now());
   }
 
+  /** A reload is done: full magazine, and the client is told. */
+  private finishReload(p: MatchPlayer, slot: number): void {
+    const s = p.slots[slot];
+    s.reloadDoneAt = 0;
+    s.mag = s.cap;
+    this.host.send(p.id, { t: 'ammo', slot: slot as 0 | 1 | 2, mag: s.mag, reloading: false });
+  }
+
   private startReload(p: MatchPlayer, now: number): void {
     const s = p.slots[p.slot];
     if (s.cap <= 0 || s.mag >= s.cap || s.reloadDoneAt > 0 || now < p.switchReadyAt) return;
-    s.reloadDoneAt = now + s.def.reloadSec;
+    s.reloadDoneAt = now + reloadTimeFor(s.def, s.mag);
     this.host.send(p.id, { t: 'ammo', slot: p.slot, mag: s.mag, reloading: true });
   }
 
@@ -412,6 +446,7 @@ export class Match {
     if (m.slot !== p.slot) this.switchWeapon(id, m.slot); // the client switched without telling us
     const s = p.slots[p.slot];
     const w = s.def;
+    if (s.reloadDoneAt > 0 && now >= s.reloadDoneAt - RELOAD_SLACK) this.finishReload(p, p.slot);
     if (now < p.switchReadyAt || s.reloadDoneAt > 0) return false;
     if (now < s.nextFireAt - FIRE_SLACK) return false;
     if (s.cap > 0 && s.mag <= 0) {
@@ -428,55 +463,64 @@ export class Match {
       } else s.nextFireAt = shotAt + fireInterval(w);
     } else s.nextFireAt = shotAt + fireInterval(w);
     p.firedThisLife = true;
+    // Spread: the next index of this player's seeded sequence (the client predicts the same one and is corrected by `ammo`).
+    const n = p.shotN++;
+    const seq = seqOf(m);
     // Spawn protection ends with the first shot (no shooting from behind a shield).
     if (p.protectedUntil > now) p.protectedUntil = now;
     this.noteFight(p.x, p.z, now);
     if (s.cap > 0) {
       s.mag--;
-      this.host.send(id, { t: 'ammo', slot: p.slot, mag: s.mag, reloading: false });
+      this.host.send(id, { t: 'ammo', slot: p.slot, mag: s.mag, reloading: false, sn: p.shotN, ...(seq >= 0 ? { seq } : {}) });
     }
 
     const ex = p.x, ey = p.y + EYE_HEIGHT, ez = p.z;
     const trusted = Math.hypot(m.ox - ex, m.oy - ey, m.oz - ez) <= MAX_ORIGIN_DRIFT;
     const ox = trusted ? m.ox : ex, oy = trusted ? m.oy : ey, oz = trusted ? m.oz : ez;
     const dx = m.dx / len, dy = m.dy / len, dz = m.dz / len;
-    const spread = m.ads && w.slot !== 'melee' ? w.adsSpread : w.spread;
+    const spread = shotSpread(w, m.ads === true, m.mv === true, m.air === true);
 
-    // Lag compensation: targets are tested where this shooter saw them.
-    const rewind = rewindWindow(this.host.ping(id), this.host.interpDelay);
-    const at = now - rewind;
+    // Lag compensation: targets are tested where this shooter saw them. The client says which server tick its
+    // screen showed (`rk`); without it (older clients) the round trip plus the interpolation delay estimates it.
+    const ping = this.host.ping(id);
+    const interp = this.host.interpDelay ?? 0.1;
+    const shown = typeof m.rk === 'number' ? this.tickTime(m.rk, now) : NaN;
+    const at = Number.isFinite(shown) ? Math.min(now, Math.max(now - rewindLimit(ping, interp), shown)) : now - rewindWindow(ping, interp);
+    const rewind = now - at;
     const damaging = this.phase === 'live';
     // Where each target is tested. Peeker's advantage limit: a target that was already behind cover
     // PEEK_LIMIT seconds ago (as seen from this shot's origin) is not rewound further back into the open.
     const targets = this.targets;
     targets.length = 0;
+    const pos = this.tmpPos;
     for (const o of this.players.values()) {
       if (o === p || !o.alive) continue;
       if (this.teams && o.team === p.team) continue; // no friendly fire
-      const t = { o, x: 0, y: 0, z: 0, h: HITBOX.height };
-      this.positionAt(o, at, now, this.tmpPos);
-      t.x = this.tmpPos[0]; t.y = this.tmpPos[1]; t.z = this.tmpPos[2]; t.h = this.tmpPos[3];
+      this.positionAt(o, at, now, pos);
       if (rewind > PEEK_LIMIT) {
-        this.positionAt(o, now - PEEK_LIMIT, now, this.tmpPos);
-        if (!bodyVisible(this.host.blocks, ox, oy, oz, this.tmpPos[0], this.tmpPos[1], this.tmpPos[2], this.tmpPos[3])) {
-          t.x = this.tmpPos[0]; t.y = this.tmpPos[1]; t.z = this.tmpPos[2]; t.h = this.tmpPos[3];
-        }
+        const x = pos.x, y = pos.y, z = pos.z, yaw = pos.yaw, pitch = pos.pitch, h = pos.h;
+        this.positionAt(o, now - PEEK_LIMIT, now, pos);
+        if (bodyVisible(this.host.blocks, ox, oy, oz, pos.x, pos.y, pos.z, pos.h)) { pos.x = x; pos.y = y; pos.z = z; pos.yaw = yaw; pos.pitch = pitch; pos.h = h; }
       }
-      targets.push(t);
+      targets.push({ o, x: pos.x, y: pos.y, z: pos.z, yaw: pos.yaw, pitch: pos.pitch, h: pos.h });
     }
 
     const dealt = new Map<number, { damage: number; head: boolean }>();
     let tracer: [number, number, number] | null = null;
     const dir = this.tmpDir;
+    const rand = this.tmpRand;
+    const trace = this.trace;
     const hitList: ShotReport['hits'] = [];
     for (let k = 0; k < w.pellets; k++) {
-      spreadDirection(dx, dy, dz, spread, this.host.random(), this.host.random(), dir);
-      let tEnd = traceBlocks(this.host.blocks, ox, oy, oz, dir[0], dir[1], dir[2], w.maxRange);
+      shotRandom(p.spreadSeed, n, k, w.pellets, rand);
+      spreadDirection(dx, dy, dz, spread, rand[0], rand[1], dir);
+      traceBullet(this.host.blocks, ox, oy, oz, dir[0], dir[1], dir[2], w.maxRange, trace);
+      let tEnd = trace.t;
       let victim: MatchPlayer | null = null;
       let hitHead = false;
       for (const t of targets) {
-        const hit = rayPlayer(ox, oy, oz, dir[0], dir[1], dir[2], t.x, t.y, t.z, t.h);
-        if (hit && hit.t < tEnd) { tEnd = hit.t; victim = t.o; hitHead = hit.head; }
+        const hit = rayPlayer(ox, oy, oz, dir[0], dir[1], dir[2], t.x, t.y, t.z, t.yaw, t.pitch, t.h / HITBOX.height);
+        if (hit && hit.t < tEnd) { tEnd = hit.t; victim = t.o; hitHead = hit.part === 'head'; }
       }
       if (victim) {
         const prevHit = hitList.find((h) => h.victim === victim!.id);
@@ -484,7 +528,10 @@ export class Match {
       }
       if (!tracer) tracer = [ox + dir[0] * tEnd, oy + dir[1] * tEnd, oz + dir[2] * tEnd];
       if (victim && damaging && now >= victim.protectedUntil) {
-        const dmg = damageAt(w, tEnd, s.rangeMul) * (hitHead ? w.headshot : 1) * (this.logic.damageMul?.(this, p, victim, w) ?? 1);
+        // See-through blocks (a window, a hedge) on the way to the victim cost damage.
+        let keep = 1;
+        for (let i = 0; i < trace.thin; i++) if (trace.thinT[i] < tEnd) keep *= trace.thinMul[i];
+        const dmg = damageAt(w, tEnd, s.rangeMul) * (hitHead ? w.headshot : 1) * keep * (this.logic.damageMul?.(this, p, victim, w) ?? 1);
         const prev = dealt.get(victim.id);
         if (prev) { prev.damage += dmg; prev.head ||= hitHead; } else dealt.set(victim.id, { damage: dmg, head: hitHead });
       }
@@ -495,16 +542,34 @@ export class Match {
       if (p.perk === 'suppressor') shot.sup = 1;
       this.host.broadcast(shot);
     }
-    for (const [vid, d] of dealt) this.applyDamage(p, this.players.get(vid)!, Math.max(1, Math.round(d.damage)), w, d.head, now);
-    this.host.onShot?.({ shooter: id, weapon: w.id, ox, oy, oz, dx, dy, dz, hits: hitList });
+    for (const [vid, d] of dealt) this.applyDamage(p, this.players.get(vid)!, Math.max(1, Math.round(d.damage)), w, d.head, now, seq);
+    this.host.onShot?.({
+      shooter: id, weapon: w.id, ox, oy, oz, dx, dy, dz, hits: hitList, rewind, seq, rk: typeof m.rk === 'number' ? m.rk : -1, tick: this.tickNo,
+      targets: this.host.debugShots ? targets.map((t) => [t.o.id, r2(t.x), r2(t.y), r2(t.z), r2(t.yaw), r2(t.pitch)]) : [],
+    });
     return true;
   }
 
-  private applyDamage(killer: MatchPlayer, victim: MatchPlayer, amount: number, w: WeaponDef, head: boolean, now: number): void {
+  /** The server time of a (fractional) tick number from a client's `rk`; NaN when it is not a recent tick. */
+  tickTime(rk: number, now: number): number {
+    if (!Number.isFinite(rk) || this.tickNo === 0) return NaN;
+    const k0 = Math.floor(rk), f = rk - k0;
+    if (k0 > this.tickNo || k0 <= this.tickNo - TICK_RING + 1 || k0 < 1) return NaN;
+    const t0 = this.tickTimes[k0 % TICK_RING];
+    if (k0 === this.tickNo) {
+      // Past the newest tick (the client extrapolates a late packet for a moment): one tick interval further.
+      const prev = k0 > 1 ? this.tickTimes[(k0 - 1) % TICK_RING] : t0;
+      return Math.min(now, t0 + f * Math.max(0, t0 - prev));
+    }
+    const t1 = this.tickTimes[(k0 + 1) % TICK_RING];
+    return t0 + (t1 - t0) * f;
+  }
+
+  private applyDamage(killer: MatchPlayer, victim: MatchPlayer, amount: number, w: WeaponDef, head: boolean, now: number, seq = -1): void {
     victim.health = Math.max(0, victim.health - amount);
     victim.lastDamageAt = now;
     const killed = victim.health <= 0;
-    this.host.send(killer.id, { t: 'hit', victim: victim.id, damage: amount, head, killed });
+    this.host.send(killer.id, { t: 'hit', victim: victim.id, damage: amount, head, killed, ...(seq >= 0 ? { seq } : {}) });
     this.host.onDamage?.(killer.id, victim.id, amount, w.id, head);
     const hx = killer.x - victim.x, hz = killer.z - victim.z, hl = Math.hypot(hx, hz) || 1;
     this.host.send(victim.id, { t: 'damaged', from: killer.id, damage: amount, dx: r2(hx / hl), dz: r2(hz / hl) });
@@ -548,30 +613,35 @@ export class Match {
   // ---------------------------------------------------------------- lag compensation
 
   /**
-   * Where a player was at time `t` (seconds): interpolated between recorded ticks; out[3] is the hitbox height
-   * then (the taller of the two samples around `t`: a pose change is never in the shooter's disfavour).
+   * Where a player was at time `t` (seconds), where they looked, and the hitbox height then (the taller of the two
+   * samples around `t`: a pose change is never in the shooter's disfavour): interpolated between recorded ticks.
    */
-  private positionAt(p: MatchPlayer, t: number, now: number, out: [number, number, number, number]): void {
+  private positionAt(p: MatchPlayer, t: number, now: number, out: Sample): void {
     // Newest sample is the live position at `now`.
-    let nx = p.x, ny = p.y, nz = p.z, nh = p.height, nt = now;
+    let nx = p.x, ny = p.y, nz = p.z, nyaw = p.yaw, npitch = p.pitch, nh = p.height, nt = now;
     for (let i = 0; i < p.historyCount; i++) {
       const s = p.history[(p.historyHead - 1 - i + HISTORY_SIZE * 2) % HISTORY_SIZE];
       if (s.t <= t) {
         const span = nt - s.t;
         const f = span > 1e-6 ? (t - s.t) / span : 0;
-        out[0] = s.x + (nx - s.x) * f; out[1] = s.y + (ny - s.y) * f; out[2] = s.z + (nz - s.z) * f;
-        out[3] = Math.max(s.h, nh);
+        out.x = s.x + (nx - s.x) * f; out.y = s.y + (ny - s.y) * f; out.z = s.z + (nz - s.z) * f;
+        // Shortest way round, like the client's interpolation.
+        let dyaw = nyaw - s.yaw;
+        dyaw = Math.atan2(Math.sin(dyaw), Math.cos(dyaw));
+        out.yaw = s.yaw + dyaw * f;
+        out.pitch = s.pitch + (npitch - s.pitch) * f;
+        out.h = Math.max(s.h, nh);
         return;
       }
-      nx = s.x; ny = s.y; nz = s.z; nh = s.h; nt = s.t;
+      nx = s.x; ny = s.y; nz = s.z; nyaw = s.yaw; npitch = s.pitch; nh = s.h; nt = s.t;
     }
     // Older than anything recorded: the oldest known position.
-    out[0] = nx; out[1] = ny; out[2] = nz; out[3] = nh;
+    out.x = nx; out.y = ny; out.z = nz; out.yaw = nyaw; out.pitch = npitch; out.h = nh;
   }
 
   private record(p: MatchPlayer, now: number): void {
     const s = p.history[p.historyHead];
-    s.t = now; s.x = p.x; s.y = p.y; s.z = p.z; s.h = p.height;
+    s.t = now; s.x = p.x; s.y = p.y; s.z = p.z; s.yaw = p.yaw; s.pitch = p.pitch; s.h = p.height;
     p.historyHead = (p.historyHead + 1) % HISTORY_SIZE;
     if (p.historyCount < HISTORY_SIZE) p.historyCount++;
   }
@@ -582,6 +652,8 @@ export class Match {
     const now = this.host.now();
     const dt = Math.min(0.25, Math.max(0, now - this.lastTick));
     this.lastTick = now;
+    this.tickNo++;
+    this.tickTimes[this.tickNo % TICK_RING] = now;
     if (this.players.size === 0) return;
     for (const p of this.players.values()) if (p.alive) this.record(p, now);
 
@@ -605,11 +677,7 @@ export class Match {
       }
       for (let i = 0; i < 3; i++) {
         const s = p.slots[i];
-        if (s.reloadDoneAt > 0 && now >= s.reloadDoneAt) {
-          s.reloadDoneAt = 0;
-          s.mag = s.cap;
-          this.host.send(p.id, { t: 'ammo', slot: i as 0 | 1 | 2, mag: s.mag, reloading: false });
-        }
+        if (s.reloadDoneAt > 0 && now >= s.reloadDoneAt) this.finishReload(p, i);
       }
       if (p.health < PLAYER_MAX_HEALTH && now - p.lastDamageAt >= REGEN_DELAY) {
         p.health = Math.min(PLAYER_MAX_HEALTH, p.health + REGEN_PER_SECOND * dt);
@@ -826,8 +894,9 @@ export class Match {
     this.host.moveTo(p.id, p.x, p.y, p.z);
     this.host.send(p.id, {
       t: 'spawn', x: p.x, y: p.y, z: p.z, yaw: p.yaw, team: p.team, primary: p.primary, secondary: p.secondary, optic: p.optic, perk: p.perk, health: p.health,
+      ss: p.spreadSeed,
     });
-    for (let i = 0; i < 3; i++) this.host.send(p.id, { t: 'ammo', slot: i as 0 | 1 | 2, mag: p.slots[i].mag, reloading: false });
+    for (let i = 0; i < 3; i++) this.host.send(p.id, { t: 'ammo', slot: i as 0 | 1 | 2, mag: p.slots[i].mag, reloading: false, sn: p.shotN });
   }
 
   /** A shot was fired here (recent fights: spawns keep away from them). Fixed ring, no allocation. */
@@ -975,3 +1044,8 @@ function isSlot(v: unknown): v is 0 | 1 | 2 {
 }
 
 const r2 = (v: number) => Math.round(v * 100) / 100;
+
+/** The client's shot counter from a `fire` message, −1 when absent. */
+function seqOf(m: Extract<ClientMessage, { t: 'fire' }>): number {
+  return typeof m.seq === 'number' && Number.isInteger(m.seq) && m.seq >= 0 ? m.seq : -1;
+}

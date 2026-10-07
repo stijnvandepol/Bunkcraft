@@ -67,6 +67,17 @@ describe('Realms quick play', () => {
     for (const m of r.body.modes) expect(m.players).toBeGreaterThanOrEqual(0);
   });
 
+  it('serves a household behind one address: four players with the playlist open and browsing for a minute (QA round 3)', async () => {
+    const ip = '10.201.0.7';
+    let refused = 0;
+    // Four playlists polling every 10 s for a minute (24), each opening it three times (12) and browsing twice (8), with margin.
+    for (let i = 0; i < 80; i++) {
+      const r = await api(srv, 'GET', i % 5 === 4 ? '/api/rooms?public=1&kind=arcade' : '/api/realms', undefined, ip);
+      if (r.status === 429) refused++;
+    }
+    expect(refused).toBe(0);
+  });
+
   it('keeps the room creation limit: quick play may join but not open lobbies past it', async () => {
     const limited = await startServer({ ROOM_CREATE_LIMIT: '1' });
     try {

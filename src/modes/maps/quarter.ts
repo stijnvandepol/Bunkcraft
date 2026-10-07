@@ -74,7 +74,7 @@ export const QUARTER: ArenaMapDef = {
     // East block next to the courtyard: doors on both sides, a ramp-like stair on the south alley.
     building(b, 15, 25, 0, 10, 5, BLOCK.STONE_BRICKS, [
       door('u0', 3, 5), door('u1', 7, 9),
-      glass('u0', 8, 9), glass('u0', 0, 0), glass('u1', 1, 2), glass('v1', 18, 19), glass('v1', 22, 23),
+      glass('u0', 8, 8), glass('u0', 0, 0), glass('v1', 18, 19), glass('v1', 22, 23),
     ], BLOCK.SPRUCE_PLANKS);
     box(20, 20, 3, 4, 1, 4, BLOCK.STONE_BRICKS);
     box(17, 18, 7, 8, 1, 2, BLOCK.BOOKSHELF);

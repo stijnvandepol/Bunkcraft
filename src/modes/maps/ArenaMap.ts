@@ -127,6 +127,10 @@ function spawnAt(u: number, v: number, sx: number, sz: number): Spawn {
   return facingCentre(toWorld(u, sx), toWorld(v, sz));
 }
 
+/** How far a spawn's yaw may turn away from the centre to look at open space, and how far it looks (blocks). */
+const SPAWN_TURN = 75;
+const SPAWN_VIEW = 12;
+
 function facingCentre(x: number, z: number): Spawn {
   // Three.js camera: yaw 0 looks along -Z, so facing the centre from (x, z) is atan2(x, z).
   const yaw = Math.round(Math.atan2(x, z) * 1000) / 1000;
@@ -171,6 +175,7 @@ export class ArenaMap {
       const at = ([x, z]: [number, number]) => facingCentre(x + 0.5, z + 0.5);
       this.highGround = (def.highGround ?? []).map(([x, z]) => ({ x: x + 0.5, z: z + 0.5 }));
       this.spawns = { red: def.redSpawns.map(at), blue: def.blueSpawns.map(at), ffa: def.ffaSpawns.map(at) };
+      this.openSpawnYaws();
       return;
     }
     this.mirrored = true;
@@ -187,6 +192,40 @@ export class ArenaMap {
         spawnAt(u, v, -1, -1), spawnAt(u, v, 1, -1), spawnAt(u, v, -1, 1), spawnAt(u, v, 1, 1),
       ]),
     };
+    this.openSpawnYaws();
+  }
+
+  /**
+   * Turns every spawn from facing the centre towards the most open direction within SPAWN_TURN of it, when a wall stands
+   * right in front (QA round 3: 216 of the spawns looked at a wall 1-4 blocks away, so every life began with "where am
+   * I?"). The view counts up to SPAWN_VIEW blocks at eye height, the worst of all cover variants; a smaller turn wins a tie.
+   */
+  private openSpawnYaws(): void {
+    for (const list of [this.spawns.red, this.spawns.blue, this.spawns.ffa]) {
+      for (const s of list) {
+        const centre = s.yaw;
+        let best = centre, bestScore = -Infinity;
+        for (let deg = -SPAWN_TURN; deg <= SPAWN_TURN; deg += 5) {
+          const yaw = centre + (deg * Math.PI) / 180;
+          const score = this.viewFrom(s, yaw) - Math.abs(deg) * 0.02;
+          if (score > bestScore + 1e-9) { bestScore = score; best = yaw; }
+        }
+        s.yaw = Math.round(Math.atan2(Math.sin(best), Math.cos(best)) * 1000) / 1000;
+      }
+    }
+  }
+
+  /** Free distance (blocks, at most SPAWN_VIEW) straight ahead at eye height, the worst over the cover variants. */
+  private viewFrom(s: Spawn, yaw: number): number {
+    const dx = -Math.sin(yaw), dz = -Math.cos(yaw);
+    const ey = Math.floor(s.y + 1.62);
+    let worst = SPAWN_VIEW;
+    for (let v = 0; v < this.variants; v++) {
+      let d = 0;
+      while (d < worst && this.blockAt(v, Math.floor(s.x + dx * d), ey, Math.floor(s.z + dz * d)) === BLOCK.AIR) d += 0.25;
+      worst = Math.min(worst, d);
+    }
+    return worst;
   }
 
   /** Capture zones with their standing level (the same in every variant: objectives stay off the variable cover). */

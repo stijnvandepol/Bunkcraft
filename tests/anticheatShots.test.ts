@@ -3,7 +3,7 @@ import type { ClientMessage, MatchInfo, ServerMessage } from '../src/net/protoco
 import { BLOCK } from '../src/world/BlockRegistry';
 import { Match, type MatchHost, SPAWN_PROTECTION, WARMUP_SECONDS } from '../server/Match';
 import { ORIGIN_TOLERANCE, isUnitVector, originError, viewDir } from '../server/anticheat/AimCheck';
-import { MAX_REWIND, PEEK_LIMIT, bodyVisible, rewindWindow } from '../server/anticheat/LagComp';
+import { MAX_REWIND, PEEK_LIMIT, REWIND_SLACK, bodyVisible, rewindLimit, rewindWindow } from '../server/anticheat/LagComp';
 import { AimStats, SUSPICION } from '../server/anticheat/Suspicion';
 import { rng } from './helpers/clientSim';
 
@@ -48,13 +48,19 @@ const aimAt = (x: number, y: number, z: number): Fire => {
 };
 
 describe('lag compensation window', () => {
-  it('is RTT/2 plus the interpolation delay, capped at 250 ms', () => {
+  it('is the full round trip plus the interpolation delay, capped at 400 ms', () => {
     expect(rewindWindow(0)).toBeCloseTo(0.1);
-    expect(rewindWindow(100)).toBeCloseTo(0.15);
-    expect(rewindWindow(200)).toBeCloseTo(0.2);
+    expect(rewindWindow(100)).toBeCloseTo(0.2);
+    expect(rewindWindow(200)).toBeCloseTo(0.3);
     expect(rewindWindow(1000)).toBe(MAX_REWIND);
-    expect(MAX_REWIND).toBe(0.25);
-    expect(rewindWindow(100, 2 / 30)).toBeCloseTo(0.05 + 2 / 30);
+    expect(MAX_REWIND).toBe(0.4);
+    expect(rewindWindow(100, 2 / 30)).toBeCloseTo(0.1 + 2 / 30);
+  });
+
+  it("a client's own render time is trusted up to its round trip plus slack", () => {
+    expect(rewindLimit(0)).toBe(MAX_REWIND);
+    expect(rewindLimit(100, 2 / 30)).toBeCloseTo(0.1 + 2 / 30 + REWIND_SLACK);
+    expect(rewindLimit(900)).toBe(MAX_REWIND);
   });
 
   it('body line of sight sees around a low wall but not through a full one', () => {

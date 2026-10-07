@@ -34,6 +34,9 @@ export interface RealmsActions {
   version: string;
 }
 
+/** How often the home screen refreshes its player counts. */
+const STATS_REFRESH_MS = 10_000;
+
 const COLUMN = 'display: flex; flex-direction: column; align-items: center; gap: calc(var(--u) * 4);';
 /** The mode PLAY starts: the last one played or picked on the home screen. */
 const MODE_KEY = 'bunkcraft.lastMode';
@@ -175,7 +178,10 @@ export class RealmsMenu {
       home.setStats(await realmsStats());
     };
     void refresh();
-    const timer = window.setInterval(() => (this.home === home && home.el.isConnected ? void refresh() : window.clearInterval(timer)), 5000);
+    const timer = window.setInterval(() => {
+      if (this.home !== home || !home.el.isConnected) window.clearInterval(timer);
+      else if (!document.hidden && this.stack.top === home.el) void refresh();
+    }, STATS_REFRESH_MS);
   }
 
   /** The profile of this browser (created on first use) once there is a name; joining waits for it. */

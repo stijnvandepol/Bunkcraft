@@ -35,6 +35,11 @@ export const EQUIPMENT_UNLOCKS: readonly Unlock[] = [
   { kind: 'secondary', id: 'revolver', level: 9 },
   { kind: 'primary', id: 'semisniper', level: 10 },
   { kind: 'primary', id: 'sniper', level: 12 },
+  // QA round 3 additions.
+  { kind: 'optic', id: 'combat', level: 6 },
+  { kind: 'primary', id: 'lever', level: 7 },
+  { kind: 'primary', id: 'battle', level: 11 },
+  { kind: 'primary', id: 'antimat', level: 12 },
 ];
 
 /** Titles shown under your name in the Realms hub. */
@@ -139,7 +144,7 @@ export function equipmentList(): { kind: 'primary' | 'secondary' | 'optic' | 'pe
   const out: { kind: 'primary' | 'secondary' | 'optic' | 'perk'; id: string; level: number }[] = [];
   for (const id of PRIMARY_WEAPONS) out.push({ kind: 'primary', id, level: unlockLevel('primary', id) });
   for (const id of SECONDARY_WEAPONS) out.push({ kind: 'secondary', id, level: unlockLevel('secondary', id) });
-  for (const id of ['iron', 'reddot', 'holo', 'scope']) out.push({ kind: 'optic', id, level: unlockLevel('optic', id) });
+  for (const id of ['iron', 'reddot', 'holo', 'combat', 'scope']) out.push({ kind: 'optic', id, level: unlockLevel('optic', id) });
   for (const id of PERK_IDS) out.push({ kind: 'perk', id, level: unlockLevel('perk', id) });
   return out;
 }

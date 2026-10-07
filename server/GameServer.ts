@@ -9,7 +9,7 @@ import {
 import { ARENA_FLOOR_Y, DEFAULT_MAP, type MapId, type MapSetting, getMap, mapFor, nextMap, parseMapId, parseMapSetting, voteChoices } from '../src/modes/maps';
 import { type GameType, gameTypeDef } from '../src/modes/GameTypes';
 import { GAME_MODES, type GameMode, hasSurvivalRules } from '../src/player/GameMode';
-import { BINARY_VERSION, BINARY_VERSION_SHOT, BINARY_VERSION_SNAP_Q, encodeBinary, encodeShot, encodeSnap, encodeSnapQ } from '../src/net/binary';
+import { BINARY_VERSION, BINARY_VERSION_SHOT, BINARY_VERSION_SNAP_Q, BINARY_VERSION_SNAP_TICK, encodeBinary, encodeShot, encodeSnap, encodeSnapQ } from '../src/net/binary';
 import { ARCADE_TICK_HZ, ARCADE_TICK_MAX, ARCADE_TICK_MIN, arcadeInterpDelay, arcadeMaxSpeed } from '../src/modes/ArcadeLogic';
 import { HITBOX, perkMoveSpeed } from '../src/modes/Weapons';
 import { POSE, poseEye, slideCooldown } from '../src/player/ArcadeMove';
@@ -49,6 +49,8 @@ import type { ProfileService } from './progression/ProfileService';
 import { type RateLimiter, hashIp, newToken, safeEqual, tokenMatches, verifyPassword, hashToken } from './Security';
 
 const TICK_MS = 50; // 20 ticks per second, like Minecraft
+/** Blocks per second above which the server counts a shooter as moving (spread penalty), whatever the client says. */
+const MOVING_SPEED = 3;
 const DAY_SECONDS = 1200;
 const SAVE_INTERVAL_MS = 30_000;
 /** A game tick at least this long (wall clock) is counted and logged with its phases. */
@@ -191,6 +193,8 @@ interface Session {
   binShot: boolean;
   /** Highest binary format version both sides understand (0 = JSON only, 1 = snap/ent frames). */
   binVersion: number;
+  /** Arcade: the quantised snapshot carries the server tick (binary version 4). */
+  bink: boolean;
   guard: InventoryGuard;
   /** Arcade: fire, reload, weapon and loadout requests. */
   fires: Bucket;
@@ -665,6 +669,7 @@ export class GameServer {
       random: Math.random,
       ping: (id) => this.sessions.get(id)?.pingMs ?? 0,
       onShot: (r) => { this.progress?.shot(r.shooter, r.weapon, r.hits.length > 0); this.onShot(r); },
+      debugShots: process.env.ARCADE_SHOT_DEBUG === '1',
       ...this.progress?.hooks(),
       get interpDelay() { return arcadeInterpDelay(gs.tickHz); },
       nextMap: (current, requires, preferred) => {
@@ -857,6 +862,7 @@ export class GameServer {
       binq: hello.bin === true && this.opts.binary !== false && !!this.match && Number(hello.binv) >= BINARY_VERSION_SNAP_Q,
       binShot: hello.bin === true && this.opts.binary !== false && !!this.match && Number(hello.binv) >= BINARY_VERSION_SHOT,
       binVersion: hello.bin === true && this.opts.binary !== false ? Math.max(1, Math.min(BINARY_VERSION, Math.floor(Number(hello.binv)) || 1)) : 0,
+      bink: hello.bin === true && this.opts.binary !== false && !!this.match && Number(hello.binv) >= BINARY_VERSION_SNAP_TICK,
       guard: new InventoryGuard(initial.error ? [] : initial.slots),
     });
     const joined = this.match?.join(session.id, name) ?? null;
@@ -902,7 +908,7 @@ export class GameServer {
   /** A session with every rate limit and check a player has (people and bots alike). */
   private newSession(
     name: string, ws: WebSocket, ip: string, start: { x: number; y: number; z: number },
-    extra: Pick<Session, 'op' | 'owner' | 'verified' | 'keyHash' | 'bin' | 'binq' | 'binShot' | 'binVersion' | 'guard'>,
+    extra: Pick<Session, 'op' | 'owner' | 'verified' | 'keyHash' | 'bin' | 'binq' | 'binShot' | 'binVersion' | 'bink' | 'guard'>,
   ): Session {
     return {
       id: this.nextId++, name, ws, ip, ...extra,
@@ -926,7 +932,7 @@ export class GameServer {
     const match = this.match;
     if (!match || this.closed || this.sessions.size >= this.maxPlayers) return null;
     const session = this.newSession(name, BOT_SOCKET, 'bot', this.world.spawn, {
-      op: false, owner: false, verified: false, bin: false, binq: false, binShot: false, binVersion: 0, guard: new InventoryGuard([]),
+      op: false, owner: false, verified: false, bin: false, binq: false, binShot: false, binVersion: 0, bink: false, guard: new InventoryGuard([]),
     });
     session.sink = sink(session.id);
     const joined = match.join(session.id, name, true);
@@ -1238,6 +1244,9 @@ export class GameServer {
       this.logger.debug('cheat', { name: s.name, kind: 'shot', rule: 'origin', error: Math.round(err * 100) / 100 });
       m = { ...msg, ox: s.x, oy: s.y + 1.62, oz: s.z };
     }
+    // Spread penalty for moving: the client says so, and the server's own velocity estimate overrules a client that
+    // claims to stand still while running (its tracers then disagree with the server, its problem).
+    if (!m.mv && Math.hypot(s.velX, s.velZ) > MOVING_SPEED) m = { ...m, mv: true };
     s.lastFireAt = now;
     return match.fire(s.id, m);
   }
@@ -1247,6 +1256,7 @@ export class GameServer {
     const s = this.sessions.get(r.shooter);
     const match = this.match;
     if (!s || !match) return;
+    if (r.targets.length > 0) this.send(s, { t: 'shotdbg', seq: r.seq, rewind: Math.round(r.rewind * 1000) / 1000, rk: r.rk, tick: r.tick, targets: r.targets, hits: r.hits.map((h) => h.victim), ray: [r.ox, r.oy, r.oz, r.dx, r.dy, r.dz].map((v) => Math.round(v * 10000) / 10000) });
     const me = match.players.get(r.shooter);
     // The opponent closest to the aim line is what the shot was meant for.
     let best = Infinity, dist = NaN;
@@ -1585,7 +1595,7 @@ export class GameServer {
         if (this.match || !s.trail.sample(at, pose)) { pose.x = s.x; pose.y = s.y; pose.z = s.z; pose.yaw = s.yaw; pose.pitch = s.pitch; }
         players.push([s.id, round(pose.x), round(pose.y), round(pose.z), round(pose.yaw), round(pose.pitch), s.flags, s.held]);
       }
-      if (players.length > 0) this.broadcast({ t: 'snap', players });
+      if (players.length > 0) this.broadcast(this.match ? { t: 'snap', players, k: this.match.tickNo } : { t: 'snap', players });
     }
     if (this.tickCount % 100 === 0 && !this.match) this.broadcast({ t: 'time', time: this.world.time, day: this.world.day ?? 0 });
   }
@@ -1621,7 +1631,7 @@ export class GameServer {
           players.push([s.id, round(a.x), round(a.y), round(a.z), round(s.yaw), round(s.pitch), (s.flags & ~SNAP_FLAG_STALE) | SNAP_FLAG_STALE, s.held]);
         }
       }
-      if (players.length > 0) this.send(r, { t: 'snap', players });
+      if (players.length > 0) this.send(r, { t: 'snap', players, k: match.tickNo });
     }
   }
 
@@ -1660,7 +1670,7 @@ export class GameServer {
     // Using an item on a mob can hand one back (milking a cow gives a milk bucket).
     if (msg.t === 'mobused' && msg.give) s.guard.creditPickup(msg.give, 1);
     if (s.bin) {
-      const frame = s.binq && msg.t === 'snap' ? encodeSnapQ(msg.players, 0, ARENA_FLOOR_Y, 0)
+      const frame = s.binq && msg.t === 'snap' ? encodeSnapQ(msg.players, 0, ARENA_FLOOR_Y, 0, s.bink ? msg.k ?? -1 : -1)
         : s.binShot && msg.t === 'shot' ? encodeShot(msg) : encodeBinary(msg);
       if (frame) {
         s.ws.send(frame);
@@ -1678,6 +1688,7 @@ export class GameServer {
     let data: string | undefined;
     let frame: ArrayBuffer | null | undefined;
     let frameQ: ArrayBuffer | undefined;
+    let frameQK: ArrayBuffer | undefined;
     let frameShot: ArrayBuffer | null | undefined;
     for (const s of this.sessions.values()) {
       if (s.sink) { if (s.id !== except) s.sink(msg); continue; }
@@ -1691,9 +1702,11 @@ export class GameServer {
         }
       }
       if (s.binq && msg.t === 'snap') {
-        frameQ ??= encodeSnapQ(msg.players, 0, ARENA_FLOOR_Y, 0);
-        s.ws.send(frameQ);
-        metrics.sent(frameQ.byteLength);
+        const f = s.bink && msg.k !== undefined
+          ? (frameQK ??= encodeSnapQ(msg.players, 0, ARENA_FLOOR_Y, 0, msg.k))
+          : (frameQ ??= encodeSnapQ(msg.players, 0, ARENA_FLOOR_Y, 0));
+        s.ws.send(f);
+        metrics.sent(f.byteLength);
         continue;
       }
       if (s.bin && (msg.t === 'snap' || msg.t === 'ent')) {
