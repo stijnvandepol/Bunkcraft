@@ -1,0 +1,142 @@
+/* ---------------------------------------------------------------- Realms progression (rank badges, profile, XP) */
+
+/* Rank badge: a pixel shield in the tier colour; the level is drawn from data-lv (no text in the DOM). */
+.rank-badge {
+  display: inline-block;
+  flex: none;
+  position: relative;
+  min-width: calc(var(--s) * 11);
+  height: calc(var(--s) * 9);
+  margin-right: calc(var(--s) * 3);
+  vertical-align: middle;
+  background: var(--rank, #8a8a8a);
+  box-shadow: inset 0 calc(var(--s) * -2) 0 rgba(0, 0, 0, 0.35), inset 0 var(--s) 0 rgba(255, 255, 255, 0.35), 0 0 0 var(--s) #000;
+  clip-path: polygon(0 0, 100% 0, 100% 70%, 50% 100%, 0 70%);
+  pointer-events: none;
+}
+.rank-badge::before {
+  content: attr(data-lv);
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  text-align: center;
+  font-size: calc(var(--s) * 6);
+  line-height: calc(var(--s) * 7);
+  color: #fff;
+  text-shadow: calc(var(--s) * 0.5) calc(var(--s) * 0.5) 0 #000;
+}
+.rank-badge.prestige {
+  background: linear-gradient(180deg, #2a0f3a, #120616);
+  box-shadow: inset 0 0 0 var(--s) #ffcc33, 0 0 0 var(--s) #000;
+}
+.rank-badge.prestige::before { content: 'P' attr(data-p); color: #ffcc33; }
+.rank-badge.big { min-width: calc(var(--s) * 22); height: calc(var(--s) * 18); }
+.rank-badge.big::before { font-size: calc(var(--s) * 9); line-height: calc(var(--s) * 13); }
+.rank-badge.big.prestige::after {
+  content: attr(data-lv);
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(var(--s) * 3);
+  text-align: center;
+  font-size: calc(var(--s) * 5);
+  color: #fff;
+}
+
+/* ---------------------------------------------------------------- profile banner in the Realms header */
+
+.realms-profile {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--s) * 5);
+  width: min(calc(var(--s) * 300), 92vw);
+  padding: calc(var(--s) * 3) calc(var(--s) * 5);
+  box-shadow: inset 0 0 0 var(--s) rgba(0, 0, 0, 0.8), inset 0 0 0 calc(var(--s) * 2) rgba(255, 255, 255, 0.15);
+  cursor: pointer;
+  pointer-events: auto;
+}
+.realms-profile:hover { box-shadow: inset 0 0 0 var(--s) #fff; }
+.realms-profile .rp-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: var(--s); }
+.realms-profile .rp-top { display: flex; justify-content: space-between; gap: calc(var(--s) * 4); }
+.realms-profile .rp-name { color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.realms-profile .rp-title { color: #ffff55; }
+.realms-profile .rp-level { color: #fff; white-space: nowrap; }
+.prog-bar {
+  position: relative;
+  height: calc(var(--s) * 5);
+  background: rgba(0, 0, 0, 0.6);
+  box-shadow: inset 0 0 0 var(--s) #000;
+}
+.prog-bar > i { display: block; height: 100%; width: 0; background: linear-gradient(180deg, #8cff5a, #3fb81e); transition: width 0.6s ease-out; }
+.prog-bar.max > i { background: linear-gradient(180deg, #ffe066, #d0a020); }
+.realms-profile .rp-xp { color: #d0d0d0; font-size: calc(var(--fs) * 0.8); }
+.realms-progress-row { display: flex; gap: calc(var(--s) * 3); flex-wrap: wrap; justify-content: center; }
+
+/* ---------------------------------------------------------------- stats, challenges, armory (menu bodies) */
+
+.prog-panel { display: flex; flex-direction: column; gap: calc(var(--s) * 5); width: min(calc(var(--s) * 300), 94vw); margin: 0 auto; padding: calc(var(--s) * 4) 0; }
+.prog-section-title { color: #ffff55; margin-top: calc(var(--s) * 2); }
+.prog-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(calc(var(--s) * 70), 1fr)); gap: calc(var(--s) * 3); }
+.prog-stat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s);
+  padding: calc(var(--s) * 3) calc(var(--s) * 4);
+  background: rgba(0, 0, 0, 0.45);
+  box-shadow: inset 0 0 0 var(--s) rgba(255, 255, 255, 0.1);
+}
+.prog-stat .k { color: #a0a0a0; font-size: calc(var(--fs) * 0.8); }
+.prog-stat .v { color: #fff; }
+.prog-row {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--s) * 4);
+  padding: calc(var(--s) * 3) calc(var(--s) * 4);
+  background: rgba(0, 0, 0, 0.45);
+  box-shadow: inset 0 0 0 var(--s) rgba(255, 255, 255, 0.1);
+}
+.prog-row .grow { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: var(--s); }
+.prog-row .muted, .prog-muted { color: #a0a0a0; }
+.prog-row .good { color: #55ff55; }
+.prog-row .bad { color: #ff5555; }
+.prog-row.done { box-shadow: inset 0 0 0 var(--s) #55ff55; }
+.prog-row .right { text-align: right; white-space: nowrap; }
+
+.camo-row { display: flex; flex-wrap: wrap; gap: calc(var(--s) * 2); }
+.camo-swatch {
+  width: calc(var(--s) * 14);
+  height: calc(var(--s) * 14);
+  box-shadow: inset 0 0 0 var(--s) #000;
+  cursor: pointer;
+  position: relative;
+}
+.camo-swatch.locked { filter: grayscale(1) brightness(0.45); cursor: default; }
+.camo-swatch.selected { box-shadow: inset 0 0 0 var(--s) #000, 0 0 0 var(--s) #fff; }
+
+/* ---------------------------------------------------------------- match XP report (end screen) */
+
+.xp-report {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--s) * 2);
+  width: min(calc(var(--s) * 220), 92vw);
+  padding: calc(var(--s) * 4) calc(var(--s) * 5);
+  background: rgba(0, 0, 0, 0.6);
+  border: var(--s) solid #000;
+  box-shadow: inset 0 0 0 var(--s) rgba(255, 255, 255, 0.12);
+}
+.xp-report.hidden { display: none; }
+.xp-report .xr-head { display: flex; align-items: center; justify-content: space-between; color: #fff; }
+.xp-report .xr-lines { display: flex; flex-direction: column; gap: var(--s); max-height: calc(var(--s) * 70); overflow: hidden; }
+.xp-report .xr-line { display: flex; justify-content: space-between; color: #d0d0d0; }
+.xp-report .xr-line b { color: #8cff5a; font-weight: 400; }
+.xp-report .xr-line.total { color: #fff; border-top: var(--s) solid rgba(255, 255, 255, 0.2); padding-top: var(--s); }
+.xp-report .xr-levelup { color: #ffff55; text-align: center; animation: xr-pop 0.6s ease-out; }
+.xp-report .xr-note { color: #55ffff; }
+@keyframes xr-pop { 0% { transform: scale(1.5); } 100% { transform: scale(1); } }
+
+/* ---------------------------------------------------------------- Create-a-Class: locked items */
+
+.arc-cac-item.locked, .arc-chip.locked { opacity: 0.45; cursor: default; }
+.arc-cac-item.locked em { color: #ff8080; }
