@@ -216,6 +216,8 @@ export const SITE: FreeArenaMapDef = {
     ],
     dominationZones: [0, 1, 2],
     flags: [{ team: 'red', x: -28.5, z: -18.5 }, { team: 'blue', x: 28.5, z: 18.5 }],
+    // Search and destroy: bomb sites in the blue (defenders') half, placed with scripts/site-scan.ts.
+    sites: [{ name: 'A', x: 23.5, z: -16.5, r: 3 }, { name: 'B', x: 24.5, z: 16.5, r: 3 }],
   },
   build(_variant, b) {
     half(b, 1, WEST);

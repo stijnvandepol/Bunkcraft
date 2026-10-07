@@ -222,6 +222,8 @@ export const SHANTY: FreeArenaMapDef = {
     ],
     dominationZones: [0, 1, 2],
     flags: [{ team: 'red', x: -28.5, z: -18.5 }, { team: 'blue', x: 28.5, z: 18.5 }],
+    // Search and destroy: bomb sites in the blue (defenders') half, placed with scripts/site-scan.ts.
+    sites: [{ name: 'A', x: 19.5, z: -8.5, r: 3 }, { name: 'B', x: 12.5, z: 11.5, r: 3 }],
   },
   build(_variant, b) {
     const { box, paint } = b;

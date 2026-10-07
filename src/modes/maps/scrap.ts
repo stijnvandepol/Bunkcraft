@@ -153,6 +153,8 @@ export const SCRAP: FreeArenaMapDef = {
     ],
     dominationZones: [0, 1, 2],
     flags: [{ team: 'red', x: -27.5, z: 15.5 }, { team: 'blue', x: 27.5, z: -15.5 }],
+    // Search and destroy: bomb sites in the blue (defenders') half, placed with scripts/site-scan.ts.
+    sites: [{ name: 'A', x: 13.5, z: -15.5, r: 3 }, { name: 'B', x: 21.5, z: 15.5, r: 3 }],
   },
   build(_variant, b) {
     const { box } = b;

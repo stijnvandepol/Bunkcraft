@@ -8,7 +8,9 @@ import { reachable } from './helpers/mapAnalysis';
  * spawn (eye to chest or eye). scripts/qa/map-audit.ts measures every map; the older open maps still have
  * long lines into the spawns and are not held to this yet.
  */
-const SHELTERED = ['desert', 'bunker', 'villa', 'yacht', 'town', 'station'] as const;
+const SHELTERED = [
+  'desert', 'atomic', 'bunker', 'villa', 'yacht', 'town', 'station', 'plaza', 'site', 'carrier', 'shanty', 'mall', 'scrap',
+] as const;
 const EYE = 1.62;
 
 /** Reachable standing spots that see into one of `team`'s spawns: on the enemy half, and in total. */

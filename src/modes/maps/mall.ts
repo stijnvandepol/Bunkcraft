@@ -261,6 +261,8 @@ export const MALL: FreeArenaMapDef = {
     ],
     dominationZones: [0, 1, 2],
     flags: [{ team: 'red', x: -27.5, z: -15.5, level: 0 }, { team: 'blue', x: 27.5, z: 15.5, level: 0 }],
+    // Search and destroy: bomb sites in the blue (defenders') half, placed with scripts/site-scan.ts.
+    sites: [{ name: 'A', x: 12.5, z: -16.5, r: 3 }, { name: 'B', x: 19.5, z: 16.5, r: 3 }],
   },
   build(_variant, b) {
     const { box } = b;

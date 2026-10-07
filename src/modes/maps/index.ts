@@ -17,7 +17,8 @@ import { TOWN } from './town';
 import { VILLA } from './villa';
 import { YACHT } from './yacht';
 
-export { ARENA_FLOOR_Y, ArenaMap, type Flag, type Spawn, type Zone } from './ArenaMap';
+export { ARENA_FLOOR_Y, ArenaMap, type Flag, type MapRequirement, type Site, type Spawn, type Zone } from './ArenaMap';
+import type { MapRequirement } from './ArenaMap';
 
 export type MapId = 'classic' | 'suburb' | 'quarter' | 'dockyard' | 'desert' | 'atomic' | 'bunker' | 'villa' | 'yacht' | 'town' | 'station'
   | 'plaza' | 'site' | 'carrier' | 'shanty' | 'mall' | 'scrap';
@@ -47,7 +48,7 @@ export function getMap(id: unknown): ArenaMap {
 }
 
 /** The map after `id` in rotation order that has the data the game type needs (all maps when it needs none). */
-export function nextMap(id: MapId, requires?: readonly ('zones' | 'flags')[]): MapId {
+export function nextMap(id: MapId, requires?: readonly MapRequirement[]): MapId {
   for (let i = 1; i <= MAPS.length; i++) {
     const m = MAPS[(MAP_IDS.indexOf(id) + i) % MAPS.length];
     if (m.supports(requires)) return m.id as MapId;
@@ -56,7 +57,7 @@ export function nextMap(id: MapId, requires?: readonly ('zones' | 'flags')[]): M
 }
 
 /** The first map that has the data a game type needs; `preferred` when it qualifies. */
-export function mapFor(preferred: MapId, requires?: readonly ('zones' | 'flags')[]): MapId {
+export function mapFor(preferred: MapId, requires?: readonly MapRequirement[]): MapId {
   return getMap(preferred).supports(requires) ? preferred : (MAPS.find((m) => m.supports(requires))?.id as MapId | undefined) ?? preferred;
 }
 
@@ -68,7 +69,7 @@ export function mapName(setting: MapSetting): string {
  * The maps offered in the vote after a match: the rotation's next map first (it wins a tie), then others the
  * game type can be played on, picked at random; the map just played only when there are not enough others.
  */
-export function voteChoices(current: MapId, requires: readonly ('zones' | 'flags')[] | undefined, random: () => number, count = 3): MapId[] {
+export function voteChoices(current: MapId, requires: readonly MapRequirement[] | undefined, random: () => number, count = 3): MapId[] {
   const first = nextMap(current, requires);
   const out: MapId[] = [first];
   const pool = MAP_IDS.filter((id) => id !== first && id !== current && getMap(id).supports(requires));

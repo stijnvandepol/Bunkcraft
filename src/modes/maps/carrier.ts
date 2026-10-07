@@ -1,6 +1,6 @@
 import { BLOCK } from '../../world/BlockRegistry';
 import { type FreeArenaMapDef, type LayoutBuilder, TEAM } from './ArenaMap';
-import { AIR, jumpPad, turn, turned } from './helpers';
+import { AIR, turn, turned } from './helpers';
 import { C, crates, mannequin, steps } from './props';
 
 /**
@@ -178,7 +178,6 @@ function half(b: LayoutBuilder, s: 1 | -1, p: Side): void {
   box(-3, -3, 12, 12, 2, 2, BLOCK.WHITE_WOOL);
   box(-35, -33, 11, 13, 1, 1, LIGHT);
   box(-35, -35, 11, 13, 2, 2, BLOCK.IRON_BARS);
-  jumpPad(t, -8, 11);
 }
 
 export const CARRIER: FreeArenaMapDef = {
@@ -206,6 +205,8 @@ export const CARRIER: FreeArenaMapDef = {
     ],
     dominationZones: [0, 1, 2],
     flags: [{ team: 'red', x: -31.5, z: -15.5 }, { team: 'blue', x: 31.5, z: 15.5 }],
+    // Search and destroy: bomb sites in the blue (defenders') half, placed with scripts/site-scan.ts.
+    sites: [{ name: 'A', x: 23.5, z: -12.5, r: 3 }, { name: 'B', x: 19.5, z: 14.5, r: 3 }],
   },
   build(_variant, b) {
     half(b, 1, WEST);
