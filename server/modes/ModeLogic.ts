@@ -11,6 +11,24 @@ export interface MatchResult { winnerTeam: Team | ''; winnerId: number }
 export interface Kit { primary: string; secondary?: string; melee?: string }
 
 /**
+ * Something a player should go and do, for server bots (and anything else that wants to know what the mode
+ * asks of a player): a point in the world, what to do there and how much it matters (higher first).
+ *
+ * - `capture`: stand in it (zone, hill, a bomb site to plant at); `defend`: stay near it and shoot whoever comes;
+ * - `pickup`: walk over it (a flag, a dog tag); `defuse`: stand in it until the bomb is safe;
+ * - `hunt`: go to that player (`target`) and kill them; `flee`: keep away from that point.
+ */
+export interface BotGoal {
+  kind: 'capture' | 'defend' | 'pickup' | 'defuse' | 'hunt' | 'flee';
+  x: number; y: number; z: number;
+  /** Within this many blocks (horizontal) the goal counts as reached. */
+  r: number;
+  priority: number;
+  /** Player id for `hunt`/`flee` goals (0 = a place). */
+  target?: number;
+}
+
+/**
  * The rules of one game type. `Match` owns players, combat, health, respawn timers and lag
  * compensation; a ModeLogic decides what a kill is worth, what the objective is, how phases
  * follow each other and when the match is over. `BaseLogic` implements team/ffa deathmatch
@@ -39,8 +57,8 @@ export interface ModeLogic {
   onReset?(m: Match): void;
   /** Seconds until `victim` respawns, or a negative number for "not before the round is over". */
   respawnDelay(m: Match, victim: MatchPlayer): number;
-  /** Weapons for the next life; absent = the player's own choice. */
-  loadoutFor?(m: Match, p: MatchPlayer): Kit;
+  /** Weapons for the next life; absent (or undefined for this player) = the player's own choice. */
+  loadoutFor?(m: Match, p: MatchPlayer): Kit | undefined;
   /** A spawn point override (null = the default: furthest from living opponents). */
   pickSpawn?(m: Match, p: MatchPlayer): Spawn | null;
   /** Whether warm-up may end (default: two players). */
@@ -53,6 +71,16 @@ export interface ModeLogic {
   scoreText(m: Match): string;
   /** Mode state for the HUD (zones, flags, rounds); null = nothing to send. */
   modeState?(m: Match): ModeState | null;
+  /** The team for a player who joins now (absent/undefined = the smaller team). */
+  teamFor?(m: Match): Team | '' | undefined;
+  /** The mode moves players between teams itself (infected): Match never rebalances the teams. */
+  readonly keepTeams?: boolean;
+  /** Run-speed factor of a player on top of the weapon's (flag carrier, infected); the movement check uses it too. */
+  speedMul?(m: Match, p: MatchPlayer): number;
+  /** Damage factor of a hit (the infected's knife); default 1. */
+  damageMul?(m: Match, attacker: MatchPlayer, victim: MatchPlayer, weapon: WeaponDef): number;
+  /** What this player should do right now, best first (server bots); empty = just fight. */
+  objectives?(m: Match, p: MatchPlayer): BotGoal[];
 }
 
 /** Defaults shared by the modes: team or free-for-all deathmatch semantics. */

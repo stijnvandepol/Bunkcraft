@@ -14,7 +14,7 @@ Of vanuit een clone: `sudo ./scripts/install.sh --domain play.example.com [--adm
 Het script installeert wat ontbreekt (Docker Engine + compose uit de officiële apt-repository, git), zet de code in
 `/opt/bunkcraft`, schrijft `.env` (domein, gegenereerde `ADMIN_TOKEN` en `METRICS_TOKEN`, CPU- en geheugenlimieten
 passend bij de machine), opent poort 80/443 in `ufw` als die actief is, haalt de kant-en-klare image op, start de game
-achter Caddy (automatisch HTTPS, HTTP/3) en zet een dagelijkse back-up klaar.
+achter Caddy (automatisch HTTPS, HTTP/3) en zet een dagelijkse back-up en [automatische updates](#automatisch-deployen) klaar.
 Opnieuw draaien is veilig: bestaande instellingen en werelden blijven staan. `--dry-run` laat zien wat het zou doen.
 
 **De image komt kant-en-klaar van GHCR** (`ghcr.io/stijnvandepol/bunkcraft`, amd64 en arm64, gebouwd door CI na elke
@@ -23,7 +23,8 @@ heeft geen swap nodig. De versie kies je met `BUNKCRAFT_TAG` in `.env` (of `--ta
 
 | `BUNKCRAFT_TAG` | Wat |
 |---|---|
-| `latest` (standaard) | nieuwste versie van `main` |
+| `latest` (standaard) | nieuwste versie van `main` (elke groene push) |
+| `stable` | nieuwste release (git-tag `v1.2.3`; pre-releases zoals `v1.3.0-rc.1` tellen niet) |
 | `sha-1a2b3c4` | één bepaalde commit |
 | `1.2.0`, `1.2`, `1` | een release (git-tag `v1.2.0`) |
 | `latest@sha256:…` | precies één build, vastgepind op digest (staat in de samenvatting van de CI-run) |
@@ -38,7 +39,9 @@ Daarna open je `https://play.example.com`. Beheer gaat met één commando:
 |---|---|
 | `bunkcraft status` | containers, draaiende image (id/digest) en `/health` (spelers, games, tick p99, geheugen) |
 | `bunkcraft logs` | serverlog volgen |
-| `bunkcraft update` | `git pull`, nieuwe image ophalen terwijl de oude draait, back-up, herstart (werelden worden eerst opgeslagen), wachten tot hij gezond is. **Niet gezond binnen 2 minuten: automatisch terug naar de vorige image en commit.** Opties: `--tag`, `--build`, `--pull`, `--force`, `--dry-run` |
+| `bunkcraft update` | `git pull`, nieuwe image ophalen terwijl de oude draait, back-up, herstart (werelden worden eerst opgeslagen), wachten tot hij gezond is en de smoketest haalt. **Niet gezond binnen 2 minuten of smoketest mislukt: automatisch terug naar de vorige image en commit.** Opties: `--tag`, `--build`, `--pull`, `--force`, `--dry-run` |
+| `bunkcraft autoupdate on\|off\|status` | automatische updates aan/uit, of: instelling, timer, wacht er een update, deploylog |
+| `bunkcraft deploy` | nu de auto-update-flow draaien (ook als `AUTOUPDATE=off`); dit draait een push-deploy vanuit GitHub |
 | `bunkcraft rollback` | terug naar de image van vóór de laatste update (nog een keer: weer vooruit) |
 | `bunkcraft backup` | back-up nu, naar `/var/backups/bunkcraft` (de dagelijkse timer bewaart er 14) |
 | `bunkcraft restart` | herstart na een wijziging in `/opt/bunkcraft/.env` |
@@ -68,6 +71,87 @@ docker compose run --rm --no-deps -T --entrypoint sh bunkcraft \
   -c 'rm -rf /app/data/* && tar -xzf - -C /app' < /var/backups/bunkcraft/bunkcraft-JJJJMMDD-UUMMSS.tar.gz
 docker compose up -d
 ```
+
+### Automatisch deployen
+
+Twee manieren, ze werken naast elkaar. **Pull** staat aan na `install.sh` en heeft geen servergegevens in GitHub nodig.
+**Push** is optioneel: GitHub zet de update direct na de build via SSH door, met een sleutel die alleen dat kan.
+
+**Pull: de server haalt zelf (standaard).** Een systemd-timer draait elke 5 minuten `bunkcraft autoupdate`:
+
+1. Is er iets nieuws? Eén klein verzoek aan de registry (digest van het kanaal-tag, er wordt niets gedownload) en vergelijk
+   met de draaiende image. Een tag op digest (`latest@sha256:…`) of `sha-1a2b3c4` verandert nooit, dus die blijft staan.
+2. Wachten op een rustig moment: niemand in een Minecraft-wereld en geen lopende match (`playersInPlay` in `/health`),
+   hooguit `AUTOUPDATE_MAX_WAIT_MIN` minuten. Daarna toch, met een chatmelding aan iedereen 60 s vooraf.
+3. Alle werelden opslaan, dan `bunkcraft update`: back-up, pull, herstart, health check en smoketest (gamepagina, script,
+   API, een testgame aanmaken en weer verwijderen). **Mislukt iets: automatisch terug** naar de vorige versie. Een build die
+   is teruggedraaid probeert hij niet opnieuw; de volgende nieuwe build wel.
+
+Er draait nooit meer dan één update tegelijk (lock gedeeld met `bunkcraft update`). Spelers krijgen bij de herstart een
+reconnect en zijn binnen seconden terug.
+
+| `.env` | Standaard | Wat |
+|---|---|---|
+| `AUTOUPDATE` | `on` | `off`: geen automatische updates (`bunkcraft autoupdate off`, of `install.sh --no-autoupdate`) |
+| `AUTOUPDATE_INTERVAL` | `5min` | hoe vaak kijken (`5min`, `15m`, `1h`); na wijzigen: `bunkcraft autoupdate on` |
+| `AUTOUPDATE_WAIT_FOR_EMPTY` | `1` | `0`: niet wachten op een rustig moment (de 60 s-waarschuwing blijft) |
+| `AUTOUPDATE_MAX_WAIT_MIN` | `30` | zo lang hooguit wachten op een rustig moment |
+| `AUTOUPDATE_WARN_SEC` | `60` | zoveel seconden vooraf waarschuwen als er toch gespeeld wordt |
+| `DEPLOY_WEBHOOK_URL` | leeg | Discord- of Slack-webhook: bericht bij elke update, rollback of fout |
+
+De waarschuwing en het opslaan gaan via de admin-API, dus zonder `ADMIN_TOKEN` (install.sh zet er een) slaat hij die over;
+de server slaat bij afsluiten toch alles op. Logs: `journalctl -u bunkcraft-autoupdate` en één regel per deploy in
+`/var/log/bunkcraft-deploy.log` (`bunkcraft autoupdate status` toont de laatste).
+
+**Kanalen en releasen.** `BUNKCRAFT_TAG=latest` volgt elke groene push naar `main`; `stable` alleen releases. Een release:
+
+```bash
+git tag v1.0.0 && git push origin v1.0.0     # of: git push --tags
+```
+
+CI draait alle checks en publiceert dan `1.0.0`, `1.0`, `1` en `stable`. Een pre-release (`v1.1.0-rc.1`) krijgt alleen zijn
+eigen tag. Een server overzetten: `bunkcraft update --tag stable` (of terug: `--tag latest`).
+
+**Welke versie draait er?** `https://<domein>/health` (`"version":"1.0.0+1a2b3c4"`), links onder in het titelscherm
+(`BunkCraft 1.0 (1a2b3c4)`) en `bunkcraft status`. De commit hoort bij `https://github.com/stijnvandepol/Bunkcraft/commit/1a2b3c4`.
+
+**Terugdraaien.** Gaat vanzelf als de nieuwe versie niet gezond is. Met de hand: `bunkcraft rollback` (vorige image; nog een
+keer = weer vooruit). Een bepaalde versie vasthouden: `bunkcraft update --tag sha-1a2b3c4` of `--tag 1.0.0` (auto-update
+volgt dan die tag, die niet meer verandert); terug naar het kanaal met `--tag latest` of `--tag stable`. Data terugzetten:
+[Back-up terugzetten](#back-up-terugzetten).
+
+**Push: GitHub deployt direct (optioneel).** De CI-job `deploy` draait na een gepubliceerde image en doet
+`ssh <server> deploy`. Op de server mag die sleutel alleen `bunkcraft deploy` draaien (forced command, geen shell, geen
+port forwarding), als een eigen gebruiker zonder Docker-rechten die via sudo precies dat ene commando mag.
+
+1. Sleutel maken (op je laptop): `ssh-keygen -t ed25519 -N '' -f bunkcraft-deploy -C github-actions`.
+2. Op de server (vervang de sleutel door de inhoud van `bunkcraft-deploy.pub`):
+
+   ```bash
+   sudo useradd --system --create-home --shell /bin/sh bunkcraft-deploy
+   sudo install -d -m 700 -o bunkcraft-deploy -g bunkcraft-deploy /home/bunkcraft-deploy/.ssh
+   echo 'command="sudo -n /usr/local/bin/bunkcraft deploy",restrict ssh-ed25519 AAAA... github-actions' \
+     | sudo tee /home/bunkcraft-deploy/.ssh/authorized_keys >/dev/null
+   sudo chown bunkcraft-deploy: /home/bunkcraft-deploy/.ssh/authorized_keys
+   sudo chmod 600 /home/bunkcraft-deploy/.ssh/authorized_keys
+   echo 'bunkcraft-deploy ALL=(root) NOPASSWD: /usr/local/bin/bunkcraft deploy' | sudo tee /etc/sudoers.d/bunkcraft-deploy >/dev/null
+   sudo chmod 440 /etc/sudoers.d/bunkcraft-deploy && sudo visudo -cf /etc/sudoers.d/bunkcraft-deploy
+   ```
+
+   Staat SSH alleen voor bepaalde gebruikers open (`AllowUsers` in `sshd_config`), voeg `bunkcraft-deploy` toe.
+3. Host key vastleggen: `ssh-keyscan -t ed25519 play.example.com` op je laptop; controleer de vingerafdruk tegen
+   `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` op de server.
+4. GitHub, repository → **Settings → Environments → New environment** `production`. Optioneel: **Required reviewers**
+   (jezelf: elke deploy wacht op een klik) en **Deployment branches and tags** → *Selected*: `main` en `v*`.
+   Onder **Environment secrets**: `DEPLOY_HOST` (`play.example.com`), `DEPLOY_USER` (`bunkcraft-deploy`), `DEPLOY_SSH_KEY`
+   (de inhoud van het private bestand `bunkcraft-deploy`) en `DEPLOY_KNOWN_HOSTS` (de regel uit stap 3). Gooi daarna de
+   lokale private key weg.
+5. **Settings → Secrets and variables → Actions → Variables**: `DEPLOY_ENABLED` = `true` (en `DEPLOY_PORT` als SSH niet op
+   22 luistert). Zonder die variabele slaat CI de job over; zonder secrets meldt de job dat en stopt hij netjes.
+
+`bunkcraft deploy` volgt het kanaal van de server: een push naar `main` doet niets op een server met `BUNKCRAFT_TAG=stable`,
+een release wel. Laat `AUTOUPDATE` gerust aan: de timer is dan het vangnet als een push-deploy mislukt (lock voorkomt
+dubbel werk). Alleen push: `bunkcraft autoupdate off`, `bunkcraft deploy` blijft werken.
 
 ## Overzicht
 
@@ -169,6 +253,9 @@ limieten per bezoeker werken in plaats van per proxy.
 | `ARCADE_TICK_HZ` | `30` | Tickrate van arcade-kamers (10-60); Minecraft-werelden blijven 20 Hz |
 | `ARCADE_CULLING` | `on` | Anti-wallhack: arcade-snapshots per speler zonder onzichtbare vijanden (`off` = iedereen naar iedereen) |
 | `ARCADE_AUTOKICK_SCORE` | `0` | Kick bij deze aim-verdenkingsscore (0-100; `0` = nooit, alleen loggen) |
+| `QUICKPLAY_BOTS` | `8` | Nieuwe Snel spelen-lobby's vullen met server-bots tot zoveel spelers; bots maken plaats voor wie erbij komt (`0` = geen bots). Zie GAMEMODES.md §Bots. |
+| `QUICKPLAY_BOT_DIFFICULTY` | `normal` | Niveau van die bots: `easy`, `normal`, `hard` of `veteran` |
+| `BOT_PREWARM` | `on` | Bouwt bij het opstarten op de achtergrond de navigatiegrafen van alle kaarten (~1 s CPU, ~20 MB), zodat een lobby nooit midden in een potje hapert |
 | `BACKUP_KEEP` | `12` | Aantal back-ups per wereld (`0` = geen back-ups) |
 | `BACKUP_INTERVAL_MIN` | `60` | Minuten tussen back-ups |
 | `RECONNECT_HINT_MS` | `8000` | Bij afsluiten (SIGTERM) krijgen spelers de hint om zoveel milliseconden later opnieuw te verbinden |
@@ -270,6 +357,8 @@ alleen open via HTTPS, of beperk het in je reverse proxy tot je eigen IP.
 | `POST /api/admin/rooms/<CODE>/kick`, `POST /api/admin/main/kick` | `{"name":"..."}` |
 | `POST /api/admin/rooms/<CODE>/close` | iedereen eruit en uit het geheugen; `{"remove":true}` verwijdert ook de data |
 | `GET/POST /api/admin/ip-bans`, `DELETE /api/admin/ip-bans/<ip>` | adressen blokkeren (bewaard in `data/ip-bans.json`); open verbindingen sluiten direct |
+| `POST /api/admin/announce` | `{"text":"..."}`: servermelding in de chat van elke game (auto-update waarschuwt zo voor een herstart) |
+| `POST /api/admin/save` | elke geladen wereld nu naar schijf (auto-update doet dit vlak voor de back-up) |
 
 `/admin` is één statische HTML-pagina zonder framework en zonder geheimen erin: je plakt het token in (alleen in
 `sessionStorage` van dat tabblad), ziet elke 5 seconden de cijfers en kunt games sluiten of verwijderen, spelers kicken en
@@ -279,8 +368,9 @@ adressen blokkeren. Alle data gaat via `textContent` de pagina in en een strikte
 
 - **Logs:** een JSON-object per regel (`{"ts","level","msg",...velden}`), met `room` op regels van een game. Handig met
   `docker logs bunkcraft | jq`. `LOG_LEVEL` en `LOG_FORMAT=text` voor leesbare regels.
-- **`/health`:** `{ok, version, uptime, players, rooms, roomsLoaded, tickP99Ms, loopLagP99Ms, rssMB}` (tick en lag over de
-  laatste ~5 s); 503 terwijl de server afsluit. Genoeg voor een uptime-checker (bijv. Uptime Kuma of een cloud-monitor):
+- **`/health`:** `{ok, version, uptime, players, playersInPlay, rooms, roomsLoaded, tickP99Ms, loopLagP99Ms, rssMB}` (tick en
+  lag over de laatste ~5 s); 503 terwijl de server afsluit. `version` is `<package.json>+<commit>` (bijv. `1.0.0+1a2b3c4`);
+  `playersInPlay` telt spelers die een herstart nu zou storen (Minecraft-werelden en lopende matches). Genoeg voor een uptime-checker (bijv. Uptime Kuma of een cloud-monitor):
   alarm bij geen 200, of bij `loopLagP99Ms` structureel boven ~20 (de server loopt achter).
 - **`/metrics`** (Prometheus): `bunkcraft_players`, `bunkcraft_rooms_loaded`, `bunkcraft_rooms_total`, `bunkcraft_connections`,
   `bunkcraft_tick_duration_seconds{quantile="0.5"|"0.99"|"1"}`, `bunkcraft_tick_window_seconds{quantile}` (laatste ~5 s),
@@ -521,6 +611,7 @@ Een game aanmaken (`POST /api/rooms`) accepteert `{ name, gameMode, seed, gameTy
 - `GET /api/rooms?public=1&kind=minecraft|arcade`: de serverlijst voor Multiplayer of Realms; zonder `kind` beide (oudere
   clients). Arcade-lobby's met spelers hebben ook `phase`, `timeLeft` en `currentMap`.
 - `POST /api/rooms` accepteert ook `maxPlayers` (2 tot `ROOM_MAX_PLAYERS`, alleen arcade); dat staat in `world.json`.
+- `POST /api/rooms` accepteert voor arcade ook `bots` (0 tot lobbygrootte − 1) en `botDifficulty`; dat staat als `bots` in `world.json`. De publieke lijst meldt `bots` naast `players` (mensen).
 - Na een potje in een lobby met `rotate` stemmen de spelers over de volgende kaart (`vote`-berichten, zie `docs/GAMEMODES.md`).
 - Arcade-games zonder eigenaar (Snel spelen) bewaren geen naamclaims; een tweede speler met dezelfde naam wordt geweigerd
   zolang de eerste speelt.
@@ -570,6 +661,9 @@ munitie, respawntimers, lag compensation en de berichten. Wat een mode anders ma
 | `onKill`, `onSpawn`, `onJoin`, `onLeave`, `onReset` | levensloop van spelers en matches |
 | `respawnDelay`, `loadoutFor`, `pickSpawn`, `canStart` | regels per leven (negatief = pas volgende ronde; ladderwapen; ...) |
 | `checkEnd`, `winner`, `scoreText`, `modeState` | einde, winnaar, de regel onder de timer en de HUD-toestand (`mode`-bericht) |
+| `teamFor`, `keepTeams` | team van een nieuwe speler; de mode verdeelt de teams zelf (Match balanceert dan nooit) |
+| `speedMul`, `damageMul` | snelheidsfactor (ook in de bewegingscontrole van `GameServer`) en schadefactor per treffer |
+| `objectives(p)` | doelen voor server-bots (`BotGoal`: capture, defend, pickup, defuse, hunt, flee) |
 
 `Match` biedt de modes `setPhase(phase, sec)`, `startLive()`, `respawnAll()`, `endMatch(result?)`, `giveGear()`, `event()`,
 `markModeDirty()`, `scores`, `teamSize`/`aliveCount`. De klassen:
@@ -585,6 +679,17 @@ munitie, respawntimers, lag compensation en de berichten. Wat een mode anders ma
   (eigen punt eerst neutraliseren), 1 punt per 2 s per eigen punt.
 - `ctf.ts`: vlag aanraken (1,6 blokken, 2,6 hoog) pakt hem op; eigen vlag aanraken terwijl die thuis staat en je de andere
   draagt = capture (+1 team, +1 `pts`); dood/vertrek laat de vlag vallen, eigen team brengt hem terug of na 12 s vanzelf.
+  De drager is via `speedMul` 10% trager.
+- `confirm.ts` (kill confirmed): elke dood laat een tag vallen (max. 40); aanraken (1,6 blokken) door een tegenstander = +1 team,
+  door een teamgenoot = geweigerd; `pts` = opgeraapte tags; tags verlopen na 30 s.
+- `snd.ts` (search & destroy, `extends RoundsLogic`): planten = 4 s een levende aanvaller op een bomsite (weg = opnieuw), daarna
+  `setPhase('live', fuseSec)`; ontmantelen = 6 s een verdediger op de bom. Wipe-regels per kant, na de plant beslist de bom.
+  Zijwissel elke `scoreLimit − 1` rondes; aanvallers spawnen aan de rode kant (`pickSpawn`). `pts` = plants + defuses.
+- `infected.ts`: `keepTeams`; na 8 s wordt een willekeurige overlevende (blauw) besmet (rood, mes via `giveGear`); doden worden
+  besmet; `speedMul` 1,12 voor besmetten en de laatste overlevende, `damageMul` 2 op het mes van besmetten; `scores` = aantallen.
+- `sharpshooter.ts`: `loadoutFor` = het gedeelde wapen + pistool + mes; elke 45 s `giveGear` voor iedereen.
+- `koth.ts`: zone-rotatie zoals hardpoint, maar wie alleen in de heuvel staat krijgt `pts`; `mode` = `zones` met variant `koth`
+  en `holder`.
 
 De HUD-toestand gaat 4× per seconde (en direct bij een verandering) als `mode` naar iedereen, gebeurtenissen als `event`, een
 puntwijziging direct als `match`. Kaarten zonder de benodigde `objectives` worden voor dat type overgeslagen (`mapFor`,

@@ -1,6 +1,6 @@
 import { type GameType, type GameTypeDef, gameTypeDef } from '../modes/GameTypes';
 import { MAP_SETTINGS, type MapSetting, getMap } from '../modes/maps';
-import { type ModeStats, REALMS_MODES, isArcade, lobbySizes } from '../modes/Realms';
+import { BOT_LEVELS, type BotLevel, type ModeStats, REALMS_MODES, isArcade, lobbySizes } from '../modes/Realms';
 import { NAME_PATTERN, formatCode, normalizeCode } from '../net/protocol';
 import { type ListedRoom, type RoomInfo, browseRooms, createRoom, inviteLink, inviteText, lookupRoom, quickPlay, realmsStats, serverInfo } from '../net/RoomApi';
 import { button, h, menuScreen } from './dom';
@@ -280,7 +280,7 @@ export class RealmsMenu {
             h('div', { class: 'world-meta', text: `${realmsModeName(mode)} - ${mapLabel(r.map, r.currentMap)}` }),
             h('div', { class: `world-meta realms-stats${r.players > 0 ? ' busy' : ''}`, text: `${phaseText(r)}${r.locked ? ` - ${t('realms.locked')}` : ''}` }),
           ),
-          h('div', { class: `realms-count${full ? ' full' : ''}`, text: `${r.players}/${r.maxPlayers}` }),
+          h('div', { class: `realms-count${full ? ' full' : ''}`, text: `${r.players}/${r.maxPlayers}${r.bots ? ` +${r.bots} ${t('realms.bots')}` : ''}` }),
         );
         item.addEventListener('click', () => { selected = r.code; render(); });
         item.addEventListener('dblclick', () => void this.join(name, r.code, (m) => { error.textContent = m; }));
@@ -323,6 +323,8 @@ export class RealmsMenu {
     const sizes = this.sizes;
     let size = sizes.includes(8) ? 8 : sizes[sizes.length - 1];
     let listed = false;
+    let bots = 0;
+    let botLevel: BotLevel = 'normal';
     const error = h('div', { class: 'error' });
     const modeHint = h('div', { class: 'hint' });
     const mapHint = h('div', { class: 'hint' });
@@ -341,6 +343,10 @@ export class RealmsMenu {
     const timeBtn = button('', () => { time = next(def.options?.time ?? [], time); render(); });
     const sizeBtn = button('', () => { size = next(sizes, size); render(); });
     const listedBtn = button('', () => { listed = !listed; render(); });
+    const botChoices = () => Array.from({ length: size }, (_, i) => i);
+    const botsBtn = button('', () => { bots = next(botChoices(), bots); render(); });
+    const botLevelBtn = button('', () => { botLevel = next(BOT_LEVELS, botLevel); render(); });
+    const botsHint = h('div', { class: 'hint' });
     const render = () => {
       modeBtn.textContent = t('realms.create.mode', realmsModeName(mode));
       modeHint.textContent = modeDesc(mode);
@@ -354,6 +360,11 @@ export class RealmsMenu {
       sizeBtn.textContent = t('realms.create.players', size);
       listedBtn.textContent = t('realms.create.listed', listed ? t('common.on') : t('common.off'));
       listedHint.textContent = listed ? t('realms.create.listedHint') : t('realms.create.privateHint');
+      if (bots > size - 1) bots = size - 1;
+      botsBtn.textContent = t('realms.create.bots', bots === 0 ? t('common.off') : bots);
+      botLevelBtn.textContent = t('realms.create.botLevel', t(`realms.bot.${botLevel}`));
+      botLevelBtn.classList.toggle('hidden', bots === 0);
+      botsHint.textContent = bots === 0 ? '' : t('realms.create.botsHint');
     };
     render();
     let busy = false;
@@ -364,6 +375,7 @@ export class RealmsMenu {
       try {
         const code = await createRoom(t('realms.create.name', name), 'survival', '', {
           gameType: mode, scoreLimit: score, timeLimitSec: time, mapId: map, maxPlayers: size, listed,
+          ...(bots > 0 ? { bots, botDifficulty: botLevel } : {}),
         });
         this.stack.pop();
         this.showCreated(name, code);
@@ -378,6 +390,7 @@ export class RealmsMenu {
         modeBtn, modeHint,
         mapBtn, mapHint,
         scoreBtn, timeBtn, sizeBtn,
+        botsBtn, botLevelBtn, botsHint,
         listedBtn, listedHint,
         error,
       ),

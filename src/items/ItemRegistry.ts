@@ -1,5 +1,6 @@
 import { BLOCK, BLOCK_DEFS, CUBE_ID, PARTIAL_MATERIALS, SLAB_FIRST, STAIRS_FIRST, VARIANT_MASK, getBlockDef } from '../world/BlockRegistry';
 import { SLAB_DOUBLE } from '../world/BlockStates';
+import { CROPS, CROP_STYLE, cropAge, cropSpec, stemAttached } from '../world/Crops';
 import { efficiencyBonus, fortuneExtra, fortuneMultiplier, fortuneSaplingChance, gravelFlintChance } from './EnchantRules';
 import {
   ARMOR_BASE_DURABILITY, ARMOR_FIRST, ARMOR_MATERIALS, ARMOR_SLOT_NAMES, FOODS, FOOD_FIRST, HOE_FIRST, MATERIALS, MATERIAL_FIRST,
@@ -121,7 +122,7 @@ export interface ItemDef {
   displayName: string;
   maxStack: number;
   /** `poison`: ticks of Poison I after eating (spider eye). */
-  food?: { hunger: number; saturation: number; poison?: number; returns?: string };
+  food?: { hunger: number; saturation: number; poison?: number; poisonChance?: number; returns?: string };
   tool?: ToolInfo;
   /** Uses before breaking, for non-tool items that wear out (flint and steel). */
   durability?: number;
@@ -587,6 +588,7 @@ function silkTouchable(blockId: number): boolean {
  * its colour). `ench` are the held tool's enchantments: Silk Touch drops the block itself, Fortune raises ore drops.
  */
 export function blockDrop(blockId: number, held: number, meta = 0, ench?: MiningEnchants): ItemStack | null {
+  if (CROP_STYLE[blockId] !== 0) return cropDrops(blockId, meta, ench?.fortune ?? 0)[0] ?? null;
   if (!canHarvest(blockId, held, meta)) return null;
   const heldTool = getItemDef(held)?.tool?.kind;
   if (blockId >= SLAB_FIRST && blockId < STAIRS_FIRST) return { id: blockId, count: meta === SLAB_DOUBLE ? 2 : 1 };
@@ -621,7 +623,8 @@ export function blockDrop(blockId: number, held: number, meta = 0, ench?: Mining
       const n = rand(0, 2);
       return n > 0 ? { id: ITEM.STICK, count: n } : null;
     }
-    return Math.random() < 0.125 ? { id: named('wheat_seeds'), count: 1 } : null;
+    // Grass gives a seed one time in eight; Fortune adds 0..2·level (uniform_bonus_count).
+    return Math.random() < 0.125 ? { id: named('wheat_seeds'), count: 1 + rand(0, 2 * fortune) } : null;
   }
   switch (blockId) {
     case B.REDSTONE_WIRE: return { id: named('redstone'), count: 1 };
@@ -633,6 +636,89 @@ export function blockDrop(blockId: number, held: number, meta = 0, ench?: Mining
     case B.GRAVEL: return { id: Math.random() < gravelFlintChance(fortune) ? ITEM.FLINT : B.GRAVEL, count: 1 };
     case CUBE_ID.cobweb: return { id: ITEM.STRING, count: 1 };
     default: return { id: itemFromState(blockId, meta), count: 1 };
+  }
+}
+
+/**
+ * Everything a block drops when mined in survival: usually the one stack of {@link blockDrop}, several for crops (ripe
+ * wheat drops wheat and seeds). Use this wherever a broken block spills its loot.
+ */
+export function blockDrops(blockId: number, held: number, meta = 0, ench?: MiningEnchants): ItemStack[] {
+  if (CROP_STYLE[blockId] !== 0) return cropDrops(blockId, meta, ench?.fortune ?? 0);
+  const d = blockDrop(blockId, held, meta, ench);
+  return d ? [d] : [];
+}
+
+// ---- crops (Minecraft 1.21 loot tables) ----
+
+/** Successes in `n` tries of chance `p`. */
+function binomial(n: number, p: number): number {
+  let k = 0;
+  for (let i = 0; i < n; i++) if (Math.random() < p) k++;
+  return k;
+}
+/** binomial_with_bonus_count of the crop loot tables: 3 + Fortune level tries at 4/7. */
+const CROP_BONUS_TRIES = 3;
+const CROP_BONUS_CHANCE = 0.5714286;
+
+/**
+ * What a crop or stem drops (any tool):
+ *  - wheat and beetroots: unripe 1 seed; ripe 1 wheat / beetroot and 1 + B(3 + Fortune, 4/7) seeds;
+ *  - carrots and potatoes: unripe 1; ripe 2 + B(3 + Fortune, 4/7), potatoes also a poisonous potato 2% of the time;
+ *  - stems: B(3, (age + 1) / 15) seeds, an attached stem B(3, 8/15).
+ */
+export function cropDrops(blockId: number, meta: number, fortune = 0): ItemStack[] {
+  const spec = cropSpec(blockId);
+  if (!spec) return [];
+  const seed = named(spec.seed);
+  if (spec.style === 2) {
+    const n = binomial(3, stemAttached(meta) ? 8 / 15 : ((meta & 7) + 1) / 15);
+    return n > 0 ? [{ id: seed, count: n }] : [];
+  }
+  const ripe = cropAge(blockId, meta) >= spec.maxAge;
+  const bonus = (): number => 1 + binomial(CROP_BONUS_TRIES + Math.max(0, fortune), CROP_BONUS_CHANCE);
+  switch (spec.kind) {
+    case 'wheat': return ripe ? [{ id: named('wheat'), count: 1 }, { id: seed, count: bonus() }] : [{ id: seed, count: 1 }];
+    case 'beetroots': return ripe ? [{ id: named('beetroot'), count: 1 }, { id: seed, count: bonus() }] : [{ id: seed, count: 1 }];
+    case 'carrots': return [{ id: seed, count: ripe ? 1 + bonus() : 1 }];
+    case 'potatoes': {
+      if (!ripe) return [{ id: seed, count: 1 }];
+      const out: ItemStack[] = [{ id: seed, count: 1 + bonus() }];
+      if (Math.random() < 0.02) out.push({ id: named('poisonous_potato'), count: 1 });
+      return out;
+    }
+    default: return [];
+  }
+}
+
+let seedToCrop: Map<number, number> | null = null;
+
+/** The crop or stem block an item plants on farmland (wheat seeds, carrot, potato...), 0 for other items. */
+export function plantedBy(item: number): number {
+  if (!seedToCrop) {
+    seedToCrop = new Map();
+    for (const c of CROPS) seedToCrop.set(named(c.seed), c.id);
+  }
+  return seedToCrop.get(item) ?? 0;
+}
+
+/** The item that plants a crop or stem block (pick block, the server's placement check); 0 for other blocks. */
+export function seedItemOf(blockId: number): number {
+  const spec = cropSpec(blockId);
+  return spec ? named(spec.seed) : 0;
+}
+
+/** The most a crop can drop (Fortune III): what the server credits when a player breaks one. */
+function cropDropCeiling(blockId: number): ItemStack[] {
+  const spec = cropSpec(blockId)!;
+  const seed = named(spec.seed);
+  const max = 2 + CROP_BONUS_TRIES + 3;
+  switch (spec.kind) {
+    case 'wheat': return [{ id: named('wheat'), count: 1 }, { id: seed, count: max - 1 }];
+    case 'beetroots': return [{ id: named('beetroot'), count: 1 }, { id: seed, count: max - 1 }];
+    case 'potatoes': return [{ id: seed, count: max }, { id: named('poisonous_potato'), count: 1 }];
+    case 'carrots': return [{ id: seed, count: max }];
+    default: return [{ id: seed, count: 3 }];
   }
 }
 
@@ -665,7 +751,8 @@ function plainBlockDrops(blockId: number, meta: number): ItemStack[] {
     if (leaves.apple) out.push({ id: named('apple'), count: 1 });
     return out;
   }
-  if (WITH_SHEARS_ONLY.has(blockId)) return [{ id: blockId, count: 1 }, { id: ITEM.STICK, count: 2 }, { id: named('wheat_seeds'), count: 1 }];
+  if (WITH_SHEARS_ONLY.has(blockId)) return [{ id: blockId, count: 1 }, { id: ITEM.STICK, count: 2 }, { id: named('wheat_seeds'), count: 7 }];
+  if (CROP_STYLE[blockId] !== 0) return cropDropCeiling(blockId);
   switch (blockId) {
     case B.REDSTONE_WIRE: return [{ id: named('redstone'), count: 1 }];
     case B.REDSTONE_LAMP_LIT: return [{ id: B.REDSTONE_LAMP, count: 1 }];

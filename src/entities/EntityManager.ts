@@ -11,6 +11,7 @@ import { PrimedTnt, TNT_FUSE } from './PrimedTnt';
 import { XpOrb, mergeOrbs } from './XpOrb';
 import { mobXp, splitXp } from '../player/Experience';
 import { lootingExtra } from '../items/EnchantRules';
+import { trample } from '../world/Farming';
 
 const MAX_ITEMS = 160;
 const MAX_ARROWS = 128;
@@ -160,6 +161,15 @@ export class EntityManager implements MobWorld {
 
   biomeAt(x: number, z: number): number {
     return this.world.biomeName ? this.world.biomeName(Math.floor(x), Math.floor(z)) : -1;
+  }
+
+  /** Whether mobs may change blocks (the mobGriefing rule; set by the game or server). */
+  griefing: () => boolean = () => true;
+
+  trample(x: number, y: number, z: number, fall: number): void {
+    if (!this.griefing()) return;
+    trample({ getBlock: this.getBlock, setBlock: (bx, by, bz, id) => this.setBlock(bx, by, bz, id) },
+      Math.floor(x), Math.floor(y - 0.01), Math.floor(z), fall, Math.random());
   }
 
   lastAttackerOf(playerId: number): Mob | null {

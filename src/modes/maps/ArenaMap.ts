@@ -19,6 +19,18 @@ export interface ZoneDef {
 }
 /** A team's flag base in world coordinates: red on the left (x < 0), blue on the right. */
 export interface FlagDef { team: 'red' | 'blue'; x: number; z: number; level?: number }
+/**
+ * A bomb site (search and destroy) in world coordinates. Both sites lie in the defenders' half (x > 0, the
+ * blue spawns): the attackers always start from the red spawns (x < 0), whatever their colour.
+ */
+export interface SiteDef {
+  name: string; x: number; z: number; r: number;
+  /** Standing level in blocks above the floor (default 0: the floor, even under a roof). */
+  level?: number;
+}
+/** Map data a game type can need (see `ArenaMap.supports`). */
+export type MapRequirement = 'zones' | 'flags' | 'sites';
+
 /** Objective data of a map; a map without `zones` cannot host hardpoint/domination, without `flags` no capture the flag. */
 export interface ObjectiveDef {
   /** Hardpoint plays them in this order; domination uses every zone with `domination` set (default: all). */
@@ -26,10 +38,13 @@ export interface ObjectiveDef {
   /** Indices into `zones` that are domination points (default: all zones). */
   dominationZones?: number[];
   flags?: FlagDef[];
+  /** Bomb sites A and B (search and destroy); a map without exactly two cannot host it. */
+  sites?: SiteDef[];
 }
 /** A zone with its standing level resolved (y = where a player's feet are). */
 export interface Zone extends ZoneDef { y: number }
 export interface Flag extends FlagDef { y: number }
+export interface Site extends SiteDef { y: number }
 
 /** Draws one quadrant: (u, v) = distance from the two centre lines (0 = next to the line). */
 export interface LayoutBuilder {
@@ -135,6 +150,7 @@ export class ArenaMap {
   private readonly layouts: Layout[] = [];
   private zoneCache: Zone[] | null = null;
   private flagCache: Flag[] | null = null;
+  private siteCache: Site[] | null = null;
   private readonly quadrant: ArenaMapDef | null;
   private readonly free: FreeArenaMapDef | null;
   /** Objective data (zones, flags) of either kind of map. */
@@ -187,9 +203,15 @@ export class ArenaMap {
     return this.flagCache ??= (this.objectives?.flags ?? []).map((f) => ({ ...f, y: f.level !== undefined ? ARENA_FLOOR_Y + 1 + f.level : this.heightAt(0, f.x, f.z) + 1 }));
   }
 
+  /** Bomb sites with their standing level (search and destroy). */
+  get sites(): Site[] {
+    // Sites may sit under a roof (a warehouse, a hall): the level is the floor unless the map says otherwise.
+    return this.siteCache ??= (this.objectives?.sites ?? []).map((s) => ({ ...s, y: ARENA_FLOOR_Y + 1 + (s.level ?? 0) }));
+  }
+
   /** Whether the map has the data a game type asks for. */
-  supports(requires: readonly ('zones' | 'flags')[] | undefined): boolean {
-    return (requires ?? []).every((r) => (r === 'zones' ? this.zones.length >= 3 : this.flags.length === 2));
+  supports(requires: readonly MapRequirement[] | undefined): boolean {
+    return (requires ?? []).every((r) => (r === 'zones' ? this.zones.length >= 3 : r === 'flags' ? this.flags.length === 2 : this.sites.length === 2));
   }
 
   variantFor(seed: number): number {

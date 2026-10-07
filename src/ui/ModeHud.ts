@@ -1,16 +1,19 @@
 import * as THREE from 'three';
 import { type GameTypeDef, TEAM_COLORS, type Team } from '../modes/GameTypes';
 import {
-  type FlagState, type ModeState, type ZoneState,
+  type FlagState, type ModeState, type SiteState, type TagState, type ZoneState,
 } from '../net/protocol';
 import {
-  flagAction, flagLine, otherTeam, placeMarker, zoneColor, zoneLetter, zoneRing, zoneStatus,
+  CONTESTED_COLOR, bombRoleLine, flagAction, flagLine, infectedLine, nearestTags, otherTeam, placeMarker, siteAction, tagAction,
+  zoneColor, zoneLetter, zoneRing, zoneStatus,
 } from '../modes/ModeView';
 import { weaponDef } from '../modes/Weapons';
 import { h } from './dom';
 import { t } from './i18n';
 
 const MAX_MARKERS = 6;
+/** Kill confirmed: markers for this many of the nearest tags. */
+const TAG_MARKERS = 4;
 const TOAST_SECONDS = 2.6;
 
 interface Marker {
@@ -58,6 +61,9 @@ export class ModeHud {
   private dirty = true;
   private lastBar = '';
   private ladderKey = '';
+  /** Camera position of the last frame (kill confirmed picks the nearest tags with it). */
+  private readonly eye = new THREE.Vector3();
+  private readonly nearTags: TagState[] = [];
 
   constructor(private readonly def: GameTypeDef) {
     this.markerLayer = h('div', { class: 'mode-markers' });
@@ -75,7 +81,8 @@ export class ModeHud {
     this.panel = h('div', { class: 'mode-panel' });
     this.toastEl = h('div', { class: 'mode-toast hidden' });
     this.el = h('div', { class: 'mode-hud' }, this.markerLayer, this.bar, this.panel, this.toastEl);
-    this.bar.classList.toggle('hidden', !(def.hud ?? []).some((w) => w === 'zones' || w === 'flags'));
+    // The red/blue progress bar only means something with teams (king of the hill uses zones without them).
+    this.bar.classList.toggle('hidden', !def.teams || !(def.hud ?? []).some((w) => w === 'zones' || w === 'flags'));
   }
 
   setState(state: ModeState | null): void {
@@ -135,6 +142,7 @@ export class ModeHud {
       this.toastEl.classList.add('hidden');
     }
     const st = this.state;
+    this.eye.copy(camera.position);
     if (this.dirty) {
       this.dirty = false;
       this.refresh(st, self, nameOf);
@@ -177,25 +185,84 @@ export class ModeHud {
         if (i >= MAX_MARKERS) return;
         // Hardpoint shows the live hill (or, during the pause, where the next one will be).
         const show = st.variant === 'domination' || z.active || (st.gap && i === this.nextHill(st.zones));
-        if (show) this.setZoneMarker(this.markers[i], z, i, st, self.team);
+        if (show) this.setZoneMarker(this.markers[i], z, i, st, self);
       });
-      this.panel.replaceChildren(...(st.variant === 'hardpoint' ? [h('div', { class: 'mode-line', text: t(st.gap ? 'mode.hill.next' : 'mode.hill.moves', Math.ceil(st.rotateIn)) })] : []));
+      this.panel.replaceChildren(...(st.variant !== 'domination' ? [h('div', { class: 'mode-line', text: t(st.gap ? 'mode.hill.next' : 'mode.hill.moves', Math.ceil(st.rotateIn)) })] : []));
     } else if (st.kind === 'ctf') {
       st.flags.forEach((f, i) => this.setFlagMarker(this.markers[i], f, self));
       this.panel.replaceChildren(...st.flags.map((f) => h('div', { class: 'mode-line', style: `color:${TEAM_COLORS[f.team]}`, text: flagLine(f, nameOf) })));
     } else if (st.kind === 'rounds') {
-      const pips = (team: Team) => {
-        const row = h('div', { class: 'mode-pips' });
-        for (let i = 0; i < st.need; i++) row.append(h('i', { style: i < st.wins[team] ? `background:${TEAM_COLORS[team]}` : '' }));
-        return row;
-      };
-      const mine = self.team || 'red';
-      this.panel.replaceChildren(h('div', { class: 'mode-rounds' },
-        pips('red'),
-        h('div', { class: 'mode-alive', text: `${st.alive[mine]} v ${st.alive[otherTeam(mine)]}` }),
-        pips('blue'),
+      this.panel.replaceChildren(this.roundsRow(st, self.team));
+    } else if (st.kind === 'bomb') {
+      const bomb = st.sites.find((x) => x.planted);
+      st.sites.forEach((x, i) => { if (i < MAX_MARKERS) this.setSiteMarker(this.markers[i], x, st.attackers, self.team, !!bomb); });
+      const lines: HTMLElement[] = [this.roundsRow(st, self.team)];
+      const role = bombRoleLine(st.attackers, self.team);
+      if (role) lines.push(h('div', { class: 'mode-line', style: `color:${self.team === st.attackers ? '#ff9f2a' : '#7fc8ff'}`, text: role }));
+      if (bomb) lines.push(h('div', { class: 'mode-line mode-alert', text: t('mode.bomb.fuse', bomb.name, Math.ceil(st.fuseIn)) }));
+      else if (st.swapIn > 0) lines.push(h('div', { class: 'mode-line mode-sub', text: st.swapIn === 1 ? t('mode.bomb.swapLast') : t('mode.bomb.swapIn', st.swapIn) }));
+      this.panel.replaceChildren(...lines);
+    } else if (st.kind === 'tags') {
+      nearestTags(st.tags, this.eye.x, this.eye.z, TAG_MARKERS, this.nearTags);
+      this.nearTags.forEach((tag, i) => this.setTagMarker(this.markers[i], tag, self.team));
+      this.panel.replaceChildren(...(st.tags.length ? [h('div', { class: 'mode-line mode-sub', text: t('mode.tag.count', st.tags.length) })] : []));
+    } else if (st.kind === 'infected') {
+      const color = self.team === 'red' ? TEAM_COLORS.red : st.last === self.id ? '#ffd23f' : '#7fc8ff';
+      this.panel.replaceChildren(
+        h('div', { class: 'mode-line mode-big', style: `color:${color}`, text: infectedLine(st, self.team, self.id) }),
+        h('div', { class: 'mode-line', text: t('mode.inf.count', st.survivors, st.infected) }),
+      );
+    } else if (st.kind === 'roulette') {
+      const name = weaponDef(st.weapon)?.name ?? st.weapon;
+      this.panel.replaceChildren(h('div', { class: 'mode-ladder' },
+        h('div', { class: 'mode-ladder-level', text: t('mode.roulette.title') }),
+        h('div', { class: 'mode-ladder-weapon', text: name }),
+        h('div', { class: 'mode-ladder-next', text: t('mode.roulette.next', Math.ceil(st.switchIn)) }),
       ));
     }
+  }
+
+  /** Round pips per team with the survivors in between (elimination, search and destroy). */
+  private roundsRow(st: { need: number; wins: { red: number; blue: number }; alive: { red: number; blue: number } }, self: Team | ''): HTMLElement {
+    const pips = (team: Team) => {
+      const row = h('div', { class: 'mode-pips' });
+      for (let i = 0; i < st.need; i++) row.append(h('i', { style: i < st.wins[team] ? `background:${TEAM_COLORS[team]}` : '' }));
+      return row;
+    };
+    const mine = self || 'red';
+    return h('div', { class: 'mode-rounds' },
+      pips('red'),
+      h('div', { class: 'mode-alive', text: `${st.alive[mine]} v ${st.alive[otherTeam(mine)]}` }),
+      pips('blue'),
+    );
+  }
+
+  private setSiteMarker(m: Marker, x: SiteState, attackers: Team, self: Team | '', planted: boolean): void {
+    // Once the bomb is down only its site matters.
+    if (planted && !x.planted) return;
+    m.active = true;
+    m.x = x.x; m.y = x.y + 2.2; m.z = x.z;
+    m.key = `site:${x.name}`;
+    const color = x.planted ? TEAM_COLORS.red : x.progress > 0 ? CONTESTED_COLOR : '#ffffff';
+    m.icon.textContent = x.name;
+    m.icon.className = `mm-icon zone${x.planted ? ' contested' : ''}`;
+    m.icon.style.borderColor = color;
+    m.icon.style.background = `conic-gradient(${color} ${Math.round(x.progress * 360)}deg, rgba(0,0,0,0.55) 0deg)`;
+    setCaption(m, siteAction(x, attackers, self, planted));
+    m.caption.style.color = color;
+  }
+
+  private setTagMarker(m: Marker, tag: TagState, self: Team | ''): void {
+    m.active = true;
+    m.x = tag.x; m.y = tag.y + 1.2; m.z = tag.z;
+    m.key = `tag:${tag.id}`;
+    const color = TEAM_COLORS[tag.team];
+    m.icon.textContent = '';
+    m.icon.className = 'mm-icon tag';
+    m.icon.style.borderColor = color;
+    m.icon.style.background = color;
+    setCaption(m, tagAction(tag, self));
+    m.caption.style.color = tag.team === self ? '#7fc8ff' : '#ffd23f';
   }
 
   /** Index of the hill after the last live one (hardpoint pause). */
@@ -207,18 +274,18 @@ export class ModeHud {
 
   private lastActive = 0;
 
-  private setZoneMarker(m: Marker, z: ZoneState, i: number, st: Extract<ModeState, { kind: 'zones' }>, self: Team | ''): void {
+  private setZoneMarker(m: Marker, z: ZoneState, i: number, st: Extract<ModeState, { kind: 'zones' }>, self: { team: Team | ''; id: number }): void {
     if (z.active) this.lastActive = i;
     m.active = true;
     m.x = z.x; m.y = z.y + 2.2; m.z = z.z;
     m.key = `zone:${i}`;
-    const ring = zoneRing(z, st.variant);
-    const color = zoneColor(z);
-    m.icon.textContent = st.variant === 'hardpoint' ? '' : zoneLetter(i);
+    const ring = zoneRing(z, st.variant, self.id);
+    const color = zoneColor(z, self.id);
+    m.icon.textContent = st.variant === 'domination' ? zoneLetter(i) : '';
     m.icon.className = `mm-icon zone${z.contested ? ' contested' : ''}${!z.active ? ' dim' : ''}`;
     m.icon.style.borderColor = color;
     m.icon.style.background = `conic-gradient(${ring.color} ${Math.round(ring.fill * 360)}deg, rgba(0,0,0,0.55) 0deg)`;
-    setCaption(m, z.active ? zoneStatus(z, self, st.variant) : t('mode.zone.next', z.name));
+    setCaption(m, z.active ? zoneStatus(z, self.team, st.variant, self.id) : t('mode.zone.next', z.name));
     m.caption.style.color = color;
   }
 

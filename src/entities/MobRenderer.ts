@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { FOG_GLSL, LIGHT_GLSL, type WorldUniforms } from '../rendering/Materials';
+import { uploadPrefix } from '../rendering/uploadRange';
 import { DYES } from '../world/Content';
 import { SOLID } from '../world/BlockRegistry';
 import type { World } from '../world/World';
@@ -106,6 +107,9 @@ interface PartMesh {
   mesh: THREE.InstancedMesh;
   data: THREE.InstancedBufferAttribute;
   tint: THREE.InstancedBufferAttribute;
+  /** Translation to the part's pivot and back (constant per part: built once, not twice per part per frame). */
+  toPivot: THREE.Matrix4;
+  fromPivot: THREE.Matrix4;
 }
 
 const tmpM = new THREE.Matrix4();
@@ -175,7 +179,12 @@ export class MobRenderer {
         mesh.frustumCulled = false;
         mesh.count = 0;
         this.group.add(mesh);
-        const pm = { part, mesh, data, tint };
+        const [px, py, pz] = part.pivot;
+        const pm: PartMesh = {
+          part, mesh, data, tint,
+          toPivot: new THREE.Matrix4().makeTranslation(px / 16, py / 16, pz / 16),
+          fromPivot: new THREE.Matrix4().makeTranslation(-px / 16, -py / 16, -pz / 16),
+        };
         this.all.push(pm);
         return pm;
       });
@@ -201,6 +210,12 @@ export class MobRenderer {
     this.emotes.frustumCulled = false;
     this.emotes.count = 0;
     this.group.add(this.emotes);
+    // ~150 instanced part meshes that never move (the instances carry the transforms): keep them out of the scene's
+    // per-frame matrix update (three r186 recurses into every child otherwise, see ChunkManager). Their world
+    // matrices stay the identity they were created with.
+    this.group.matrixAutoUpdate = false;
+    for (const child of this.group.children) child.matrixAutoUpdate = false;
+    this.group.updateMatrixWorld = () => {};
   }
 
   /** Spawns emote sprites (hearts for love and taming, smoke for a failed taming...) around a mob. */
@@ -294,15 +309,11 @@ export class MobRenderer {
         // Sitting: the head stays level, the front legs stand straight, the hind legs fold forward under the body.
         if (sit && part.anim === 'head') rot.x -= SIT_TILT;
         if (sit && (part.anim === 'legA' || part.anim === 'legB')) rot.x = part.pivot[2] > 0 ? 1.0 : -SIT_TILT;
-        const pivot = part.pivot;
-        const px = pivot[0], py = pivot[1], pz = pivot[2];
-        tmpPivot.makeTranslation(px / 16, py / 16, pz / 16);
         tmpRot.makeRotationFromEuler(rot);
-        tmpM.copy(tmpBase).multiply(tmpPivot).multiply(tmpRot);
+        tmpM.copy(tmpBase).multiply(pm.toPivot).multiply(tmpRot);
         // Babies have big heads (Minecraft scales the baby body to half but the head only to three quarters).
         if (m.baby && part.anim === 'head') tmpM.multiply(tmpScaleM.makeScale(1.5, 1.5, 1.5));
-        tmpPivot.makeTranslation(-px / 16, -py / 16, -pz / 16);
-        tmpM.multiply(tmpPivot);
+        tmpM.multiply(pm.fromPivot);
         pm.mesh.setMatrixAt(index, tmpM);
         const d = pm.data.array as Float32Array;
         d[index * 4] = (light >> 4) / 15;
@@ -343,13 +354,15 @@ export class MobRenderer {
       // Types without any mob cost no draw call.
       p.mesh.visible = p.mesh.count > 0;
       if (p.mesh.count === 0) continue;
-      p.mesh.instanceMatrix.needsUpdate = true;
-      p.data.needsUpdate = true;
-      p.tint.needsUpdate = true;
+      // Upload only the instances in use, not the whole capacity.
+      const n = p.mesh.count;
+      uploadPrefix(p.mesh.instanceMatrix, n * 16);
+      uploadPrefix(p.data, n * 4);
+      uploadPrefix(p.tint, n * 4);
     }
     this.shadows.count = shadows;
     this.shadows.visible = shadows > 0;
-    if (shadows > 0) { this.shadows.instanceMatrix.needsUpdate = true; this.shadowData.needsUpdate = true; }
+    if (shadows > 0) { uploadPrefix(this.shadows.instanceMatrix, shadows * 16); uploadPrefix(this.shadowData, shadows); }
     this.updateEmotes(dt);
   }
 

@@ -1,7 +1,7 @@
 import { EntityManager } from '../src/entities/EntityManager';
 import { explosionDamage, explosionDropChance } from '../src/entities/Explosion';
 import type { Mob, MobEvents, MobSound, MobTarget } from '../src/entities/Mob';
-import { type ItemStack, ITEM, blockDrop, encodeData, getItemDef, itemId } from '../src/items/ItemRegistry';
+import { type ItemStack, ITEM, blockDrop, blockDrops, encodeData, getItemDef, itemId } from '../src/items/ItemRegistry';
 import { touchesPlate } from '../src/world/Redstone';
 import { fireAspectTicks, levelOf, meleeBonus, powerBonus, punchKnockback } from '../src/items/EnchantRules';
 import { canCarry } from '../src/items/Enchanting';
@@ -55,6 +55,8 @@ export interface EntityHost {
   recordEdit(x: number, y: number, z: number, id: number, meta: number): void;
   /** Sky light levels the weather takes away (rain and thunder count as darkness for spawning). */
   skyDarkness?(): number;
+  /** Rain falling on a point right now (farmland stays moist in the rain). */
+  rainingAt?(x: number, y: number, z: number): boolean;
 }
 
 const r2 = (v: number) => Math.round(v * 100) / 100;
@@ -111,16 +113,18 @@ export class ServerEntities {
     this.world.onEdit = (x, y, z, id, meta) => host.recordEdit(x, y, z, id, meta);
     this.world.liquids.onDestroyed = (x, y, z, id) => {
       // Plants and torches washed away drop themselves, like in survival Minecraft.
-      const drop = hasSurvivalRules(this.mode) ? blockDrop(id, 0) : null;
-      if (drop) this.manager.dropItem(drop, x + 0.5, y + 0.3, z + 0.5);
+      if (!hasSurvivalRules(this.mode)) return;
+      for (const drop of blockDrops(id, 0)) this.manager.dropItem(drop, x + 0.5, y + 0.3, z + 0.5);
     };
-    // Decayed leaves, uprooted plants and sand that could not land drop their item (survival rules).
+    // Decayed leaves, uprooted plants (crops too) and sand that could not land drop their items (survival rules).
     this.world.onBlockDrop = (id, meta, x, y, z) => {
-      const drop = hasSurvivalRules(this.mode) ? blockDrop(id, 0, meta) : null;
-      if (drop) this.manager.dropItem(drop, x + 0.5, y + 0.3, z + 0.5);
+      if (!hasSurvivalRules(this.mode)) return;
+      for (const drop of blockDrops(id, 0, meta)) this.manager.dropItem(drop, x + 0.5, y + 0.3, z + 0.5);
     };
     this.world.skyDarkness = () => Math.round((1 - dayFactorAt(this.getTime())) * 11 + (this.host.skyDarkness?.() ?? 0));
+    this.world.rainingAt = (x, y, z) => this.host.rainingAt?.(x, y, z) ?? false;
     this.manager = new EntityManager(this.world, seed);
+    this.manager.griefing = () => !this.rules || !!this.rules.get('mobGriefing');
     // Redstone: pressure plates see players and mobs (oak plates also items); popped-off parts drop; powered TNT is lit.
     this.world.entitiesOn = (x, y, z, oak) => {
       let n = 0;
@@ -331,7 +335,7 @@ export class ServerEntities {
   boneMeal(p: EntityPlayer, x: number, y: number, z: number): void {
     if (!p.hasPos || p.held !== itemId('bone_meal') || ![x, y, z].every(Number.isInteger)) return;
     if (Math.hypot(x + 0.5 - p.x, y + 0.5 - (p.y + 1.62), z + 0.5 - p.z) > BONE_MEAL_REACH) return;
-    if (!boneMealTarget(this.world.getBlock(x, y, z))) return;
+    if (!boneMealTarget(this.world.getBlock(x, y, z), this.world.getMeta(x, y, z))) return;
     useBoneMeal(this.world.ticker, x, y, z);
   }
 

@@ -182,5 +182,10 @@ describe('arcade movement enforcement on the server', () => {
     old.say({ t: 'hello', v: PROTOCOL_VERSION, name: 'oldclient', bin: true });
     expect(old.of('welcome')[0].binary).toBe(true);
     expect(old.of('welcome')[0].binaryVersion).toBeUndefined();
+    // Version 3 (binary shots) is offered only to clients that ask for it.
+    const v3 = new FakeSocket();
+    server.accept(v3 as unknown as WebSocket);
+    v3.say({ t: 'hello', v: PROTOCOL_VERSION, name: 'v3client', bin: true, binv: 3 });
+    expect(v3.of('welcome')[0].binaryVersion).toBe(3);
   });
 });

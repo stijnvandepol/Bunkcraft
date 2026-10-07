@@ -16,6 +16,7 @@ import { type RandomTicker, type RandomTickHost, noteRandomTickable } from './Ra
 import { findSpawnColumn } from './Spawn';
 import { BIOME } from './TerrainGenerator';
 import { type WorldGenerator, type WorldType, arenaMapOf, createGenerator, isArenaWorld } from './WorldGenerator';
+import { ATTACHED_STEM_TINT, CROP_AGE_MASK, CROP_STYLE, CROP_TINT, STEM_ATTACHED_BIT } from './Crops';
 
 /** Sparse player edits per chunk: block index → packed state (id | meta << 8, see BlockStates). */
 export type EditMap = Map<number, Map<number, number>>;
@@ -62,6 +63,8 @@ export class World {
   onBlockDrop: ((id: number, meta: number, x: number, y: number, z: number) => void) | null = null;
   /** Sky light that time of day and weather take away (0..11); the game sets it. */
   skyDarkness: () => number = () => 0;
+  /** Rain falling on a point right now (farmland stays moist); set by the game from its weather. */
+  rainingAt: (x: number, y: number, z: number) => boolean = () => false;
   private readonly tickCenters = [{ x: 0, z: 0 }];
   private batchDepth = 0;
   private readonly batched = new Set<Chunk>();
@@ -171,6 +174,7 @@ export class World {
         return c?.biomes ? c.biomes[(x & 15) + (z & 15) * 16] : BIOME.PLAINS;
       },
       skyDarkness: () => this.skyDarkness(),
+      rainingAt: (x, y, z) => this.rainingAt(x, y, z),
       // Many changes in one tick (several leaves, a tree) remesh each chunk once, without jumping the queue.
       begin: () => this.beginBatch(),
       end: () => this.endBatch(false),
@@ -285,6 +289,7 @@ export class World {
   /** Biome tint (packed 0xRRGGBB) for a block at a column; white if untinted. */
   tintAt(x: number, z: number, id: number, meta = 0): number {
     if (DYE[id]) return DYE_RGB[meta & 15];
+    if (CROP_STYLE[id]) return CROP_STYLE[id] === 2 && (meta & STEM_ATTACHED_BIT) ? ATTACHED_STEM_TINT : CROP_TINT[id * 8 + (meta & CROP_AGE_MASK[id])];
     if (!TINT[id]) return 0xffffff;
     const c = this.chunkAt(x >> 4, z >> 4);
     const biome = c?.biomes ? c.biomes[(x & 15) + (z & 15) * 16] : 2;
