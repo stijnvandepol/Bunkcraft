@@ -134,7 +134,7 @@ export const WEAPONS: WeaponDef[] = [
     role: 'Heavy automatic: four hits kill at any range, hard to control, small magazine',
   },
   {
-    id: 'lever', name: 'Lever-Action Carbine', slot: 'primary', auto: false, damage: 50, headshot: 2.1, pellets: 1, rpm: 100,
+    id: 'lever', name: 'Lever-Action Carbine', slot: 'primary', auto: false, damage: 50, headshot: 2.1, pellets: 1, rpm: 120,
     magazine: 8, reloadSec: 1.9, spread: 2.4, adsSpread: 0.1, range: 40, falloffEnd: 90, minDamage: 0.7, maxRange: 200,
     zoom: 0.72, moveSpeed: 1, recoil: 2.6, bolt: true, adsTime: 0.24, recoilX: 0.18, pattern: PAT_LEFT,
     optics: ['iron', 'reddot', 'combat'], combatZoom: 0.45,
