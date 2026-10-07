@@ -39,6 +39,8 @@ jobs:
       - run: npm run build
       - name: Bundle size budget (fails on > 10 % growth of the main chunk)
         run: npm run size:check
+      - name: Precompressed copies match the built files (the server serves .br/.gz first)
+        run: node scripts/check-precompressed.mjs
 
   # Mesh and arena benchmarks against scripts/perf-budget.json (generous ceilings, CI factor applied).
   perf:

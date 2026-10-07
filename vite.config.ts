@@ -1,4 +1,5 @@
-import { readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { brotliCompressSync, constants, gzipSync } from 'node:zlib';
 import { type Plugin, defineConfig } from 'vite';
 import { pwa } from './scripts/vite-pwa';
@@ -40,19 +41,20 @@ function productionAssets(): Plugin {
         return tags;
       },
     },
-    generateBundle(_options, bundle) {
+    // Compress the files as written to disk, not the bundle in generateBundle: Vite fills in its own
+    // placeholders (`__VITE_PRELOAD__` for lazy imports) after other plugins' generateBundle, so copies
+    // made there kept the placeholder and the lazily loaded arcade code failed to run.
+    writeBundle(options, bundle) {
       // Static hosts (itch.io) do their own compression; only the Node server uses these copies.
       if (STATIC) return;
-      for (const [file, item] of Object.entries(bundle)) {
+      const dir = options.dir ?? 'dist';
+      for (const file of Object.keys(bundle)) {
         if (!/\.(js|css|html|svg|json)$/.test(file)) continue;
-        const source = item.type === 'chunk' ? item.code : item.source;
-        const data = Buffer.from(source);
+        const data = readFileSync(join(dir, file));
         if (data.length < 1024) continue;
-        this.emitFile({ type: 'asset', fileName: `${file}.gz`, source: gzipSync(data, { level: 9 }) });
-        this.emitFile({
-          type: 'asset', fileName: `${file}.br`,
-          source: brotliCompressSync(data, { params: { [constants.BROTLI_PARAM_QUALITY]: 11, [constants.BROTLI_PARAM_SIZE_HINT]: data.length } }),
-        });
+        writeFileSync(join(dir, `${file}.gz`), gzipSync(data, { level: 9 }));
+        writeFileSync(join(dir, `${file}.br`),
+          brotliCompressSync(data, { params: { [constants.BROTLI_PARAM_QUALITY]: 11, [constants.BROTLI_PARAM_SIZE_HINT]: data.length } }));
       }
     },
   };
