@@ -212,10 +212,11 @@ try {
       await a.page.setViewportSize({ width: w, height: h });
       await wait(a, 700);
       await shot(a, `r3-f-resize-${w}x${h}`);
-      const boxes = await a.page.evaluate(() => {
-        const r = (s: string) => { const e = document.querySelector(s); if (!e) return null; const b = e.getBoundingClientRect(); return b.width ? [b.left, b.top, b.right, b.bottom] : null; };
+      // A plain string: tsx would wrap a nested arrow function in a helper the page does not have.
+      const boxes = await a.page.evaluate(`(() => {
+        const r = (s) => { const e = document.querySelector(s); if (!e) return null; const b = e.getBoundingClientRect(); return b.width ? [b.left, b.top, b.right, b.bottom] : null; };
         return { top: r('.arc-top'), health: r('.arc-health'), ammo: r('.arc-ammo'), slots: r('.arc-slots'), lobby: r('.mlobby'), vw: innerWidth, vh: innerHeight };
-      });
+      })()`) as { top: number[] | null; health: number[] | null; ammo: number[] | null; slots: number[] | null; lobby: number[] | null; vw: number; vh: number };
       const inside = (b: number[] | null) => !b || (b[0] >= -1 && b[1] >= -1 && b[2] <= boxes.vw + 1 && b[3] <= boxes.vh + 1);
       const overlap = (p: number[] | null, q: number[] | null) => !!p && !!q && p[0] < q[2] && q[0] < p[2] && p[1] < q[3] && q[1] < p[3];
       check(`resize ${w}x${h}: HUD inside the window`, [boxes.top, boxes.health, boxes.ammo, boxes.slots, boxes.lobby].every(inside), JSON.stringify(boxes));

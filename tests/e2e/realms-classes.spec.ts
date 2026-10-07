@@ -47,6 +47,14 @@ test('create-a-class: a picked preset shows in the editor, applies at once in th
   await expect(page.locator('.chat')).toBeVisible();
 });
 
+test('hardpoint warm-up: no "Hill moves in 0" before the round is live', async ({ page }) => {
+  test.setTimeout(120_000);
+  await quickPlay(page, 'hill_e2e', 'hardpoint');
+  await expect(page.locator('.mlobby-status')).toContainText('Waiting for players');
+  await play(page, 1500);
+  await expect(page.locator('.mode-panel')).not.toContainText('Hill moves');
+});
+
 test('language: switching to Dutch in a match redraws the HUD, the lobby panel and Create-a-Class', async ({ page }) => {
   test.setTimeout(120_000);
   await quickPlay(page, 'taal_e2e');

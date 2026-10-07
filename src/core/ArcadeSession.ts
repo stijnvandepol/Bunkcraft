@@ -432,6 +432,7 @@ export class ArcadeSession {
       this.d.feedback?.caption(t('arc.cap.matchStarts'), this.d.player.x, this.d.player.z);
     }
     this.phase = msg.phase;
+    this.modeHud.setLive(msg.phase === 'live');
     this.matchRaw = msg.text ?? '';
     this.matchText = localizeServerText(this.matchRaw);
     this.timeLeft = msg.timeLeft;
