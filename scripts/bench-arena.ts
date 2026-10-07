@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { WebSocket } from 'ws';
 import { ARENA_FLOOR_Y, getMap, parseMapId } from '../src/modes/maps';
-import { decodeBinary } from '../src/net/binary';
+import { BINARY_VERSION, decodeBinary } from '../src/net/binary';
 import { PROTOCOL_VERSION, type ClientMessage, type ServerMessage } from '../src/net/protocol';
 import { GameServer } from '../server/GameServer';
 import { metrics } from '../server/Metrics';
@@ -31,6 +31,10 @@ const CULL = opt('cull', 'on') !== 'off';
 const MAP = parseMapId(opt('map', 'classic')) ?? 'classic';
 
 let clock = 1_700_000_000_000;
+/** Outgoing bytes per message type, all players (JSON and binary frames counted separately). */
+const byType = new Map<string, number>();
+const threadCpu = (process as { threadCpuUsage?: () => NodeJS.CpuUsage }).threadCpuUsage;
+const cpuMs = () => { const u = threadCpu ? threadCpu.call(process) : process.cpuUsage(); return (u.user + u.system) / 1000; };
 let kills = 0;
 Date.now = () => clock;
 
@@ -63,9 +67,12 @@ class Sink extends EventEmitter {
   teleports = 0;
   send(data: string | ArrayBuffer): void {
     const m = typeof data === 'string' ? JSON.parse(data) as ServerMessage : decodeBinary(data);
-    this.bytes += typeof data === 'string' ? data.length : data.byteLength;
+    const size = typeof data === 'string' ? data.length : data.byteLength;
+    this.bytes += size;
     this.messages++;
     if (!m) return;
+    const k = typeof data === 'string' ? m.t : `${m.t} (bin)`;
+    byType.set(k, (byType.get(k) ?? 0) + size);
     if (m.t === 'snap') this.snapBytes += typeof data === 'string' ? data.length : data.byteLength;
     if (m.t === 'kill') kills++;
     if (m.t === 'welcome') { this.me.id = m.id; variant = map.variantFor(m.seed); }
@@ -94,7 +101,7 @@ const bots: Sink[] = [];
 for (let i = 0; i < PLAYERS; i++) {
   const ws = new Sink();
   server.accept(ws as unknown as WebSocket);
-  ws.say({ t: 'hello', v: PROTOCOL_VERSION, name: `bot${i}`, ...(WIRE !== 'json' ? { bin: true } : {}), ...(WIRE === 'binq' ? { binv: 2 } : {}) });
+  ws.say({ t: 'hello', v: PROTOCOL_VERSION, name: `bot${i}`, ...(WIRE !== 'json' ? { bin: true } : {}), ...(WIRE === 'binq' ? { binv: BINARY_VERSION } : {}) });
   bots.push(ws);
 }
 
@@ -103,6 +110,8 @@ const blocks = { getBlock: (x: number, y: number, z: number) => map.blockAt(vari
 // Warm-up first (10 s), not measured.
 for (let t = 0; t < 11; t += dt) { clock += dt * 1000; for (const b of bots) b.say({ t: 'pos', x: b.me.x, y: b.me.y, z: b.me.z, yaw: 0, pitch: 0, flags: 4, held: 0 }); tick(); }
 for (const b of bots) { b.bytes = 0; b.snapBytes = 0; b.messages = 0; b.teleports = 0; }
+byType.clear();
+let tickCpu = 0, handleCpu = 0;
 const cheatBefore = [...metrics.cheatEvents.values()].reduce((a, c) => a + c, 0);
 
 const times: number[] = [];
@@ -112,6 +121,7 @@ const steps = Math.round(SECONDS * HZ);
 for (let step = 0; step < steps; step++) {
   clock += dt * 1000;
   const h0 = performance.now();
+  const c0 = cpuMs();
   for (const b of bots) {
     if (b.fresh) b.fresh = false; // the first report after a spawn or correction is that position
     else {
@@ -136,9 +146,12 @@ for (let step = 0; step < steps; step++) {
     }
   }
   const h1 = performance.now();
+  const c1 = cpuMs();
   tick();
   times.push(performance.now() - h1);
   handleTimes.push(h1 - h0);
+  tickCpu += cpuMs() - c1;
+  handleCpu += c1 - c0;
 }
 
 const stat = (xs: number[]) => {
@@ -152,8 +165,13 @@ console.log(`${PLAYERS} players on ${MAP}, ${SECONDS} s at ${HZ} Hz, wire ${WIRE
 console.log(`tick():                ${stat(times)}`);
 console.log(`message handling/tick: ${stat(handleTimes)}  (pos + fire incl. movement validation and hitscan)`);
 console.log(`CPU per second: ${((mean(times) + mean(handleTimes)) * HZ).toFixed(2)} ms (${(((mean(times) + mean(handleTimes)) * HZ) / 10).toFixed(2)} % of a core)`);
+// Thread CPU time: unaffected by other processes on the machine (wall-clock ticks above are, under load).
+console.log(`CPU time: tick mean ${(tickCpu / steps).toFixed(3)} ms, message handling/tick mean ${(handleCpu / steps).toFixed(3)} ms (bots' own work included)`);
 const snapBytes = bots.reduce((a, b) => a + b.snapBytes, 0) / bots.length / SECONDS;
 console.log(`outgoing per player: ${(bytes / 1024).toFixed(2)} KiB/s (${bytes.toFixed(0)} B/s), of which snapshots ${snapBytes.toFixed(0)} B/s; ${(bots[0].messages / SECONDS).toFixed(0)} msg/s`);
+const total = [...byType.values()].reduce((a, b) => a + b, 0) || 1;
+console.log(`outgoing by type (B/s per player): ${[...byType].sort((a, b) => b[1] - a[1]).slice(0, 8)
+  .map(([k, v]) => `${k} ${(v / bots.length / SECONDS).toFixed(0)} (${((100 * v) / total).toFixed(0)} %)`).join(', ')}`);
 console.log(`anti-cheat corrections of honest bots: ${[...metrics.cheatEvents.values()].reduce((a, c) => a + c, 0) - cheatBefore} (teleports ${bots.reduce((a, b) => a + b.teleports, 0)})`);
 console.log(`phase at the end: ${(server as unknown as { match: { phase: string } }).match.phase}`);
 server.shutdown();

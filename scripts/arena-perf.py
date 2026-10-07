@@ -52,6 +52,10 @@ RECORDER = """
   const gaps = [], drawCalls = [], tris = [];
   const g = window.game;
   const ws0 = { ...window.__ws };
+  // Main-loop JS time per frame (update + render submission): comparable across browsers, unlike frame gaps that sit
+  // at the display refresh while there is headroom. Game.frame re-requests itself through the property.
+  const work = [], frame = g.frame;
+  g.frame = (t) => { const a = performance.now(); frame(t); work.push(performance.now() - a); };
   let last = performance.now(), start = last;
   let shots = 0, kills = 0, remotes = 0;
   const tick = (now) => {
@@ -62,7 +66,8 @@ RECORDER = """
     if (now - start < seconds * 1000) requestAnimationFrame(tick);
     else {
       const ws = window.__ws, el = (now - start) / 1000;
-      resolve({ gaps, drawCalls, tris, scale: g.dynamicResolution.scale,
+      g.frame = frame;
+      resolve({ gaps, drawCalls, tris, work, scale: g.dynamicResolution.scale,
         inBps: (ws.inBytes - ws0.inBytes) / el, outBps: (ws.outBytes - ws0.outBytes) / el,
         inMps: (ws.inMsgs - ws0.inMsgs) / el, outMps: (ws.outMsgs - ws0.outMsgs) / el,
         remotes: g.remote.count ?? 0, phase: g.arcade && g.arcade.phase });
@@ -333,6 +338,8 @@ def measure(srv, pw, args, map_id):
         ('p95 frame (ms)', f'{pct(gaps, 0.95):.1f}'),
         ('p99 frame (ms)', f'{pct(gaps, 0.99):.1f}'),
         ('worst frame (ms)', f'{max(gaps):.1f}'),
+        ('frame JS mean (ms)', f"{statistics.mean(res['work']):.2f}" if res['work'] else '-'),
+        ('frame JS p95 (ms)', f"{pct(res['work'], 0.95):.2f}" if res['work'] else '-'),
         ('long frames > 20 ms', sum(1 for x in gaps if x > 20)),
         ('long frames > 33 ms', sum(1 for x in gaps if x > 33)),
         ('GC pauses (n)', len(gc) if cdp else '-'),

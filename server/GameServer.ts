@@ -9,7 +9,7 @@ import {
 import { ARENA_FLOOR_Y, DEFAULT_MAP, type MapId, type MapSetting, getMap, mapFor, nextMap, parseMapId, parseMapSetting, voteChoices } from '../src/modes/maps';
 import { type GameType, gameTypeDef } from '../src/modes/GameTypes';
 import { GAME_MODES, type GameMode, hasSurvivalRules } from '../src/player/GameMode';
-import { BINARY_VERSION, encodeBinary, encodeSnap, encodeSnapQ } from '../src/net/binary';
+import { BINARY_VERSION, BINARY_VERSION_SHOT, BINARY_VERSION_SNAP_Q, encodeBinary, encodeShot, encodeSnap, encodeSnapQ } from '../src/net/binary';
 import { ARCADE_TICK_HZ, ARCADE_TICK_MAX, ARCADE_TICK_MIN, arcadeInterpDelay } from '../src/modes/ArcadeLogic';
 import { decodeData } from '../src/items/ItemRegistry';
 import { BLOCK, getBlockDef } from '../src/world/BlockRegistry';
@@ -179,6 +179,10 @@ interface Session {
   bin: boolean;
   /** Arcade: receives snapshots in the quantised binary format (binary version 2). */
   binq: boolean;
+  /** Arcade: receives `shot` as a binary frame (binary version 3). */
+  binShot: boolean;
+  /** Highest binary format version both sides understand (0 = JSON only, 1 = snap/ent frames). */
+  binVersion: number;
   guard: InventoryGuard;
   /** Arcade: fire, reload, weapon and loadout requests. */
   fires: Bucket;
@@ -792,7 +796,9 @@ export class GameServer {
     const session: Session = {
       id: this.nextId++, name, ws, ip, op, owner: who.owner, verified: who.verified, keyHash,
       bin: hello.bin === true && this.opts.binary !== false,
-      binq: hello.bin === true && this.opts.binary !== false && !!this.match && Number(hello.binv) >= BINARY_VERSION,
+      binq: hello.bin === true && this.opts.binary !== false && !!this.match && Number(hello.binv) >= BINARY_VERSION_SNAP_Q,
+      binShot: hello.bin === true && this.opts.binary !== false && !!this.match && Number(hello.binv) >= BINARY_VERSION_SHOT,
+      binVersion: hello.bin === true && this.opts.binary !== false ? Math.max(1, Math.min(BINARY_VERSION, Math.floor(Number(hello.binv)) || 1)) : 0,
       guard: new InventoryGuard(initial.error ? [] : initial.slots),
       x: start.x, y: start.y, z: start.z, yaw: 0, pitch: 0, flags: 0, held: 0,
       hasPos: false, lastPosTime: Date.now(),
@@ -821,7 +827,7 @@ export class GameServer {
       motd: this.opts.motd,
       ...(op ? { op: true } : {}),
       ...(session.bin ? { binary: true } : {}),
-      ...(session.binq ? { binaryVersion: BINARY_VERSION } : {}),
+      ...(session.binq ? { binaryVersion: session.binVersion } : {}),
       ...(this.match ? { tickHz: this.tickHz } : {}),
       ...(this.survival ? this.survival.welcome() : {}),
       ...(this.containers ? { containers: true } : {}),
@@ -1479,7 +1485,8 @@ export class GameServer {
     // Using an item on a mob can hand one back (milking a cow gives a milk bucket).
     if (msg.t === 'mobused' && msg.give) s.guard.creditPickup(msg.give, 1);
     if (s.bin) {
-      const frame = s.binq && msg.t === 'snap' ? encodeSnapQ(msg.players, 0, ARENA_FLOOR_Y, 0) : encodeBinary(msg);
+      const frame = s.binq && msg.t === 'snap' ? encodeSnapQ(msg.players, 0, ARENA_FLOOR_Y, 0)
+        : s.binShot && msg.t === 'shot' ? encodeShot(msg) : encodeBinary(msg);
       if (frame) {
         s.ws.send(frame);
         metrics.sent(frame.byteLength);
@@ -1496,8 +1503,17 @@ export class GameServer {
     let data: string | undefined;
     let frame: ArrayBuffer | null | undefined;
     let frameQ: ArrayBuffer | undefined;
+    let frameShot: ArrayBuffer | null | undefined;
     for (const s of this.sessions.values()) {
       if (s.id === except || s.ws.readyState !== s.ws.OPEN || this.overloaded(s)) continue;
+      if (s.binShot && msg.t === 'shot') {
+        if (frameShot === undefined) frameShot = encodeShot(msg);
+        if (frameShot) {
+          s.ws.send(frameShot);
+          metrics.sent(frameShot.byteLength);
+          continue;
+        }
+      }
       if (s.binq && msg.t === 'snap') {
         frameQ ??= encodeSnapQ(msg.players, 0, ARENA_FLOOR_Y, 0);
         s.ws.send(frameQ);
