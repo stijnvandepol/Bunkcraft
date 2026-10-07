@@ -53,6 +53,8 @@ export interface Config {
   quickPlayBots: number;
   /** Difficulty of those bots (QUICKPLAY_BOT_DIFFICULTY: easy, normal, hard, veteran). */
   quickPlayBotDifficulty: BotDifficulty;
+  /** Build the bots' navigation graphs of every arena in the background at start-up (BOT_PREWARM; off under Vitest). */
+  botPrewarm: boolean;
 }
 
 const flag = (v: string | undefined, dflt: boolean): boolean => (v === undefined || v === '' ? dflt : !/^(0|off|false|no)$/i.test(v));
@@ -98,6 +100,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     chunkWorkers: chunkWorkerCount(env.CHUNK_WORKERS),
     quickPlayBots: Math.max(0, Math.floor(num(env.QUICKPLAY_BOTS, 8))),
     quickPlayBotDifficulty: parseBotDifficulty(env.QUICKPLAY_BOT_DIFFICULTY?.toLowerCase()) ?? 'normal',
+    botPrewarm: flag(env.BOT_PREWARM, !env.VITEST),
   };
 }
 

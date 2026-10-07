@@ -17,6 +17,7 @@ import { gameTypeDef, parseGameType } from '../src/modes/GameTypes';
 import { parseListingKind } from '../src/modes/Realms';
 import { RateLimiter, bearer, hashPassword, hashToken, newToken, safeEqual } from './Security';
 import { ChunkGenPool } from './chunkgen/ChunkGenPool';
+import { prewarmNavGraphs } from './bots/BotWorld';
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -129,6 +130,8 @@ export async function startServer(config: Config): Promise<RunningServer> {
   const every = (ms: number, fn: () => void) => { const t = setInterval(fn, ms); t.unref(); timers.push(t); };
   every(600_000, () => { createLimit.prune(); lookupLimit.prune(); listLimit.prune(); quickLimit.prune(); failLimiter.prune(); adminFailures.prune(); });
   every(5000, () => metrics.rollWindow());
+  // Bot navigation for every arena, built in the background before the first lobby needs it.
+  if (rooms && config.botPrewarm) prewarmNavGraphs((ms, n) => log.info('bot nav graphs ready', { graphs: n, ms: Math.round(ms) }));
   if (config.backupKeep > 0) {
     const run = () => backupAll(config.dataDir, backupDir, config.backupKeep);
     setTimeout(run, 2000).unref();

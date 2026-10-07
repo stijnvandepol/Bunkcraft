@@ -105,13 +105,15 @@ export class NavGraph {
     return this.nodeCol.length;
   }
 
-  constructor(world: NavWorld, coreSeed?: { x: number; y: number; z: number }) {
+  constructor(source: NavWorld, coreSeed?: { x: number; y: number; z: number }) {
     const t0 = performance.now();
-    const b = world.bounds;
+    const b = source.bounds;
     this.minX = b.minX; this.minZ = b.minZ;
     this.w = b.maxX - b.minX; this.d = b.maxZ - b.minZ;
-    this.floorY = world.floorY;
-    this.levels = Math.min(255, Math.round((world.maxHeight ?? 14) / NAV_STEP));
+    this.floorY = source.floorY;
+    this.levels = Math.min(255, Math.round((source.maxHeight ?? 14) / NAV_STEP));
+    // Millions of block lookups follow: a dense copy of the region makes them array reads.
+    const world = snapshot(source, this.floorY - 2, this.floorY + Math.ceil(this.levels * NAV_STEP) + 6);
     const mv = new MovementValidator({ getBlock: world.getBlock, getMeta: world.getMeta }, { maxSpeed: 1 });
     const solidAt = (x: number, y: number, z: number) => mv.inSolid(x, y, z);
     const feet = (l: number) => this.floorY + 0.5 + l * NAV_STEP;
@@ -501,6 +503,32 @@ export class NavGraph {
     for (let i = this.colStart[c]; i < this.colStart[c + 1]; i++) if (Math.abs(this.ny[i] - y) <= 0.55) return true;
     return false;
   }
+}
+
+/** A dense copy of the blocks (and states) of the graph's region, y in [y0, y1); outside it the source answers. */
+function snapshot(src: NavWorld, y0: number, y1: number): NavWorld {
+  const b = src.bounds;
+  const x0 = b.minX - 1, z0 = b.minZ - 1, w = b.maxX - b.minX + 2, d = b.maxZ - b.minZ + 2, h = y1 - y0;
+  const ids = new Uint8Array(w * d * h);
+  const metas = src.getMeta ? new Uint8Array(w * d * h) : null;
+  for (let x = 0; x < w; x++) {
+    for (let z = 0; z < d; z++) {
+      for (let y = 0; y < h; y++) {
+        const i = (x * d + z) * h + y;
+        ids[i] = src.getBlock(x + x0, y + y0, z + z0);
+        if (metas && ids[i] !== 0) metas[i] = src.getMeta!(x + x0, y + y0, z + z0);
+      }
+    }
+  }
+  const index = (x: number, y: number, z: number) => {
+    const ix = x - x0, iy = y - y0, iz = z - z0;
+    return ix < 0 || iz < 0 || iy < 0 || ix >= w || iz >= d || iy >= h ? -1 : (ix * d + iz) * h + iy;
+  };
+  return {
+    ...src,
+    getBlock: (x, y, z) => { const i = index(x, y, z); return i < 0 ? src.getBlock(x, y, z) : ids[i]; },
+    getMeta: metas ? (x, y, z) => { const i = index(x, y, z); return i < 0 ? src.getMeta!(x, y, z) : metas[i]; } : undefined,
+  };
 }
 
 /** Graphs per map variant (any key the caller chooses: map id + variant), built on first use. */
