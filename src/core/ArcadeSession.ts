@@ -10,7 +10,7 @@ import {
 } from '../modes/Loadouts';
 import {
   AIM_CLIMB, DEFAULT_PRIMARY, DEFAULT_SECONDARY, type OpticId, PLAYER_MAX_HEALTH, RESPAWN_SECONDS, type WeaponDef, adsTimeFor, fireInterval,
-  isPerk, opticFor, opticZoom, switchDelayFor, weaponDef,
+  isPerk, magazineFor, opticFor, opticZoom, reloadTimeFor, switchDelayFor, weaponDef,
 } from '../modes/Weapons';
 import { type ClientMessage, type MatchInfo, type MatchPhase, type ModeState, type RosterEntry, SNAP_FLAG_ADS, type ServerMessage } from '../net/protocol';
 import type { RemotePlayers } from '../net/RemotePlayers';
@@ -41,6 +41,8 @@ interface AmmoState {
   reloading: boolean;
   /** Clock time the reload began (for the reload bar and animation). */
   since: number;
+  /** Seconds this reload takes (tactical or empty, `reloadTimeFor`): the animation, the sounds and the local finish. */
+  duration: number;
 }
 
 export interface ArcadeDeps {
@@ -172,8 +174,10 @@ export class ArcadeSession {
   private slot: Slot = 0;
   private prevSlot: Slot = 1;
   private readonly weaponIds: [string, string, string] = [DEFAULT_PRIMARY, DEFAULT_SECONDARY, 'knife'];
-  private readonly ammo: AmmoState[] = [0, 1, 2].map(() => ({ mag: 0, reloading: false, since: 0 }));
+  private readonly ammo: AmmoState[] = [0, 1, 2].map(() => ({ mag: 0, reloading: false, since: 0, duration: 1 }));
   private pending = 0;
+  /** The weapon in hand is still coming up until then (the server refuses a reload before that too). */
+  private equipUntil = 0;
   private readonly trigger = new FireControl();
   private ads = 0;
   private wantAds = false;
@@ -343,7 +347,12 @@ export class ArcadeSession {
       case 'ammo': {
         const a = this.ammo[msg.slot];
         if (!a) break;
-        if (msg.reloading && !a.reloading) { a.since = now; this.reloadStep[msg.slot] = 0; }
+        if (msg.reloading && !a.reloading) {
+          // The server started a reload by itself (an empty click): time it from its magazine count.
+          a.since = now;
+          a.duration = reloadTimeFor(weaponDef(this.weaponIds[msg.slot])!, msg.mag);
+          this.reloadStep[msg.slot] = 0;
+        }
         a.mag = msg.mag;
         a.reloading = msg.reloading;
         if (msg.slot === this.slot) this.pending = 0;
@@ -711,7 +720,7 @@ export class ArcadeSession {
   private fillAmmo(): void {
     for (let i = 0; i < 3; i++) {
       const def = weaponDef(this.weaponIds[i])!;
-      this.ammo[i].mag = def.magazine;
+      this.ammo[i].mag = magazineFor(def, this.cls.perk);
       this.ammo[i].reloading = false;
     }
     this.pending = 0;
@@ -730,6 +739,7 @@ export class ArcadeSession {
     this.pending = 0;
     this.boltAt = 0;
     this.trigger.delay(this.lastNow, equip);
+    this.equipUntil = this.lastNow + equip;
     if (announce) {
       this.d.send({ t: 'weapon', slot });
       this.d.audio.playMech('switch');
@@ -774,9 +784,10 @@ export class ArcadeSession {
   private requestReload(now: number): void {
     const w = this.weapon;
     const a = this.ammo[this.slot];
-    if (w.magazine === 0 || a.reloading || a.mag >= w.magazine) return;
+    if (w.magazine === 0 || a.reloading || a.mag >= magazineFor(w, this.cls.perk) || now < this.equipUntil) return;
     a.reloading = true;
     a.since = now;
+    a.duration = reloadTimeFor(w, Math.max(0, a.mag - this.pending));
     this.reloadStep[this.slot] = 0;
     this.d.send({ t: 'reload', slot: this.slot });
   }
@@ -858,10 +869,15 @@ export class ArcadeSession {
     const canAct = f.controls && !this.dead && !this.ended && !this.loadoutOpen;
     const ammo = this.ammo[this.slot];
 
-    // A local reload that the server never confirmed (or that is long over) must not hang forever.
+    // A reload ends on our clock, when the animation and the sounds end: the server's reload started half a round trip
+    // later, and our next shot needs that same half trip to arrive (Match.RELOAD_SLACK). Its `ammo` confirms the count.
     for (let i = 0; i < 3; i++) {
       const a = this.ammo[i];
-      if (a.reloading && now - a.since > (weaponDef(this.weaponIds[i])?.reloadSec ?? 1) + 1) a.reloading = false;
+      if (a.reloading && now - a.since >= a.duration) {
+        a.reloading = false;
+        a.mag = magazineFor(weaponDef(this.weaponIds[i])!, this.cls.perk);
+        if (i === this.slot) this.pending = 0;
+      }
     }
 
     if (canAct) {
@@ -913,7 +929,7 @@ export class ArcadeSession {
     this.hurt = Math.max(0, this.hurt - dt * 2);
     this.protect = Math.max(0, this.protect - dt);
 
-    const reload = ammo.reloading ? reloadProgress(now - ammo.since, w.reloadSec) : -1;
+    const reload = ammo.reloading ? reloadProgress(now - ammo.since, ammo.duration) : -1;
     this.viewmodel.update(dt, this.ads, reload, f.bobPhase, f.bobStrength, f.lookX, f.lookY, f.light, f.aspect);
     this.tracers.update(dt);
     this.updateHud(f, w, ammo, reload, input);
@@ -1020,7 +1036,7 @@ export class ArcadeSession {
     const slot = this.slot;
     if (ammo.reloading) {
       const steps = reloadSteps(w.id);
-      const t = (now - ammo.since) / Math.max(0.1, w.reloadSec);
+      const t = (now - ammo.since) / Math.max(0.1, ammo.duration);
       let i = this.reloadStep[slot];
       while (i < steps.length && steps[i][0] <= t) this.d.audio.playMech(steps[i++][1] as MechKind);
       this.reloadStep[slot] = i;

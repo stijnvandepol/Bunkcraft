@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ARENA_SPAWNS } from '../src/modes/arena';
 import { getMap } from '../src/modes/maps';
-import { WEAPONS, fireInterval, weaponDef } from '../src/modes/Weapons';
+import { TACTICAL_RELOAD, WEAPONS, fireInterval, reloadTimeFor, weaponDef } from '../src/modes/Weapons';
 import type { ClientMessage, MatchInfo, ServerMessage } from '../src/net/protocol';
 import { BLOCK } from '../src/world/BlockRegistry';
 import { ENDED_SECONDS, Match, type MatchHost, SPAWN_PROTECTION, WARMUP_SECONDS } from '../server/Match';
@@ -482,11 +482,38 @@ describe('weapon handling', () => {
     match.reload(1, 0);
     expect(host.of('ammo', 1).at(-1)).toMatchObject({ slot: 0, mag: 27, reloading: true });
     expect(match.fire(1, aim(alice, body(10.5)))).toBe(false);
-    advance(1.5);
+    // A tactical reload (rounds left): 75% of the rifle's 1.3 s empty reload.
+    const tactical = reloadTimeFor(weaponDef('rifle')!, 27);
+    expect(tactical).toBeCloseTo(1.3 * TACTICAL_RELOAD, 9);
+    advance(tactical - 0.15);
     expect(host.of('ammo', 1).at(-1)).toMatchObject({ mag: 27, reloading: true });
     advance(0.2);
     expect(host.of('ammo', 1).at(-1)).toMatchObject({ mag: 30, reloading: false });
     expect(match.fire(1, aim(alice, body(10.5)))).toBe(true);
+  });
+
+  it('reload timing matches the client: empty is slower than tactical, and a shot right at the end of the animation counts', () => {
+    const { host, match, advance } = liveDuel('ffa');
+    const alice = match.players.get(1)!;
+    for (let i = 0; i < 30; i++) { match.fire(1, aim(alice, { x: 8.5, y: 65, z: 0.5 })); advance(0.11); }
+    match.reload(1, 0);
+    expect(host.of('ammo', 1).at(-1)).toMatchObject({ mag: 0, reloading: true });
+    const empty = reloadTimeFor(weaponDef('rifle')!, 0);
+    expect(empty).toBe(weaponDef('rifle')!.reloadSec);
+    // The client ends its animation on its own clock and fires: that shot arrives a little before the server's timer
+    // (jitter). It must not be thrown away (QA round 3: "a visible wait after the animation").
+    advance(empty - 0.08);
+    expect(host.of('ammo', 1).at(-1)).toMatchObject({ reloading: true });
+    expect(match.fire(1, aim(alice, body(10.5)))).toBe(true);
+    expect(host.of('ammo', 1).at(-1)).toMatchObject({ mag: 29, reloading: false });
+  });
+
+  it('reloads are arcade fast: every gun reloads in at most 2.1 s, except the LMG; the LMG and the bolt-action sniper are the slowest', () => {
+    const guns = WEAPONS.filter((w) => w.magazine > 0);
+    for (const w of guns) if (w.id !== 'lmg') expect(w.reloadSec, w.id).toBeLessThanOrEqual(2.1);
+    const slowest = [...guns].sort((a, b) => b.reloadSec - a.reloadSec).slice(0, 2).map((w) => w.id);
+    expect(slowest.sort()).toEqual(['lmg', 'sniper']);
+    for (const w of guns) expect(reloadTimeFor(w, 1), w.id).toBeLessThan(reloadTimeFor(w, 0));
   });
 
   it('an empty magazine starts a reload instead of firing', () => {

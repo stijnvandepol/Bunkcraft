@@ -2,7 +2,7 @@ import { type ArenaMap, DEFAULT_MAP, type Spawn, getMap, mapFor, parseMapId } fr
 import { type GameTypeDef, type Team, gameTypeDef } from '../src/modes/GameTypes';
 import {
   DEFAULT_PRIMARY, DEFAULT_SECONDARY, type OpticId, PLAYER_MAX_HEALTH, type PerkId, REGEN_DELAY, REGEN_PER_SECOND,
-  type WeaponDef, damageAt, fireInterval, magazineFor, opticFor, rangeMulFor, switchDelayFor, weaponDef,
+  type WeaponDef, damageAt, fireInterval, magazineFor, opticFor, rangeMulFor, reloadTimeFor, switchDelayFor, weaponDef,
 } from '../src/modes/Weapons';
 import { type ClassSpec, DEFAULT_CLASS, validateClass } from '../src/modes/Loadouts';
 import type {
@@ -37,6 +37,12 @@ export const HISTORY_SECONDS = 1;
 export { DEFAULT_REWIND, MAX_REWIND } from './anticheat/LagComp';
 /** Fire messages may arrive this much (s) earlier than the weapon's cadence allows (network jitter). */
 const FIRE_SLACK = 0.04;
+/**
+ * A shot this close before the reload ends finishes the reload. The client ends its reload animation on its own clock,
+ * which started when it asked (half a round trip before the server); its next shot travels the same half trip, so it
+ * arrives about when the server's reload is done. The slack covers the jitter, so no shot is lost after the animation.
+ */
+const RELOAD_SLACK = 0.1;
 const HISTORY_SIZE = 24;
 /** The mode state (zones, flags) is re-sent at least this often. */
 const MODE_INTERVAL = 0.25;
@@ -346,10 +352,18 @@ export class Match {
     this.startReload(p, this.host.now());
   }
 
+  /** A reload is done: full magazine, and the client is told. */
+  private finishReload(p: MatchPlayer, slot: number): void {
+    const s = p.slots[slot];
+    s.reloadDoneAt = 0;
+    s.mag = s.cap;
+    this.host.send(p.id, { t: 'ammo', slot: slot as 0 | 1 | 2, mag: s.mag, reloading: false });
+  }
+
   private startReload(p: MatchPlayer, now: number): void {
     const s = p.slots[p.slot];
     if (s.cap <= 0 || s.mag >= s.cap || s.reloadDoneAt > 0 || now < p.switchReadyAt) return;
-    s.reloadDoneAt = now + s.def.reloadSec;
+    s.reloadDoneAt = now + reloadTimeFor(s.def, s.mag);
     this.host.send(p.id, { t: 'ammo', slot: p.slot, mag: s.mag, reloading: true });
   }
 
@@ -376,6 +390,7 @@ export class Match {
     if (m.slot !== p.slot) this.switchWeapon(id, m.slot); // the client switched without telling us
     const s = p.slots[p.slot];
     const w = s.def;
+    if (s.reloadDoneAt > 0 && now >= s.reloadDoneAt - RELOAD_SLACK) this.finishReload(p, p.slot);
     if (now < p.switchReadyAt || s.reloadDoneAt > 0) return false;
     if (now < s.nextFireAt - FIRE_SLACK) return false;
     if (s.cap > 0 && s.mag <= 0) {
@@ -552,11 +567,7 @@ export class Match {
       }
       for (let i = 0; i < 3; i++) {
         const s = p.slots[i];
-        if (s.reloadDoneAt > 0 && now >= s.reloadDoneAt) {
-          s.reloadDoneAt = 0;
-          s.mag = s.cap;
-          this.host.send(p.id, { t: 'ammo', slot: i as 0 | 1 | 2, mag: s.mag, reloading: false });
-        }
+        if (s.reloadDoneAt > 0 && now >= s.reloadDoneAt) this.finishReload(p, i);
       }
       if (p.health < PLAYER_MAX_HEALTH && now - p.lastDamageAt >= REGEN_DELAY) {
         p.health = Math.min(PLAYER_MAX_HEALTH, p.health + REGEN_PER_SECOND * dt);
