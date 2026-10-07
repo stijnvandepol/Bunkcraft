@@ -40,7 +40,7 @@ describe('weapon table', () => {
     for (const w of WEAPONS) {
       const body = Math.ceil(PLAYER_MAX_HEALTH / (w.damage * w.pellets));
       const head = Math.ceil(PLAYER_MAX_HEALTH / (w.damage * w.headshot * w.pellets));
-      if (w.id === 'knife') expect(body, 'knife needs two stabs').toBe(2);
+      if (w.id === 'knife') expect(body, 'one stab kills').toBe(1);
       else if (ONE_SHOT.has(w.id)) expect(body, w.id).toBe(1);
       else if (w.pellets === 1) expect(body, w.id).toBeGreaterThanOrEqual(2);
       expect(head, w.id).toBeLessThanOrEqual(body);

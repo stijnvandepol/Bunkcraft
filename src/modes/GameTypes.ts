@@ -66,11 +66,16 @@ export interface GameTypeDef {
   scoreColumn?: string;
 }
 
-/** The gun game weapon ladder: 16 levels, ending with the knife. Sniper and shotgun levels are never adjacent. */
+/**
+ * The gun game weapon ladder, ending with the knife. Sniper and shotgun levels are never adjacent.
+ * Starts with all-rounders (a shotgun first made the first kill take a minute on big open maps, docs/qa/ARCADE.md) and
+ * ends on one-hit weapons, so the finish is tense and fair: a one-pump shotgun, the one-headshot revolver, the one-shot
+ * bolt-action sniper, then the one-stab knife that wins (GUN_GAME_FINALE).
+ */
+export const GUN_GAME_FINALE = ['shotgun', 'revolver', 'sniper', 'knife'];
 export const GUN_GAME_LADDER: string[] = [
-  // Starts with all-rounders: a shotgun first made the first kill take a minute on big open maps (docs/qa/ARCADE.md).
-  'rifle', 'smg', 'lmg', 'burst', 'revolver', 'shotgun', 'dmr', 'mpistol', 'semisniper',
-  'smg', 'sniper', 'rifle', 'pistol', 'shotgun', 'burst', 'revolver', 'smg', 'knife',
+  'rifle', 'smg', 'lmg', 'burst', 'dmr', 'shotgun', 'mpistol', 'semisniper',
+  'smg', 'rifle', 'pistol', 'burst', 'lmg', ...GUN_GAME_FINALE,
 ];
 
 const minutes = (...m: number[]) => m.map((x) => x * 60);

@@ -140,13 +140,13 @@ export const WEAPONS: WeaponDef[] = [
     id: 'revolver', name: 'Revolver', slot: 'secondary', auto: false, damage: 52, headshot: 2, pellets: 1, rpm: 150,
     magazine: 6, reloadSec: 1.8, spread: 2.5, adsSpread: 0.15, range: 30, falloffEnd: 70, minDamage: 0.6, maxRange: 120,
     zoom: 0.85, moveSpeed: 1, recoil: 4.5, adsTime: 0.2, recoilX: 0.25, pattern: PAT_RIGHT, optics: ['iron'],
-    role: 'Two hits to kill, slow to reload',
+    role: 'One headshot kills out to 30 blocks, two to the body; slow to reload',
   },
   {
-    id: 'knife', name: 'Knife', slot: 'melee', auto: false, damage: 55, headshot: 1, pellets: 1, rpm: 120,
+    id: 'knife', name: 'Knife', slot: 'melee', auto: false, damage: 100, headshot: 1, pellets: 1, rpm: 120,
     magazine: 0, reloadSec: 0, spread: 0, adsSpread: 0, range: 2.6, falloffEnd: 2.6, minDamage: 1, maxRange: 2.6,
     zoom: 1, moveSpeed: 1.08, recoil: 0, adsTime: 0.2, recoilX: 0, pattern: PAT_NONE, optics: ['iron'],
-    role: 'Two stabs',
+    role: 'One stab kills; arm\'s length only',
   },
 ];
 

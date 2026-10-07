@@ -394,7 +394,7 @@ describe('hitscan', () => {
     k.match.switchWeapon(1, 2);
     k.advance(0.3);
     k.match.fire(1, aim(k.match.players.get(1)!, { x: 0.5, y: 65.9, z: 2.2 }, 2));
-    expect(k.host.of('hit', 1)[0]).toMatchObject({ damage: 55 });
+    expect(k.host.of('hit', 1)[0]).toMatchObject({ damage: 100, killed: true }); // one stab
     k.place(2, 0.5, 65, 6.5);
     k.advance(0.5);
     k.host.clear();
