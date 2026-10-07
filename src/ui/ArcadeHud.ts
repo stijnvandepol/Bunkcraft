@@ -14,6 +14,9 @@ const DAMAGE_LIFETIME = 1.6;
 /** Health below this flashes red. */
 const LOW_HEALTH = 30;
 
+/** When a class picked in Create-a-Class applies: at once, at the respawn (dead), or from the next life (mid-fight). */
+export type ClassApply = 'now' | 'respawn' | 'nextLife';
+
 export interface ScoreboardContext {
   selfId: number;
   teams: boolean;
@@ -104,6 +107,12 @@ export class ArcadeHud {
   private readonly statsEl: HTMLDivElement;
   private readonly loadoutNote: HTMLDivElement;
   private custom: ClassSpec = validateClass(null);
+  /**
+   * The class the editor shows: the one picked last (a preset or the custom class). Editing starts from it and makes it
+   * the custom class. (QA round 3: after picking a preset the editor still showed the old custom class, so a pick looked
+   * like it did nothing.)
+   */
+  private shown: ClassSpec = validateClass(null);
   private readonly scopeBreath: HTMLDivElement;
   private readonly scopeBreathFill: HTMLDivElement;
   private readonly scopeHint: HTMLDivElement;
@@ -266,24 +275,26 @@ export class ArcadeHud {
     this.renderCustom();
   }
 
-  /** The custom class (from storage); the editor shows it. */
+  /** The custom class (from storage). */
   setCustomClass(c: ClassSpec): void {
     this.custom = validateClass(c);
     this.renderCustom();
   }
 
   private editCustom(field: keyof typeof this.pick, id: string): void {
-    const next = { ...this.custom, [field]: id };
+    const next = { ...this.shown, [field]: id };
     // A new primary keeps the optic only when it fits; else the weapon's default.
     if (field === 'primary' && !opticAllowed(weaponDef(id)!, next.optic)) next.optic = weaponDef(id)!.optics[0];
     if (field === 'optic' && !opticAllowed(weaponDef(next.primary)!, id)) return;
     this.custom = validateClass(next);
+    this.shown = this.custom;
     this.renderCustom();
     this.onClass?.(this.custom, true);
   }
 
+  /** Draws the editor for the class it shows (`shown`). */
   private renderCustom(): void {
-    const c = this.custom;
+    const c = this.shown;
     const w = weaponDef(c.primary)!;
     for (const [id, el] of this.pick.primary) el.classList.toggle('selected', id === c.primary);
     for (const [id, el] of this.pick.secondary) el.classList.toggle('selected', id === c.secondary);
@@ -574,17 +585,29 @@ export class ArcadeHud {
     this.endCount.textContent = t('lobby.nextMatch', n);
   }
 
-  /** Opens Create-a-Class with `selected` (the class of the next life) highlighted. */
-  showLoadout(selected: ClassSpec, nextLife: boolean): void {
+  /** Opens Create-a-Class with `selected` (the class of the next life) highlighted; `when` says when a pick applies. */
+  showLoadout(selected: ClassSpec, when: ClassApply): void {
     this.loadoutEl.classList.remove('hidden');
     // A full-screen menu: the match HUD under it (score bar, banners, lobby panel, markers) would show through the title.
     this.el.classList.add('class-open');
+    // The chat lies outside the HUD layer: its lines showed through the editor columns (QA round 3).
+    document.body.classList.add('arc-class-open');
     this.markClass(selected);
-    this.loadoutNote.textContent = nextLife ? t('arc.cac.applyNow') : t('arc.cac.applyRespawn');
+    this.setClassApply(when);
   }
 
-  /** Highlights the chosen class: its preset card, or the custom card. */
+  /** The line under the editor: when the class picked now is put in your hands. */
+  setClassApply(when: ClassApply): void {
+    const text = t(when === 'now' ? 'arc.cac.applyNow' : when === 'respawn' ? 'arc.cac.applyRespawn' : 'arc.cac.applyNextLife');
+    if (this.loadoutNote.textContent !== text) this.loadoutNote.textContent = text;
+  }
+
+  /** Highlights the chosen class (its preset card, or the custom card) and shows it in the editor. */
   markClass(selected: ClassSpec): void {
+    if (!sameClass(selected, this.shown)) {
+      this.shown = validateClass(selected);
+      this.renderCustom();
+    }
     const cur = presetFor(selected);
     for (const [id, card] of this.presetCards) card.classList.toggle('selected', id === cur?.id);
     this.customCard.classList.toggle('selected', !cur && sameClass(selected, this.custom));
@@ -595,6 +618,7 @@ export class ArcadeHud {
   hideLoadout(): void {
     this.loadoutEl.classList.add('hidden');
     this.el.classList.remove('class-open');
+    document.body.classList.remove('arc-class-open');
   }
 
   get loadoutOpen(): boolean {

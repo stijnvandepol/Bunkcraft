@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  CLASS_STORAGE_KEY, DEFAULT_CLASS, LOADOUT_PRESETS, loadSavedClass, presetFor, presetsValid, saveClass, validateClass,
+  CLASS_STORAGE_KEY, DEFAULT_CLASS, LOADOUT_PRESETS, classApplies, loadSavedClass, presetFor, presetsValid, saveClass, validateClass,
 } from '../src/modes/Loadouts';
 import { GUN_GAME_LADDER } from '../src/modes/GameTypes';
 import { SECONDARY_WEAPONS, weaponDef } from '../src/modes/Weapons';
@@ -167,5 +167,16 @@ describe('server: classes', () => {
     expect(p.slots.map((s) => s.def.id)).toEqual([GUN_GAME_LADDER[0], 'knife', 'knife']);
     expect(p.perk).toBe('none');
     expect(SECONDARY_WEAPONS).not.toContain('knife');
+  });
+});
+
+describe('when a picked class applies (the Create-a-Class note follows the server rule)', () => {
+  it('now outside a live round and right after spawning; at the respawn when dead; else from the next life', () => {
+    for (const phase of ['warmup', 'countdown', 'roundend', 'intermission']) expect(classApplies(phase, true, true, 60), phase).toBe('now');
+    expect(classApplies('live', true, false, 1)).toBe('now');
+    expect(classApplies('live', true, false, CLASS_SWAP_WINDOW + 0.1)).toBe('nextLife');
+    expect(classApplies('live', true, true, 1)).toBe('nextLife');
+    expect(classApplies('live', false, true, 9)).toBe('respawn');
+    expect(classApplies('ended', true, false, 0)).toBe('respawn');
   });
 });

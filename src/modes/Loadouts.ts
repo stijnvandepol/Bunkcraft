@@ -33,6 +33,24 @@ export const LOADOUT_PRESETS: LoadoutPreset[] = [
   { id: 'sniper', name: 'Sniper', primary: 'sniper', optic: 'scope', secondary: 'mpistol', perk: 'quickdraw', description: 'One shot, one kill' },
 ];
 
+/** A class picked within this many seconds of spawning (and before the first shot) applies at once in a live round. */
+export const CLASS_SWAP_WINDOW = 3;
+
+/** Phases without fighting: a class picked then applies at once (warm-up, countdown, between rounds). */
+export function calmPhase(phase: string): boolean {
+  return phase === 'warmup' || phase === 'countdown' || phase === 'roundend' || phase === 'intermission';
+}
+
+/**
+ * When a class picked now is put in your hands (the server's rule in Match.setLoadout): at once outside a live round or
+ * right after spawning before the first shot, at the respawn while dead (or after the match), else from the next life.
+ */
+export function classApplies(phase: string, alive: boolean, firedThisLife: boolean, sinceSpawn: number): 'now' | 'respawn' | 'nextLife' {
+  if (!alive || phase === 'ended') return 'respawn';
+  if (calmPhase(phase) || (!firedThisLife && sinceSpawn <= CLASS_SWAP_WINDOW)) return 'now';
+  return 'nextLife';
+}
+
 /** A valid class from anything (saved JSON, a network message): unknown or disallowed fields become the default. */
 export function validateClass(raw: unknown): ClassSpec {
   const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;

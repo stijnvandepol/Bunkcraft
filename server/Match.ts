@@ -4,7 +4,7 @@ import {
   DEFAULT_PRIMARY, DEFAULT_SECONDARY, type OpticId, PLAYER_MAX_HEALTH, type PerkId, REGEN_DELAY, REGEN_PER_SECOND,
   type WeaponDef, damageAt, fireInterval, magazineFor, opticFor, rangeMulFor, reloadTimeFor, switchDelayFor, weaponDef,
 } from '../src/modes/Weapons';
-import { type ClassSpec, DEFAULT_CLASS, validateClass } from '../src/modes/Loadouts';
+import { CLASS_SWAP_WINDOW, type ClassSpec, DEFAULT_CLASS, calmPhase, validateClass } from '../src/modes/Loadouts';
 import type {
   ClientMessage, MatchInfo, MatchPhase, ModeEventKind, RosterEntry, ServerMessage,
 } from '../src/net/protocol';
@@ -24,7 +24,7 @@ export const VOTE_OPTIONS = 3;
 export const SPAWN_PROTECTION = 2;
 export const SWITCH_DELAY = 0.25;
 /** A class picked this soon after spawning (and before the first shot) applies at once instead of next life. */
-export const CLASS_SWAP_WINDOW = 3;
+export { CLASS_SWAP_WINDOW };
 export const EYE_HEIGHT = 1.62;
 /**
  * A client-reported shot origin further than this from the server's eye is replaced by the server's.
@@ -290,7 +290,7 @@ export class Match {
     const now = this.host.now();
     // Outside a live round nobody fights (warm-up, waiting for players, countdown, between rounds): any
     // change applies at once. In a live round only right after spawning and before the first shot.
-    const calm = this.phase === 'warmup' || this.phase === 'countdown' || this.phase === 'roundend' || this.phase === 'intermission';
+    const calm = calmPhase(this.phase);
     const fresh = !p.firedThisLife && now - p.spawnedAt <= CLASS_SWAP_WINDOW;
     if (p.alive && (calm || fresh) && this.phase !== 'ended' && !this.logic.loadoutFor) {
       this.equip(p, p.next.primary, p.next.secondary, 'knife', p.next.optic, p.next.perk);

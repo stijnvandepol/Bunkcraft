@@ -6,7 +6,7 @@ import {
 import { type GameTypeDef, type Team, TEAM_COLORS, gameTypeDef } from '../modes/GameTypes';
 import { carriesFlag, eventView, localizeServerText, phaseBanner } from '../modes/ModeView';
 import {
-  type ClassSpec, DEFAULT_CLASS, LAST_CLASS_STORAGE_KEY, LOADOUT_PRESETS, loadSavedClass, saveClass, validateClass,
+  type ClassSpec, DEFAULT_CLASS, LAST_CLASS_STORAGE_KEY, LOADOUT_PRESETS, classApplies, loadSavedClass, saveClass, validateClass,
 } from '../modes/Loadouts';
 import {
   AIM_CLIMB, DEFAULT_PRIMARY, DEFAULT_SECONDARY, type OpticId, PLAYER_MAX_HEALTH, RESPAWN_SECONDS, type WeaponDef, adsTimeFor, fireInterval,
@@ -213,6 +213,9 @@ export class ArcadeSession {
 
   dead = false;
   private deadAt = 0;
+  /** Clock time of the last spawn and whether we fired since (the window in which a new class applies at once). */
+  private spawnedAt = -1e9;
+  private firedThisLife = false;
   /** Who killed us (for the first second of spectating) and whom the camera follows now (0 = nobody). */
   private killerId = 0;
   private watchId = 0;
@@ -474,6 +477,8 @@ export class ArcadeSession {
     p.landedFall = 0;
     this.setTeam(msg.team);
     this.dead = false;
+    this.spawnedAt = now;
+    this.firedThisLife = false;
     this.endSpectate();
     this.hud.setDeath(null);
     this.applyGear(msg.primary, msg.secondary, msg.optic, msg.perk);
@@ -776,7 +781,12 @@ export class ArcadeSession {
   openLoadout(): void {
     if (this.def.loadout === 'ladder') return; // gun game: the ladder chooses
     this.loadoutOpen = true;
-    this.hud.showLoadout(this.nextClass, !this.dead);
+    this.hud.showLoadout(this.nextClass, this.classApplies());
+  }
+
+  /** When a class picked now applies (the note in Create-a-Class). */
+  private classApplies(): 'now' | 'respawn' | 'nextLife' {
+    return classApplies(this.phase, !this.dead, this.firedThisLife, this.lastNow - this.spawnedAt);
   }
 
   closeLoadout(): void {
@@ -811,6 +821,7 @@ export class ArcadeSession {
     const ox = p.x, oy = p.eyeY, oz = p.z;
     this.d.send({ t: 'fire', slot: this.slot, ox, oy, oz, dx: tmpAim.x, dy: tmpAim.y, dz: tmpAim.z, ads: this.ads > 0.5 });
     this.pending++;
+    this.firedThisLife = true;
     // Predicted effects.
     const sup = this.cls.perk === 'suppressor';
     this.d.audio.playGun(w.id, 1, undefined, sup);
@@ -859,6 +870,7 @@ export class ArcadeSession {
     const p = this.d.player;
     this.aim(tmpAim);
     this.d.send({ t: 'fire', slot: this.slot, ox: p.x, oy: p.eyeY, oz: p.z, dx: tmpAim.x, dy: tmpAim.y, dz: tmpAim.z, ads: false });
+    this.firedThisLife = true;
     this.viewmodel.swingKnife();
     this.d.audio.playGun('knife', 1);
   }
@@ -936,6 +948,8 @@ export class ArcadeSession {
     this.viewmodel.update(dt, this.ads, reload, f.bobPhase, f.bobStrength, f.lookX, f.lookY, f.light, f.aspect);
     this.tracers.update(dt);
     this.updateHud(f, w, ammo, reload, input);
+    // The note follows the clock: the quick-swap window closes while the menu is open.
+    if (this.loadoutOpen) this.hud.setClassApply(this.classApplies());
   }
 
   private boardContext(): ScoreboardContext {
