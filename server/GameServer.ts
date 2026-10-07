@@ -40,6 +40,8 @@ import { AimStats, SUSPICION } from './anticheat/Suspicion';
 import { Send, type Viewer, Visibility } from './anticheat/Visibility';
 import type { ShotReport } from './Match';
 import type { ChunkGenPool } from './chunkgen/ChunkGenPool';
+import { MatchProgress } from './progression/MatchProgress';
+import type { ProfileService } from './progression/ProfileService';
 import { type RateLimiter, hashIp, newToken, safeEqual, tokenMatches, verifyPassword, hashToken } from './Security';
 
 const TICK_MS = 50; // 20 ticks per second, like Minecraft
@@ -246,6 +248,8 @@ export interface ServerOptions {
   startMap?: MapId;
   /** For a new game: its own player limit (a Realms lobby size), at most `maxPlayers`. */
   lobbySize?: number;
+  /** Realms progression (profiles, XP) shared by every game on the server; absent = no XP. */
+  profiles?: ProfileService | null;
 }
 
 /**
@@ -276,6 +280,8 @@ export class GameServer {
   private entitiesActive = false;
   /** Arcade games: the match and the arena as bullets see it. */
   private readonly match: Match | null = null;
+  /** Arcade games with profiles: XP, ranks and unlocks (see progression/MatchProgress.ts). */
+  private readonly progress: MatchProgress | null = null;
   private arena: ServerWorld | null = null;
   /** Arcade: movement validation against the arena (see anticheat/). */
   private readonly guard: ArcadeGuard | null = null;
@@ -318,6 +324,12 @@ export class GameServer {
         (x, z) => this.match!.inBounds(x, z),
       );
       if (opts.culling ?? process.env.ARCADE_CULLING !== 'off') this.visibility = new Visibility({ getBlock: (x, y, z) => this.arena!.getBlock(x, y, z) });
+      if (opts.profiles) {
+        this.progress = new MatchProgress(opts.profiles, {
+          match: () => this.match!, now: () => Date.now() / 1000,
+          send: (id, msg) => { const s = this.sessions.get(id); if (s) this.send(s, msg); },
+        });
+      }
       this.match = new Match(this.matchHost(), {
         type: def.id, scoreLimit: this.world.scoreLimit ?? def.scoreLimit, timeLimitSec: this.world.timeLimitSec ?? def.timeLimitSec,
         map: first,
@@ -605,7 +617,8 @@ export class GameServer {
       },
       random: Math.random,
       ping: (id) => this.sessions.get(id)?.pingMs ?? 0,
-      onShot: (r) => this.onShot(r),
+      onShot: (r) => { this.progress?.shot(r.shooter, r.weapon, r.hits.length > 0); this.onShot(r); },
+      ...this.progress?.hooks(),
       get interpDelay() { return arcadeInterpDelay(gs.tickHz); },
       nextMap: (current, requires, preferred) => {
         if (this.mapSetting !== 'rotate') return null;
@@ -803,6 +816,8 @@ export class GameServer {
       pingMs: 0, pingSentAt: 0, awaiting: null, velX: 0, velY: 0, velZ: 0, aim: new AimStats(), lastFireAt: 0, trail: new PoseTrail(),
     };
     const joined = this.match?.join(session.id, name) ?? null;
+    // Realms profile (before `ready` sends the roster, so the rank icon is there from the start).
+    if (joined) this.progress?.bind(session.id, hello.profile, name);
     if (joined) {
       session.x = joined.x; session.y = joined.y; session.z = joined.z; session.hasPos = true;
       this.guard?.join(session.id, name);
@@ -847,7 +862,9 @@ export class GameServer {
     this.entities?.forget(s.id);
     this.survival?.forget(s.id);
     this.containers?.onLeave(s.id);
+    this.progress?.leave(s.id);
     this.match?.leave(s.id);
+    if (this.match && this.match.players.size === 0) this.progress?.recorder.stop();
     this.guard?.leave(s.id);
     this.visibility?.forget(s.id);
     this.broadcast({ t: 'leave', id: s.id, name: s.name });
@@ -972,9 +989,13 @@ export class GameServer {
       case 'reload': return void (s.actions.take() && match.reload(s.id, Number(msg.slot)));
       case 'weapon': return void (s.actions.take() && match.switchWeapon(s.id, Number(msg.slot)));
       case 'vote': return void (s.actions.take() && match.castVote(s.id, Number(msg.map)));
-      case 'loadout': return void (s.actions.take() && match.setLoadout(
-        s.id, optStr(msg.primary) ?? '', optStr(msg.secondary), optStr(msg.optic), optStr(msg.perk),
-      ));
+      case 'loadout': {
+        if (!s.actions.take()) return;
+        const req = { primary: optStr(msg.primary) ?? '', secondary: optStr(msg.secondary), optic: optStr(msg.optic), perk: optStr(msg.perk) };
+        // Realms unlocks: a locked weapon, optic or perk falls back to the default (the client shows them locked).
+        const c = this.progress ? this.progress.lockClass(s.id, req) : req;
+        return match.setLoadout(s.id, c.primary, c.secondary, c.optic, c.perk);
+      }
       case 'block':
         // Nobody builds in an arcade game: roll the client's guess back.
         return this.send(s, { t: 'reject', seq: msg.seq, x: msg.x, y: msg.y, z: msg.z, id: this.arena!.getBlock(msg.x | 0, msg.y | 0, msg.z | 0) });
