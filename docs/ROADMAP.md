@@ -283,14 +283,24 @@ regenereert, respawns en een scoreboard. Beschrijving, besturing en wapentabel: 
   JS-tijd per frame 0,57 → 0,58 ms, zonder vsync-cap 650 → 637 fps (−2%); server (`bench-arena.ts 16 30`): tick 0,074 → 0,085 ms,
   0,84 → 0,93% van een core. Audio worst case 0,26 ms/frame (budget 0,3).
 
+- **Vijf nieuwe modes: Gedaan (oktober 2026).** Kill Confirmed, Search & Destroy (bomsites A/B op alle elf kaarten, zijwissel),
+  Infected, Sharpshooter en King of the Hill: server-autoritaire regels, HUD, wereldmodellen (tags, bom), cues, Realms-kaarten
+  met icoon en NL/EN-tekst, quick play, Vitest per mode en bots die elke mode tot het einde spelen. Nieuwe `ModeLogic`-hooks
+  (`teamFor`, `keepTeams`, `speedMul`, `damageMul`, `objectives` voor server-bots). Details: [`GAMEMODES.md`](GAMEMODES.md).
+
 **Open:**
 
 1. **Integratie met de serverbranch** verifiëren: zie de checklist in de overdracht (arena-wereld via `worldType`,
    snelheidscontrole voor 1,3× sprint, `damaged.dx/dz`-richting, `holds` bij joinen).
 2. **Meer kaarten en varianten:** per kaart meerdere dekkingsindelingen via de seed (nu alleen Classic), en bij een
    kaartwissel de wereld ter plekke herbouwen (nu een korte herverbinding met laadscherm, ook na de kaartstemming).
-3. **Meer modes:** Infected en Block Hunt (onderzoek §2.4), Search & Destroy op een asymmetrische kaart (Foundry), en
-   Domination/Hardpoint-varianten per kaart (meer zones op kleine kaarten, spawnkeuze weg van de actieve heuvel).
+3. **Meer modes:** Block Hunt / Prop Hunt (vraagt een hitbox per speler in `rayPlayer`, een op het raster snappende
+   blokvermomming en eigen rendering; pas na de hitreg-ronde), een Krunker-parkour/race-mode zodra jump pads en slide in de
+   kaarten zitten, Search & Destroy op een asymmetrische kaart (Foundry), en Domination/Hardpoint-varianten per kaart (meer
+   zones op kleine kaarten, spawnkeuze weg van de actieve heuvel). S&D-afwerking: een bomdrager (nu mag elke aanvaller
+   planten), planten/ontmantelen met een actietoets en stilstaan in plaats van alleen op de site staan, explosieschade, een
+   tikkend 3D-geluid van de bom. Infected: een UAV-ping voor de besmetten op de laatste overlevende (vraagt een uitzondering in
+   de anti-wallhack-filtering). Kill Confirmed: tags op de grond laten vallen bij een dood in de lucht.
 4. **Objective-afwerking:** dragerpijl met interval voor de vijand, MVP-punten (dragerkill, terugbrengen), overtime bij een
    gelijkspel in ctf, rondes met zijwissel, granaten voor elimination, de vlag als echt derde-persoonsmodel op de rug.
 5. **Na Create-a-Class:** meerdere opgeslagen custom-klassen (nu één), attachments per slot (grip, laser) en een

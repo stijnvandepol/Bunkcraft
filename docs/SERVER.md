@@ -536,6 +536,9 @@ munitie, respawntimers, lag compensation en de berichten. Wat een mode anders ma
 | `onKill`, `onSpawn`, `onJoin`, `onLeave`, `onReset` | levensloop van spelers en matches |
 | `respawnDelay`, `loadoutFor`, `pickSpawn`, `canStart` | regels per leven (negatief = pas volgende ronde; ladderwapen; ...) |
 | `checkEnd`, `winner`, `scoreText`, `modeState` | einde, winnaar, de regel onder de timer en de HUD-toestand (`mode`-bericht) |
+| `teamFor`, `keepTeams` | team van een nieuwe speler; de mode verdeelt de teams zelf (Match balanceert dan nooit) |
+| `speedMul`, `damageMul` | snelheidsfactor (ook in de bewegingscontrole van `GameServer`) en schadefactor per treffer |
+| `objectives(p)` | doelen voor server-bots (`BotGoal`: capture, defend, pickup, defuse, hunt, flee) |
 
 `Match` biedt de modes `setPhase(phase, sec)`, `startLive()`, `respawnAll()`, `endMatch(result?)`, `giveGear()`, `event()`,
 `markModeDirty()`, `scores`, `teamSize`/`aliveCount`. De klassen:
@@ -551,6 +554,17 @@ munitie, respawntimers, lag compensation en de berichten. Wat een mode anders ma
   (eigen punt eerst neutraliseren), 1 punt per 2 s per eigen punt.
 - `ctf.ts`: vlag aanraken (1,6 blokken, 2,6 hoog) pakt hem op; eigen vlag aanraken terwijl die thuis staat en je de andere
   draagt = capture (+1 team, +1 `pts`); dood/vertrek laat de vlag vallen, eigen team brengt hem terug of na 12 s vanzelf.
+  De drager is via `speedMul` 10% trager.
+- `confirm.ts` (kill confirmed): elke dood laat een tag vallen (max. 40); aanraken (1,6 blokken) door een tegenstander = +1 team,
+  door een teamgenoot = geweigerd; `pts` = opgeraapte tags; tags verlopen na 30 s.
+- `snd.ts` (search & destroy, `extends RoundsLogic`): planten = 4 s een levende aanvaller op een bomsite (weg = opnieuw), daarna
+  `setPhase('live', fuseSec)`; ontmantelen = 6 s een verdediger op de bom. Wipe-regels per kant, na de plant beslist de bom.
+  Zijwissel elke `scoreLimit − 1` rondes; aanvallers spawnen aan de rode kant (`pickSpawn`). `pts` = plants + defuses.
+- `infected.ts`: `keepTeams`; na 8 s wordt een willekeurige overlevende (blauw) besmet (rood, mes via `giveGear`); doden worden
+  besmet; `speedMul` 1,12 voor besmetten en de laatste overlevende, `damageMul` 2 op het mes van besmetten; `scores` = aantallen.
+- `sharpshooter.ts`: `loadoutFor` = het gedeelde wapen + pistool + mes; elke 45 s `giveGear` voor iedereen.
+- `koth.ts`: zone-rotatie zoals hardpoint, maar wie alleen in de heuvel staat krijgt `pts`; `mode` = `zones` met variant `koth`
+  en `holder`.
 
 De HUD-toestand gaat 4× per seconde (en direct bij een verandering) als `mode` naar iedereen, gebeurtenissen als `event`, een
 puntwijziging direct als `match`. Kaarten zonder de benodigde `objectives` worden voor dat type overgeslagen (`mapFor`,
