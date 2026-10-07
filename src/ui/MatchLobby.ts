@@ -4,6 +4,7 @@ import type { MatchPhase, RosterEntry, ServerMessage } from '../net/protocol';
 import { h } from './dom';
 import { t } from './i18n';
 import { realmsModeName } from './RealmsMenu';
+import { rankBadge } from './RankBadge';
 import './realms.css';
 
 type VoteMsg = Extract<ServerMessage, { t: 'vote' }>;
@@ -129,7 +130,7 @@ export class MatchLobby {
       const players = roster.filter((p) => team === null || p.team === team);
       return h('div', { class: 'mlobby-team' },
         h('div', { class: `mlobby-team-title ${cls}`, text: `${title} (${players.length})` }),
-        ...(players.length ? players.map((p) => h('div', { class: `mlobby-player${p.id === this.selfId ? ' self' : ''}`, text: p.name }))
+        ...(players.length ? players.map((p) => h('div', { class: `mlobby-player${p.id === this.selfId ? ' self' : ''}` }, rankBadge(p.rk), p.name))
           : [h('div', { class: 'mlobby-player none', text: t('lobby.empty') })]),
       );
     };

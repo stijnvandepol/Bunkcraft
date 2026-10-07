@@ -12,6 +12,7 @@ import { GameServer, parseGameMode } from './GameServer';
 import { log } from './Log';
 import { RateLimiter } from './Security';
 import type { ChunkGenPool } from './chunkgen/ChunkGenPool';
+import type { ProfileService } from './progression/ProfileService';
 
 export { RateLimiter };
 
@@ -36,6 +37,8 @@ export interface RoomOptions {
   genPool?: ChunkGenPool | null;
   /** Most games the public list shows (default 50). */
   listMax?: number;
+  /** Realms progression shared by every game (absent = no XP). */
+  profiles?: ProfileService | null;
 }
 
 /** Hashes and flags for a new game, computed by the caller (hashing is async). */
@@ -223,6 +226,7 @@ export class Rooms {
       inventoryGuard: this.opts.inventoryGuard,
       binary: this.opts.binary,
       genPool: this.opts.genPool,
+      profiles: this.opts.profiles,
       onMetaChange: () => { const r = this.loaded.get(code); if (r) this.writeMeta(code, r.server); },
     };
   }

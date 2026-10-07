@@ -23,6 +23,9 @@ import { WeaponViewmodel } from '../rendering/WeaponViewmodel';
 import { ArcadeHud, type ScoreboardContext } from '../ui/ArcadeHud';
 import { ModeHud } from '../ui/ModeHud';
 import { MatchLobby } from '../ui/MatchLobby';
+import { ProgressPanel } from '../ui/ProgressPanel';
+import { applyReport, currentRank, onProfile } from '../net/ProfileApi';
+import { lockClass } from '../modes/progression/Unlocks';
 import { ModeVisuals } from '../rendering/ModeVisuals';
 import { BLOCK } from '../world/BlockRegistry';
 import { type RayHit, createRayHit, raycast } from '../world/Raycast';
@@ -148,6 +151,9 @@ export class ArcadeSession {
   readonly modeVisuals = new ModeVisuals();
   /** Realms pre-match lobby (warm-up panel) and the map vote after a match. */
   readonly lobby: MatchLobby;
+  /** Realms XP report on the match-end screen. */
+  readonly progress = new ProgressPanel();
+  private readonly offProfile: () => void;
   private modeState: ModeState | null = null;
   private matchText = '';
   private selfPts = 0;
@@ -240,7 +246,12 @@ export class ArcadeSession {
     this.lobby.onVote = (map) => this.d.send({ t: 'vote', map });
     this.hud.el.append(this.lobby.el);
     // The vote sits under the result in the match-end overlay.
-    this.hud.el.querySelector('.arc-end')?.append(this.lobby.voteEl);
+    this.hud.el.querySelector('.arc-end')?.append(this.progress.el, this.lobby.voteEl);
+    // Realms profile: Create-a-Class shows what is unlocked, your weapons wear their camos.
+    this.offProfile = onProfile((p) => {
+      this.hud.setRank(currentRank());
+      this.viewmodel.setCamos(p?.equip.camos ?? {});
+    });
     this.players.set(d.selfId, { name: d.selfName, team: '' });
     this.surfaceAt = surfaceLookup(d.getBlock);
     this.custom = loadSavedClass(storage()) ?? { ...DEFAULT_CLASS };
@@ -373,6 +384,10 @@ export class ArcadeSession {
       case 'mode': this.onMode(msg.state); break;
       case 'event': this.onEvent(msg, now); break;
       case 'vote': this.lobby.setVote(msg); break;
+      case 'progress':
+        this.progress.show(msg.report);
+        applyReport(msg.report);
+        break;
       default: break;
     }
   }
@@ -405,6 +420,7 @@ export class ArcadeSession {
       this.ended = false;
       this.endTitle = null;
       this.hud.setMatchEnd(null);
+      this.progress.hide();
       this.d.remote.reviveAll();
     }
     if (msg.info.map && msg.info.map !== (this.info.map ?? 'classic')) {
@@ -432,6 +448,7 @@ export class ArcadeSession {
   private onRoster(players: RosterEntry[]): void {
     this.roster = players;
     this.rosterVersion++;
+    this.hud.setRanks(players);
     this.matchDirty = true;
     this.refreshEnd();
     let best: RosterEntry | null = null;
@@ -743,7 +760,8 @@ export class ArcadeSession {
 
   /** Tells the server the class for the next life (it applies at once right after a spawn). */
   private sendClass(c: ClassSpec): void {
-    this.nextClass = validateClass(c);
+    // Within the Realms unlocks (the server checks the same table; guests have the starting kit).
+    this.nextClass = lockClass(c, currentRank());
     const n = this.nextClass;
     this.d.send({ t: 'loadout', primary: n.primary, secondary: n.secondary, optic: n.optic, perk: n.perk });
     this.hud.markClass(n);
@@ -1097,6 +1115,8 @@ export class ArcadeSession {
 
   /** Leaving the game: drop effects and remote state. */
   dispose(): void {
+    this.offProfile();
+    this.progress.hide();
     this.hud.reset();
     this.modeHud.reset();
     this.lobby.reset();
