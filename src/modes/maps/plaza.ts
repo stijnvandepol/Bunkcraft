@@ -1,6 +1,6 @@
 import { BLOCK } from '../../world/BlockRegistry';
 import { type FreeArenaMapDef, type LayoutBuilder, TEAM } from './ArenaMap';
-import { AIR, turn, turned } from './helpers';
+import { AIR, jumpPad, turn, turned } from './helpers';
 import { C, bench, car, crates, hedge, lamp, mannequin, tree, umbrella } from './props';
 
 /**
@@ -179,6 +179,9 @@ function half(b: LayoutBuilder, s: 1 | -1, p: Side): void {
   // The roof walk: reached from the café terrace, a flower box and a lamp at the far end.
   box(-18, -17, 13, 13, 4, 4, p.trim);
   box(-4, -3, 15, 15, 5, 5, BLOCK.OAK_LEAVES);
+  // Jump pads from the square up onto the arcade roof and onto the hotel balcony.
+  jumpPad(t, -2, 13);
+  jumpPad(t, -12, -11);
   // Street furniture in the lane outside the arcade.
   bench(t, -20, 21, true, BLOCK.SPRUCE_SLAB);
   lamp(t, -12, 21, 4);
@@ -288,7 +291,6 @@ export const PLAZA: FreeArenaMapDef = {
     box(0, 0, -1, -1, 1, 4, C.CALCITE);
     box(-2, 1, -2, 1, 5, 5, C.POLISHED_DIORITE);
     box(-1, 0, -1, 0, 6, 6, C.GOLD_BLOCK);
-    box(-1, 0, -1, 0, 7, 7, C.SEA_LANTERN);
     paint(-1, 0, -1, 0, C.SEA_LANTERN);
   },
 };

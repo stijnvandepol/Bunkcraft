@@ -1,6 +1,6 @@
 import { BLOCK } from '../../world/BlockRegistry';
 import { type FreeArenaMapDef, type LayoutBuilder, TEAM } from './ArenaMap';
-import { AIR, turn, turned } from './helpers';
+import { AIR, jumpPad, turn, turned } from './helpers';
 import { C, bench, car, crates, hedge, lamp, mannequin, tree } from './props';
 
 /**
@@ -205,6 +205,8 @@ function homestead(b: LayoutBuilder, s: 1 | -1, p: Palette): void {
   // --- Driveway with the second car ---------------------------------------------------------
   paint(-17, -11, 6, 11, BLOCK.GRAVEL);
   car(t, -16, 7, true, p.car);
+  // A trampoline pad at the end of the driveway: up onto the garage roof, then in at the side window.
+  jumpPad(t, -17, 12);
   box(-11, -11, 12, 12, 1, 1, BLOCK.WALL);
   box(-11, -11, 13, 13, 1, 1, BLOCK.WALL);
 
