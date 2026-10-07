@@ -29,7 +29,7 @@ const TAG_FADE = 0.18;
 /** The ray for the line-of-sight check ends at the head, 1.7 above the feet. */
 const HEAD_HEIGHT = 1.7;
 /** Body lean (radians) of a sliding (back, legs forward) and a crouching (forward) remote player. */
-const POSE_SLIDE_LEAN = 0.85;
+const POSE_SLIDE_LEAN = 0.6;
 const POSE_CROUCH_LEAN = -0.3;
 /** A shot player lies on the ground this long, then is hidden until the respawn. */
 const CORPSE_SECONDS = 1.4;
@@ -348,7 +348,7 @@ export class RemotePlayers {
       const slide = (c.flags & SNAP_FLAG_SLIDE) !== 0, crouch = !slide && (c.flags & SNAP_FLAG_CROUCH) !== 0;
       const ease = 1 - Math.exp(-14 * dtTag);
       m.lean += ((slide ? POSE_SLIDE_LEAN : crouch ? POSE_CROUCH_LEAN : 0) - m.lean) * ease;
-      m.drop += ((slide ? 0.15 : crouch ? 0.2 : 0) - m.drop) * ease;
+      m.drop += ((slide ? 0.3 : crouch ? 0.2 : 0) - m.drop) * ease;
       m.legLean += ((slide ? -1.0 : crouch ? -POSE_CROUCH_LEAN : 0) - m.legLean) * ease;
       // Limb swing from the distance moved this frame (same smoothing as mobs).
       const moved = Math.hypot(m.x - px, m.z - pz);
@@ -359,7 +359,7 @@ export class RemotePlayers {
       this.placeWeapon(r);
 
       // Name tag above the head.
-      tmp.set(m.x, m.y + 2.15, m.z).project(camera);
+      tmp.set(m.x, m.y + 2.15 * Math.cos(m.lean) - m.drop, m.z).project(camera);
       const dx = camera.position.x - m.x, dy = camera.position.y - m.y, dz = camera.position.z - m.z;
       const d2 = dx * dx + dy * dy + dz * dz;
       const arcade = this.occluder !== null;
@@ -408,7 +408,7 @@ export class RemotePlayers {
     tmpBase.compose(tmpPos, tmpQuat, tmpScale);
     // Crouch and slide lean the body (same transform as the model, see MobRenderer).
     if (m.lean !== 0 || m.drop !== 0) {
-      tmpLocal.makeTranslation(0, -m.drop, 0);
+      tmpLocal.makeTranslation(0, -m.drop, -0.9 * Math.sin(m.lean));
       tmpBase.multiply(tmpLocal);
       tmpLocal.makeRotationX(m.lean);
       tmpBase.multiply(tmpLocal);

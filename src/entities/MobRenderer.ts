@@ -261,9 +261,9 @@ export class MobRenderer {
       const death = m.dead ? Math.min(1, Math.sqrt((m.deathTime + alpha) / 20)) * (Math.PI / 2) : 0;
       tmpQuat.setFromEuler(tmpEuler.set(0, yaw, death, 'YXZ'));
       tmpBase.compose(tmpPos, tmpQuat, tmpScale);
-      // Arcade crouch and slide: the body lowers and leans around the feet.
+      // Arcade crouch and slide: the body lowers and leans, shifted so it stays over the feet (the hitbox column).
       if (m.lean !== 0 || m.drop !== 0) {
-        tmpPivot.makeTranslation(0, -m.drop, 0);
+        tmpPivot.makeTranslation(0, -m.drop, -0.9 * Math.sin(m.lean));
         tmpRot.makeRotationX(m.lean);
         tmpBase.multiply(tmpPivot).multiply(tmpRot);
       }
