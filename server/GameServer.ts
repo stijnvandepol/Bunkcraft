@@ -4,13 +4,15 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameS
 import { join } from 'node:path';
 import type { WebSocket } from 'ws';
 import {
-  type ClientMessage, type MatchPhase, NAME_PATTERN, PROTOCOL_VERSION, type PlayerRecord, SNAP_FLAG_STALE, type ServerMessage, type SnapshotEntry, sanitizeChat,
+  type ClientMessage, type MatchPhase, NAME_PATTERN, PROTOCOL_VERSION, type PlayerRecord, SNAP_FLAG_CROUCH, SNAP_FLAG_SLIDE, SNAP_FLAG_STALE, type ServerMessage, type SnapshotEntry, sanitizeChat,
 } from '../src/net/protocol';
 import { ARENA_FLOOR_Y, DEFAULT_MAP, type MapId, type MapSetting, getMap, mapFor, nextMap, parseMapId, parseMapSetting, voteChoices } from '../src/modes/maps';
 import { type GameType, gameTypeDef } from '../src/modes/GameTypes';
 import { GAME_MODES, type GameMode, hasSurvivalRules } from '../src/player/GameMode';
 import { BINARY_VERSION, encodeBinary, encodeSnap, encodeSnapQ } from '../src/net/binary';
-import { ARCADE_TICK_HZ, ARCADE_TICK_MAX, ARCADE_TICK_MIN, arcadeInterpDelay } from '../src/modes/ArcadeLogic';
+import { ARCADE_TICK_HZ, ARCADE_TICK_MAX, ARCADE_TICK_MIN, arcadeInterpDelay, arcadeMaxSpeed } from '../src/modes/ArcadeLogic';
+import { HITBOX, perkMoveSpeed } from '../src/modes/Weapons';
+import { POSE, poseEye, slideCooldown } from '../src/player/ArcadeMove';
 import { decodeData } from '../src/items/ItemRegistry';
 import { BLOCK, getBlockDef } from '../src/world/BlockRegistry';
 import { isValidMeta } from '../src/world/BlockShapes';
@@ -1034,9 +1036,11 @@ export class GameServer {
         // The weapon in the hands sets the pace; a flag carrier (capture the flag) is params.carrySlow slower.
         const logic = this.match.logic as { isCarrier?(p: unknown): boolean };
         const carry = logic.isCarrier?.(p) ? 1 - (gameTypeDef(this.match.info.type).params?.carrySlow ?? 0.1) : 1;
-        this.guard!.setMoveSpeed(s.id, p.slots[p.slot].def.moveSpeed * carry, now / 1000);
+        this.guard!.setMoveSpeed(s.id, p.slots[p.slot].def.moveSpeed * carry * perkMoveSpeed(p.perk), now / 1000);
+        this.guard!.setSlideCooldown(s.id, slideCooldown(p.perk === 'lightfoot'));
       }
-      const r = outside ? this.guard!.flag(s.id, 'bounds', 2, now / 1000) : this.guard!.move(s.id, m.x, m.y, m.z, now / 1000, typeof m.step === 'number' ? m.step : undefined);
+      const step = typeof m.step === 'number' ? m.step : undefined, slide = typeof m.sl === 'number' ? m.sl : undefined;
+      const r = outside ? this.guard!.flag(s.id, 'bounds', 2, now / 1000) : this.guard!.move(s.id, m.x, m.y, m.z, now / 1000, step, slide);
       if (!r.ok) {
         this.onCheat(s, r);
         return;
@@ -1061,7 +1065,28 @@ export class GameServer {
     s.hasPos = true;
     s.lastPosTime = now;
     s.trail.push(now, s.x, s.y, s.z, s.yaw, s.pitch);
-    this.match?.setPosition(s.id, s.x, s.y, s.z, s.yaw, s.pitch);
+    if (this.match) {
+      const height = this.poseHeight(s);
+      // Others see the pose the server believes (the snapshot flags), the same one bullets hit.
+      if (height !== POSE.SLIDE_HEIGHT) s.flags &= ~SNAP_FLAG_SLIDE;
+      if (height !== POSE.CROUCH_HEIGHT) s.flags &= ~SNAP_FLAG_CROUCH;
+      this.match.setPosition(s.id, s.x, s.y, s.z, s.yaw, s.pitch, height);
+    }
+  }
+
+  /**
+   * Arcade: hitbox height of the pose a player reports, believed only when it is possible. A slide needs a
+   * slide start the movement validator accepted; a crouch needs the ground and a crouch pace (the velocity
+   * between the last two reports). Anything else gets the standing hitbox: a lower one would be harder to hit.
+   */
+  private poseHeight(s: Session): number {
+    if (s.flags & SNAP_FLAG_SLIDE && this.guard?.sliding(s.id)) return POSE.SLIDE_HEIGHT;
+    if (s.flags & SNAP_FLAG_CROUCH && s.flags & 4) {
+      const p = this.match?.players.get(s.id);
+      const max = arcadeMaxSpeed(p ? p.slots[p.slot].def.moveSpeed * perkMoveSpeed(p.perk) : 1);
+      if (Math.hypot(s.velX, s.velZ) <= max * POSE.CROUCH_SPEED * 1.25 + 0.5) return POSE.CROUCH_HEIGHT;
+    }
+    return HITBOX.height;
   }
 
   /**
@@ -1076,8 +1101,14 @@ export class GameServer {
     const now = Date.now();
     let m = msg;
     const nums = [msg.ox, msg.oy, msg.oz];
+    // The eye of the reported pose (crouch, slide) or the standing one: the camera glides between them.
+    const since = (now - s.lastPosTime) / 1000;
+    const poseEyeHeight = poseEye((s.flags & SNAP_FLAG_CROUCH) !== 0, (s.flags & SNAP_FLAG_SLIDE) !== 0);
     const err = nums.every((n) => typeof n === 'number' && Number.isFinite(n))
-      ? originError(msg.ox, msg.oy, msg.oz, s.x, s.y, s.z, s.velX, s.velY, s.velZ, (now - s.lastPosTime) / 1000) : Infinity;
+      ? Math.min(
+        originError(msg.ox, msg.oy, msg.oz, s.x, s.y, s.z, s.velX, s.velY, s.velZ, since),
+        originError(msg.ox, msg.oy, msg.oz, s.x, s.y, s.z, s.velX, s.velY, s.velZ, since, poseEyeHeight),
+      ) : Infinity;
     if (err > ORIGIN_TOLERANCE) {
       metrics.cheat('origin');
       this.logger.debug('cheat', { name: s.name, kind: 'shot', rule: 'origin', error: Math.round(err * 100) / 100 });

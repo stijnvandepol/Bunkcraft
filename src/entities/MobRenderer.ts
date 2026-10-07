@@ -261,6 +261,12 @@ export class MobRenderer {
       const death = m.dead ? Math.min(1, Math.sqrt((m.deathTime + alpha) / 20)) * (Math.PI / 2) : 0;
       tmpQuat.setFromEuler(tmpEuler.set(0, yaw, death, 'YXZ'));
       tmpBase.compose(tmpPos, tmpQuat, tmpScale);
+      // Arcade crouch and slide: the body lowers and leans around the feet.
+      if (m.lean !== 0 || m.drop !== 0) {
+        tmpPivot.makeTranslation(0, -m.drop, 0);
+        tmpRot.makeRotationX(m.lean);
+        tmpBase.multiply(tmpPivot).multiply(tmpRot);
+      }
       // A sitting wolf: the body tilts up around its hind legs.
       const sit = m.sitting && m.type.kind === 'wolf';
       if (sit) {
@@ -399,8 +405,8 @@ export class MobRenderer {
         const lift = m.type.kind === 'wolf' && (m.tamed || m.angryTicks > 0) ? -0.5 : 0;
         return tmpEuler.set(rx + lift + amount * 0.3 * (m.type.kind === 'horse' ? -1 : 0), ry, rz + wag, 'YXZ');
       }
-      case 'legA': return tmpEuler.set(legSwing + rx, ry, rz);
-      case 'legB': return tmpEuler.set(-legSwing + rx, ry, rz);
+      case 'legA': return tmpEuler.set(legSwing + rx + m.legLean, ry, rz);
+      case 'legB': return tmpEuler.set(-legSwing + rx + m.legLean, ry, rz);
       case 'armL':
       case 'armR': {
         // Armed arcade players aim: the right arm points along the view, the left supports it.

@@ -6,7 +6,7 @@ import { type OpticId, RESPAWN_SECONDS } from '../modes/Weapons';
 import { createWeaponMaterial, weaponGeometry } from '../rendering/WeaponModels';
 import { h } from '../ui/dom';
 import { type RayHit, createRayHit, raycast } from '../world/Raycast';
-import { SNAP_FLAG_STALE, type SnapshotEntry } from './protocol';
+import { SNAP_FLAG_CROUCH, SNAP_FLAG_SLIDE, SNAP_FLAG_STALE, type SnapshotEntry } from './protocol';
 
 /** Render other players this far in the past so there are always two snapshots to blend (20 Hz default; arcade sets its own). */
 const INTERPOLATION_DELAY = 0.1;
@@ -28,6 +28,9 @@ const TAG_RANGE = 64;
 const TAG_FADE = 0.18;
 /** The ray for the line-of-sight check ends at the head, 1.7 above the feet. */
 const HEAD_HEIGHT = 1.7;
+/** Body lean (radians) of a sliding (back, legs forward) and a crouching (forward) remote player. */
+const POSE_SLIDE_LEAN = 0.85;
+const POSE_CROUCH_LEAN = -0.3;
 /** A shot player lies on the ground this long, then is hidden until the respawn. */
 const CORPSE_SECONDS = 1.4;
 
@@ -341,6 +344,12 @@ export class RemotePlayers {
       // The mob model tilts its head by −headPitch (positive = looking down); player pitch is positive when looking up.
       m.headPitch = -(a.pitch + (c.pitch - a.pitch) * f);
       m.onGround = (c.flags & 4) !== 0;
+      // Arcade crouch and slide (the pose the server believes): ease the body into it.
+      const slide = (c.flags & SNAP_FLAG_SLIDE) !== 0, crouch = !slide && (c.flags & SNAP_FLAG_CROUCH) !== 0;
+      const ease = 1 - Math.exp(-14 * dtTag);
+      m.lean += ((slide ? POSE_SLIDE_LEAN : crouch ? POSE_CROUCH_LEAN : 0) - m.lean) * ease;
+      m.drop += ((slide ? 0.15 : crouch ? 0.2 : 0) - m.drop) * ease;
+      m.legLean += ((slide ? -1.0 : crouch ? -POSE_CROUCH_LEAN : 0) - m.legLean) * ease;
       // Limb swing from the distance moved this frame (same smoothing as mobs).
       const moved = Math.hypot(m.x - px, m.z - pz);
       m.limbAmount += (Math.min(1, moved * 12) - m.limbAmount) * 0.25;
@@ -397,6 +406,13 @@ export class RemotePlayers {
     tmpPos.set(m.x, m.y, m.z);
     tmpQuat.setFromEuler(tmpEuler.set(0, m.yaw, 0, 'YXZ'));
     tmpBase.compose(tmpPos, tmpQuat, tmpScale);
+    // Crouch and slide lean the body (same transform as the model, see MobRenderer).
+    if (m.lean !== 0 || m.drop !== 0) {
+      tmpLocal.makeTranslation(0, -m.drop, 0);
+      tmpBase.multiply(tmpLocal);
+      tmpLocal.makeRotationX(m.lean);
+      tmpBase.multiply(tmpLocal);
+    }
     // Weapon frame: shoulder pivot, rotated so −Z runs along the arm, then out to the hand.
     tmpLocal.makeRotationX(-m.headPitch);
     tmpLocal.setPosition(ARM_PIVOT);

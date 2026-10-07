@@ -574,7 +574,7 @@ put('lantern', (i) => {
 });
 
 // Arcade jump pad (an original look): a dark steel plate with a glowing teal ring and an up arrow.
-put('jump_pad_top', (i, r) => {
+put('jump_pad', (i, r) => {
   noisy(i, r, P('#2b3138', '#323940', '#383f47'), 0.5, 3);
   const glow = hex('#3ff2d8'), dim = hex('#1f9e8e'), rim = hex('#5d6670');
   for (let k = 0; k < 16; k++) { i.set(k, 0, rim); i.set(k, 15, rim); i.set(0, k, rim); i.set(15, k, rim); }
@@ -586,11 +586,6 @@ put('jump_pad_top', (i, r) => {
     i.set(7 - k, 5 + k, glow); i.set(8 + k, 5 + k, glow);
     i.set(7 - k, 8 + k, dim); i.set(8 + k, 8 + k, dim);
   }
-});
-put('jump_pad_side', (i, r) => {
-  noisy(i, r, P('#2b3138', '#323940', '#383f47'), 0.5, 3);
-  const glow = hex('#3ff2d8'), dim = hex('#1f9e8e');
-  for (let x = 0; x < 16; x++) { i.set(x, 0, hex('#5d6670')); i.set(x, 1, x % 4 < 2 ? glow : dim); i.set(x, 15, hex('#20252b')); }
 });
 
 void PX;

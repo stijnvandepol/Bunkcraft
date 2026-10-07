@@ -964,6 +964,26 @@ export class AudioEngine {
     });
   }
 
+  /** Arcade slide: a gritty scrape that fades with the slide, under a short whoosh. */
+  playSlide(): void {
+    this.emit('player.slide', NaN, NaN, NaN, 0.3);
+    this.placed(undefined, 0, Priority.Player, () => {
+      this.noiseBurst(2300, 0.7, 0.55, 0.22, 'bandpass', 0, { attack: 0.02 });
+      this.noiseBurst(600, 0.9, 0.35, 0.18, 'lowpass', 0.01);
+      this.synth.whoosh(0.9);
+    });
+  }
+
+  /** Jump pad launch: a rising electric thump. */
+  playJumpPad(): void {
+    this.emit('player.jumppad', NaN, NaN, NaN, 0.4);
+    this.placed(undefined, 0, Priority.Player, () => {
+      this.voice('sine', 140, 520, 0.28, 0.3);
+      this.voice('square', 420, 1250, 0.18, 0.06, 0.02, { lp: 2600 });
+      this.noiseBurst(900, 0.8, 0.2, 0.15, 'bandpass', 0.01);
+    });
+  }
+
   /** Little whoosh when you respawn. */
   playSpawn(): void {
     this.emit('player.spawn', NaN, NaN, NaN, 0.2);

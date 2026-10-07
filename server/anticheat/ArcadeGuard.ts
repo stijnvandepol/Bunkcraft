@@ -75,9 +75,19 @@ export class ArcadeGuard {
     this.players.get(id)?.validator.reset(x, y, z, now);
   }
 
-  /** The weapon in the hands decides the speed limit. */
+  /** The weapon in the hands (and the perk) decides the speed limit. */
   setMoveSpeed(id: number, moveSpeed: number, now: number): void {
     this.players.get(id)?.validator.setMaxSpeed(arcadeMaxSpeed(moveSpeed), now);
+  }
+
+  /** Has this player started an accepted slide recently enough to still be sliding? */
+  sliding(id: number): boolean {
+    return this.players.get(id)?.validator.slideActive ?? false;
+  }
+
+  /** Seconds between two slides for this player (the perk of this life). */
+  setSlideCooldown(id: number, seconds: number): void {
+    this.players.get(id)?.validator.setSlideCooldown(seconds);
   }
 
   strikes(id: number, now: number): number {
@@ -88,11 +98,14 @@ export class ArcadeGuard {
     return this.players.get(id)?.violations ?? 0;
   }
 
-  /** Checks a position report (`step`: the client's physics clock, when sent); on failure the caller rubber-bands to `lastValid`. */
-  move(id: number, x: number, y: number, z: number, now: number, step?: number): MoveResult {
+  /**
+   * Checks a position report (`step`: the client's physics clock, `slide`: the step of its latest slide start,
+   * when sent); on failure the caller rubber-bands to `lastValid`.
+   */
+  move(id: number, x: number, y: number, z: number, now: number, step?: number, slide?: number): MoveResult {
     const p = this.players.get(id);
     if (!p) return { ok: true };
-    const v = p.validator.check(x, y, z, now, step);
+    const v = p.validator.check(x, y, z, now, step, slide);
     if (v.ok) return v;
     return this.strike(p, v.rule, v.weight, v.lag, now);
   }

@@ -201,8 +201,11 @@ export class MovementValidator {
    */
   private readonly getMeta: BlockGetter;
 
+  private slideCooldown: number;
+
   constructor(private readonly world: MovementWorld, private readonly opts: MovementOptions) {
     this.maxSpeed = this.prevMaxSpeed = opts.maxSpeed;
+    this.slideCooldown = opts.slideCooldown ?? SLIDE.COOLDOWN;
     this.getMeta = world.getMeta ?? (() => 0);
   }
 
@@ -239,6 +242,17 @@ export class MovementValidator {
     this.speedChangedAt = t;
   }
 
+  /** Arcade: did an accepted slide start recently enough that the player may still be sliding (low hitbox)? */
+  get slideActive(): boolean {
+    const age = this.tp - this.slideAt;
+    return age >= -0.1 && age <= SLIDE.MAX_TIME + 0.7;
+  }
+
+  /** Arcade: the slide cooldown changed (perk of the new life). */
+  setSlideCooldown(seconds: number): void {
+    this.slideCooldown = seconds;
+  }
+
   private inGrace(t: number): boolean {
     const grace = this.prevMaxSpeed > this.maxSpeed ? MOVE.SLOWDOWN_GRACE : MOVE.SPEEDUP_GRACE;
     return t - this.speedChangedAt < grace;
@@ -269,7 +283,7 @@ export class MovementValidator {
     if (!Number.isFinite(at) || at === this.slideStep || at > step) return;
     // New since the last report (after a resync: within the last two seconds).
     if (resync ? step - at > 2 * STEPS_PER_SECOND : !(at > this.lastStep)) return;
-    const cooldown = Math.round((this.opts.slideCooldown ?? SLIDE.COOLDOWN) * STEPS_PER_SECOND) - 1;
+    const cooldown = Math.round(this.slideCooldown * STEPS_PER_SECOND) - 1;
     if (this.slideStep === this.slideStep && at - this.slideStep < cooldown) return;
     this.slideStep = at;
     this.slideAt = tp - (step - at) / STEPS_PER_SECOND;

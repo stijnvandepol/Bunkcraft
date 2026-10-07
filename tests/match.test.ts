@@ -6,6 +6,7 @@ import type { ClientMessage, MatchInfo, ServerMessage } from '../src/net/protoco
 import { BLOCK } from '../src/world/BlockRegistry';
 import { ENDED_SECONDS, Match, type MatchHost, SPAWN_PROTECTION, WARMUP_SECONDS } from '../server/Match';
 import { RESPAWN_SECONDS } from '../src/modes/Weapons';
+import { POSE } from '../src/player/ArcadeMove';
 
 type Fire = Extract<ClientMessage, { t: 'fire' }>;
 
@@ -492,6 +493,32 @@ describe('weapon handling', () => {
     for (let i = 0; i < 5; i++) { match.fire(2, aim(match.players.get(2)!, { x: 0.5, y: 65.9, z: 0.5 })); advance(0.11); }
     advance(RESPAWN_SECONDS + 0.2);
     expect(host.of('spawn', 1).at(-1)!.primary).toBe('sniper');
+  });
+});
+
+describe('pose hitboxes (arcade crouch and slide)', () => {
+  it('a sliding player is hit low and missed at standing head height; the head moves down with the pose', () => {
+    const { host, match, advance } = liveDuel('tdm');
+    match.setPosition(2, 0.5, 65, 10.5, 0, 0, POSE.SLIDE_HEIGHT);
+    advance(0.4);
+    host.clear();
+    // Standing head height (66.6) passes over a slider (hitbox 1.15 tall: top at 66.15).
+    match.fire(1, aim(match.players.get(1)!, head(10.5)));
+    expect(host.of('hit', 1)).toHaveLength(0);
+    advance(0.2);
+    // The slider's own head (top 0.4 of 1.15) is a headshot.
+    match.fire(1, aim(match.players.get(1)!, { x: 0.5, y: 65 + POSE.SLIDE_HEIGHT - 0.15, z: 10.5 }));
+    expect(host.of('hit', 1)[0]?.head).toBe(true);
+  });
+
+  it('a pose change in the rewind window counts with the taller hitbox (never in the shooter\'s disfavour)', () => {
+    const { host, match, advance } = liveDuel('tdm');
+    host.pings.set(1, 200); // rewinds 0.2 s
+    match.setPosition(2, 0.5, 65, 10.5, 0, 0, POSE.SLIDE_HEIGHT);
+    advance(0.05);
+    host.clear();
+    match.fire(1, aim(match.players.get(1)!, head(10.5)));
+    expect(host.of('hit', 1)).toHaveLength(1);
   });
 });
 

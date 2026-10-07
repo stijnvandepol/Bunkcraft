@@ -21,7 +21,7 @@ import { EFFECT_DEFS, isEffectId } from '../player/Effects';
 import { NetClient, type WelcomeMessage } from '../net/NetClient';
 import { NetEntities } from '../net/NetEntities';
 import { useBoneMeal } from '../world/Growth';
-import { type ClientMessage, type ServerMessage, formatCode, normalizeCode } from '../net/protocol';
+import { type ClientMessage, SNAP_FLAG_CROUCH, SNAP_FLAG_SLIDE, type ServerMessage, formatCode, normalizeCode } from '../net/protocol';
 import { type GameType, TEAM_COLORS, gameTypeDef } from '../modes/GameTypes';
 import { ARCADE_POS_HZ, arcadeInterpDelay } from '../modes/ArcadeLogic';
 import { inviteLink, inviteText, rememberGame } from '../net/RoomApi';
@@ -176,6 +176,10 @@ export class Game {
   private readonly padCtx: PadContext = { state: 'menu', playing: false, arcade: false };
   /** Was the player walking forward last frame (releases a toggled sprint when they stop). */
   private wasMovingForward = false;
+  /** Arcade: slides seen so far and the physics step of the latest start (the `sl` field of `pos`). */
+  private slidesSeen = 0;
+  private slideStep = NaN;
+  private padsSeen = 0;
   private readonly solidAt = (x: number, y: number, z: number): boolean => !!SOLID[this.getBlock(x, y, z)];
   /** Feedback channels for the arcade session: captions and controller rumble. */
   private readonly feedback = {
@@ -2076,9 +2080,14 @@ export class Game {
         if (needsAutoJump(this.solidAt, p.x, p.y, p.z, -sin * move.forward + cos * move.strafe, -cos * move.forward - sin * move.strafe)) move.jump = true;
       }
       move.descend = control && arcade === null && input.actionDown(KB.SNEAK);
+      // Arcade: the sneak key crouches, and slides while running (latched like the jump press).
+      move.crouch = control && arcade !== null && input.actionDown(KB.SNEAK);
+      move.crouchPressed = latchPress(move.crouchPressed === true, control && arcade !== null, input.actionPressed(KB.SNEAK));
+      p.arcadeMove = arcade !== null;
       if (arcade) {
         p.speedMultiplier = arcade.speedMultiplier;
         p.airAccel = arcade.airAccel;
+        p.slideCooldown = arcade.slideCooldown;
       } else {
         // Status effects: Speed/Slowness, Jump Boost, Levitation.
         const fx = this.stats.effects;
@@ -2094,6 +2103,16 @@ export class Game {
         if (this.mount && !rideStep(p, this.mount, move, ((this.stepCount % STEPS_PER_TICK) + 1) / STEPS_PER_TICK)) this.mount = null;
         if (!asleep && !this.mount) p.step(move, this.getBlock, this.getMeta);
         move.jumpPressed = false;
+        move.crouchPressed = false;
+        if (p.slideStarts !== this.slidesSeen) {
+          this.slidesSeen = p.slideStarts;
+          this.slideStep = this.stepCount + 1;
+          this.audio.playSlide();
+        }
+        if (p.padLaunches !== this.padsSeen) {
+          this.padsSeen = p.padLaunches;
+          this.audio.playJumpPad();
+        }
         this.accumulator -= PHYSICS.STEP;
         if (++this.stepCount % STEPS_PER_TICK === 0) this.gameTick();
       }
@@ -2140,9 +2159,10 @@ export class Game {
     }
 
     if (this.net) {
-      const flags = (p.sprinting ? 1 : 0) | (p.flying ? 2 : 0) | (p.onGround ? 4 : 0) | (this.arcade ? this.arcade.aimFlags : 0);
+      const flags = (p.sprinting ? 1 : 0) | (p.flying ? 2 : 0) | (p.onGround ? 4 : 0) | (this.arcade ? this.arcade.aimFlags : 0)
+        | (p.crouching ? SNAP_FLAG_CROUCH : 0) | (p.sliding ? SNAP_FLAG_SLIDE : 0);
       // The physics clock (steps) lets the server time the movement checks without trusting arrival times.
-      this.net.update(dt, p.x, p.y, p.z, p.yaw, p.pitch, flags, this.arcade ? 0 : this.hotbar.selectedBlock, this.stepCount);
+      this.net.update(dt, p.x, p.y, p.z, p.yaw, p.pitch, flags, this.arcade ? 0 : this.hotbar.selectedBlock, this.stepCount, this.arcade ? this.slideStep : NaN);
     }
     if (this.net || this.previewServer) this.remote.update(performance.now() / 1000, this.cam.camera, window.innerWidth, window.innerHeight);
     // Arcade: after dying the camera follows another player (with fresh interpolated poses).
