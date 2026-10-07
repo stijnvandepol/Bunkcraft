@@ -271,7 +271,7 @@ export class Match {
   /**
    * The class for the next life (Create-a-Class). Every field is validated: an unknown or disallowed one
    * becomes the default (a missing secondary/optic/perk keeps the current choice, for older clients).
-   * Picked within CLASS_SWAP_WINDOW seconds of spawning and before the first shot, it applies at once.
+   * Outside a live round, or within CLASS_SWAP_WINDOW seconds of spawning and before the first shot, it applies at once.
    */
   setLoadout(id: number, primary: string, secondary?: string, optic?: string, perk?: string): void {
     const p = this.players.get(id);
@@ -281,7 +281,11 @@ export class Match {
       primary, secondary: secondary ?? p.next.secondary, optic: keepOptic ? p.next.optic : optic, perk: perk ?? p.next.perk,
     });
     const now = this.host.now();
-    if (p.alive && !p.firedThisLife && now - p.spawnedAt <= CLASS_SWAP_WINDOW && this.phase !== 'ended' && !this.logic.loadoutFor) {
+    // Outside a live round nobody fights (warm-up, waiting for players, countdown, between rounds): any
+    // change applies at once. In a live round only right after spawning and before the first shot.
+    const calm = this.phase === 'warmup' || this.phase === 'countdown' || this.phase === 'roundend' || this.phase === 'intermission';
+    const fresh = !p.firedThisLife && now - p.spawnedAt <= CLASS_SWAP_WINDOW;
+    if (p.alive && (calm || fresh) && this.phase !== 'ended' && !this.logic.loadoutFor) {
       this.equip(p, p.next.primary, p.next.secondary, 'knife', p.next.optic, p.next.perk);
       p.switchReadyAt = now + SWITCH_DELAY;
       this.sendGear(p);

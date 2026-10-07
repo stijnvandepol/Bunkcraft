@@ -111,6 +111,21 @@ describe('server: classes', () => {
     expect(p.next.primary).toBe('smg');
   });
 
+  it('a class chosen while nobody is fighting (warm-up, waiting for players) applies at once, even long after spawning', () => {
+    const host = new StubHost();
+    const match = new Match(host, { type: 'tdm', scoreLimit: 50, timeLimitSec: 600 });
+    const advance = (sec: number, step = 0.01) => { for (let t = 0; t < sec - 1e-9; t += step) { host.t += step; match.tick(); } };
+    match.join(1, 'alice');
+    match.ready(1);
+    advance(CLASS_SWAP_WINDOW + 5); // alone in the lobby: waiting for players, well past the spawn window
+    expect(match.phase).not.toBe('live');
+    match.setLoadout(1, 'sniper', 'revolver', 'scope', 'none');
+    const p = match.players.get(1)!;
+    expect(p.primary).toBe('sniper');
+    expect(p.slots[1].def.id).toBe('revolver');
+    expect(host.of('gear', 1).at(-1)).toMatchObject({ primary: 'sniper', secondary: 'revolver', optic: 'scope' });
+  });
+
   it('extended mags reload to the bigger magazine; the suppressor marks shots and shortens damage range', () => {
     const { host, match, advance } = live();
     match.setLoadout(1, 'rifle', 'pistol', 'reddot', 'suppressor');
