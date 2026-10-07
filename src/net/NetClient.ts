@@ -1,6 +1,7 @@
 import { BINARY_VERSION, decodeBinary } from './binary';
 import { type ClientMessage, type ContainerClientMessage, PROTOCOL_VERSION, type ServerMessage } from './protocol';
 import { forgetRoomPassword, identityKey, ownerToken, roomPassword } from './RoomApi';
+import { profileToken } from './ProfileApi';
 
 export type WelcomeMessage = Extract<ServerMessage, { t: 'welcome' }>;
 
@@ -65,8 +66,10 @@ export class NetClient {
       ws.onopen = () => {
         const owner = room ? ownerToken(room) : undefined;
         const password = room ? roomPassword(room) : undefined;
+        // Realms profile (server-issued, per host): the server grants XP and shows the rank icon with it.
+        const profile = room ? profileToken(host) : undefined;
         // `bin`: this client understands binary snap/ent frames, `binv` which formats (older servers ignore both).
-        this.send({ t: 'hello', v: PROTOCOL_VERSION, name, key: identityKey(host, room), bin: true, binv: BINARY_VERSION, ...(owner ? { owner } : {}), ...(password ? { password } : {}) });
+        this.send({ t: 'hello', v: PROTOCOL_VERSION, name, key: identityKey(host, room), bin: true, binv: BINARY_VERSION, ...(owner ? { owner } : {}), ...(password ? { password } : {}), ...(profile ? { profile } : {}) });
       };
       ws.onmessage = (e) => {
         let msg: ServerMessage;

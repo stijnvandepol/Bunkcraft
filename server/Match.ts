@@ -76,6 +76,17 @@ export interface MatchHost {
    * which wins a tie), or null when this game does not vote (a fixed map).
    */
   voteMaps?(current: string, requires?: readonly ('zones' | 'flags')[]): string[] | null;
+  /** Progression hooks (server/progression/MatchRecorder.ts): all optional, called only while it matters. */
+  /** Warm-up is over and the match goes live. */
+  onMatchStart?(): void;
+  /** `attacker` hurt `victim` (live phase only). */
+  onDamage?(attacker: number, victim: number, amount: number, weapon: string, head: boolean): void;
+  /** `victim` died; `killer` is 0 for deaths without one. */
+  onKill?(killer: number, victim: number, weapon: string, head: boolean): void;
+  /** A player did an objective (flag captured or returned, zone captured, `amount` seconds in a hill). */
+  onObjective?(id: number, kind: 'flag-captured' | 'flag-returned' | 'zone-captured' | 'hill', amount: number): void;
+  /** The match ended with this result (after the `matchend` message went out). */
+  onMatchEnd?(result: MatchResult): void;
 }
 
 export interface ShotReport {
@@ -139,6 +150,8 @@ export interface MatchPlayer {
   streak: number;
   slots: [Slot, Slot, Slot];
   slot: 0 | 1 | 2;
+  /** Realms rank for the roster (prestige * 100 + level, see progression/Levels.ts); 0 or absent = none. */
+  rank?: number;
   switchReadyAt: number;
   history: Sample[];
   historyHead: number;
@@ -489,6 +502,7 @@ export class Match {
     victim.lastDamageAt = now;
     const killed = victim.health <= 0;
     this.host.send(killer.id, { t: 'hit', victim: victim.id, damage: amount, head, killed });
+    this.host.onDamage?.(killer.id, victim.id, amount, w.id, head);
     const hx = killer.x - victim.x, hz = killer.z - victim.z, hl = Math.hypot(hx, hz) || 1;
     this.host.send(victim.id, { t: 'damaged', from: killer.id, damage: amount, dx: r2(hx / hl), dz: r2(hz / hl) });
     if (!killed) {
@@ -509,6 +523,7 @@ export class Match {
     victim.streak = 0;
     this.logic.onKill(this, killer, victim, w, head, now);
     if (killer && killer !== victim && ++killer.streak % RADAR_STREAK === 0) this.radar(killer);
+    this.host.onKill?.(killer?.id ?? 0, victim.id, w.id, head);
     this.sendHp(victim, true);
     this.host.broadcast({ t: 'kill', killer: killer?.id ?? 0, victim: victim.id, weapon: w.id, head });
     this.broadcastRoster();
@@ -609,6 +624,7 @@ export class Match {
   private beginMatch(now: number): void {
     this.scores.red = this.scores.blue = 0;
     for (const p of this.players.values()) { p.kills = 0; p.deaths = 0; p.pts = 0; }
+    this.host.onMatchStart?.();
     this.logic.onStart(this, now);
     this.broadcastMatch();
     this.broadcastRoster();
@@ -649,6 +665,7 @@ export class Match {
     this.broadcastMatch();
     this.broadcastRoster();
     this.broadcastMode();
+    this.host.onMatchEnd?.(r);
   }
 
   /** Next match: scores reset, teams rebalanced, everyone respawns into a new warm-up. */
@@ -906,6 +923,12 @@ export class Match {
   /** A one-off happening for the clients (banner and sound). */
   event(kind: ModeEventKind, team: Team | '' = '', id = 0, text = ''): void {
     this.host.broadcast({ t: 'event', kind, ...(team ? { team } : {}), ...(id ? { id } : {}), ...(text ? { text } : {}) });
+    if (id && (kind === 'flag-captured' || kind === 'flag-returned') && this.phase === 'live') this.host.onObjective?.(id, kind, 1);
+  }
+
+  /** Objective credit for a player the event does not name (zone capturers, time in a hill); live phase only. */
+  creditObjective(p: MatchPlayer, kind: 'zone-captured' | 'hill', amount = 1): void {
+    if (this.phase === 'live') this.host.onObjective?.(p.id, kind, amount);
   }
 
   /** A system line in the chat. */
@@ -918,6 +941,7 @@ export class Match {
     return [...this.players.values()].map((p) => ({
       id: p.id, name: p.name, team: p.team, kills: p.kills, deaths: p.deaths, ping: Math.round(this.host.ping(p.id)),
       ...(withPts ? { pts: p.pts } : {}),
+      ...(p.rank ? { rk: p.rank } : {}),
     }));
   }
 

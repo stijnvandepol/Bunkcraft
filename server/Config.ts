@@ -48,6 +48,14 @@ export interface Config {
   reconnectHintMs: number;
   /** Chunk generation threads (CHUNK_WORKERS): default min(2, cores − 1), 0 = on the main thread. */
   chunkWorkers: number;
+  /** Realms profiles and XP (PROFILES, default on). */
+  profiles: boolean;
+  /** Most profiles kept in DATA_DIR/profiles (MAX_PROFILES). */
+  maxProfiles: number;
+  /** New profiles per client address per hour (PROFILE_CREATE_LIMIT). */
+  profileCreateLimit: number;
+  /** HMAC secret for profile tokens (PROFILE_SECRET); unset = DATA_DIR/profiles/secret.key. */
+  profileSecret?: string;
 }
 
 const flag = (v: string | undefined, dflt: boolean): boolean => (v === undefined || v === '' ? dflt : !/^(0|off|false|no)$/i.test(v));
@@ -91,6 +99,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     passwordFailLimit: num(env.PASSWORD_FAIL_LIMIT, 5),
     reconnectHintMs: num(env.RECONNECT_HINT_MS, 8000),
     chunkWorkers: chunkWorkerCount(env.CHUNK_WORKERS),
+    profiles: flag(env.PROFILES, true),
+    maxProfiles: Math.max(0, Math.floor(num(env.MAX_PROFILES, 50_000))),
+    profileCreateLimit: Math.max(1, Math.floor(num(env.PROFILE_CREATE_LIMIT, 10))),
+    profileSecret: env.PROFILE_SECRET || undefined,
   };
 }
 
