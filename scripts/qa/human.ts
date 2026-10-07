@@ -146,7 +146,11 @@ export async function inMatch(p: Player): Promise<boolean> {
 export async function quickPlay(p: Player, mode: string): Promise<void> {
   await p.page.locator(`.realms-item[data-mode="${mode}"]`).click();
   await clickButton(p, /^(Quick Play|Snel spelen)$/);
-  await until(p, 'in match', async () => (await inMatch(p)) || (await visible(p, '.click-to-play')), 90_000);
+  try {
+    await until(p, 'in match', async () => (await inMatch(p)) || (await visible(p, '.click-to-play')), 90_000);
+  } catch (e) {
+    throw new Error(`${(e as Error).message}; Realms says: "${await text(p, '.realms-status')}"`);
+  }
 }
 
 /** Clicks into the game (click-to-play overlay or canvas) and waits for pointer lock. */

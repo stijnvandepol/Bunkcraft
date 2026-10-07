@@ -291,8 +291,15 @@ export class Rooms {
   quickPlay(mode: GameType, mayCreate: () => boolean): QuickPlayResult {
     const def = gameTypeDef(mode);
     if (!def.arcade) return { error: 'full' };
-    const pick = pickLobby(this.lobbies(mode), mode);
-    if (pick) return { code: pick.code, created: false };
+    for (;;) {
+      const pick = pickLobby(this.lobbies(mode), mode);
+      if (!pick) break;
+      if (this.loaded.has(pick.code) || existsSync(join(this.opts.dataDir, pick.code, 'world.json'))) return { code: pick.code, created: false };
+      // Its files are gone (deleted by hand, a restored backup): forget it, or every quick play of the mode would answer
+      // "Game not found" from now on (QA round 3).
+      this.listedMeta.delete(pick.code);
+      this.listCache = null;
+    }
     if (!mayCreate()) return { error: 'limited' };
     // Named after its code so lobbies of one mode can be told apart in the list.
     // Every new lobby starts on a random map the mode can use, so not every lobby opens on the same arena.

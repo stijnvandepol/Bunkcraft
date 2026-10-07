@@ -174,6 +174,17 @@ describe('Rooms quick play', () => {
     expect(r.quickPlay('ffa', () => true)).toMatchObject({ created: true });
   });
 
+  it('skips a listed lobby whose files are gone instead of sending everyone to "Game not found"', () => {
+    const r = rooms();
+    const { code } = r.quickPlay('gungame', () => true) as { code: string };
+    r.close(code, false); // unloaded, still listed
+    rmSync(join(dirs.at(-1)!, code), { recursive: true, force: true });
+    const next = r.quickPlay('gungame', () => true) as { code: string; created: boolean };
+    expect(next.code).not.toBe(code);
+    expect(next.created).toBe(true);
+    expect(r.info(next.code)).toMatchObject({ gameType: 'gungame' });
+  });
+
   it('starts new lobbies on a random map the mode can be played on', () => {
     const r = rooms();
     const seen = new Set<string>();
