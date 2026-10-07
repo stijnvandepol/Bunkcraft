@@ -56,7 +56,7 @@ export class ModeVisuals {
     const geo = new THREE.RingGeometry(0.92, 1, 48);
     geo.rotateX(-Math.PI / 2);
     for (let i = 0; i < MAX_ZONES; i++) {
-      const ring = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.6, depthWrite: false, side: THREE.DoubleSide }));
+      const ring = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.6, depthWrite: false, side: THREE.DoubleSide, forceSinglePass: true }));
       ring.visible = false;
       ring.renderOrder = 2;
       this.rings.push(ring);

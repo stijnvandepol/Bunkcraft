@@ -81,6 +81,9 @@ export class WeaponViewmodel {
   private readonly flash: THREE.Mesh;
   private readonly material: THREE.MeshBasicMaterial;
   private readonly armGeometries = new Map<string, THREE.BufferGeometry>();
+  /** The weapon in hand from the hip and cut for aiming (see weaponFrontGeometry); set in apply(). */
+  private hipGeometry: THREE.BufferGeometry | null = null;
+  private frontGeometry: THREE.BufferGeometry | null = null;
   private weaponId = '';
   private optic: OpticId = 'iron';
   private sup = false;
@@ -108,6 +111,9 @@ export class WeaponViewmodel {
     this.armsMesh = new THREE.Mesh(undefined, this.material);
     this.flash = new THREE.Mesh(new THREE.PlaneGeometry(0.2, 0.2), new THREE.MeshBasicMaterial({
       map: flashTexture(), transparent: true, blending: THREE.AdditiveBlending, depthTest: false, depthWrite: false, side: THREE.DoubleSide,
+      // One pass: three draws transparent double-sided materials twice (back, then front) and flips needsUpdate both
+      // times, a program lookup with garbage per draw. A flat additive quad looks the same either way.
+      forceSinglePass: true,
     }));
     this.flash.visible = false;
     const reticle = (kind: 'reddot' | 'holo', size: number) => {
@@ -175,6 +181,8 @@ export class WeaponViewmodel {
     const geo = weaponGeometry(id, this.optic, this.sup);
     if (!geo) return;
     this.weaponMesh.geometry = geo;
+    this.hipGeometry = geo;
+    this.frontGeometry = weaponFrontGeometry(id, this.optic, this.sup) ?? geo;
     let arms = this.armGeometries.get(id);
     if (!arms) {
       const left = LEFT_HAND_Z[id];
@@ -278,7 +286,8 @@ export class WeaponViewmodel {
     // A scoped weapon disappears behind the scope overlay when fully aimed.
     this.weaponMesh.visible = !(this.optic === 'scope' && ads > 0.92);
     // Aiming: no stock and no hands in the way of the sights.
-    const geo = (ads > 0.5 ? weaponFrontGeometry(def.id, this.optic, this.sup) : weaponGeometry(def.id, this.optic, this.sup)) ?? this.weaponMesh.geometry;
+    // (Both picked in apply(): looking them up here built a string key every frame.)
+    const geo = (ads > 0.5 ? this.frontGeometry : this.hipGeometry) ?? this.weaponMesh.geometry;
     if (this.weaponMesh.geometry !== geo) this.weaponMesh.geometry = geo;
     this.armsMesh.visible = this.weaponMesh.visible && ads < 0.5;
     const ret = this.reticle;

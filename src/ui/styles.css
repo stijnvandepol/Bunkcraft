@@ -821,6 +821,8 @@ html, body {
   background: rgba(0, 0, 0, 0.35);
   color: #fff;
   white-space: nowrap;
+  /* Moved every frame (transform) and faded (opacity): its own compositor layer, so neither repaints the HUD. */
+  will-change: transform, opacity;
 }
 
 /* ---------------------------------------------------------------- advancements */

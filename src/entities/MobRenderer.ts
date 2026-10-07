@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { FOG_GLSL, LIGHT_GLSL, type WorldUniforms } from '../rendering/Materials';
+import { uploadPrefix } from '../rendering/uploadRange';
 import { DYES } from '../world/Content';
 import { SOLID } from '../world/BlockRegistry';
 import type { World } from '../world/World';
@@ -201,6 +202,11 @@ export class MobRenderer {
     this.emotes.frustumCulled = false;
     this.emotes.count = 0;
     this.group.add(this.emotes);
+    // ~150 instanced part meshes that never move (the instances carry the transforms): keep them out of the scene's
+    // per-frame matrix update. Their world matrices stay the identity they were created with.
+    this.group.matrixAutoUpdate = false;
+    this.group.matrixWorldAutoUpdate = false;
+    for (const child of this.group.children) child.matrixAutoUpdate = false;
   }
 
   /** Spawns emote sprites (hearts for love and taming, smoke for a failed taming...) around a mob. */
@@ -337,13 +343,15 @@ export class MobRenderer {
       // Types without any mob cost no draw call.
       p.mesh.visible = p.mesh.count > 0;
       if (p.mesh.count === 0) continue;
-      p.mesh.instanceMatrix.needsUpdate = true;
-      p.data.needsUpdate = true;
-      p.tint.needsUpdate = true;
+      // Upload only the instances in use, not the whole capacity.
+      const n = p.mesh.count;
+      uploadPrefix(p.mesh.instanceMatrix, n * 16);
+      uploadPrefix(p.data, n * 4);
+      uploadPrefix(p.tint, n * 4);
     }
     this.shadows.count = shadows;
     this.shadows.visible = shadows > 0;
-    if (shadows > 0) { this.shadows.instanceMatrix.needsUpdate = true; this.shadowData.needsUpdate = true; }
+    if (shadows > 0) { uploadPrefix(this.shadows.instanceMatrix, shadows * 16); uploadPrefix(this.shadowData, shadows); }
     this.updateEmotes(dt);
   }
 

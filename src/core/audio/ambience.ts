@@ -1,5 +1,6 @@
 import { birdFactor, caveFactor, cricketFactor, windFactor, type AudioEnvironment } from './environment';
 import { distanceGain, panFor } from './spatial';
+import { glide, resetGlide } from './glide';
 import { Priority } from './voiceLimiter';
 import type { Synth } from './synth';
 
@@ -58,8 +59,8 @@ class Loop {
       if (this.silentFor > 4) this.stop();
     }
     if (this.src || level > 0) {
-      this.out.gain.setTargetAtTime(level, t, 0.35);
-      this.pan.pan.setTargetAtTime(pan, t, 0.2);
+      glide(this.out.gain, level, t, 0.35, 0.002);
+      glide(this.pan.pan, pan, t, 0.2, 0.01);
     }
   }
 
@@ -82,6 +83,7 @@ class Loop {
     this.extras = [];
     this.src = null;
     this.out.gain.value = 0;
+    resetGlide(this.out.gain);
   }
 
   /** Hard stop (engine suspended or torn down). */
@@ -215,7 +217,7 @@ export class Ambience {
     const rainLevel = this.rain * (0.1 + 0.34 * open + 0.1 * (1 - cave) * roof) * (1 - 0.8 * submerged);
     this.rainLoop.set(rainLevel, step);
     const rainFilter = this.rainLoop.nodes[0] as BiquadFilterNode | undefined;
-    if (rainFilter) rainFilter.frequency.setTargetAtTime(1300 + 7500 * open, this.ctx.currentTime, 0.4);
+    if (rainFilter) glide(rainFilter.frequency, 1300 + 7500 * open, this.ctx.currentTime, 0.4, 25);
     this.windLoop.set(windFactor(env) * 0.32 * (1 - submerged) + this.rain * 0.05 * open, step);
     this.caveLoop.set(cave * 0.09 * (1 - submerged), step);
     this.underLoop.set(submerged * 0.2, step);
@@ -438,7 +440,7 @@ export class Ambience {
         return;
       }
     }
-    this.cricketNodes?.g.gain.setTargetAtTime(this.cricketLevel, ctx.currentTime, 0.8);
+    if (this.cricketNodes) glide(this.cricketNodes.g.gain, this.cricketLevel, ctx.currentTime, 0.8, 0.002);
   }
 
   private startCrickets(): void {

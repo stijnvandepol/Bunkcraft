@@ -19,6 +19,7 @@ plus the browser's style/layout/paint time (DOM churn).
 import argparse
 import json
 import os
+import signal
 import socket
 import statistics
 import subprocess
@@ -69,6 +70,31 @@ RECORDER = """
   };
   requestAnimationFrame(tick);
 })
+"""
+
+# --diag: which DOM nodes change how often (style/layout work comes from these).
+MUTATIONS = """
+() => {
+  const counts = window.__mut = {};
+  const name = (n) => n.nodeType === 1 ? (n.className && typeof n.className === 'string' ? '.' + n.className.split(' ')[0] : n.tagName.toLowerCase()) : '#text in ' + name(n.parentNode);
+  window.__mo = new MutationObserver((list) => { for (const m of list) {
+    const k = name(m.target) + ' · ' + (m.type === 'attributes' ? m.attributeName : m.type);
+    counts[k] = (counts[k] || 0) + 1; } });
+  window.__mo.observe(document.body, { subtree: true, childList: true, attributes: true, characterData: true });
+}
+"""
+
+DIAG = """
+(seconds) => {
+  const g = window.game, three = g.renderer.three;
+  window.__mo.disconnect();
+  const mutations = {};
+  for (const [k, v] of Object.entries(window.__mut)) mutations[k] = v / seconds;
+  let objects = 0, autoUpdate = 0, visible = 0; const types = {};
+  g.renderer.scene.traverse((o) => { objects++; if (o.matrixAutoUpdate) autoUpdate++; if (o.visible) visible++; types[o.type] = (types[o.type] || 0) + 1; });
+  return { objects, autoUpdate, visible, types, mutations, programs: three.info.programs.length,
+    geometries: three.info.memory.geometries, textures: three.info.memory.textures };
+}
 """
 
 # Click → muzzle flash: a real mousedown on the canvas, then the first animation frame after the viewmodel fired.
@@ -148,6 +174,24 @@ def wait_http(url, tries=300):
     raise RuntimeError(f'{url} did not come up')
 
 
+def spawn(cmd, env=None, stdout=None):
+    """Own process group: npx starts node as a child, and stopping npx alone would leave that child running."""
+    return subprocess.Popen(cmd, cwd=ROOT, env=env, stdout=stdout, stderr=subprocess.STDOUT, start_new_session=True)
+
+
+def stop(p):
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(p.pid, sig)
+        except ProcessLookupError:
+            return
+        try:
+            p.wait(5)
+            return
+        except subprocess.TimeoutExpired:
+            pass
+
+
 class Servers:
     """Game server + Vite on free ports; cleaned up on exit."""
 
@@ -157,7 +201,7 @@ class Servers:
         self.data = tempfile.mkdtemp(prefix='bunk-arena-perf-')
         env = dict(os.environ, PORT=str(self.game_port), DATA_DIR=self.data, ROOM_CREATE_LIMIT='1000')
         self.log = open(os.path.join(self.data, 'server.log'), 'w')
-        self.game = subprocess.Popen(['npx', 'tsx', 'server/index.ts'], cwd=ROOT, env=env, stdout=self.log, stderr=subprocess.STDOUT)
+        self.game = spawn(['npx', 'tsx', 'server/index.ts'], env=env, stdout=self.log)
         self.cfg = os.path.join(ROOT, f'.vite.arenaperf.{self.vite_port}.config.ts')
         with open(self.cfg, 'w') as f:
             f.write(f"""import {{ mergeConfig }} from 'vite';
@@ -165,7 +209,7 @@ import base from './vite.config';
 export default mergeConfig(base, {{ server: {{ port: {self.vite_port}, strictPort: true, hmr: false, watch: null,
   proxy: {{ '/ws': {{ target: 'ws://127.0.0.1:{self.game_port}', ws: true }}, '/api': {{ target: 'http://127.0.0.1:{self.game_port}' }} }} }} }});
 """)
-        self.vite = subprocess.Popen(['npx', 'vite', '--config', self.cfg], cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.vite = spawn(['npx', 'vite', '--config', self.cfg], stdout=subprocess.DEVNULL)
         wait_http(f'http://127.0.0.1:{self.game_port}/health')
         wait_http(f'http://localhost:{self.vite_port}/')
         self.bots = None
@@ -180,26 +224,17 @@ export default mergeConfig(base, {{ server: {{ port: {self.vite_port}, strictPor
 
     def start_bots(self, code, token, n):
         self.stop_bots()
-        self.bots = subprocess.Popen(['npx', 'tsx', 'scripts/arena-perf-bots.ts', f'http://127.0.0.1:{self.game_port}', code, token, str(n)],
-                                     cwd=ROOT, stdout=self.log, stderr=subprocess.STDOUT)
+        self.bots = spawn(['npx', 'tsx', 'scripts/arena-perf-bots.ts', f'http://127.0.0.1:{self.game_port}', code, token, str(n)], stdout=self.log)
 
     def stop_bots(self):
         if self.bots:
-            self.bots.terminate()
-            try:
-                self.bots.wait(5)
-            except subprocess.TimeoutExpired:
-                self.bots.kill()
+            stop(self.bots)
             self.bots = None
 
     def close(self):
         self.stop_bots()
         for p in (self.vite, self.game):
-            p.terminate()
-            try:
-                p.wait(5)
-            except subprocess.TimeoutExpired:
-                p.kill()
+            stop(p)
         if os.path.exists(self.cfg):
             os.remove(self.cfg)
 
@@ -214,7 +249,7 @@ def measure(srv, pw, args, map_id):
     page.add_init_script(WS_COUNTER)
     page.add_init_script("try { localStorage.setItem('bunkcraft.name', 'perfplayer'); } catch (e) {}")
     page.goto(f'http://localhost:{srv.vite_port}/')
-    page.wait_for_function('window.game && window.game.state === "menu"', timeout=90000)
+    page.wait_for_function('window.game && window.game.state === "menu" && window.game.last > 0', timeout=90000)
     if not args.dynres:
         page.evaluate("() => window.game.settings.set('dynamicResolution', false)")
     t_join = time.time()
@@ -247,7 +282,10 @@ def measure(srv, pw, args, map_id):
         if args.alloc:
             cdp.send('HeapProfiler.startSampling', {'samplingInterval': 4096, 'includeObjectsCollectedByMajorGC': True,
                                                      'includeObjectsCollectedByMinorGC': True})
+    if args.diag:
+        page.evaluate(MUTATIONS)
     res = page.evaluate(RECORDER, args.seconds)
+    diag = page.evaluate(DIAG, args.seconds) if args.diag else None
     alloc = cdp.send('HeapProfiler.stopSampling')['profile'] if cdp and args.alloc else None
     prof = cdp.send('Profiler.stop')['profile'] if cdp and args.profile else None
     gc, gc_major, dom, heap = [], 0, {}, {}
@@ -314,6 +352,14 @@ def measure(srv, pw, args, map_id):
     for k, v in row:
         print(f'{k:<{width}}  {v}')
     out = {k: v for k, v in row}
+    if diag:
+        print(f"\nscene: {diag['objects']} objects ({diag['autoUpdate']} with matrixAutoUpdate, {diag['visible']} visible); "
+              f"GL programs {diag['programs']}, geometries {diag['geometries']}, textures {diag['textures']}")
+        print('  by type: ' + ', '.join(f'{k} {v}' for k, v in sorted(diag['types'].items(), key=lambda kv: -kv[1])))
+        print('DOM mutations per second (target · kind):')
+        for k, v in sorted(diag['mutations'].items(), key=lambda kv: -kv[1])[:15]:
+            print(f'  {v:7.1f}  {k}')
+        out['diag'] = diag
     if dom:
         print('\nbrowser main-thread work (ms/s): ' + ', '.join(f'{k} {v / el:.1f}' for k, v in sorted(dom.items(), key=lambda kv: -kv[1])))
         out['dom'] = {k: round(v / el, 2) for k, v in dom.items()}
@@ -326,6 +372,9 @@ def measure(srv, pw, args, map_id):
             self_us[key] = self_us.get(key, 0) + dt
             sub = subsystem(cf['url'], cf['functionName'])
             by_sub[sub] = by_sub.get(sub, 0) + dt
+        busy = sum(v for k, v in by_sub.items() if k != '(idle)') / 1000
+        print(f'\nmain-thread busy: {busy / el:.0f} ms/s, {busy / max(1, len(gaps)):.2f} ms per frame')
+        out['busy ms/frame'] = round(busy / max(1, len(gaps)), 2)
         print('\nmain-thread self time by subsystem (ms per second):')
         for k, v in sorted(by_sub.items(), key=lambda kv: -kv[1])[:20]:
             if k != '(idle)':
@@ -339,18 +388,26 @@ def measure(srv, pw, args, map_id):
             with open(args.profile_out, 'w') as f:
                 json.dump(prof, f)
     if alloc:
-        sites = {}
-        stack = [alloc['head']]
+        sites, chains = {}, {}
+        stack = [(alloc['head'], ())]
         while stack:
-            n = stack.pop()
+            n, path = stack.pop()
             cf = n['callFrame']
             key = f"{cf['functionName'] or '(anonymous)'} {cf['url'].split('/')[-1].split('?')[0]}:{cf['lineNumber']}"
             sites[key] = sites.get(key, 0) + n['selfSize']
-            stack.extend(n['children'])
+            if n['selfSize']:
+                ch = chains.setdefault(key, {})
+                caller = ' < '.join(path[-args.depth:][::-1])
+                ch[caller] = ch.get(caller, 0) + n['selfSize']
+            stack.extend((c, path + (key,)) for c in n['children'])
         total = sum(sites.values()) or 1
-        print(f'\ntop allocation sites (sampled; total {total / 1048576:.1f} MB in {el:g} s):')
+        print(f'\ntop allocation sites (sampled; total {total / 1048576:.1f} MB in {el:g} s = {total / 1024 / el:.0f} KB/s):')
         for k, v in sorted(sites.items(), key=lambda kv: -kv[1])[:16]:
             print(f'  {v / 1024:9.0f} KB  {100 * v / total:5.1f} %  {k}')
+            if args.stacks:
+                for c, cv in sorted(chains.get(k, {}).items(), key=lambda kv: -kv[1])[:2]:
+                    print(f'              {cv / 1024:7.0f} KB  < {c}')
+        out['allocKBps'] = round(total / 1024 / el, 1)
     browser.close()
     srv.stop_bots()
     return out
@@ -369,6 +426,9 @@ def main():
     ap.add_argument('--profile', action='store_true')
     ap.add_argument('--profile-out', default=None)
     ap.add_argument('--alloc', action='store_true')
+    ap.add_argument('--stacks', action='store_true', help='with --alloc: print the main callers of each allocation site')
+    ap.add_argument('--depth', type=int, default=3, help='caller frames shown by --stacks')
+    ap.add_argument('--diag', action='store_true', help='also count scene objects, GL programs and DOM mutations per second')
     ap.add_argument('--no-latency', action='store_true')
     ap.add_argument('--json', default=None, help='write the result(s) here')
     args = ap.parse_args()
@@ -377,6 +437,17 @@ def main():
     results = []
     try:
         with sync_playwright() as pw:
+            # Warm-up load: a fresh Vite pre-bundles dependencies on the first visit and then reloads the page,
+            # which would cut a measured join short.
+            b = pw.chromium.launch()
+            p = b.new_page()
+            p.goto(f'http://localhost:{srv.vite_port}/')
+            p.wait_for_function('window.game && window.game.state === "menu" && window.game.last > 0', timeout=120000)
+            # Load an arena once too (arcade chunk, chunk worker): Vite optimises their dependencies on first use and the
+            # stale requests of that first attempt fail, which sends a first join back to the title screen.
+            p.evaluate("() => window.game.arcadePreview('tdm', 'You', 'classic')")
+            p.wait_for_timeout(6000)
+            b.close()
             for m in maps:
                 print(f'\n=== {m}')
                 try:
