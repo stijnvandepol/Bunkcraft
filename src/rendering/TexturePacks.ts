@@ -23,6 +23,8 @@ export interface TexturePackInfo {
   layout: PackLayout;
   /** Folder for built-in packs (served from /public). */
   path?: string;
+  /** Built-in packs: every PNG of the folder in one file (made by the build, scripts/vite-texture-pack.ts). */
+  bundle?: string;
 }
 
 export interface PackImage {
@@ -259,6 +261,7 @@ export const BUILTIN_PACKS: TexturePackInfo[] = [
     name: 'Pixel Perfection',
     credit: 'Pixel Perfection by Hugh "XSSheep" Rutland & contributors — CC BY-SA 4.0',
     path: 'texturepacks/pixel-perfection/',
+    bundle: 'texturepacks/pixel-perfection.bcpk',
     layout: PIXEL_PERFECTION,
   },
 ];
@@ -366,6 +369,53 @@ export async function loadPack(layout: PackLayout, resolve: FileResolver, size: 
 export function builtinResolver(pack: TexturePackInfo): FileResolver {
   const base = import.meta.env.BASE_URL + (pack.path ?? '');
   return (f) => `${base}${f}.png`;
+}
+
+/** Reads a pack bundle (format in scripts/vite-texture-pack.ts): PNG bytes per file name, or null when malformed. */
+export function parsePackBundle(buf: ArrayBuffer): Map<string, Uint8Array> | null {
+  if (buf.byteLength < 8) return null;
+  const v = new DataView(buf);
+  if (v.getUint32(0) !== 0x4243504b) return null; // "BCPK"
+  const headerLen = v.getUint32(4, true);
+  if (8 + headerLen > buf.byteLength) return null;
+  let index: unknown;
+  try {
+    index = (JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 8, headerLen))) as { files?: unknown }).files;
+  } catch {
+    return null;
+  }
+  if (!index || typeof index !== 'object') return null;
+  const data = 8 + headerLen;
+  const out = new Map<string, Uint8Array>();
+  for (const [name, range] of Object.entries(index as Record<string, unknown>)) {
+    if (!Array.isArray(range) || range.length !== 2) return null;
+    const [off, len] = range as [number, number];
+    if (!Number.isInteger(off) || !Number.isInteger(len) || off < 0 || len < 0 || data + off + len > buf.byteLength) return null;
+    out.set(name, new Uint8Array(buf, data + off, len));
+  }
+  return out;
+}
+
+/**
+ * A built-in pack from its bundle: one request instead of one per PNG. Resolves to object URLs (dispose them when
+ * done); files missing from the bundle, or no bundle at all (an old deploy, a failed fetch), use the single files.
+ */
+export async function bundledResolver(pack: TexturePackInfo): Promise<{ resolve: FileResolver; dispose(): void }> {
+  const single = builtinResolver(pack);
+  const urls = new Map<string, string>();
+  if (pack.bundle) {
+    try {
+      const res = await fetch(import.meta.env.BASE_URL + pack.bundle);
+      const files = res.ok ? parsePackBundle(await res.arrayBuffer()) : null;
+      if (files) for (const [name, bytes] of files) urls.set(name, URL.createObjectURL(new Blob([bytes as BlobPart], { type: 'image/png' })));
+    } catch {
+      // Offline without a cached copy or an old server: the single files below.
+    }
+  }
+  return {
+    resolve: (f) => urls.get(f) ?? single(f),
+    dispose: () => urls.forEach((u) => URL.revokeObjectURL(u)),
+  };
 }
 
 /** All file names (without extension) a layout may reference. */

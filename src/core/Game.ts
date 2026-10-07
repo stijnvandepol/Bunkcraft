@@ -39,7 +39,7 @@ import { MAX_AIR, PlayerStats } from '../player/PlayerStats';
 import { DayCycle, MOON_PHASE_NAMES } from '../rendering/DayCycle';
 import { HandRenderer } from '../rendering/HandRenderer';
 import {
-  IMPORTED_PREFIX, MINECRAFT_LAYOUT, type PackImage, builtinResolver, findBuiltinPack, importMinecraftArchive, importedResolver, loadPack,
+  IMPORTED_PREFIX, MINECRAFT_LAYOUT, type PackImage, bundledResolver, findBuiltinPack, importMinecraftArchive, importedResolver, loadPack,
 } from '../rendering/TexturePacks';
 import { type WorldMeta, SaveSystem, cheatsAllowed, newWorldId } from '../save/SaveSystem';
 import { BlockIcons } from '../ui/BlockIcons';
@@ -544,7 +544,12 @@ export class Game {
     try {
       const builtin = findBuiltinPack(id);
       if (builtin) {
-        images = await loadPack(builtin.layout, builtinResolver(builtin), 16);
+        const files = await bundledResolver(builtin);
+        try {
+          images = await loadPack(builtin.layout, files.resolve, 16);
+        } finally {
+          files.dispose();
+        }
         credit = builtin.credit;
       } else if (id.startsWith(IMPORTED_PREFIX)) {
         const pack = await this.save.getPack(id.slice(IMPORTED_PREFIX.length));
