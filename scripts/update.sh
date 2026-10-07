@@ -168,7 +168,7 @@ main() {
     say "rolled back, healthy again: $(health)"
     deploy_log "update ROLLED BACK: $(short "$new_id") failed its checks; back on ${old_version:-$(short "$old_id")}"
     notify "update to $(short "$new_id") failed its checks and was rolled back to ${old_version:-$(short "$old_id")}"
-    echo "The update was undone; the next 'bunkcraft update' tries again. Report the log above." >&2
+    echo "The update was undone. 'bunkcraft update' tries this build again; auto-update waits for a newer one." >&2
   else
     deploy_log "update FAILED: the rollback to $(short "$old_id") is not healthy either"
     notify "update failed and the rollback is not healthy either: the server needs attention"

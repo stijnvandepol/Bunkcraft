@@ -77,7 +77,7 @@ autoupdate_off() {
 autoupdate_status() {
   echo "AUTOUPDATE=$(setting AUTOUPDATE on), channel BUNKCRAFT_TAG=$(setting BUNKCRAFT_TAG latest), wait for a quiet server: $(setting AUTOUPDATE_WAIT_FOR_EMPTY 1) (at most $(setting AUTOUPDATE_MAX_WAIT_MIN 30) min)"
   if [ -d /run/systemd/system ] && [ -f "$UNIT.timer" ]; then
-    systemctl list-timers --all --no-pager bunkcraft-autoupdate.timer | head -n 2
+    systemctl list-timers --all --no-pager bunkcraft-autoupdate.timer 2>/dev/null | head -n 2 || true
   elif [ -f "$CRON" ]; then
     echo "cron: $(cat "$CRON")"
   else
