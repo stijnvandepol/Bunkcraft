@@ -118,7 +118,9 @@ export async function startServer(config: Config): Promise<RunningServer> {
   // Per client address: creating rooms and looking up codes (stops code guessing).
   const createLimit = new RateLimiter(config.roomCreateLimit, 3_600_000);
   const lookupLimit = new RateLimiter(40, 60_000);
-  const listLimit = new RateLimiter(30, 60_000);
+  // Listings are cheap (cached 5 s) and a household or LAN party shares one address: several players with the Realms
+  // playlist open poll it together (QA round 3: three browsers behind one address got 429s and an error in Browse Lobbies).
+  const listLimit = new RateLimiter(120, 60_000);
   // Realms quick play: asking is cheap (it mostly joins an existing lobby); opening a new lobby also takes from createLimit.
   const quickLimit = new RateLimiter(20, 60_000);
   const ipBans = new IpBans(config.dataDir);

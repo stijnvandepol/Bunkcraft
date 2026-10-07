@@ -15,6 +15,9 @@ export interface RealmsActions {
   joinCode(name: string, code: string, onError: (msg: string) => void): Promise<void>;
 }
 
+/** How often the playlist refreshes its player counts. */
+const STATS_REFRESH_MS = 10_000;
+
 const COLUMN = 'display: flex; flex-direction: column; align-items: center; gap: calc(var(--s) * 4);';
 
 /** The mode's name in the current language. */
@@ -169,14 +172,17 @@ export class RealmsMenu {
     header.append(nameLine);
     this.stack.push(el);
 
-    // Live player counts while the playlist is open.
+    // Live player counts while the playlist is open and in view (not under another screen, not in a hidden tab).
     const refresh = async () => {
       if (!el.isConnected) return;
       stats = await realmsStats();
       renderStats();
     };
     void refresh();
-    const timer = window.setInterval(() => (el.isConnected ? void refresh() : window.clearInterval(timer)), 5000);
+    const timer = window.setInterval(() => {
+      if (!el.isConnected) window.clearInterval(timer);
+      else if (!document.hidden && this.stack.top === el) void refresh();
+    }, STATS_REFRESH_MS);
   }
 
   private busy = false;
