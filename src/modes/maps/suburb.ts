@@ -17,7 +17,7 @@ export const SUBURB: ArenaMapDef = {
   wallBlock: BLOCK.BIRCH_PLANKS,
   floorBlock: BLOCK.GRASS,
   variants: 1,
-  teamSpawns: [[28, 3], [26, 6], [28, 8], [27, 14]],
+  teamSpawns: [[28, 3], [26, 6], [28, 8], [30, 10]],
   ffaSpawns: [[10, 5], [20, 7], [21, 16], [6, 16]],
   highGround: [[21, 4]],
   objectives: {
