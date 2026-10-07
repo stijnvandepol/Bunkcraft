@@ -1508,7 +1508,7 @@ export class Game {
 
   private showClickToPlay(): void {
     this.stack.clear();
-    const hint = this.input.touchMode ? 'Tap to play' : this.input.padMode ? 'Press A to play' : 'Click to play';
+    const hint = t(this.input.touchMode ? 'click.tap' : this.input.padMode ? 'click.pad' : 'click.play');
     this.stack.push(h('div', { class: 'screen click-to-play', tabIndex: 0, role: 'button', 'aria-label': hint, onclick: () => void this.resumeGame() },
       h('div', { class: 'click-hint', text: hint })));
   }

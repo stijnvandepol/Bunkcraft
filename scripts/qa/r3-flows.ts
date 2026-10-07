@@ -42,7 +42,8 @@ async function backToGame(p: Player): Promise<void> {
 }
 
 async function leave(p: Player): Promise<void> {
-  if (!(await visible(p, 'button:has-text("Disconnect")'))) await esc(p);
+  if (await visible(p, '.click-to-play')) await lock(p);
+  if (!(await visible(p, 'button:has-text("Disconnect"), button:has-text("Verbinding verbreken")'))) await esc(p);
   await p.page.getByRole('button', { name: /Disconnect|Verbinding verbreken|Verbreek/ }).first().click();
   await until(p, 'back in realms', () => visible(p, '.realms-screen'), 15_000);
 }

@@ -56,6 +56,10 @@ test('language: switching to Dutch in a match redraws the HUD, the lobby panel a
   await play(page, 300);
   // Before the fix these stayed English until the next match.
   await expect(page.locator('.arc-health-label')).toHaveText('GEZONDHEID');
+  // The longer Dutch label ran into the number ("GEZONDHEID100").
+  const label = (await page.locator('.arc-health-label').boundingBox())!;
+  const num = (await page.locator('.arc-health-num').boundingBox())!;
+  expect(label.x + label.width).toBeLessThan(num.x);
   await expect(page.locator('.mlobby-hint')).toHaveText('Houd Tab ingedrukt voor het scorebord');
   await page.keyboard.press('KeyB');
   await expect(page.locator('.arc-cac-head').first()).toHaveText('Primair');

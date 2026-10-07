@@ -442,6 +442,8 @@ const EN = {
   'loading.preparing': 'Preparing...',
   'loading.tip': 'Tip: {0}',
   'click.play': 'Click to play',
+  'click.tap': 'Tap to play',
+  'click.pad': 'Press A to play',
 
   // Statistics
   'stats.title': 'Statistics',
@@ -897,6 +899,8 @@ const NL: Record<I18nKey, string> = {
   'loading.preparing': 'Voorbereiden...',
   'loading.tip': 'Tip: {0}',
   'click.play': 'Klik om te spelen',
+  'click.tap': 'Tik om te spelen',
+  'click.pad': 'Druk op A om te spelen',
 
   'stats.title': 'Statistieken',
   'stats.blocksMined': 'Blokken gedolven',
