@@ -10,7 +10,7 @@ Standaard, aanpasbaar via Options > Controls > Key Binds.
 |---|---|
 | Lopen | W A S D |
 | Springen (dubbel tikken: vliegen in creative) | Spatie |
-| Sneak / omlaag vliegen | C |
+| Sneak / omlaag vliegen (arcade: crouch, tijdens rennen: slide) | C |
 | Sprint | Linker Shift |
 | Aanvallen / breken | Linkermuisknop |
 | Gebruiken / plaatsen | Rechtermuisknop |

@@ -147,9 +147,40 @@ Screenshots: `docs/screenshots/modes/` (gemaakt met `python3 scripts/mode-shots.
 - Geen blokken breken of plaatsen, geen mobs, geen items, geen inventory of crafting (`Interaction.arcade`).
   Chat blijft werken.
 - Geen valschade en geen honger. De server bepaalt je health.
-- **Beweging:** altijd sprinten (1,3× Minecraft-sprint, met de `moveSpeed` van je wapen), meer luchtbesturing
-  (`airAccel` 8 tegen 4,5) zodat bunny hoppen werkt: je behoudt je snelheid bij het landen als je blijft
-  springen. Geen sneak en geen vliegen.
+- **Beweging:** altijd sprinten (1,3× Minecraft-sprint, met de `moveSpeed` van je wapen), plus slide, slide-hop,
+  bunny hop met momentum, air strafe, crouch en jump pads (zie *Beweging* hieronder). Geen vliegen.
+
+## Beweging (slide, slide-hop, bunny hop, jump pads)
+
+Krunker-achtig, met eigen getallen (onderzoek: `docs/research/KRUNKER.md`). Alles staat in `src/player/ArcadeMove.ts`
+en geldt alleen in arcade-games (`Player.arcadeMove`); de Minecraft-beweging is ongewijzigd (tests bewaken dat).
+
+| Techniek | Hoe | Wat er gebeurt |
+|---|---|---|
+| **Slide** | Crouch-toets (C) indrukken terwijl je rent, of ingedrukt houden tijdens een landing | Snelheid springt naar 1,45× de rensnelheid en dooft uit (grond 2,4/s); max 0,8 s grondtijd; camera zakt naar 1,0 blok, FOV-kick, lichte kanteling, slide-geluid. Cooldown 0,9 s. Met strafe + muis buig je de slide (curve slide). |
+| **Slide-hop** | Springen tijdens de slide | De slide-snelheid gaat mee de lucht in en dooft daar langzaam uit (0,8/s). Ritme: springen → crouch vlak voor de landing → meteen weer springen. |
+| **Bunny hop** | Springen op het moment van landen (spatie vasthouden) | De sprongstap gebruikt luchtbesturing: geen grondwrijving, momentum blijft. |
+| **Air strafe** | Strafe-toets + muis dezelfde kant op in de lucht | De baan draait mee (4/s) zonder snelheid te winnen. Achteruit sturen remt. |
+| **Trap/helling-slide** | Sliden over treden of slabs omlaag | Elke trede omlaag is een mini-sprongetje: daar geldt de lage luchtwrijving en telt de slide-tijd niet, dus de slide houdt langer snelheid. |
+| **Crouch** | Crouch-toets vasthouden zonder te sliden | 55% snelheid, oog 1,27, hitbox 1,5 hoog. |
+| **Jump pad** | Over een jump pad lopen (blok `JUMP_PAD`, gloeiend groen-blauw) | Lanceert met 16 blokken/s recht omhoog (top ≈ 4,3 blokken); je rensnelheid blijft. Kaarten plaatsen ze met `jumpPad()` in `src/modes/maps/helpers.ts`. |
+
+- Snelheid *winnen* boven de rensnelheid kan alleen met de slide-boost; elke andere toestand laat het overschot minstens zo snel
+  uitdoven als 0,8/s. Een perfecte slide-chain haalt gemiddeld ~1,3× de rensnelheid.
+- **Perk Lightfoot** (+8% snelheid, slide-cooldown 0,65 s) en de preset **Scout** (SMG, pistool, Lightfoot) zijn de snelle klasse.
+- **Server:** `pos` draagt `sl` (de fysica-stap van je laatste slide-start) en de vlaggen crouch (32) en slide (64). De
+  bewegingsvalidator (`server/anticheat/Movement.ts`) accepteert een slide-start alleen binnen het meldvenster en na de cooldown,
+  en verhoogt dan het snelheidsbudget met precies de envelop `max × 0,45 × e^(−0,8·t)`; zonder gemelde slide geldt het oude
+  budget. Jump pads verhogen de sprongcurve alleen als er een pad onder het pad van de speler lag. Een snelheidshack die elke
+  melding een slide claimt wordt teruggezet (`scripts/cheat-bots.ts`).
+- **Hitbox:** de server gelooft een pose alleen als die kan (slide: een geaccepteerde slide-start, crouch: op de grond en op
+  crouch-tempo) en schiet dan op die hitbox (slide 1,15 hoog, crouch 1,5, hoofd de bovenste 0,4). Lag compensation neemt bij een
+  pose-wissel in het terugspoelvenster de hoogste hitbox. Anderen zien dezelfde pose: lichaam leunt achterover (slide) of voorover
+  (crouch), boven de voeten.
+- **Tests:** `tests/arcadeMovement.test.ts` (slide-curve, cooldown, momentum, envelop-bovengrens, jump pads, claims),
+  `tests/anticheatMovement.test.ts` (replay van slides, slide-hops, bhop-chains en air strafe op elke kaart, met lag, bursts en
+  frame-hitches: nooit gecorrigeerd), `scripts/qa/slide-check.py` (Playwright in een echte match; screenshots
+  `docs/screenshots/arcade/slide-*.png`).
 
 ## Besturing
 
@@ -158,6 +189,7 @@ Alles is aan te passen in *Options → Controls → Key Binds* (categorie **Arca
 | Actie | Standaard |
 |---|---|
 | Lopen, springen | W A S D, spatie |
+| Crouch / slide (tijdens rennen) | C (de Sneak-toets, *Sneak / Crouch & Slide*) |
 | Schieten | linkermuisknop (vasthouden bij automatische wapens, klikken bij semi-automatische) |
 | Richten (ADS) | rechtermuisknop vasthouden |
 | Herladen | R |
@@ -169,7 +201,8 @@ Alles is aan te passen in *Options → Controls → Key Binds* (categorie **Arca
 | Chat | T |
 | HUD verbergen | F1 |
 
-Op het doodscherm kies je met 1–8 de klasse voor je volgende leven (7 presets en je Custom-klasse). Esc opent het pauzemenu;
+Op het doodscherm kies je met 1–9 de klasse voor je volgende leven (8 presets en je Custom-klasse); binnen 3 s na je
+spawn en vóór je eerste schot gaat een nieuwe klasse direct in. Esc opent het pauzemenu;
 de match loopt op de server gewoon door.
 
 ## HUD
@@ -268,10 +301,12 @@ Een klasse is **primair wapen + optiek + secundair wapen + één perk** (`ClassS
 | Quickdraw | 40% sneller richten, wapenwissel twee keer zo snel (ook op de server) |
 | Ninja | Je voetstappen zijn voor anderen alleen dichtbij (≤ 7 m) te horen in plaats van tot 26 m |
 | Suppressor | Demper op het wapen: stille "thwip", tot 24 m hoorbaar, klein mondingsvuur; 20% korter schadebereik |
+| Lightfoot | 8% sneller te voet (ook in het snelheidsbudget van de server), slide-cooldown 0,65 s in plaats van 0,9 s |
 
 - **Presets als quick picks:** Assault (rifle + red dot, pistol, Quickdraw), Rusher (SMG, machine pistol, Ninja), Breacher
   (shotgun, pistol, Ninja), Support (LMG + holo, pistol, Extended Mags), Marksman (DMR + scope, revolver), Burst (burst + holo,
-  pistol, Suppressor), Sniper (bolt-action, machine pistol, Quickdraw).
+  pistol, Suppressor), Sniper (bolt-action, machine pistol, Quickdraw), Scout (SMG, pistol, Lightfoot: slide erin, mes of
+  spray, slide eruit).
 - **Menu (B):** de presets bovenaan (1–7), daaronder de **Custom**-klasse (8) met per kolom primair, optiek (optieken die het
   wapen niet kan dragen zijn grijs), secundair en perk, plus de stats van het gekozen wapen. Elke wijziging maakt de klasse je
   Custom-klasse en bewaart hem in `localStorage` (`bunkcraft.arcadeClass`); de laatst gekozen klasse (`bunkcraft.arcadeClass.last`)
@@ -352,13 +387,36 @@ Alles procedureel (geen samples), data in `src/core/audio/weaponSounds.ts`, rece
   de tijd om is; na `restartIn` seconden begint een nieuwe match.
 - Rondemodes (elimination) hebben daartussen per ronde `intermission` (iedereen terug bij de spawn, wapen kiezen, geen
   schade), `countdown` (3 s), `live` (de rondetijd) en `roundend` (uitslag, 4 s). De klok toont dan "NEXT ROUND".
-- De respawntijd en spawnbescherming komen uit het type: 3 s / 2 s (tdm, ffa), 1,5 s / 1 s (gun game), 4 s / 2 s
-  (hardpoint, domination, ctf), geen respawn binnen een ronde (elimination).
-- Je respawnt `RESPAWN_SECONDS` (3 s) na een kill op de server (`spawn`), met volledige health, je geladen
-  loadout en spawn-bescherming.
+- De respawntijd en spawnbescherming komen uit het type: 2,5 s / 2 s (tdm, ffa), 1,5 s / 1 s (gun game), 3 s / 2 s
+  (hardpoint, domination, ctf), geen respawn binnen een ronde (elimination). Spawnbescherming **eindigt bij je eerste schot**.
+- Je respawnt na de timer op de server (`spawn`), met volledige health, je geladen loadout en spawn-bescherming.
+- **Spawnkeuze** (`Match.pickSpawn`): zo ver mogelijk van de dichtstbijzijnde levende tegenstander, −8 als een tegenstander
+  binnen 35 blokken de plek kan zien, −3 per schot in de buurt (14 blokken) in de laatste 3 s, +1 met een teamgenoot binnen 25
+  blokken, plus wat willekeur. Sterkere straffen kozen in botmatches dichterbij verstopte plekken en gaven méér spawnkills.
+- **Killstreak:** elke 5e kill in één leven geeft een **radarscan**: de posities van de levende tegenstanders, 4 s zichtbaar als
+  rode ruiten voor jou en je team (`radar`-bericht). Geen airstrikes of nuke.
+- **Lage health:** onder 35 pulseert de schermrand rood (Reduce Flashes begrenst het).
 - Health regenereert na `REGEN_DELAY` (5 s) zonder schade met `REGEN_PER_SECOND` (25) per seconde.
-- Hitbox: 0,6 breed, 1,8 hoog, de bovenste 0,4 is het hoofd (headshot).
+- Hitbox: 0,6 breed, 1,8 hoog (crouch 1,5, slide 1,15), de bovenste 0,4 is het hoofd (headshot).
 - Een klasse geldt vanaf je **volgende leven**, behalve als je hem binnen 3 s na je spawn en vóór je eerste schot kiest: dan meteen.
+
+### Tempo gemeten (botmatches)
+
+`npx tsx scripts/flow-metrics.ts 8 300 --maps=classic,suburb,quarter,town,dockyard --type=tdm|ffa --seed=1..3`: 8 bots via de echte
+server, 5 kaarten × 300 s, gemiddeld over 3 seeds. Bots lopen eerlijke paden (6 b/s, geen slides) en schieten na 0,6 s
+reactietijd. *Naar gevecht* = mediaan van spawn tot eerste schade; *stil* = gemiddelde pauze tussen gevechten tijdens een leven;
+*spawnkill* = dood binnen 3 s na spawn (*passief*: zonder zelf geschoten te hebben); *hete spawn* = vijand binnen 20 blokken.
+
+| | kills/min | leven (s) | naar gevecht (s) | stil (s) | spawnkill % | passief % | hete spawn % |
+|---|---|---|---|---|---|---|---|
+| TDM voor | 20,6 | 19,5 | 6,3 | 7,2 | 1,4 | 0,0 | 11,6 |
+| TDM na | 22,1 | 18,4 | 6,1 | 7,3 | 3,0 | 0,0 | 13,5 |
+| FFA voor | 34,2 | 11,1 | 3,0 | 4,6 | 2,7 | 0,1 | 14,1 |
+| FFA na | 37,8 | 10,3 | 2,9 | 4,3 | 6,4 | 0,1 | 20,5 |
+
+Sneller respawnen geeft +8% (TDM) tot +11% (FFA) kills per minuut. Spawnkills stijgen omdat bescherming nu eindigt bij je eerste
+schot (bots schieten na 0,6 s terug en verliezen dan hun schild); *passieve* spawnkills (je schoot niet) blijven ~0. De grootste
+tempowinst voor echte spelers komt van de beweging (slides) en van jump pads op de kaarten; die zitten niet in de bots.
 
 ## Netwerk (client)
 

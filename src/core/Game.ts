@@ -1221,7 +1221,9 @@ export class Game {
     this.root.append(session.hud.el, session.hud.loadoutEl);
     session.setHudVisible(false);
     for (const pl of welcome.players) session.addPlayer(pl.id, pl.name, pl.team ?? '');
-    this.arcadeHint = `${def.name}: ${def.description}. Tab = scoreboard,${def.loadout === 'ladder' ? '' : ' B = loadout,'} R = reload.`;
+    const slideKey = keyDisplayName(this.input.bound(KB.SNEAK)) || 'Sneak';
+    this.arcadeHint = `${def.name}: ${def.description}. Tab = scoreboard,${def.loadout === 'ladder' ? '' : ' B = loadout,'} R = reload,`
+      + ` ${slideKey} while running = slide (jump out of it to keep the speed).`;
   }
 
   private stopArcade(): void {

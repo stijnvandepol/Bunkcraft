@@ -282,8 +282,22 @@ regenereert, respawns en een scoreboard. Beschrijving, besturing en wapentabel: 
   Meting 16 spelers (15 bots + Chromium `--use-angle=metal`, M1 Pro, classic): 120 fps (vsync) vóór en na, frame p99 10,3 → 10,4 ms,
   JS-tijd per frame 0,57 → 0,58 ms, zonder vsync-cap 650 → 637 fps (−2%); server (`bench-arena.ts 16 30`): tick 0,074 → 0,085 ms,
   0,84 → 0,93% van een core. Audio worst case 0,26 ms/frame (budget 0,3).
+- **Krunker-beweging en tempo: Gedaan (oktober 2026).** Onderzoek in [`research/KRUNKER.md`](research/KRUNKER.md). Slide (crouch
+  tijdens rennen, 1,45× burst die uitdooft), slide-hop, bunny hop met momentum, air strafe, crouch, trap-slide, jump pads
+  (`BLOCK.JUMP_PAD` + `jumpPad()`; plaatsing op kaarten door de kaart-agent), perk Lightfoot + preset Scout, crouch/slide-pose voor
+  anderen en als server-hitbox. Anticheat modelleert de slide-envelop exact (geen algemene marge); replaytests op alle kaarten,
+  `scripts/cheat-bots.ts` vangt een slide-claimende speedhack. Tempo: respawn 2,5 s (tdm/ffa) en 3 s (objective), bescherming
+  eindigt bij je eerste schot, spawnkeuze weg van zichtlijnen en recente schoten, radarscan bij 5 kills op rij, rode schermrand bij
+  lage health. Gemeten met `scripts/flow-metrics.ts` (+8%/+11% kills per minuut TDM/FFA, zie `GAMEMODES.md`). Frametijd
+  ongewijzigd: 16 spelers zonder vsync-cap 663 → 659 fps, JS-tijd per frame 1,27 → 1,21 ms (M1 Pro, `--use-angle=metal`).
 
 **Open:**
+
+0. **Beweging vervolg:** crouch-jump en wall-jump (vergen een variabele botsingsbox in client én validator), richting-jump pads
+   met horizontale impuls (validator moet die impuls modelleren), touch-knop voor crouch/slide, slide in de dev-preview-bots,
+   bots die sliden in `flow-metrics.ts`/`cheat-bots.ts` (nu lopen ze), een kleine kans op een valse correctie onder extreme
+   frame-hitches (≥ 0,35 s) met een sprong over een rand (≈ 5 per 700k meldingen in de replaytest met 80 seeds), en
+   spawnkills in FFA na de snellere respawn verder omlaag (6,4% in botmatches, 2,7% vóór; passief ~0%).
 
 1. **Integratie met de serverbranch** verifiëren: zie de checklist in de overdracht (arena-wereld via `worldType`,
    snelheidscontrole voor 1,3× sprint, `damaged.dx/dz`-richting, `holds` bij joinen).
@@ -294,7 +308,7 @@ regenereert, respawns en een scoreboard. Beschrijving, besturing en wapentabel: 
 4. **Objective-afwerking:** dragerpijl met interval voor de vijand, MVP-punten (dragerkill, terugbrengen), overtime bij een
    gelijkspel in ctf, rondes met zijwissel, granaten voor elimination, de vlag als echt derde-persoonsmodel op de rug.
 5. **Na Create-a-Class:** meerdere opgeslagen custom-klassen (nu één), attachments per slot (grip, laser) en een
-   tweede perk; scorestreaks (UAV, die de medailles al voorbereiden), kill cam, headshot-statistieken, teamchat; een
+   tweede perk; meer scorestreaks (de radarscan bij 5 is er), kill cam, headshot-statistieken, teamchat; een
    variabele zoom op de bolt-action; een granaat/launcher pas als de server projectielen kan (nu alles hitscan); de
    glinstering ook in de dev-preview (de nep-bots sturen nog geen ADS-vlag); een echte TTS- of ingesproken announcer als
    iemand stemmen opneemt (nu muzikale cues + tekst).
