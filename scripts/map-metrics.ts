@@ -10,6 +10,9 @@
  * - route        shortest walking route (4-neighbour BFS over open ground cells) between the nearest red and blue spawn,
  *                divided by the straight distance; 1.0 = open field, >1.5 = a maze that forces a lot of flow
  * - spawn open   mean free path of rays that start at team spawns (high = a spawn that is exposed)
+ * - vis %        mean share of the open floor cells a player standing on a random open cell can see (eye to eye):
+ *                how open the map is as a whole (Nuketown-like small maps want this low)
+ * - ctr %        share of the open floor cells visible from the open cell nearest to the centre
  */
 import { traceBlocks } from '../server/Combat';
 import { ARENA_FLOOR_Y, MAPS, getMap } from '../src/modes/maps';
@@ -20,7 +23,7 @@ function rng(seed: number): () => number {
 }
 
 const maps = process.argv[2] ? [getMap(process.argv[2])] : MAPS;
-console.log('map'.padEnd(10) + 'size'.padStart(8) + 'cover%'.padStart(8) + 'freepath'.padStart(10) + 'long%'.padStart(7) + 'route'.padStart(7) + 'spawnopen'.padStart(11));
+console.log('map'.padEnd(10) + 'size'.padStart(8) + 'cover%'.padStart(8) + 'freepath'.padStart(10) + 'long%'.padStart(7) + 'route'.padStart(7) + 'spawnopen'.padStart(11) + 'vis%'.padStart(7) + 'ctr%'.padStart(7));
 for (const map of maps) {
   const b = map.bounds;
   const world = { getBlock: (x: number, y: number, z: number) => map.blockAt(0, x, y, z) };
@@ -66,10 +69,26 @@ for (const map of maps) {
     }
   }
   const route = dist[idx(Math.floor(blue.x), Math.floor(blue.z))];
+
+  // Visibility: eye (1.62) to eye between open floor cells.
+  const eye = ARENA_FLOOR_Y + 1 + 1.62;
+  const sees = (a: [number, number], c: [number, number]) => {
+    const dx = c[0] - a[0], dz = c[1] - a[1], d = Math.hypot(dx, dz);
+    return d === 0 || traceBlocks(world, a[0] + 0.5, eye, a[1] + 0.5, dx / d, 0, dz / d, d) >= d - 0.01;
+  };
+  let vis = 0;
+  const VO = 300, VT = 300;
+  for (let i = 0; i < VO; i++) {
+    const a = cells[Math.floor(r() * cells.length)];
+    for (let j = 0; j < VT; j++) if (sees(a, cells[Math.floor(r() * cells.length)])) vis++;
+  }
+  const centre = cells.reduce((m, c) => (Math.hypot(c[0] + 0.5, c[1] + 0.5) < Math.hypot(m[0] + 0.5, m[1] + 0.5) ? c : m), cells[0]);
+  let ctr = 0;
+  for (const c of cells) if (sees(centre, c)) ctr++;
   const straight = Math.hypot(red.x - blue.x, red.z - blue.z);
   console.log(
     map.id.padEnd(10) + `${b.maxX - b.minX}x${b.maxZ - b.minZ}`.padStart(8) + (100 * blocked / total).toFixed(1).padStart(8) +
     (sum / N).toFixed(1).padStart(10) + (100 * long / N).toFixed(0).padStart(7) + (route >= 0 ? (route / straight).toFixed(2) : 'n/a').padStart(7) +
-    (sp / spn).toFixed(1).padStart(11),
+    (sp / spn).toFixed(1).padStart(11) + (100 * vis / (VO * VT)).toFixed(1).padStart(7) + (100 * ctr / cells.length).toFixed(1).padStart(7),
   );
 }
