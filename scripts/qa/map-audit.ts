@@ -1,5 +1,5 @@
 /**
- * QA: static audit of the five arcade maps (no browser, no server). Builds a walk graph of every
+ * QA: static audit of the arcade maps (no browser, no server). Builds a walk graph of every
  * standing spot (2 blocks of headroom on a solid block) with the arcade movement rules (step up
  * 1 block with a jump, drop any height, jump across 1-block gaps) and reports per map and variant:
  *
@@ -24,7 +24,7 @@ import { BLOCK, SOLID, TALL } from '../../src/world/BlockRegistry';
 const args = process.argv.slice(2);
 const jsonAt = args.indexOf('--json');
 const jsonOut = jsonAt >= 0 ? args[jsonAt + 1] : '';
-const only = args.find((a, i) => !a.startsWith('--') && i !== jsonAt + 1);
+const only = args.find((a, i) => !a.startsWith('--') && !(jsonAt >= 0 && i === jsonAt + 1));
 const maps = only ? [getMap(only)] : MAPS;
 
 const EYE = 1.62;
