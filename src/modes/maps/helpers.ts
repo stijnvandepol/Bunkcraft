@@ -54,6 +54,17 @@ export function stairs(
   }
 }
 
+/**
+ * A jump pad (see player/ArcadeMove.ts): launches straight up about 4.3 blocks, the run speed carries on.
+ * `h` = 0 puts it into the floor; h ≥ 1 puts it on top of whatever stands below at height h − 1 (a roof,
+ * a crate). Leave the column above it free up to h + 5, and the target ledge within 4 blocks of it.
+ * `u1`/`v1` make a larger pad (inclusive ranges).
+ */
+export function jumpPad(b: LayoutBuilder, u: number, v: number, h = 0, u1 = u, v1 = v): void {
+  if (h <= 0) b.paint(u, u1, v, v1, BLOCK.JUMP_PAD);
+  else b.box(u, u1, v, v1, h, h, BLOCK.JUMP_PAD);
+}
+
 /** A car: a wool body with a glass cabin on top. Length along u when `alongU`. */
 export function car(b: LayoutBuilder, u: number, v: number, alongU: boolean, color: number): void {
   const [w, d] = alongU ? [4, 2] : [2, 4];
