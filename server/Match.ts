@@ -106,6 +106,8 @@ export interface MatchPlayer {
   pts: number;
   /** Order of joining (higher = joined later); decides who moves when the teams get uneven. */
   joinSeq: number;
+  /** A server-side bot (server/bots): marked in the roster, otherwise a player like any other. */
+  bot?: boolean;
   x: number; y: number; z: number;
   yaw: number; pitch: number;
   alive: boolean;
@@ -202,7 +204,7 @@ export class Match {
    * Adds a player: picks the team and a spawn and returns them so the welcome message can carry
    * them. Nothing is sent yet; call `ready` once the player is in the game.
    */
-  join(id: number, name: string): MatchPlayer {
+  join(id: number, name: string, bot = false): MatchPlayer {
     const now = this.host.now();
     let team: Team | '' = '';
     if (this.teams) {
@@ -217,6 +219,7 @@ export class Match {
       primary: DEFAULT_PRIMARY, secondary: DEFAULT_SECONDARY, optic: 'iron', perk: 'none', next: { ...DEFAULT_CLASS }, spawnedAt: now, firedThisLife: false,
       slots: [newSlot(DEFAULT_PRIMARY, 'none'), newSlot(DEFAULT_SECONDARY, 'none'), newSlot('knife', 'none')], slot: 0,
       switchReadyAt: 0, history: Array.from({ length: HISTORY_SIZE }, () => ({ t: 0, x: 0, y: 0, z: 0 })), historyHead: 0, historyCount: 0,
+      ...(bot ? { bot: true } : {}),
     };
     this.players.set(id, p);
     this.resetLife(p, now);
@@ -856,6 +859,7 @@ export class Match {
     return [...this.players.values()].map((p) => ({
       id: p.id, name: p.name, team: p.team, kills: p.kills, deaths: p.deaths, ping: Math.round(this.host.ping(p.id)),
       ...(withPts ? { pts: p.pts } : {}),
+      ...(p.bot ? { bot: 1 as const } : {}),
     }));
   }
 

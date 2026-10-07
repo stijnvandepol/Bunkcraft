@@ -53,6 +53,8 @@ export interface RosterEntry {
   ping: number;
   /** Objective score of the mode (gun game level, captures); absent in modes without one. */
   pts?: number;
+  /** A server-side bot (its name also starts with "[BOT] "). */
+  bot?: 1;
 }
 
 /**
