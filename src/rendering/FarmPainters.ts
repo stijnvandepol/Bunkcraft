@@ -1,4 +1,4 @@
-import { type Img, type RGB, type Rand, hex, shade } from './PaintKit';
+import { type Img, type RGB, type Rand, hex } from './PaintKit';
 
 /**
  * Procedural crop textures (see world/Crops.ts). Each crop has one 16×16 texture, its ripe look; the mesher shows a
@@ -27,7 +27,8 @@ function stalk(img: Img, r: Rand, x: number, top: number, c: RGB, dark: RGB): nu
 FARM_PAINTERS.wheat_crop = (img, r) => {
   img.clear();
   // Grey values only: the stage tint makes them green or golden.
-  const stem = hex('#a8a8a8'), stemDark = hex('#8a8a8a'), ear = hex('#e2e2e2'), earDark = hex('#9c9c9c'), leaf = hex('#bcbcbc');
+  // No side leaves: young stages show the bottom of this picture, plain stalks read as shoots there.
+  const stem = hex('#a8a8a8'), stemDark = hex('#8a8a8a'), ear = hex('#e2e2e2'), earDark = hex('#9c9c9c');
   for (const x0 of [1, 4, 7, 10, 13]) {
     const top = 4 + Math.floor(r() * 3);
     const x = stalk(img, r, x0 + (r() < 0.5 ? 0 : 1), top + 4, stem, stemDark);
@@ -37,47 +38,48 @@ FARM_PAINTERS.wheat_crop = (img, r) => {
       img.set(Math.min(15, x + 1), y, (y & 1) ? earDark : ear);
     }
     img.set(x, top - 1, ear);
-    // A leaf halfway up.
-    const ly = 9 + Math.floor(r() * 3), dir = r() < 0.5 ? -1 : 1;
-    line(img, [[x0 + dir, ly], [x0 + 2 * dir, ly - 1]], leaf);
   }
 };
 
-/** Green fronds from the soil up to row `top`, `n` of them. */
-function fronds(img: Img, r: Rand, n: number, top: number, pal: RGB[]): void {
-  for (let i = 0; i < n; i++) {
-    let x = 1 + Math.floor(r() * 14);
-    const t = top + Math.floor(r() * 3);
-    for (let y = 12; y >= t; y--) {
-      const c = pal[Math.floor(r() * pal.length)];
-      img.set(x, y, c);
-      // Leaflets on both sides near the tips.
-      if (y < 8 && r() < 0.45) img.set(x + (r() < 0.5 ? -1 : 1), y, shade(c, 1.1));
-      if (r() < 0.3) x += r() < 0.5 ? -1 : 1;
-      x = Math.max(0, Math.min(15, x));
+/** A feathery stalk (carrot tops): a 1 px stem from the soil to `top` with leaflets alternating left and right. */
+function feather(img: Img, r: Rand, x0: number, top: number, stem: RGB, leaf: RGB, tip: RGB): void {
+  let x = x0;
+  for (let y = 12; y >= top; y--) {
+    img.set(x, y, y - top < 2 ? tip : stem);
+    img.set((y + x0) % 2 === 0 ? x - 1 : x + 1, y, leaf);
+    if (y < 9 && r() < 0.25) x += x0 < 8 ? -1 : 1;
+    x = Math.max(1, Math.min(14, x));
+  }
+}
+
+/** A broad leaf: an oval of `w`×`h` with a darker midrib, centred at (cx, cy). */
+function broadLeaf(img: Img, cx: number, cy: number, w: number, h: number, leaf: RGB, rib: RGB): void {
+  for (let dy = 0; dy < h; dy++) {
+    for (let dx = 0; dx < w; dx++) {
+      if ((dy === 0 || dy === h - 1) && (dx === 0 || dx === w - 1)) continue;
+      img.set(cx - (w >> 1) + dx, cy - (h >> 1) + dy, dx === (w >> 1) ? rib : leaf);
     }
   }
 }
 
 FARM_PAINTERS.carrots_crop = (img, r) => {
   img.clear();
-  fronds(img, r, 9, 1, [hex('#3f8f2a'), hex('#4ea532'), hex('#5cb83c'), hex('#2f7a22')]);
+  const stem = hex('#3f8f2a'), leaf = hex('#5cb83c'), tip = hex('#7acc4e');
+  for (const [x, top] of [[2, 4], [4, 1], [6, 3], [9, 2], [11, 0], [13, 3]] as [number, number][]) feather(img, r, x, top + Math.floor(r() * 2), stem, leaf, tip);
   // Orange carrot tops in the soil line.
   for (const x0 of [2, 7, 12]) {
     line(img, [[x0, 13], [x0 + 1, 13], [x0, 14], [x0 + 1, 14], [x0, 15]], hex('#e8821e'));
     img.set(x0 + 1, 15, hex('#c86812'));
-    img.set(x0, 12, hex('#4ea532'));
   }
 };
 
 FARM_PAINTERS.potatoes_crop = (img, r) => {
   img.clear();
-  fronds(img, r, 8, 2, [hex('#2f7d24'), hex('#3a8c2a'), hex('#469c30'), hex('#296b1e')]);
-  // Round leaves at the frond tips.
-  for (let i = 0; i < 6; i++) {
-    const x = 1 + Math.floor(r() * 13), y = 2 + Math.floor(r() * 6);
-    line(img, [[x, y], [x + 1, y], [x, y + 1], [x + 1, y + 1]], hex('#4fa836'));
-  }
+  const stem = hex('#2f6b21'), leaf = hex('#3f8a2c'), dark = hex('#2a5f1d'), light = hex('#55a33a');
+  // Upright stalks carrying broad oval leaves (potato plants are bushier and darker than carrots).
+  for (const x0 of [3, 7, 12]) for (let y = 12; y >= 4; y--) img.set(x0, y, stem);
+  const leaves: [number, number, number, number][] = [[2, 3, 3, 4], [5, 6, 4, 3], [8, 2, 3, 4], [11, 5, 4, 3], [13, 2, 3, 4], [3, 9, 4, 3], [10, 9, 4, 3], [7, 7, 3, 3]];
+  for (const [cx, cy, w, h] of leaves) broadLeaf(img, cx, cy, w, h, r() < 0.5 ? leaf : light, dark);
   // Potatoes peeking out of the soil.
   for (const x0 of [2, 8, 12]) {
     line(img, [[x0, 13], [x0 + 1, 13], [x0 - 1, 14], [x0, 14], [x0 + 1, 14], [x0 + 2, 14], [x0, 15], [x0 + 1, 15]], hex('#c8a05a'));
@@ -87,11 +89,11 @@ FARM_PAINTERS.potatoes_crop = (img, r) => {
 
 FARM_PAINTERS.beetroots_crop = (img, r) => {
   img.clear();
-  fronds(img, r, 8, 2, [hex('#3d8a2c'), hex('#4a9a34'), hex('#357a26')]);
-  // Red leaf stalks (beetroot leaves have red veins).
-  for (let i = 0; i < 5; i++) {
-    const x = 2 + Math.floor(r() * 12);
-    for (let y = 12; y > 7 - Math.floor(r() * 3); y--) img.set(x, y, hex('#8a1f3a'));
+  const red = hex('#8a1f3a'), leaf = hex('#3d8a2c'), light = hex('#4fa034'), rib = hex('#a02848');
+  // Red leaf stalks fanning out from the beet, each with a wavy leaf on top (red midrib, like Minecraft's).
+  for (const [x0, top] of [[3, 3], [6, 1], [9, 2], [12, 4]] as [number, number][]) {
+    for (let y = 12; y > top + 4; y--) img.set(x0, y, red);
+    broadLeaf(img, x0, top + 2, 3 + Math.floor(r() * 2), 5, r() < 0.5 ? leaf : light, rib);
   }
   for (const x0 of [3, 9]) {
     line(img, [[x0, 13], [x0 + 1, 13], [x0 + 2, 13], [x0 - 1, 14], [x0, 14], [x0 + 1, 14], [x0 + 2, 14], [x0 + 3, 14], [x0, 15], [x0 + 1, 15], [x0 + 2, 15]], hex('#7a1830'));
