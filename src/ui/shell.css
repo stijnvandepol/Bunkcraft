@@ -341,6 +341,8 @@
 .mode-text { display: flex; flex-direction: column; gap: calc(var(--u) * 0.6); min-width: 0; }
 .mode-name {
   font: 750 var(--f-xs) / 1.15 var(--bc-font);
+  hyphens: auto;
+  overflow-wrap: anywhere;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -453,7 +455,7 @@
   justify-content: flex-end;
 }
 .bc .screen-footer.tall { flex-direction: column; align-items: flex-end; }
-.bc .screen-footer .mc-btn.w150, .bc .screen-footer .mc-btn.w72 { width: auto; min-width: calc(var(--u) * 72); padding: 0 calc(var(--u) * 10); }
+.bc .screen-footer .mc-btn { width: auto; min-width: calc(var(--u) * 72); padding: 0 calc(var(--u) * 10); }
 .bc .screen-footer .row { gap: calc(var(--u) * 3); }
 
 /* Forms (a centred column in the survival menus): left-aligned in the shell's column, under the title. */
@@ -507,7 +509,7 @@
   box-shadow: none;
   overflow: hidden;
 }
-.bc .mc-slider input { inset: 0; width: 100%; height: 100%; background: linear-gradient(90deg, rgba(212, 255, 58, 0.2) var(--pct, 0%), transparent var(--pct, 0%)); }
+.bc .mc-slider input { inset: 0; width: 100%; height: 100%; background: linear-gradient(90deg, rgba(255, 255, 255, 0.1) var(--pct, 0%), transparent var(--pct, 0%)); }
 .bc .mc-slider input::-webkit-slider-thumb { width: calc(var(--u) * 2.5); height: calc(var(--u) * 17); background: var(--bc-volt); border: none; box-shadow: none; }
 .bc .mc-slider input::-moz-range-thumb { width: calc(var(--u) * 2.5); height: calc(var(--u) * 17); background: var(--bc-volt); border: none; border-radius: 0; }
 .bc .mc-slider-label { font: 650 var(--f-sm) / 1 var(--bc-font); color: var(--bc-text); text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6); }
@@ -521,6 +523,18 @@
 .bc .keybind-label { text-shadow: none; font-size: var(--f-sm); }
 .bc .stat-row { background: rgba(255, 255, 255, 0.04); border-radius: var(--u); }
 .bc .stat-row.alt { background: transparent; }
+
+/* Option rows (private match): label left, value right. */
+.bc .mc-btn.bc-option { justify-content: space-between; gap: calc(var(--u) * 6); }
+.bc .mc-btn.bc-option .opt-k { color: var(--bc-dim); font-weight: 600; }
+.bc .mc-btn.bc-option .opt-v { font-weight: 800; color: var(--bc-text); }
+.bc .mc-btn.bc-option .opt-v::after { content: ''; display: inline-block; width: 0.42em; height: 0.42em; margin-left: calc(var(--u) * 3); border-right: 2px solid var(--bc-volt); border-top: 2px solid var(--bc-volt); transform: rotate(45deg) translateY(-0.08em); }
+.bc-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: calc(var(--u) * 3) calc(var(--u) * 8); width: min(calc(var(--u) * 320), 92vw); align-items: start; }
+.bc-form-col { display: flex; flex-direction: column; gap: calc(var(--u) * 3); min-width: 0; }
+.bc-form-col .mc-btn { width: 100%; }
+.bc-form-col .hint { text-align: left; margin: calc(var(--u) * -1) 0 calc(var(--u) * 2); }
+.bc-form-col .hint:empty { display: none; }
+@media (max-width: 760px) { .bc-form { grid-template-columns: minmax(0, 1fr); } }
 
 /* Lists in the shell (lobby browser, packs): cards instead of Minecraft's list rows. */
 .bc .world-list { width: min(calc(var(--u) * 320), 92vw); gap: calc(var(--u) * 2.5); }
@@ -538,7 +552,15 @@
 .bc .world-icon { border-radius: var(--u); }
 .bc .world-name { font: 750 var(--f-sm) / 1.2 var(--bc-font); }
 .bc .world-meta { color: var(--bc-dim); font-size: var(--f-xs); }
-.bc .world-empty { color: var(--bc-dim); font-size: var(--f-sm); }
+.bc .world-empty {
+  margin-top: calc(var(--u) * 10);
+  padding: calc(var(--u) * 14) calc(var(--u) * 10);
+  color: var(--bc-dim);
+  font-size: var(--f-sm);
+  border: 1px dashed var(--bc-line-strong);
+  border-radius: calc(var(--u) * 2);
+  background: rgba(12, 16, 22, 0.5);
+}
 .bc .realms-stats.busy { color: var(--bc-volt); }
 .bc .realms-count { top: 50%; transform: translateY(-50%); font: 800 var(--f-sm) / 1 var(--bc-font); color: var(--bc-dim); font-variant-numeric: tabular-nums; }
 .bc .realms-count.full { color: var(--bc-danger); }
@@ -594,9 +616,14 @@
 .loadout-tag.locked { color: var(--bc-danger); }
 
 /* Build & Survival door screen. */
-.build-panel { display: flex; flex-direction: column; align-items: stretch; gap: calc(var(--u) * 4); width: min(calc(var(--u) * 220), 92vw); }
-.build-panel .hint { text-align: left; max-width: none; }
-.build-panel .mc-btn { width: 100%; }
+.build-panel { display: flex; flex-direction: column; align-items: flex-start; gap: calc(var(--u) * 4); width: min(calc(var(--u) * 320), 92vw); }
+.build-panel .hint { text-align: left; max-width: calc(var(--u) * 240); margin-bottom: calc(var(--u) * 2); }
+.build-panel .mc-btn { width: min(calc(var(--u) * 200), 100%); }
+
+/* Profile: what is still locked, as a two-column list. */
+.bc .prog-locked { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: calc(var(--u) * 1.5) calc(var(--u) * 6); width: 100%; }
+.bc .prog-panel[style*='center'] .prog-section-title { align-self: flex-start; }
+.bc .realms-profile .rp-xp { font-size: var(--f-xs); }
 
 /* Arena pause menu: the same buttons, centred over the match. */
 .bc.pause .screen-header { justify-content: center; border-bottom: none; }
@@ -646,20 +673,38 @@
 .arc-hud .mlobby-player.none { color: var(--bc-dim); }
 .arc-hud .mlobby-hint { color: var(--bc-dim); font-size: var(--f-xs); }
 
+/* Match end: the result on top, the scoreboard next to the XP report, the map vote underneath. */
 .arc-hud .arc-end {
-  gap: calc(var(--u) * 6);
+  display: grid;
+  grid-template-columns: minmax(0, calc(var(--u) * 250)) minmax(0, calc(var(--u) * 170));
+  grid-template-areas: 'title title' 'count count' 'board xp' 'vote vote';
+  grid-template-rows: auto auto minmax(0, auto) auto;
+  justify-content: center;
+  align-content: center;
+  align-items: start;
+  gap: calc(var(--u) * 5) calc(var(--u) * 8);
+  padding: calc(var(--u) * 8) calc(var(--u) * 10);
+  overflow: hidden;
   background:
     radial-gradient(90% 70% at 50% 35%, rgba(22, 28, 37, 0.55), rgba(7, 9, 13, 0) 70%),
     linear-gradient(180deg, rgba(7, 9, 13, 0.82), rgba(7, 9, 13, 0.92));
 }
 .arc-hud .arc-end-title {
+  grid-area: title;
+  justify-self: center;
   font: italic 900 calc(var(--u) * 20 * var(--ts, 1)) / 1 var(--bc-font);
   letter-spacing: 0.01em;
   text-transform: uppercase;
-  text-shadow: 0 calc(var(--u) * 1) calc(var(--u) * 6) rgba(0, 0, 0, 0.5);
+  /* The team colours are made for the HUD bar: lifted here so the title reads on the dark ink. */
+  filter: brightness(1.35) saturate(1.1) drop-shadow(0 calc(var(--u) * 1) calc(var(--u) * 5) rgba(0, 0, 0, 0.6));
 }
+.arc-hud .arc-end > .xp-report { grid-area: xp; width: 100%; }
+.arc-hud .arc-end > .mvote { grid-area: vote; }
+.arc-hud .arc-end > .xp-report.hidden + .mvote, .arc-hud .arc-end:has(> .xp-report.hidden) > .arc-end-board { grid-column: 1 / -1; justify-self: center; }
 .arc-hud .arc-end-board {
-  width: min(calc(var(--u) * 300), 94vw);
+  grid-area: board;
+  width: 100%;
+  max-height: min(48vh, calc(var(--u) * 150));
   padding: calc(var(--u) * 4);
   gap: calc(var(--u) * 1);
   font-size: var(--f-sm);
@@ -671,10 +716,14 @@
 .arc-hud .arc-end-board .arc-row.head { background: transparent; color: var(--bc-dim); font: 800 var(--f-xs) / 1 var(--bc-font); letter-spacing: 0.08em; text-transform: uppercase; }
 .arc-hud .arc-end-board .arc-row.self { background: rgba(212, 255, 58, 0.12); box-shadow: inset calc(var(--u) * 1) 0 0 var(--bc-volt); }
 .arc-hud .arc-end-board .arc-board-scores { font: italic 900 calc(var(--u) * 12) / 1 var(--bc-font); margin-bottom: calc(var(--u) * 3); }
-.arc-hud .arc-end-count { font: 800 var(--f-sm) / 1 var(--bc-font); letter-spacing: 0.1em; text-transform: uppercase; color: var(--bc-volt); }
+.arc-hud .arc-end-count { grid-area: count; justify-self: center; margin-top: calc(var(--u) * -2); font: 800 var(--f-sm) / 1 var(--bc-font); letter-spacing: 0.1em; text-transform: uppercase; color: var(--bc-volt); }
+@media (max-width: 760px), (max-aspect-ratio: 1/1) {
+  .arc-hud .arc-end { grid-template-columns: minmax(0, 1fr); grid-template-areas: 'title' 'count' 'board' 'xp' 'vote'; overflow-y: auto; }
+}
 
 .arc-hud .xp-report {
   width: min(calc(var(--u) * 230), 92vw);
+  max-height: min(48vh, calc(var(--u) * 150));
   padding: calc(var(--u) * 4) calc(var(--u) * 6);
   gap: calc(var(--u) * 2);
   font-size: var(--f-xs);

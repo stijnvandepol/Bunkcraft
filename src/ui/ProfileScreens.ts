@@ -240,7 +240,8 @@ export class ProfileScreens {
       h('div', { class: 'row' }, titleBtn, cardBtn),
       prestigeBtn,
       h('div', { class: 'prog-muted', text: t('custom.prestigeHint') }),
-      ...locked.map((line) => h('div', { class: 'prog-muted', text: line })),
+      locked.length ? h('div', { class: 'prog-section-title', text: t('custom.lockedTitle') }) : null,
+      locked.length ? h('div', { class: 'prog-locked' }, ...locked.map((line) => h('div', { class: 'prog-muted', text: line }))) : null,
     );
     this.stack.push(menuScreen(t('custom.title'), [panel], [button(t('common.back'), () => this.stack.pop(), { cls: 'w150' })], { list: true }));
   }

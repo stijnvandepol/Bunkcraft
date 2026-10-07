@@ -1,9 +1,9 @@
 import { type GameType, type GameTypeDef, gameTypeDef } from '../modes/GameTypes';
-import { type ClassSpec, LAST_CLASS_STORAGE_KEY, LOADOUT_PRESETS, loadSavedClass, saveClass, sameClass } from '../modes/Loadouts';
+import { type ClassSpec, DEFAULT_CLASS, LAST_CLASS_STORAGE_KEY, LOADOUT_PRESETS, loadSavedClass, saveClass, sameClass } from '../modes/Loadouts';
 import { MAP_SETTINGS, type MapSetting, getMap } from '../modes/maps';
 import { classUnlocked, unlockLevel } from '../modes/progression/Unlocks';
 import { BOT_LEVELS, type BotLevel, REALMS_MODES, isArcade, lobbySizes } from '../modes/Realms';
-import { OPTICS, PERKS, PRIMARY_WEAPONS, isPerk, weaponDef } from '../modes/Weapons';
+import { OPTICS, PERKS, isPerk, weaponDef } from '../modes/Weapons';
 import { NAME_PATTERN, formatCode, normalizeCode } from '../net/protocol';
 import { currentProfile, currentRank, loadProfile, onProfile } from '../net/ProfileApi';
 import { type ListedRoom, type RoomInfo, browseRooms, createRoom, inviteLink, inviteText, lookupRoom, quickPlay, realmsStats, serverInfo } from '../net/RoomApi';
@@ -96,6 +96,18 @@ export function savedMode(): GameType {
 
 function saveMode(mode: GameType): void {
   try { storage()?.setItem(MODE_KEY, mode); } catch { /* private mode: PLAY starts the default next time */ }
+}
+
+/**
+ * An option button as a row: "Mode: Team Deathmatch" becomes the label on the left and the value on the right
+ * (the accessible name stays the whole text).
+ */
+function setOption(btn: HTMLButtonElement, text: string): void {
+  const i = text.indexOf(': ');
+  btn.classList.add('bc-option');
+  btn.setAttribute('aria-label', text);
+  if (i < 0) { btn.textContent = text; return; }
+  btn.replaceChildren(h('span', { class: 'opt-k', text: text.slice(0, i) }), h('span', { class: 'opt-v', text: text.slice(i + 2) }));
 }
 
 /** A menu screen in the shell look (docs/research/IDENTITY.md). */
@@ -375,21 +387,21 @@ export class RealmsMenu {
     const botLevelBtn = button('', () => { botLevel = next(BOT_LEVELS, botLevel); render(); });
     const botsHint = h('div', { class: 'hint' });
     const render = () => {
-      modeBtn.textContent = t('realms.create.mode', realmsModeName(mode));
+      setOption(modeBtn, t('realms.create.mode', realmsModeName(mode)));
       modeHint.textContent = modeDesc(mode);
       if (!maps().includes(map)) map = 'rotate';
-      mapBtn.textContent = t('realms.create.map', map === 'rotate' ? t('realms.create.rotate') : getMap(map).name);
+      setOption(mapBtn, t('realms.create.map', map === 'rotate' ? t('realms.create.rotate') : getMap(map).name));
       mapHint.textContent = map === 'rotate' ? t('realms.create.rotateHint') : getMap(map).description;
       const scoreChoices = def.options?.score ?? [];
       scoreBtn.classList.toggle('hidden', scoreChoices.length === 0);
-      scoreBtn.textContent = t('realms.limit.value', limitLabel(def.options?.scoreLabel, 'realms.limit.score'), score);
-      timeBtn.textContent = t('realms.limit.value', limitLabel(def.options?.timeLabel, 'realms.limit.time'), seconds(time));
-      sizeBtn.textContent = t('realms.create.players', size);
-      listedBtn.textContent = t('realms.create.listed', listed ? t('common.on') : t('common.off'));
+      setOption(scoreBtn, t('realms.limit.value', limitLabel(def.options?.scoreLabel, 'realms.limit.score'), score));
+      setOption(timeBtn, t('realms.limit.value', limitLabel(def.options?.timeLabel, 'realms.limit.time'), seconds(time)));
+      setOption(sizeBtn, t('realms.create.players', size));
+      setOption(listedBtn, t('realms.create.listed', listed ? t('common.on') : t('common.off')));
       listedHint.textContent = listed ? t('realms.create.listedHint') : t('realms.create.privateHint');
       if (bots > size - 1) bots = size - 1;
-      botsBtn.textContent = t('realms.create.bots', bots === 0 ? t('common.off') : bots);
-      botLevelBtn.textContent = t('realms.create.botLevel', t(`realms.bot.${botLevel}`));
+      setOption(botsBtn, t('realms.create.bots', bots === 0 ? t('common.off') : bots));
+      setOption(botLevelBtn, t('realms.create.botLevel', t(`realms.bot.${botLevel}`)));
       botLevelBtn.classList.toggle('hidden', bots === 0);
       botsHint.textContent = bots === 0 ? '' : t('realms.create.botsHint');
     };
@@ -414,14 +426,11 @@ export class RealmsMenu {
       }
     };
     this.stack.push(shellScreen(t('realms.create.title'), [
-      h('div', { style: COLUMN },
-        modeBtn, modeHint,
-        mapBtn, mapHint,
-        scoreBtn, timeBtn, sizeBtn,
-        botsBtn, botLevelBtn, botsHint,
-        listedBtn, listedHint,
-        error,
+      h('div', { class: 'bc-form' },
+        h('div', { class: 'bc-form-col' }, modeBtn, modeHint, mapBtn, mapHint, listedBtn, listedHint),
+        h('div', { class: 'bc-form-col' }, scoreBtn, timeBtn, sizeBtn, botsBtn, botLevelBtn, botsHint),
       ),
+      error,
     ], [
       button(t('common.cancel'), () => this.stack.pop(), { cls: 'w150' }),
       button(t('realms.create.button'), () => void create(), { cls: 'w150 primary' }),
@@ -510,12 +519,16 @@ export class RealmsMenu {
       const perk = isPerk(c.perk) && c.perk !== 'none' ? ` · ${PERKS[c.perk].name}` : '';
       return `${weaponDef(c.primary)?.name ?? c.primary}${optic} + ${weaponDef(c.secondary)?.name ?? c.secondary}${perk}`;
     };
-    const lockLevel = (c: ClassSpec) => (PRIMARY_WEAPONS.includes(c.primary) ? unlockLevel('primary', c.primary) : 1);
+    // The level the whole class needs: its highest unlock (a weapon's own default sights are always open).
+    const lockLevel = (c: ClassSpec) => Math.max(unlockLevel('primary', c.primary), unlockLevel('secondary', c.secondary),
+      unlockLevel('perk', c.perk), weaponDef(c.primary)?.optics[0] === c.optic ? 1 : unlockLevel('optic', c.optic));
+    const now = h('div', { class: 'prog-muted' });
     const render = () => {
       const entries: { key: string; name: string; desc: string; spec: ClassSpec | null }[] = [
         ...LOADOUT_PRESETS.map((p, i) => ({ key: String(i + 1), name: p.name, desc: t(`arc.class.${p.id}` as I18nKey), spec: p as ClassSpec })),
         { key: String(LOADOUT_PRESETS.length + 1), name: t('arc.custom'), desc: custom ? '' : t('loadouts.customEmpty'), spec: custom },
       ];
+      now.textContent = t('loadouts.now', gear(equipped ?? DEFAULT_CLASS));
       list.replaceChildren(...entries.map((e) => {
         const open = !!e.spec && classUnlocked(e.spec, rank);
         const on = !!e.spec && !!equipped && sameClass(e.spec, equipped);
@@ -539,7 +552,7 @@ export class RealmsMenu {
     };
     render();
     this.stack.push(shellScreen(t('loadouts.title'), [
-      h('div', { class: 'prog-panel' }, h('div', { class: 'prog-muted', text: t('loadouts.hint') })),
+      h('div', { class: 'prog-panel' }, h('div', { class: 'prog-muted', text: t('loadouts.hint') }), now),
       list,
     ], [button(t('common.back'), () => this.stack.pop(), { cls: 'w150' })], { list: true }));
   }

@@ -78,6 +78,13 @@ const EN = {
   'loadouts.equipped': 'Equipped',
   'loadouts.equip': 'Equip',
   'loadouts.customEmpty': 'Not built yet: open Create-a-Class during a match.',
+  'loadouts.now': 'Next match: {0}',
+  'invite.title': 'Invite Friends',
+  'invite.code': 'Game Code',
+  'invite.link': 'Invite Link',
+  'invite.hint': 'Friends open the link, or paste the code under Play with Friends on the main menu.',
+  'invite.copy': 'Copy Invite',
+  'custom.lockedTitle': 'Still locked',
 
   // BunkCraft Realms (arcade hub) and the pre-match lobby
   'realms.playingAs': 'Playing as {0}',
@@ -782,6 +789,13 @@ const NL: Record<I18nKey, string> = {
   'loadouts.equipped': 'Uitgerust',
   'loadouts.equip': 'Uitrusten',
   'loadouts.customEmpty': 'Nog niet gebouwd: open Create-a-Class tijdens een wedstrijd.',
+  'loadouts.now': 'Volgende wedstrijd: {0}',
+  'invite.title': 'Vrienden uitnodigen',
+  'invite.code': 'Spelcode',
+  'invite.link': 'Uitnodigingslink',
+  'invite.hint': 'Vrienden openen de link, of plakken de code bij Speel met vrienden in het hoofdmenu.',
+  'invite.copy': 'Uitnodiging kopiëren',
+  'custom.lockedTitle': 'Nog vergrendeld',
 
   // BunkCraft Realms
   'realms.playingAs': 'Je speelt als {0}',

@@ -691,19 +691,19 @@ export function pauseScreen(actions: {
 export function inviteScreen(code: string, link: string, text: string, done: () => void, shell = false): HTMLDivElement {
   const linkInput = h('input', { class: 'mc-input', value: link, readOnly: true });
   linkInput.addEventListener('focus', () => linkInput.select());
-  const copy = button('Copy Invite', () => {
-    const ok = () => { copy.textContent = 'Copied!'; window.setTimeout(() => { copy.textContent = 'Copy Invite'; }, 1500); };
+  const copy = button(t('invite.copy'), () => {
+    const ok = () => { copy.textContent = t('common.copied'); window.setTimeout(() => { copy.textContent = t('invite.copy'); }, 1500); };
     navigator.clipboard?.writeText(text).then(ok, () => linkInput.select());
     if (!navigator.clipboard) linkInput.select();
   }, { cls: 'w150' });
-  return menuScreen('Invite Friends', [
+  return menuScreen(t('invite.title'), [
     h('div', { style: 'display: flex; flex-direction: column; align-items: center; gap: calc(var(--s) * 4);' },
-      h('div', { class: 'field-label', text: 'Game Code' }),
-      h('div', { class: 'death-title', text: formatCode(code) }),
-      h('div', { class: 'field-label', text: 'Invite Link' }), linkInput,
-      h('div', { class: 'hint', text: 'Friends open the link, or type the code under Multiplayer.' }),
+      h('div', { class: 'field-label', text: t('invite.code') }),
+      h('div', { class: `death-title${shell ? ' realms-code' : ''}`, text: formatCode(code) }),
+      h('div', { class: 'field-label', text: t('invite.link') }), linkInput,
+      h('div', { class: 'hint', text: t('invite.hint') }),
     ),
-  ], [copy, button('Done', done, { cls: 'w150' })], { cls: shell ? 'bc' : '' });
+  ], [copy, button(t('common.done'), done, { cls: `w150${shell ? ' primary' : ''}` })], { cls: shell ? 'bc' : '' });
 }
 
 function describeError(e: unknown): string {

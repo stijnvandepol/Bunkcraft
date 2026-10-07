@@ -20,7 +20,7 @@ from playwright.sync_api import sync_playwright
 
 PROFILE_REPORT = {
     'lines': [{'key': 'kills', 'xp': 900, 'count': 9}, {'key': 'headshots', 'xp': 150, 'count': 3},
-              {'key': 'win', 'xp': 500}, {'key': 'matchComplete', 'xp': 200}],
+              {'key': 'win', 'xp': 500}, {'key': 'completion', 'xp': 200}],
     'xp': 1750,
     'before': {'xp': 300, 'level': 1, 'prestige': 0},
     'after': {'xp': 2050, 'level': 3, 'prestige': 0},
@@ -187,15 +187,23 @@ def run(browser_name, pw, args):
             settle(page, 0.5)
             shot(page, 'pause')
             page.evaluate("() => { const g = window.game; g.stack.clear(); g.input.locked = true; g.state = 'playing'; }")
-        if want('match-end'):
-            page.evaluate("""(report) => {
-              const g = window.game;
-              g.onServerMessage({ t: 'matchend', winnerTeam: 'red', winnerId: 0, restartIn: 15 });
-              g.onServerMessage({ t: 'progress', report });
-              g.onServerMessage({ t: 'vote', options: ['atomic', 'villa', 'dockyard'], counts: [1, 0, 0], mine: 0, endsIn: 12 });
-            }""", PROFILE_REPORT)
-            settle(page, 1.5)
-            shot(page, 'match-end')
+    # The match end on the dev preview server (a real lobby would have to be played to the end).
+    if want('match-end'):
+        page.evaluate("() => window.game.quitToTitle()")
+        wait_home(page)
+        page.evaluate("() => window.game.arcadePreview('tdm', 'Stijn_vdP', 'atomic')")
+        page.wait_for_function("() => { const g = window.game; return g.state !== 'loading' && g.state !== 'menu' && !!g.previewServer; }", timeout=90000)
+        page.evaluate("() => { const g = window.game; g.input.locked = true; g.state = 'playing'; g.previewServer.botsAggressive = false; }")
+        settle(page, 2)
+        page.evaluate("""(report) => {
+          const g = window.game;
+          g.previewServer.endMatch('red');
+          document.querySelector('.click-to-play')?.remove();
+          g.onServerMessage({ t: 'progress', report });
+          g.onServerMessage({ t: 'vote', options: ['atomic', 'villa', 'dockyard'], counts: [2, 1, 0], mine: 0, endsIn: 12 });
+        }""", PROFILE_REPORT)
+        settle(page, 1.5)
+        shot(page, 'match-end')
     ctx.close()
     browser.close()
 
