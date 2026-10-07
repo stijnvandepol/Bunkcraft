@@ -638,10 +638,9 @@ De server beslist (`server/Match.ts`), met dezelfde code als de client (`src/mod
   dezelfde willekeur op client en server (`spreadRandom`), met dezelfde regel (`shotSpread`: heup/ADS, bewegen, in de lucht;
   `fire.mv`/`fire.air`, de server zet `mv` zelf als hij je ziet rennen). `ammo.sn` en `ammo.seq` houden de teller gelijk.
   Je tracers (ook alle hagelkorrels) zijn dus de kogels die de server test, en eindigen op de speler die ze raken.
-- **Kogels door glas (schakelaar `GLASS_PASSES_DEFAULT` in `Hitscan.ts`, staat nog UIT).** De nieuwe kaarten (suburb,
-  quarter, atomic, plaza, mall) gebruiken glas en bladeren als spawndekking: aan geeft zichtlijnen in de spawns
-  (`spawnExposure.test.ts`). Eerst die ramen afschermen, dan aanzetten. Aan: glas, glazen panelen, gebrandschilderd glas en
-  bladeren laten een kogel door: één raam of haag per
+- **Kogels door glas (schakelaar `GLASS_PASSES_DEFAULT` in `Hitscan.ts`, staat AAN).** De spawns van suburb, quarter,
+  atomic, plaza en mall zijn afgeschermd met massieve blokken (`spawnExposure.test.ts` draait met glas aan). Glas,
+  glazen panelen, gebrandschilderd glas en bladeren laten een kogel door: één raam of haag per
   kogel (twee glazen blokken achter elkaar tellen als één ruit), 20% schade minder (bladeren 10%). Een tweede raam of een
   muur van vijf glasblokken stopt hem. Slabs, trappen, hekken en muren stoppen kogels alleen waar hun vorm zit; ijzeren
   tralies als een blok. De client tekent glasscherven en speelt een glasgeluid waar een kogel door een ruit gaat (ook bij

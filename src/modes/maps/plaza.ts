@@ -46,7 +46,7 @@ function half(b: LayoutBuilder, s: 1 | -1, p: Side): void {
   box(-33, -27, 14, 14, 3, 3, BLOCK.STONE_BRICK_SLAB);
   box(-31, -30, -15, -15, 1, 3, AIR);
   box(-32, -31, 14, 14, 1, 3, AIR);
-  hedge(t, -28, -28, -2, 2, 2);
+  hedge(t, -28, -28, -2, 2, 2, C.MOSS);
   box(-28, -28, -3, -3, 1, 2, C.CALCITE);
   box(-28, -28, 3, 3, 1, 2, C.CALCITE);
   for (const z of [-12, 11]) {
@@ -77,7 +77,7 @@ function half(b: LayoutBuilder, s: 1 | -1, p: Side): void {
   box(-22, -21, -14, -14, 1, 2, AIR);
   box(-23, -20, -14, -14, 3, 3, p.awning);
   // Windows: ground floor glass, upstairs open windows over the tram street and the square.
-  for (const z of [-13, -12, -6, -5]) box(-16, -16, z, z, 2, 2, BLOCK.GLASS);
+  for (const z of [-12, -6, -5]) box(-16, -16, z, z, 2, 2, BLOCK.GLASS);
   box(-25, -24, -14, -14, 2, 2, BLOCK.GLASS);
   box(-19, -18, -14, -14, 2, 2, BLOCK.GLASS);
   box(-24, -23, -14, -14, 5, 6, AIR);
@@ -134,7 +134,7 @@ function half(b: LayoutBuilder, s: 1 | -1, p: Side): void {
   box(-18, -18, 8, 9, 2, 2, BLOCK.GLASS);
   box(-17, -17, 5, 12, 3, 3, p.awning);
   box(-22, -21, 13, 13, 1, 2, AIR);
-  box(-26, -26, 9, 10, 2, 2, BLOCK.GLASS);
+  box(-26, -26, 10, 10, 2, 2, BLOCK.GLASS);
   box(-25, -25, 6, 11, 1, 1, C.SMOOTH_STONE);
   box(-25, -25, 7, 7, 1, 1, BLOCK.FURNACE);
   box(-25, -25, 6, 6, 2, 2, BLOCK.BOOKSHELF);

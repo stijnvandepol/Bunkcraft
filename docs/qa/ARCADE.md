@@ -179,8 +179,8 @@ boven de scope, op het richtpunt. **Geluid:** inslagen per materiaal, langsfluit
 hartslag bij lage health, punchier schoten met variatie, herlaadklop; captions voor de nieuwe geluiden. `audio-report.py` en
 cheat-bots/modes-bots zijn na de laatste merge nog niet opnieuw gedraaid (usage-limiet).
 
-**Kogels door glas:** gebouwd en getest (één raam of haag, 20%/10% minder schade, tweede raam stopt), maar staat UIT
-(`GLASS_PASSES_DEFAULT`): de nieuwe kaarten schermen hun spawns af met glas en bladeren. Eerst die ramen dicht, dan aanzetten.
+**Kogels door glas:** staat AAN (`GLASS_PASSES_DEFAULT`; één raam of haag, 20%/10% minder schade, tweede raam stopt). De
+spawns van suburb, quarter, atomic, plaza en mall zijn daarvoor met massieve blokken afgeschermd.
 
 ## Ronde 2: BunkCraft Realms, arsenaal, geluid, anti-cheat (oktober 2026)
 

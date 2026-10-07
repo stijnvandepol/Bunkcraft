@@ -192,7 +192,7 @@ function homestead(b: LayoutBuilder, s: 1 | -1, p: Palette): void {
   box(-18, -18, 7, 10, 1, 3, AIR);
   box(-18, -18, 7, 10, 3, 3, BLOCK.WHITE_WOOL);
   box(-26, -26, 10, 11, 1, 2, AIR);
-  car(t, -24, 8, true, p.car2);
+  car(t, -24, 8, true, p.car2, false, C.COAL_BLOCK);
   box(-25, -25, 6, 7, 1, 2, BLOCK.BOOKSHELF);
   box(-21, -19, 6, 6, 1, 1, BLOCK.CRAFTING_TABLE);
   box(-20, -20, 6, 6, 1, 1, BLOCK.ANVIL);

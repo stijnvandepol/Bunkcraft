@@ -89,22 +89,23 @@ export function hedge(b: B, x0: number, x1: number, z0: number, z1: number, h = 
 /**
  * A car, 5 long and 3 wide (from (x, z), along x or z): a body one block high with dark wheels at the
  * corners, a glass cabin with a roof-coloured top line, head lights at the front (+x / +z end, or the
- * other end with `back`).
+ * other end with `back`). `cabin` is the glass by default; a solid block (coal = tinted windows) stops bullets,
+ * for a car that stands between a spawn and the rest of the map.
  */
-export function car(b: B, x: number, z: number, alongX: boolean, body: number, back = false): void {
+export function car(b: B, x: number, z: number, alongX: boolean, body: number, back = false, cabin: number = BLOCK.GLASS): void {
   const L = 5, W = 3;
   const [x1, z1] = alongX ? [x + L - 1, z + W - 1] : [x + W - 1, z + L - 1];
   b.box(x, x1, z, z1, 1, 1, body);
   // Wheels on the corners, lights in the middle of both ends.
   for (const [cx, cz] of [[x, z], [x1, z], [x, z1], [x1, z1]]) b.box(cx, cx, cz, cz, 1, 1, C.COAL_BLOCK);
   if (alongX) {
-    b.box(x + 1, x1 - 1, z, z1, 2, 2, BLOCK.GLASS);
+    b.box(x + 1, x1 - 1, z, z1, 2, 2, cabin);
     b.box(x + 2, x + 2, z + 1, z + 1, 2, 2, body);
     const front = back ? x : x1, rear = back ? x1 : x;
     b.box(front, front, z + 1, z + 1, 1, 1, C.SEA_LANTERN);
     b.box(rear, rear, z + 1, z + 1, 1, 1, C.REDSTONE_BLOCK);
   } else {
-    b.box(x, x1, z + 1, z1 - 1, 2, 2, BLOCK.GLASS);
+    b.box(x, x1, z + 1, z1 - 1, 2, 2, cabin);
     b.box(x + 1, x + 1, z + 2, z + 2, 2, 2, body);
     const front = back ? z : z1, rear = back ? z1 : z;
     b.box(x + 1, x + 1, front, front, 1, 1, C.SEA_LANTERN);

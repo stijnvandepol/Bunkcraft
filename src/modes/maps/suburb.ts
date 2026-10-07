@@ -47,7 +47,7 @@ export const SUBURB: ArenaMapDef = {
     // The house: brick, flat roof, team-coloured band above the front door.
     building(b, 14, 23, 0, 11, 4, BLOCK.BRICKS, [
       door('u0', 2, 4), glass('u0', 7, 9), glass('u0', 0, 0),
-      door('u1', 7, 9), glass('u1', 1, 2),
+      door('u1', 7, 9),
       glass('v1', 16, 17), glass('v1', 20, 21),
     ]);
     box(14, 14, 0, 11, 4, 4, TEAM);
@@ -84,7 +84,7 @@ export const SUBURB: ArenaMapDef = {
 
     // The street: a van across the centre, parked cars, hedges and bins.
     box(0, 3, 0, 1, 1, 2, BLOCK.WHITE_WOOL);
-    box(1, 2, 0, 1, 3, 3, BLOCK.GLASS);
+    box(1, 2, 0, 1, 3, 3, BLOCK.WHITE_WOOL);
     car(b, 6, 4, true, BLOCK.YELLOW_WOOL);
     car(b, 4, 9, false, BLOCK.GREEN_WOOL);
     car(b, 9, 14, true, BLOCK.WHITE_WOOL);

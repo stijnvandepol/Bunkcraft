@@ -182,11 +182,11 @@ export const MAX_THIN = 4;
 export const MAX_PANES = 1;
 
 /**
- * Whether bullets pass windows and hedges (glass, panes, leaves). OFF for now: the maps use glass and leaves as spawn
- * cover (tests/spawnExposure.test.ts: suburb, quarter, atomic, plaza and mall get lines into the spawns through
- * windows). Turn on once those spawns are screened with solid blocks; client and server read the same constant.
+ * Whether bullets pass windows and hedges (glass, panes, leaves); client and server read the same constant. The maps
+ * keep their spawns behind solid blocks (tests/spawnExposure.test.ts runs with this on), so glass and leaves are
+ * never the only cover in front of a spawn.
  */
-export const GLASS_PASSES_DEFAULT = false;
+export const GLASS_PASSES_DEFAULT = true;
 
 /** Fills BULLET / BULLET_KEEP; `glassPasses` false makes see-through blocks stop bullets like any full block. */
 export function setGlassPasses(glassPasses: boolean): void {
