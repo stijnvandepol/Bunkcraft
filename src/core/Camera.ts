@@ -104,6 +104,27 @@ export class CameraController {
     }
   }
 
+  /**
+   * Home screen flythrough over an arena: a slow loop (radii rx, rz) above the cover around the centre, looking
+   * down across the map at a point that drifts ahead of the camera, so the view sweeps over the buildings.
+   */
+  flyover(cx: number, cy: number, cz: number, rx: number, rz: number, t: number): void {
+    const cam = this.camera;
+    const a = t * 0.04;
+    const x = cx + Math.cos(a) * rx, z = cz + Math.sin(a) * rz;
+    const y = cy + Math.sin(t * 0.11) * 1.5;
+    // The look target leads the camera by a quarter turn, on a smaller loop near the floor.
+    const la = a + 1.9;
+    const tx = cx + Math.cos(la) * rx * 0.55, tz = cz + Math.sin(la) * rz * 0.55, ty = cy - 13;
+    const dx = tx - x, dy = ty - y, dz = tz - z;
+    cam.position.set(x, y, z);
+    cam.rotation.set(Math.atan2(dy, Math.hypot(dx, dz)), Math.atan2(-dx, -dz), 0, 'YXZ');
+    if (cam.fov !== 70) {
+      cam.fov = this.fov = 70;
+      cam.updateProjectionMatrix();
+    }
+  }
+
   /** The recoil kick the camera really shows (Reduced Motion keeps a quarter of it). */
   get appliedKick(): number {
     return this.reducedMotion ? this.kick * 0.25 : this.kick;

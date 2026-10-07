@@ -12,6 +12,7 @@ import { RealmsMenu } from './RealmsMenu';
 import { savePlayerName, savedPlayerName } from './playerName';
 import { installButton } from '../pwa/Pwa';
 import { button, dirtBackground, h, menuScreen, screen } from './dom';
+import { emblemSvg, svgDataUrl } from './Brand';
 import { cheatsAllowed } from '../save/SaveSystem';
 import { TIP_COUNT, modeHint, modeName, t, tip } from './i18n';
 import { difficultyButton, gameRulesScreen } from './GameRulesScreen';
@@ -31,15 +32,16 @@ export interface MenuActions {
   /** `.bunkworld` export/import and backups. */
   transfer: WorldTransfer;
   openOptions(): void;
-  /** Join a server (empty address = this page's server); with a code, that game; without, the main world. */
-  joinServer(name: string, address: string, room?: string): void;
-  logo(): HTMLCanvasElement;
+  /** Join a server (empty address = this page's server); with a code, that game; without, the main world. `arena`: an arena lobby (shell loading screen). */
+  joinServer(name: string, address: string, room?: string, arena?: boolean): void;
   /** Fallback world icon (data URL) when a world has no screenshot yet. */
   defaultWorldIcon(): string;
   /** Key names for the {inventory}, {chat}, {command}, {sprint}, {drop} placeholders in loading tips. */
   tipKeys?(): Record<string, string>;
-  /** Opens the Language screen on the title screen (the Options button next to it opens the rest). */
+  /** Opens the Language screen from the home screen. */
   openLanguage?(): void;
+  /** Name of the arena map flying by behind the menu. */
+  backgroundMap?(): string;
 }
 
 export const VERSION = 'BunkCraft 1.0';
@@ -88,28 +90,32 @@ export function formatWorldDate(ts: number): string {
   return `${d.getFullYear()}/${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
-const SPLASHES = [
-  'Now in your browser!', 'Greedy meshed!', 'Made of typed arrays!', '60 frames per second!',
-  'Web Workers inside!', 'Procedurally generated!', 'Pixel perfect!', 'Ambient occlusion!',
-  '100% blocks!', 'Seeded!', 'Punch a tree!', 'Biome tinted!', 'Also try the original!',
-  'Now with shadows!', 'Bunk approved!', 'WebGL2!',
-  'Headshot!', 'Team Deathmatch!',
-];
-
 const COLUMN = 'display: flex; flex-direction: column; align-items: center; gap: calc(var(--s) * 4);';
 
-/** Title screen, world selection and world creation, laid out like Minecraft 1.21. */
+/**
+ * The menus: the home screen (the arena shooter, see RealmsMenu/HomeScreen) is the front door; Build & Survival
+ * (beta) leads to the sandbox menus (world selection, world creation, Multiplayer), which keep their Minecraft-style
+ * layout for now.
+ */
 export class MainMenu {
-  /** BunkCraft Realms: the arcade minigames hub (Multiplayer is the Minecraft sandbox only). */
+  /** The arena menus (internally still "Realms"): home, lobbies, private matches, codes, loadouts, progression. */
   readonly realms: RealmsMenu;
 
   constructor(private readonly stack: ScreenStack, private readonly actions: MenuActions) {
-    this.realms = new RealmsMenu(stack, { joinCode: (name, code, onError) => this.joinByCode(name, code, onError, undefined, false) });
+    this.realms = new RealmsMenu(stack, {
+      joinCode: (name, code, onError) => this.joinByCode(name, code, onError, undefined, false),
+      openSurvival: () => this.showBuild(),
+      openOptions: () => actions.openOptions(),
+      openLanguage: () => (actions.openLanguage ? actions.openLanguage() : actions.openOptions()),
+      backgroundMap: () => actions.backgroundMap?.() ?? '',
+      version: BUILD_SHA ? `${VERSION} (${BUILD_SHA})` : VERSION,
+    });
   }
 
-  /** The Realms playlist (also where a player returns to after leaving a Realms match). */
+  /** Where a player lands after an arena match: the home screen is the hub. */
   showRealms(): Promise<void> {
-    return this.realms.show();
+    this.showTitle();
+    return Promise.resolve();
   }
 
   /** An invite link (?join=CODE): a Realms lobby opens in Realms, anything else in Multiplayer with the code filled in. */
@@ -124,41 +130,26 @@ export class MainMenu {
     else await this.showMultiplayer(code);
   }
 
+  /** The front door: the home screen of the arena shooter. */
   showTitle(): void {
     this.stack.clear();
-    const splashText = dateSplash(new Date()) ?? SPLASHES[Math.floor(Math.random() * SPLASHES.length)];
-    const splash = h('div', { class: 'splash', text: splashText });
-    // Long splashes shrink, like Minecraft's 1.8 × 100 / (width + 32) rule.
-    splash.style.setProperty('--splash-scale', String(Math.min(1.8, (1.8 * 100) / (splashText.length * 6 + 32))));
-    const logo = this.actions.logo();
-    logo.classList.add('logo');
-
-    this.stack.push(screen('title-screen',
-      h('div', { class: 'logo-wrap' }, logo, h('div', { class: 'edition', text: t('title.edition') })),
-      splash,
-      h('div', { class: 'title-buttons' },
-        button(t('title.singleplayer'), () => void this.showWorlds()),
-        button(t('title.multiplayer'), () => void this.showMultiplayer()),
-        button(t('title.realms'), () => void this.realms.show()),
-        h('div', { class: 'gap' }),
-        h('div', { class: 'row' },
-          this.actions.openLanguage ? this.iconButton('icon-lang', t('title.language'), () => this.actions.openLanguage!()) : null,
-          button(t('title.options'), () => this.actions.openOptions(), { cls: 'half' }),
-          button(t('title.quit'), () => this.quit(), { cls: 'half' }),
-        ),
-      ),
-      installButton('pwa-install-title'),
-      h('div', { class: 'footer-left', text: BUILD_SHA ? `${VERSION} (${BUILD_SHA})` : VERSION }),
-      h('div', { class: 'footer-right', text: t('title.disclaimer') }),
-    ));
+    const home = this.realms.showHome();
+    const install = installButton('pwa-install-title');
+    if (install) home.el.append(install);
   }
 
-  /** Small square icon button (Language), drawn from CSS so it stays crisp at every GUI scale. */
-  private iconButton(icon: string, title: string, onClick: () => void): HTMLButtonElement {
-    const b = button('', onClick, { cls: `icon ${icon}` });
-    b.title = title;
-    b.setAttribute('aria-label', title);
-    return b;
+  /**
+   * Build & Survival (beta): the voxel sandbox BunkCraft started as. Singleplayer worlds and Multiplayer games
+   * (codes, browser, direct connect) live behind this door.
+   */
+  showBuild(): void {
+    this.stack.push(menuScreen(t('build.title'), [
+      h('div', { class: 'build-panel' },
+        h('div', { class: 'hint', text: t('build.text') }),
+        button(t('title.singleplayer'), () => void this.showWorlds(), { cls: 'primary' }),
+        button(t('title.multiplayer'), () => void this.showMultiplayer()),
+      ),
+    ], [button(t('common.back'), () => this.stack.pop(), { cls: 'w150' })], { cls: 'bc build-screen' }));
   }
 
   /**
@@ -258,7 +249,7 @@ export class MainMenu {
       this.askPassword(playerName, code, info);
       return;
     }
-    this.actions.joinServer(playerName, '', code);
+    this.actions.joinServer(playerName, '', code, isArcade(info.gameType));
   }
 
   /** Password prompt for a locked game. The password goes to the server in `hello` and is kept in memory only. */
@@ -404,15 +395,6 @@ export class MainMenu {
     this.stack.push(menuScreen(t('disconnected.title'), [
       h('div', { class: 'hint', text: reason }),
     ], [button(t('disconnected.back'), () => this.showTitle())]));
-  }
-
-  /** A browser tab cannot close itself unless script-opened; leave fullscreen and say so. */
-  private quit(): void {
-    if (document.fullscreenElement) void document.exitFullscreen();
-    window.close();
-    this.stack.push(menuScreen(t('quit.title'), [
-      h('div', { class: 'hint', text: t('quit.text') }),
-    ], [button(t('quit.back'), () => this.stack.pop())]));
   }
 
   async showWorlds(): Promise<void> {
@@ -623,9 +605,24 @@ export class MainMenu {
     window.setTimeout(() => name.select(), 0);
   }
 
-  /** Loading screen: dirt background, a progress bar with percentage and rotating tips about the real controls. */
-  showLoading(title: string): (status: string, progress: number) => void {
+  /**
+   * Loading screen: a progress bar with percentage and rotating tips about the real controls. The sandbox gets the
+   * dirt background; an arena match (`arena`) the shell's ink with the emblem.
+   */
+  showLoading(title: string, arena = false): (status: string, progress: number) => void {
     this.stack.clear();
+    if (arena) {
+      const status = h('div', { class: 'hint', text: t('loading.preparing') });
+      const bar = h('div', { class: 'progress-fill' });
+      this.stack.push(screen('loading bc',
+        h('img', { class: 'loading-emblem', src: svgDataUrl(emblemSvg()), alt: '' }),
+        h('div', { class: 'loading-title', text: title }), status, h('div', { class: 'progress' }, bar)));
+      return (text, p) => {
+        const pct = Math.round(Math.min(1, p) * 100);
+        status.textContent = `${text} ${pct}%`;
+        bar.style.width = `${pct}%`;
+      };
+    }
     dirtBackground();
     const status = h('div', { class: 'hint', text: t('loading.preparing') });
     const bar = h('div', { class: 'progress-fill' });
@@ -691,22 +688,22 @@ export function pauseScreen(actions: {
 }
 
 /** Share screen of a hosted game: the code, a link, and one-click copy. */
-export function inviteScreen(code: string, link: string, text: string, done: () => void): HTMLDivElement {
+export function inviteScreen(code: string, link: string, text: string, done: () => void, shell = false): HTMLDivElement {
   const linkInput = h('input', { class: 'mc-input', value: link, readOnly: true });
   linkInput.addEventListener('focus', () => linkInput.select());
-  const copy = button('Copy Invite', () => {
-    const ok = () => { copy.textContent = 'Copied!'; window.setTimeout(() => { copy.textContent = 'Copy Invite'; }, 1500); };
+  const copy = button(t('invite.copy'), () => {
+    const ok = () => { copy.textContent = t('common.copied'); window.setTimeout(() => { copy.textContent = t('invite.copy'); }, 1500); };
     navigator.clipboard?.writeText(text).then(ok, () => linkInput.select());
     if (!navigator.clipboard) linkInput.select();
   }, { cls: 'w150' });
-  return menuScreen('Invite Friends', [
+  return menuScreen(t('invite.title'), [
     h('div', { style: 'display: flex; flex-direction: column; align-items: center; gap: calc(var(--s) * 4);' },
-      h('div', { class: 'field-label', text: 'Game Code' }),
-      h('div', { class: 'death-title', text: formatCode(code) }),
-      h('div', { class: 'field-label', text: 'Invite Link' }), linkInput,
-      h('div', { class: 'hint', text: 'Friends open the link, or type the code under Multiplayer.' }),
+      h('div', { class: 'field-label', text: t('invite.code') }),
+      h('div', { class: `death-title${shell ? ' realms-code' : ''}`, text: formatCode(code) }),
+      h('div', { class: 'field-label', text: t('invite.link') }), linkInput,
+      h('div', { class: 'hint', text: t('invite.hint') }),
     ),
-  ], [copy, button('Done', done, { cls: 'w150' })]);
+  ], [copy, button(t('common.done'), done, { cls: `w150${shell ? ' primary' : ''}` })], { cls: shell ? 'bc' : '' });
 }
 
 function describeError(e: unknown): string {

@@ -1,19 +1,22 @@
 import { type Page } from '@playwright/test';
-import { clickButton, expect, forcePlaying, openTitle, play, test, waitForWorld } from './fixtures';
+import { expect, forcePlaying, openTitle, play, test, waitForWorld } from './fixtures';
 
 /*
  * QA round 3: Create-a-Class the way a player uses it (B, clicks on the cards and the editor, Done), against the real
- * server through the Realms menus.
+ * server through the home screen.
  */
 
 async function quickPlay(page: Page, name: string, mode = 'tdm'): Promise<void> {
   await openTitle(page);
-  await clickButton(page, 'BunkCraft Realms');
+  const card = page.locator(`.mode-card[data-mode="${mode}"]`);
+  await expect(card).toBeVisible();
+  await card.click();
+  await expect(page.locator('.bc-play')).toBeEnabled();
+  await page.locator('.bc-play').click();
+  // A fresh browser has no name yet: PLAY asks for it once, then quick play goes on by itself.
   await expect(page.getByRole('heading', { name: 'Choose a Name' })).toBeVisible();
   await page.locator('input.mc-input:visible').first().fill(name);
   await page.keyboard.press('Enter');
-  await page.locator(`.realms-item[data-mode="${mode}"]`).click();
-  await clickButton(page, 'Quick Play');
   await waitForWorld(page);
   await forcePlaying(page);
 }

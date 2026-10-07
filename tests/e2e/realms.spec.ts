@@ -1,6 +1,6 @@
 import { type Browser, type Page } from '@playwright/test';
 import { REALMS_MODES } from '../../src/modes/Realms';
-import { clickButton, expect, forcePlaying, hidePanorama, openTitle, play, test, waitForWorld } from './fixtures';
+import { clickButton, expect, forcePlaying, hidePanorama, openSandbox, openTitle, play, test, waitForWorld } from './fixtures';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -12,18 +12,18 @@ async function secondPlayer(browser: Browser, errors: string[]): Promise<Page> {
   return page;
 }
 
-/** Title → BunkCraft Realms → (name, asked once) → Quick Play on the selected mode → in the arena. */
+/** Home → pick the mode → PLAY → (name, asked once, then quick play goes on by itself) → in the arena. */
 async function quickPlay(page: Page, name: string, mode = 'tdm'): Promise<void> {
   await openTitle(page);
-  await clickButton(page, 'BunkCraft Realms');
-  // A fresh browser has no name yet: Realms asks for it once.
+  const card = page.locator(`.mode-card[data-mode="${mode}"]`);
+  await expect(card).toBeVisible();
+  await card.click();
+  await expect(page.locator('.bc-play')).toBeEnabled();
+  await page.locator('.bc-play').click();
+  // A fresh browser has no name yet: PLAY asks for it once.
   await expect(page.getByRole('heading', { name: 'Choose a Name' })).toBeVisible();
   await page.locator('input.mc-input:visible').first().fill(name);
   await page.keyboard.press('Enter');
-  const row = page.locator(`.realms-item[data-mode="${mode}"]`);
-  await expect(row).toBeVisible();
-  await row.click();
-  await clickButton(page, 'Quick Play');
   await waitForWorld(page);
   await forcePlaying(page);
 }
@@ -56,22 +56,26 @@ test('realms: two players quick play team deathmatch, meet in one lobby and the 
   }, { timeout: 40_000 }).toEqual(['live', 'live']);
   await expect(page.locator('.mlobby')).toBeHidden();
 
-  // Leaving the match goes back to the Realms playlist.
+  // Leaving the match goes back to the home screen (the arena hub), with the mode still picked.
   await page.evaluate(() => (window as any).game.quitToTitle());
-  await expect(page.locator('.realms-screen')).toBeVisible();
+  await expect(page.locator('.home')).toBeVisible();
+  await expect(page.locator('.mode-card[data-mode="tdm"]')).toHaveAttribute('aria-pressed', 'true');
   await b.context().close();
 });
 
-test('realms: the playlist matches its baseline and Multiplayer only creates Minecraft games', async ({ page }) => {
+test('realms: the private match screen matches its baseline and Multiplayer only creates Minecraft games', async ({ page }) => {
   await openTitle(page);
   await page.evaluate(() => localStorage.setItem('bunkcraft.name', 'baseline_p'));
-  await clickButton(page, 'BunkCraft Realms');
-  await expect(page.locator('.realms-item')).toHaveCount(REALMS_MODES.length);
+  await expect(page.locator('.mode-card')).toHaveCount(REALMS_MODES.length);
+  await expect(page.locator('.bc-play')).toBeEnabled();
+  await clickButton(page, 'Private match');
+  await expect(page.getByRole('heading', { name: 'Create Private Match' })).toBeVisible();
   await page.mouse.move(0, 0);
   await hidePanorama(page);
   await play(page, 300);
-  await expect(page).toHaveScreenshot('realms.png', { mask: [page.locator('.realms-stats')], maxDiffPixelRatio: 0.04 });
-  await clickButton(page, 'Back');
+  await expect(page).toHaveScreenshot('private-match.png', { maxDiffPixelRatio: 0.04 });
+  await clickButton(page, 'Cancel');
+  await openSandbox(page);
   await clickButton(page, 'Multiplayer');
   await clickButton(page, 'Create Game');
   await expect(page.getByRole('button', { name: /^Game Mode:/ })).toBeVisible();

@@ -61,9 +61,8 @@ with sync_playwright() as p:
     page.wait_for_function("!!(window.game && window.game.arcadePreview) && window.game.state === 'menu'", timeout=60000)
     time.sleep(1)
 
-    # Realms hub: every mode card with its icon.
-    page.evaluate("localStorage.setItem('bunkcraft.name', 'Stijn')")
-    page.get_by_text('BunkCraft Realms').first.click()
+    # The home screen (the arena hub): every mode card with its icon.
+    page.evaluate("localStorage.setItem('bunkcraft.name', 'Stijn'); window.game.menu.showTitle()")
     settle(page, 8)
     page.screenshot(path=f'{out}/realms-hub.png')
     # The new modes sit at the end of the playlist.

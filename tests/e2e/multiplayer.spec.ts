@@ -1,5 +1,5 @@
 import { type Browser, type Page } from '@playwright/test';
-import { clickButton, expect, forcePlaying, openTitle, play, test, waitForWorld } from './fixtures';
+import { clickButton, expect, forcePlaying, openSandbox, openTitle, play, test, waitForWorld } from './fixtures';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -13,7 +13,7 @@ async function secondPlayer(browser: Browser, errors: string[]): Promise<Page> {
 
 /**
  * Opens an invite link (?join=CODE), types a name and joins. A Minecraft game opens Multiplayer with the code filled in;
- * an arcade lobby opens BunkCraft Realms, which asks for the name once and then joins by itself.
+ * an arena lobby opens on the home screen, which asks for the name once and then joins by itself.
  */
 async function joinByLink(page: Page, code: string, name: string, realms = false): Promise<void> {
   await openTitle(page, `/?join=${code}`);
@@ -39,6 +39,7 @@ test('multiplayer: create a game, join by link, chat and see each other\'s block
   test.setTimeout(180_000);
   // Player A creates a Minecraft game through the menus.
   await openTitle(page);
+  await openSandbox(page);
   await clickButton(page, 'Multiplayer');
   await page.locator('input.mc-input:visible').first().fill('alice_e2e');
   await clickButton(page, 'Create Game');

@@ -4,6 +4,25 @@ Samenvatting van drie onderzoeken (oktober 2026): een bug-review van de gameplay
 engine- en performance-audit, en een game-design- en distributie-analyse. **Gedaan** staat bij
 wat al is doorgevoerd.
 
+## 0. Koers: arenashooter met een eigen identiteit (oktober 2026)
+
+BunkCraft is geen Minecraft-kloon meer, maar een online arenashooter. De shooter is de voordeur, survival zit achter
+**Bouwen & Survival (bèta)**. Ontwerp en keuzes: [`research/IDENTITY.md`](research/IDENTITY.md), screenshots in
+[`screenshots/identity/`](screenshots/identity/).
+
+- **Voordeur en shell-look: Gedaan.** Home met PLAY (quick play in de laatst gekozen modus), playlist met live
+  spelers, lobby's, privéwedstrijd, spelen met code, profielkaart met level en XP-balk, dagelijkse uitdagingen,
+  loadouts, wapenkamer, statistieken, instellingen en taal, boven een vlucht over een arenamap. Lobby, einde wedstrijd,
+  instellingen en alle arenamenu's in de nieuwe look; "Realms" is uit de UI verdwenen (intern en in het protocol blijft
+  de naam). Embleem, woordmerk, favicon, PWA-iconen en social preview komen uit `src/ui/Brand.ts`.
+- **Volgende stappen, op volgorde:**
+  1. Een eigen display-font (OFL, lokaal gebundeld) voor titels en de PLAY-knop, als Stijn er een kiest (S).
+  2. Create-a-Class ook vanaf de home: de editor loskoppelen van de match-HUD (M).
+  3. Party's: samen met een vriend via PLAY in dezelfde lobby (hoort bij §7b punt 9) (M).
+  4. De in-game HUD (scorebalk, killfeed, doodscherm) naar de shell-typografie; nu nog het pixelfont (M).
+  5. Survival een eigen twist geven en daarna de survival-menu's (wereldlijst, wereld maken, pauze) in de shell-look (L).
+  6. De Multiplayer-sandboxmenu's (Create Game, Direct Connect, Browse Games) vertalen; nu alleen Engels (S).
+
 ## 1. Bugs (code-review)
 
 | # | Bug | Status |

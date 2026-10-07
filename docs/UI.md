@@ -1,5 +1,9 @@
 # UI-audit: BunkCraft tegen Minecraft Java 1.21
 
+> **Oktober 2026:** het titelscherm is vervangen door de home van de arenashooter, en de arenamenu's, instellingen, lobby
+> en het einde van een wedstrijd hebben een eigen look (zie [`research/IDENTITY.md`](research/IDENTITY.md)). Deze audit
+> geldt nog voor de survival-menu's achter Bouwen & Survival.
+
 Audit van de 2D-interface (menu's, HUD, inventory, chat, F3) tegen Minecraft Java 1.21 en de GUI-pagina's van de wiki.
 Per bevinding: wat er afweek, wat er nu is, en wat nog open staat. Maten zijn in GUI-pixels (`--s`).
 
