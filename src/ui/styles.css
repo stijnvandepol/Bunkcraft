@@ -934,7 +934,7 @@ html, body {
 .arc-xh .o { display: none; border-radius: 50%; background: transparent; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.75), inset 0 0 0 1px rgba(0, 0, 0, 0.75); }
 /* Dot: a bigger dot, nothing else. */
 .arc-xh.s-dot .t, .arc-xh.s-dot .b, .arc-xh.s-dot .l, .arc-xh.s-dot .r { display: none; }
-.arc-xh.s-dot .dot { --d: max(3px, calc(var(--w) * 2)); width: var(--d); height: var(--d); left: calc(var(--d) / -2); top: calc(var(--d) / -2); border-radius: 50%; }
+.arc-xh.s-dot .dot { --d: max(4px, calc(var(--w) * 2.5)); width: var(--d); height: var(--d); left: calc(var(--d) / -2); top: calc(var(--d) / -2); border-radius: 50%; }
 /* Circle: a ring as wide as the spread cone, a small dot in the middle. */
 .arc-xh.s-circle .t, .arc-xh.s-circle .b, .arc-xh.s-circle .l, .arc-xh.s-circle .r { display: none; }
 .arc-xh.s-circle .o {
@@ -1077,10 +1077,11 @@ html, body {
 .arc-scope.combat { --r: 47vh; background: radial-gradient(circle at center, rgba(0, 0, 0, 0) 0, rgba(0, 0, 0, 0) calc(var(--r) * 0.86), rgba(0, 0, 0, 0.6) calc(var(--r) * 0.98), #000 var(--r)); }
 .arc-scope.combat .arc-scope-lens i, .arc-scope.combat .arc-scope-dots { display: none; }
 .arc-scope.combat .arc-scope-chev {
-  display: block; left: -9px; top: 0; width: 0; height: 0;
-  border-left: 9px solid transparent; border-right: 9px solid transparent; border-bottom: 12px solid #ff5a3c; filter: drop-shadow(0 0 3px rgba(255, 90, 60, 0.8));
+  --cw: max(9px, 1.3vh);
+  display: block; left: calc(var(--cw) * -1); top: 0; width: 0; height: 0;
+  border-left: var(--cw) solid transparent; border-right: var(--cw) solid transparent; border-bottom: calc(var(--cw) * 1.35) solid #ff5a3c; filter: drop-shadow(0 0 3px rgba(255, 90, 60, 0.8));
 }
-.arc-scope.combat .arc-scope-stadia { display: block; left: -1px; top: 14px; width: 2px; height: calc(var(--r) * 0.3); background: rgba(10, 10, 10, 0.85); }
+.arc-scope.combat .arc-scope-stadia { display: block; left: -1px; top: calc(max(9px, 1.3vh) * 1.35 + 2px); width: 2px; height: calc(var(--r) * 0.3); background: rgba(10, 10, 10, 0.85); }
 .arc-scope-hint { position: absolute; left: 50%; top: calc(50% + var(--r) * 0.49); transform: translateX(-50%); color: rgba(255, 255, 255, 0.7); white-space: nowrap; text-shadow: var(--shadow); }
 
 /* Medals: multi-kill and killstreak banners under the crosshair. */

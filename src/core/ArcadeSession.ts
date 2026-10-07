@@ -1130,8 +1130,8 @@ export class ArcadeSession {
     this.optZoom = opticZoom(w, optic);
     const cam = this.d.cam;
     cam.zoom = 1 + (this.optZoom - 1) * eased;
-    // The view follows the eased blend closely (the camera's usual FOV smoothing would lag behind a snappy aim).
-    cam.fovRate = 30;
+    // While the sights move the view follows the eased blend closely (the camera's usual FOV smoothing would lag behind a snappy aim).
+    cam.fovRate = this.ads > 0 || wantAds ? 30 : 8;
     this.updateAimFeel(f, input, w, optic);
     this.updateMechanics(now, w, ammo);
     this.updateRemotes(f);

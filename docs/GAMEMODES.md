@@ -343,7 +343,7 @@ Alles is aan te passen in *Options → Controls → Key Binds* (categorie **Arca
 | Lopen, springen | W A S D, spatie |
 | Crouch / slide (tijdens rennen) | C (de Sneak-toets, *Sneak / Crouch & Slide*) |
 | Schieten | linkermuisknop (vasthouden bij automatische wapens, klikken bij semi-automatische) |
-| Richten (ADS) | rechtermuisknop vasthouden |
+| Richten (ADS) | rechtermuisknop vasthouden (of één keer drukken: Opties → Muis → Richtmodus) |
 | Herladen | R |
 | Wapen kiezen | 1 primair, 2 secundair, 3 melee, of het muiswiel |
 | Vorig wapen (quick switch) | Q |
@@ -366,7 +366,9 @@ en kaartnamen blijven zoals ze zijn.
 - **Health** linksonder (getal en balk, knippert rood onder 30), **munitie** rechtsonder (`magazijn / ∞`,
   wapennaam, herlaadbalk) en de drie wapenslots.
 - **Richtkruis** dat meegroeit met de spreiding (heup groter, richten kleiner, bewegen en in de lucht groter)
-  en verdwijnt bij richten (de vizieren, de rode stip of de holo-ring nemen het over) en achter de scope.
+  en verdwijnt bij richten (de vizieren, de rode stip of de holo-ring nemen het over) en achter de scope. Het opent direct
+  tot de echte kegel en sluit zacht (`CrosshairBloom`); het vervaagt tijdens het opkomen van de vizieren. Opties → Besturing
+  → Dradenkruis: stijl (kruis, stip, cirkel), kleur, grootte en "opent met spreiding" (uit = vaste opening).
 - **Medailles** onder het richtkruis (double/triple/multi kill, killstreak 3/5/10) en de ademmeter in de scope.
 - **Hit markers:** alleen bij treffers die de server bevestigt (`hit`), zonder vertraging bovenop de ping: een scherpe X van
   vier balkjes vanuit het richtpunt (schaalt met de GUI-schaal, hele pixels), die opploft (×1,45) en in 0,3 s vervaagt. Wit
@@ -417,6 +419,24 @@ is kost 0,08 s extra ADS-tijd, de combat scope 0,05 s (niet op de Battle Rifle, 
 **Herladen:** met kogels in het magazijn is het een tactische herlading (75% van de lege, `reloadTimeFor`). De client speelt
 animatie en geluid op die tijd en is klaar zodra de animatie klaar is; de server neemt een schot tot 0,1 s vóór zijn eigen
 timer aan (het schot reist dezelfde halve ronde als het verzoek), dus na de animatie wacht je nergens op.
+
+**Richten (ADS):** `src/modes/AimMath.ts` (puur, getest in `tests/aimMath.test.ts`).
+- *Curves per wapenklasse* (op `adsTime`: tot 0,2 s licht, tot 0,32 s middel, daarboven zwaar): het beeld komt voorop geladen
+  omhoog (begint meteen te bewegen, geen smoothstep vanuit stilstand) en laat de vizieren 1,4 tot 1,9× sneller los. De
+  gameplay-waarde (`ads`, lineair in de ADS-tijd van wapen, optiek en perk) blijft apart van de beeldwaarde (`adsEased`);
+  omkeren halverwege geeft geen sprong (`AdsBlend`). De camera-FOV volgt het beeld direct zolang de vizieren bewegen.
+- *Vizier staat op het midden:* het wapen draait bij kick, sway en bob om zijn vizierlijn (`WeaponViewmodel`), de rode stip en
+  de holo-ring hangen in het beeld op het exacte midden (in schermpixels, schalen met de hoogte) en de open vizieren zijn een
+  korrel met een lichte punt in een open kimme. `scripts/qa/aim-shots.py` projecteert elke wapen × optiek en meldt de afwijking
+  (nu 0,0 px voor alle 36 combinaties) en maakt de screenshots (`docs/screenshots/arcade/aim-*.png`).
+- *Gevoeligheid:* Opties → Muis → *ADS-gevoeligheid* (25-200 %, bovenop de schaling), *ADS-schaling* (**Uniform** = de
+  FOV-verhouding van de optiek, zoals voorheen; **Schermafstand** = tangens van de halve hoeken: dezelfde afstand op het scherm,
+  iets trager bij sterke zoom) en *Richtmodus* (vasthouden of schakelen: een druk aan, een druk uit; herladen, wisselen en
+  doodgaan zetten de vizieren omlaag).
+- *Sway door open vizieren:* iron sights, rode stip en holo drijven licht (0,07 / 0,11 / 0,17° per licht/middel/zwaar wapen,
+  ×1,6 bij bewegen) en de kogels volgen het richtpunt, net als bij de scope; de combat scope en Reduced Motion hebben het niet.
+- *Spreiding heup tegen ADS (gedeeld met de server via `currentSpread`/`shotSpread`):* bewegen kost heupvuur ×1,3 en richten
+  ×1,08, de lucht ×1,4 tegen ×1,25 (daarvoor ×1,15 en ×1,4 voor allebei).
 
 **One-hit wapens:** de Bolt-Action Sniper doodt met één bodyshot tot 70 m (daarna 85 schade: twee schoten of een headshot),
 de Anti-Materiel Rifle met één treffer op elke afstand, het mes met één steek. Eén headshot doodt met de Semi-Auto Sniper (op
