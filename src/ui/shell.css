@@ -341,7 +341,6 @@
 .mode-text { display: flex; flex-direction: column; gap: calc(var(--u) * 0.6); min-width: 0; }
 .mode-name {
   font: 750 var(--f-xs) / 1.15 var(--bc-font);
-  hyphens: auto;
   overflow-wrap: anywhere;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -407,6 +406,9 @@
   .home-foot { flex-direction: column; align-items: stretch; }
   .home-foot-meta { align-items: flex-start; text-align: left; }
   .home .home-scrim { background: rgba(7, 9, 13, 0.72); }
+}
+@media (max-width: 480px) {
+  .home-modes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 /* ---------------------------------------------------------------- shell sub-screens (menuScreen + the bc class) */

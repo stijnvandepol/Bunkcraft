@@ -9,7 +9,7 @@ Druk op Play en je zit in een wedstrijd: 12 modi (Team Deathmatch, Search & Dest
 Gebouwd op een eigen voxel-engine in TypeScript met WebGL2 en Three.js. Geen installatie nodig.
 De voxel-sandbox waar het mee begon zit er nog in, onder **Bouwen & Survival (bèta)**.
 
-![BunkCraft home](docs/screenshots/identity/home-chromium.png)
+![BunkCraft home](docs/screenshots/identity/home-chromium.jpg)
 
 </div>
 
@@ -34,11 +34,11 @@ De voxel-sandbox waar het mee begon zit er nog in, onder **Bouwen & Survival (b�
 
 | Home: Play, playlist en je profiel | Einde wedstrijd met XP en kaartstemming |
 |---|---|
-| ![Home](docs/screenshots/identity/home-chromium.png) | ![Einde wedstrijd](docs/screenshots/identity/match-end-chromium.png) |
+| ![Home](docs/screenshots/identity/home-chromium.jpg) | ![Einde wedstrijd](docs/screenshots/identity/match-end-chromium.jpg) |
 
 | Privéwedstrijd | Loadouts |
 |---|---|
-| ![Privéwedstrijd](docs/screenshots/identity/private-chromium.png) | ![Loadouts](docs/screenshots/identity/loadouts-chromium.png) |
+| ![Privéwedstrijd](docs/screenshots/identity/private-chromium.jpg) | ![Loadouts](docs/screenshots/identity/loadouts-chromium.jpg) |
 
 Alle schermen van de nieuwe look (Chromium en WebKit) staan in [`docs/screenshots/identity/`](docs/screenshots/identity/),
 de keuzes erachter in [`docs/research/IDENTITY.md`](docs/research/IDENTITY.md). Hieronder de survival-sandbox.

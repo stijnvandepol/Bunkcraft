@@ -71,8 +71,8 @@ def run(browser_name, pw, args):
         return only is None or name in only
 
     def shot(page, name):
-        path = os.path.join(args.out, f'{name}-{browser_name}.png')
-        page.screenshot(path=path)
+        path = os.path.join(args.out, f'{name}-{browser_name}.jpg')
+        page.screenshot(path=path, type='jpeg', quality=82)
         print('  ', path)
 
     ctx = browser.new_context(viewport={'width': 1280, 'height': 720}, device_scale_factor=1)
