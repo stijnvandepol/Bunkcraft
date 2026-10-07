@@ -96,6 +96,8 @@ export class ServerWorld implements EntityWorld, GenClient {
   onBlockDrop: ((id: number, meta: number, x: number, y: number, z: number) => void) | null = null;
   /** Sky light taken away by night and weather (0..11), for the growth light checks. */
   skyDarkness: () => number = () => 0;
+  /** Rain falling on a point right now (farmland stays moist); set from the server's weather. */
+  rainingAt: (x: number, y: number, z: number) => boolean = () => false;
   /**
    * Chests and furnaces: the server owns them in multiplayer (saved in world.json). Block changes they make
    * themselves (a furnace lighting up, the other half of a broken double chest) go out with the simulation edits.
@@ -143,6 +145,7 @@ export class ServerWorld implements EntityWorld, GenClient {
       dropBlock: (id, meta, x, y, z) => this.onBlockDrop?.(id, meta, x, y, z),
       biomeAt: (x, z) => this.generator.biomeAt(x, z, Math.floor(this.generator.heightAt(x, z))),
       skyDarkness: () => this.skyDarkness(),
+      rainingAt: (x, y, z) => this.rainingAt(x, y, z),
     }, { radius: SIM_RADIUS, budgetMs: 0.5 });
     this.updates = new BlockUpdates({
       getBlock: (x, y, z) => this.getBlock(x, y, z),

@@ -10,6 +10,8 @@ export interface FoodInfo {
   saturation: number;
   /** Ticks of Poison I after eating. */
   poison?: number;
+  /** Chance (0..1) that the poison applies; 1 when absent (spider eye). The poisonous potato poisons 60% of the time. */
+  poisonChance?: number;
   /** Bowl-like foods stack to 1 and leave a bowl behind (mushroom stew). */
   returns?: string;
 }
@@ -58,6 +60,8 @@ export const MATERIALS: ItemSpec[] = [
   { name: 'bowl', display: 'Bowl', sprite: 'bowl' },
   { name: 'sugar', display: 'Sugar', sprite: 'dust:f4f4f4' },
   ...dyeItems,
+  // Appended (farming): APPEND-ONLY like the rest of the table.
+  { name: 'beetroot_seeds', display: 'Beetroot Seeds', sprite: 'seeds:8a6a3a' },
 ];
 
 // ---------------------------------------------------------------- food
@@ -85,6 +89,9 @@ export const FOODS: ItemSpec[] = [
   { name: 'beetroot', display: 'Beetroot', sprite: 'food:beetroot', food: { hunger: 1, saturation: 1.2 } },
   { name: 'rabbit', display: 'Raw Rabbit', sprite: 'meat_pink', food: { hunger: 3, saturation: 1.8 } },
   { name: 'cooked_rabbit', display: 'Cooked Rabbit', sprite: 'meat_cooked', food: { hunger: 5, saturation: 6 } },
+  // Farming (Java 1.21): the poisonous potato poisons for 5 s 60% of the time; beetroot soup leaves its bowl.
+  { name: 'poisonous_potato', display: 'Poisonous Potato', sprite: 'food:poisonous_potato', food: { hunger: 2, saturation: 1.2, poison: 100, poisonChance: 0.6 } },
+  { name: 'beetroot_soup', display: 'Beetroot Soup', sprite: 'food:beetroot_soup', maxStack: 1, food: { hunger: 6, saturation: 7.2, returns: 'bowl' } },
 ];
 
 // ---------------------------------------------------------------- tools

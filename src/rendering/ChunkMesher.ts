@@ -12,6 +12,10 @@ import {
   DOOR_UPPER_BIT, FACE_OCTANTS, OCT_ALL, STAIR_META_MASK, slabOctants, stairOctants, stairShape,
 } from '../world/BlockStates';
 import { CHUNK_HEIGHT, CHUNK_SIZE, CHUNK_VOLUME } from '../world/constants';
+import {
+  ATTACHED_STEM_TINT, CROP_AGE_MASK, CROP_HEIGHT, CROP_STYLE, CROP_TINT, CROP_VTOP, FARMLAND, FARMLAND_MOISTURE_MASK, FARMLAND_WET,
+  FARMLAND_WET_TINT, STEM_ATTACHED_BIT, STEM_FACING_SHIFT,
+} from '../world/Crops';
 import { BLOCK } from '../world/BlockRegistry';
 import { TINT_BIRCH, TINT_FOLIAGE, TINT_GRASS, TINT_SPRUCE, TINT_WATER, tintColor } from '../world/BiomeColors';
 import { LightEngine, REGION, REGION_AREA, REGION_HEIGHT, REGION_VOLUME } from './Lighting';
@@ -376,7 +380,8 @@ export class ChunkMesher {
           // Per-corner ambient occlusion and smooth light, sampled in the air cell q.
           const c4 = n * 4;
           this.cellTint[n] = DYE[id] ? DYE_RGB[this.metaRegion[i] & 15]
-            : this.tintFor(id, nAxis === 0 ? s : uAxis === 0 ? a : b, nAxis === 2 ? s : uAxis === 2 ? a : b);
+            : id === FARMLAND ? ((this.metaRegion[i] & FARMLAND_MOISTURE_MASK) === FARMLAND_WET ? FARMLAND_WET_TINT : 0xffffff)
+              : this.tintFor(id, nAxis === 0 ? s : uAxis === 0 ? a : b, nAxis === 2 ? s : uAxis === 2 ? a : b);
           let uniform = true;
           for (let k = 0; k < 4; k++) {
             const du = CU[k] ? uOff : -uOff;
@@ -754,6 +759,71 @@ export class ChunkMesher {
     }
   }
 
+  /**
+   * Crops and stems (Crops.ts): one texture per crop, the growth stage decides the height of the plant and which part
+   * of the texture shows, and the per-stage tint. Crops use Minecraft's crop model (four planes in a # pattern, 4 px in
+   * from each side), stems the plant cross; an attached stem is one plane through the middle that bends to its fruit.
+   */
+  private emitCrop(id: number, x: number, y: number, z: number, i: number): void {
+    const geo = this.cutout;
+    const meta = this.metaRegion[i];
+    const ls = this.lighting.sky[i] * 17, lb = this.lighting.block[i] * 17;
+    const sway = FLAG_SWAY << 5;
+    const d = 6 | (3 << 3);
+    const bx = x * 16, by = y * 16, bz = z * 16;
+    if (CROP_STYLE[id] === 2 && (meta & STEM_ATTACHED_BIT) !== 0) {
+      const layer = FACE_LAYER[id * 6 + 4];
+      geo.currentTint = ATTACHED_STEM_TINT;
+      const f = (meta >> STEM_FACING_SHIFT) & 3;
+      // u runs from the side away from the fruit (0) to the fruit (1).
+      const ax = f === 2 ? bx + 16 : f === 3 ? bx : bx + 8, bxx = f === 2 ? bx : f === 3 ? bx + 16 : bx + 8;
+      const az = f === 0 ? bz + 16 : f === 1 ? bz : bz + 8, bzz = f === 0 ? bz : f === 1 ? bz + 16 : bz + 8;
+      geo.vertex(ax, by, az, 0, 0, layer, d, ls, lb);
+      geo.vertex(bxx, by, bzz, 1, 0, layer, d, ls, lb);
+      geo.vertex(bxx, by + 16, bzz, 1, 1, layer, d | sway, ls, lb);
+      geo.vertex(ax, by + 16, az, 0, 1, layer, d | sway, ls, lb);
+      geo.quad(false, true);
+      return;
+    }
+    const age = meta & CROP_AGE_MASK[id];
+    const k = id * 8 + age;
+    const h = CROP_HEIGHT[k] || 16;
+    const layer = FACE_LAYER[id * 6];
+    geo.currentTint = CROP_TINT[k];
+    const v0 = CROP_VTOP[id] ? (16 - h) / 16 : 0, v1 = CROP_VTOP[id] ? 1 : h / 16;
+    const y0 = by, y1 = by + h;
+    if (CROP_STYLE[id] === 2) {
+      const x0 = bx + 2, x1 = bx + 14, z0 = bz + 2, z1 = bz + 14;
+      for (let p = 0; p < 2; p++) {
+        const za = p === 0 ? z0 : z1, zb = p === 0 ? z1 : z0;
+        geo.vertex(x0, y0, za, 0, v0, layer, d, ls, lb);
+        geo.vertex(x1, y0, zb, 1, v0, layer, d, ls, lb);
+        geo.vertex(x1, y1, zb, 1, v1, layer, d | sway, ls, lb);
+        geo.vertex(x0, y1, za, 0, v1, layer, d | sway, ls, lb);
+        geo.quad(false, true);
+      }
+      return;
+    }
+    for (let p = 0; p < 4; p++) {
+      // Planes at 4/16 and 12/16 across x, then across z.
+      const off = p & 1 ? 12 : 4;
+      if (p < 2) {
+        const px = bx + off;
+        geo.vertex(px, y0, bz, 0, v0, layer, d, ls, lb);
+        geo.vertex(px, y0, bz + 16, 1, v0, layer, d, ls, lb);
+        geo.vertex(px, y1, bz + 16, 1, v1, layer, d | sway, ls, lb);
+        geo.vertex(px, y1, bz, 0, v1, layer, d | sway, ls, lb);
+      } else {
+        const pz = bz + off;
+        geo.vertex(bx, y0, pz, 0, v0, layer, d, ls, lb);
+        geo.vertex(bx + 16, y0, pz, 1, v0, layer, d, ls, lb);
+        geo.vertex(bx + 16, y1, pz, 1, v1, layer, d | sway, ls, lb);
+        geo.vertex(bx, y1, pz, 0, v1, layer, d | sway, ls, lb);
+      }
+      geo.quad(false, true);
+    }
+  }
+
   private meshCrosses(): void {
     const region = this.region;
     const sky = this.lighting.sky, blk = this.lighting.block;
@@ -779,6 +849,10 @@ export class ChunkMesher {
             continue;
           }
           if (SHAPE[id] !== SHAPE_CROSS) continue;
+          if (CROP_STYLE[id] !== 0) {
+            this.emitCrop(id, x, y, z, i);
+            continue;
+          }
           const slot = VARIANT_SLOT[id];
           const layer = slot ? VARIANT_LAYER[(slot * 32 + ((this.metaRegion[i] >> VARIANT_SHIFT[id]) & 31)) * 6] : FACE_LAYER[id * 6];
           geo.currentTint = this.tintFor(id, x, z);

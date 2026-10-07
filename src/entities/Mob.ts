@@ -10,6 +10,7 @@ import type { PrimedTnt } from './PrimedTnt';
 import { GoalSelector } from './ai/Goal';
 import { Navigator } from './ai/Navigator';
 import { setupBrain } from './ai/brains';
+import { canTrample } from '../world/Farming';
 
 /** Ticks a skeleton waits after a shot before it draws again (Minecraft: 40 on Easy/Normal, 20 on Hard). */
 export const SKELETON_SHOT_INTERVAL = 40;
@@ -96,6 +97,8 @@ export interface MobWorld {
   lastAttackerOf?(playerId: number): Mob | null;
   /** Drops an item into the world (eggs, wool). */
   dropItem?(stack: ItemStack, x: number, y: number, z: number): void;
+  /** A mob landed at its feet position after falling `fall` blocks: farmland under it may turn into dirt. */
+  trample?(x: number, y: number, z: number, fall: number): void;
 }
 
 /** Ticks of love mode, breeding cooldown and growth of a baby (Minecraft Java 1.21). */
@@ -450,6 +453,8 @@ export class Mob extends Entity implements DamageTarget {
 
   protected override onLand(fall: number): void {
     if (this.type.kind !== 'chicken' && this.type.kind !== 'cave_spider' && fall > 3) this.health -= Math.ceil(fall - 3);
+    // Big mobs trample farmland (Minecraft: width² × height > 0.512, only while mobGriefing is on).
+    if (fall > 0.5 && canTrample(this.width, this.height)) this.world?.trample?.(this.x, this.y, this.z, fall);
   }
 }
 

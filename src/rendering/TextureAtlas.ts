@@ -4,6 +4,7 @@ import { defaultTint } from '../world/BiomeColors';
 import { CONTENT_PAINTERS } from './ContentPainters';
 import { REDSTONE_PAINTERS } from './RedstonePainters';
 import { ENCHANT_PAINTERS } from './EnchantPainters';
+import { FARM_PAINTERS } from './FarmPainters';
 import type { PackImage } from './TexturePacks';
 import { hashString, mulberry32 } from '../world/Noise';
 
@@ -92,6 +93,7 @@ const PAINTERS: Record<string, (img: Img, r: Rand) => void> = {
   ...CONTENT_PAINTERS,
   ...REDSTONE_PAINTERS,
   ...ENCHANT_PAINTERS,
+  ...FARM_PAINTERS,
 };
 
 /** Names of all textures that have a procedural painter (tests check that every texture the registry uses is among them). */

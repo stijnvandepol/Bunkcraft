@@ -281,6 +281,11 @@ export class GameServer {
   private readonly tickHz: number = 20;
   /** Weather of this world (minecraft game types only; arcade rooms are always clear). */
   private readonly weather = new Weather();
+  /** The world as the weather rules read it (rain on farmland). */
+  private readonly weatherQuery = {
+    getBlock: (x: number, y: number, z: number): number => this.entities!.world.getBlock(x, y, z),
+    biomeAt: (x: number, z: number): number => this.entities!.world.biomeName(x, z),
+  };
   private weatherVersion = -1;
   private readonly strikeRoll = { dx: 0, dz: 0 };
   private timers: NodeJS.Timeout[] = [];
@@ -358,6 +363,7 @@ export class GameServer {
       },
       recordEdit: (x, y, z, id, meta) => { this.world.edits[`${x},${y},${z}`] = packState(id, meta); this.dirty = true; },
       skyDarkness: () => this.weather.skyDarkness,
+      rainingAt: (x, y, z) => !!this.entities && this.weather.isRainingAt(this.weatherQuery, x, y, z),
     }, () => this.world.time, this.world.genVersion, opts.genPool ?? null);
     if (this.entities) {
       const ents = this.entities;
