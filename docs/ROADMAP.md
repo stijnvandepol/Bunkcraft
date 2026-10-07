@@ -264,6 +264,13 @@ regenereert, respawns en een scoreboard. Beschrijving, besturing en wapentabel: 
   binaire snapshots (v2). Tests: client-physics-replay over alle kaarten, `scripts/cheat-bots.ts`.
 - **Vier nieuwe vrije kaarten in BO2-stijl: Gedaan.** Skyline Villa (villa met zwembad), Riptide (jacht), Sundown (dorp) en
   Terminus (station), puntsymmetrisch met per helft een eigen palet; alle met zones en vlaggen (zie `docs/GAMEMODES.md`).
+- **Kaarten leuker (Nuketown-gevoel): Gedaan (oktober 2026).** Atomic Lane opnieuw opgebouwd (72 × 48, huizen met volledig
+  interieur, doorloopbare bus en verhuiswagen, dichte straat: zichtbare vloer 30% → 11%, gevechtsafstand 38 → 25 blokken),
+  zes nieuwe kleine kaarten met drie lanes en een landmark: Fountain Square, Rebar, Flight Deck, Tin Roofs, Galleria
+  (binnen, ook voor verstoppen) en Scrapyard; jump pads op trage routes; bomplaatsen op alle nieuwe kaarten; geen spawn
+  meer zichtbaar vanaf de vijandelijke helft (behalve Classic). Analyse en metingen: [`research/MAPS.md`](research/MAPS.md),
+  meetscripts `scripts/qa/map-flow.ts` en `scripts/map-metrics.ts`. **Volgende stap:** Classic uit de rotatie of compacter,
+  Villa/Terminus/Harbor Yard inkorten of jump pads op de lange routes, playtest per kaart.
 - **BunkCraft Realms: Gedaan.** Multiplayer is alleen Minecraft; de arcade-modes zitten onder *BunkCraft Realms*: playlist
   met live spelersaantallen, **Snel spelen** (server-side matchmaking `POST /api/quickplay`: volste open lobby die niet bijna
   klaar is, anders een nieuwe), *Lobby's bekijken* (fase, tijd, kaart), *Privélobby* (mode, kaart, limieten, max. spelers,

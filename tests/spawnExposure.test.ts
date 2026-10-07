@@ -5,10 +5,13 @@ import { reachable } from './helpers/mapAnalysis';
 
 /**
  * Spawn trapping: on these maps no spot the enemy can walk to on its own half has a clear line into a team
- * spawn (eye to chest or eye). scripts/qa/map-audit.ts measures every map; the older open maps still have
- * long lines into the spawns and are not held to this yet.
+ * spawn (eye to chest or eye). scripts/qa/map-audit.ts measures every map; the classic arena still has
+ * long lines into its spawns and is not held to this.
  */
-const SHELTERED = ['desert', 'bunker', 'villa', 'yacht', 'town', 'station'] as const;
+const SHELTERED = [
+  'suburb', 'quarter', 'dockyard', 'desert', 'atomic', 'bunker', 'villa', 'yacht', 'town', 'station',
+  'plaza', 'site', 'carrier', 'shanty', 'mall', 'scrap',
+] as const;
 const EYE = 1.62;
 
 /** Reachable standing spots that see into one of `team`'s spawns: on the enemy half, and in total. */

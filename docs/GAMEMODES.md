@@ -77,15 +77,21 @@ kleurenpalet, spiegelsymmetrisch voor tdm, omheind en met spawns die ver uit elk
 | Kaart | Id | Wat | Objectives |
 |---|---|---|---|
 | Classic | `classic` | De oorspronkelijke arena (96 × 96): middenplatform, corridors, dekking. Steen en hout. | zones, vlaggen |
-| Maple Court | `suburb` | Klein en snel (64 × 40): twee bakstenen huizen met tuin tegenover elkaar, een straat met auto's en een bestelbus, garages op de hoeken, trappen naar de platte daken. Close quarters. | zones |
-| Old Quarter | `quarter` | Stedelijk (80 × 64): een binnenplaats met fontein, een poortgebouw, hoge bakstenen blokken met balkons en dakstairs, steegjes van 4 breed als flanken, een omheind plein per team. | zones, vlaggen |
-| Harbor Yard | `dockyard` | Industrieel (88 × 64): containerstapels van gekleurde wol (teamkleuren aan de eigen kant), een grote loods in het midden, een kraandek op houten pilaren en een schip met een brug om vanaf te snipen. | zones, vlaggen |
-| Dust Bazaar | `desert` | Lange zichtlijnen (96 × 64): zand en zandsteen, een markt met gestreepte kramen, platte daken langs een lange open baan en een sluipschuttertoren aan elk uiteinde, achter de ommuurde teambasis. | – |
-| Atomic Lane | `atomic` | Vrije (puntsymmetrische) kaart (80 × 52): twee huizen, een bus en een rotonde. Standaard in het menu. | zones, vlaggen |
+| Maple Court | `suburb` | Klein en snel (64 × 40): twee bakstenen huizen met tuin tegenover elkaar, een straat met auto's en een bestelbus, garages op de hoeken, trappen naar de platte daken. Close quarters. | zones, vlaggen, bommen |
+| Old Quarter | `quarter` | Stedelijk (80 × 64): een binnenplaats met fontein, een poortgebouw, hoge bakstenen blokken met balkons en dakstairs, steegjes van 4 breed als flanken, een omheind plein per team. | zones, vlaggen, bommen |
+| Harbor Yard | `dockyard` | Industrieel (88 × 64): containerstapels van gekleurde wol (teamkleuren aan de eigen kant), een grote loods in het midden, een kraandek op houten pilaren en een schip met een brug om vanaf te snipen. | zones, vlaggen, bommen |
+| Dust Bazaar | `desert` | Lange zichtlijnen (96 × 64): zand en zandsteen, een markt met gestreepte kramen, platte daken langs een lange open baan en een sluipschuttertoren aan elk uiteinde, achter de ommuurde teambasis. | zones, vlaggen, bommen |
+| Atomic Lane | `atomic` | Vrije (puntsymmetrische) kaart (72 × 48): twee huizen van twee verdiepingen, een bus, een verhuiswagen en een rotonde, zie hieronder. Standaard in het menu. | zones, vlaggen, bommen |
 | Skyline Villa | `villa` | Vrije (puntsymmetrische) kaart (88 × 64): een witte villa op een heuvel, zie hieronder. | zones, vlaggen |
 | Riptide | `yacht` | Vrije kaart (88 × 56): een superjacht in een jachthaven, zie hieronder. | zones, vlaggen |
 | Sundown | `town` | Vrije kaart (80 × 68): een stoffig kruispuntdorp, zie hieronder. | zones, vlaggen |
 | Terminus | `station` | Vrije kaart (84 × 68): een treinstation, zie hieronder. | zones, vlaggen |
+| Fountain Square | `plaza` | Vrije kaart (68 × 48): een stadsplein met fontein, hotel, caféterrassen, tramhalte en winkelgalerij, zie hieronder. | zones, vlaggen, bommen |
+| Rebar | `site` | Vrije kaart (64 × 44): een bouwplaats met een betonnen casco, hellingen, steiger en graafmachine, zie hieronder. | zones, vlaggen, bommen |
+| Flight Deck | `carrier` | Vrije kaart (72 × 40): het vliegdek van een vliegdekschip, zie hieronder. | zones, vlaggen, bommen |
+| Tin Roofs | `shanty` | Vrije kaart (64 × 44): een dichte sloppenwijk met plankbruggen over de daken en een watertoren, zie hieronder. | zones, vlaggen, bommen |
+| Galleria | `mall` | Vrije binnenkaart (64 × 44): een winkelcentrum van twee verdiepingen onder één dak, zie hieronder. | zones, vlaggen, bommen |
+| Scrapyard | `scrap` | Vrije kaart (60 × 42): een autosloperij als doolhof van geplette auto's, zie hieronder. | zones, vlaggen, bommen |
 | Bunker Flag | `bunker` | Voor capture the flag (64 × 40): een droge rivierbedding met oevers van 2 hoog, twee oversteekplaatsen en een overdekte duiker in het midden; elke vlag in een betonnen bunker met één deur achter een scherfmuur, spawns in een ommuurde tuin erachter. | zones, vlaggen |
 
 ### Vrije kaarten in BO2-stijl
@@ -94,6 +100,42 @@ Net als Atomic Lane getekend met `layout: 'free'`: één helft wordt getekend en
 gedraaid (`turned()` in `helpers.ts`), met een eigen palet en eigen details per helft. De routes zijn daardoor eerlijk,
 maar de twee kanten zien er anders uit. Screenshots: `docs/screenshots/maps/<id>-*.png` (`python3 scripts/shots.py <id> docs/screenshots/maps <poort>`).
 
+- **Atomic Lane** (`atomic`, het visitekaartje): een doodlopende straat uit de jaren 50 op een testterrein. Een geel huis
+  (rood) en een mintgroen huis (blauw) staan tegenover elkaar, elk met een volledig interieur: keuken met zwart-wit
+  geblokte vloer, koelkast en fornuis, woonkamer met bank en tv, een trap naar boven, een kinderkamer en een slaapkamer.
+  De open ramen boven kijken over de straat; uit het voorraam spring je op het verandadak. De garage (met auto) heeft een
+  plat dak: bereikbaar via kratten in de achtertuin of een springkussen (jump pad) op de oprit, en door het zijraam loop
+  je zo de bovenverdieping in. Spawns in de achtertuin achter een schutting; aan de ene kant een tuin met schommel en
+  zandbak, aan de andere een opzetzwembad. Drie lanes: achter de schoolbus (doorloopbaar, open ramen), de straat over de
+  rotonde (heg rond een grote boom), achter de verhuiswagen. Geparkeerde auto's, tuinmuurtjes, heggen en brievenbussen
+  breken de straat op: de huisgevels zien elkaar alleen nog vanaf de bovenramen.
+- **Fountain Square** (`plaza`): een plein rond een fontein met twee bassins en een gouden beeld. Per team een hotel van
+  twee verdiepingen (lobby met balie en lift, suites, een balkon boven het plein), een café met dakterras en een
+  loopbrug ertussen boven de poort naar het voorplein waar het team spawnt. De ene zijbaan is een tramstraat (tram om
+  doorheen te rennen, taxi, kiosk, abri), de andere een winkelgalerij waarvan het platte dak een verhoogde looproute is.
+  Jump pads naar het galerijdak en naar het hotelbalkon.
+- **Rebar** (`site`): een bouwplaats. In het midden het betonnen casco van een kantoor: kolommen, een eerste verdieping met
+  een groot atriumgat, een trappenhuis, een helling buiten en een jump pad in het atrium, en een klein topdek in twee
+  hoeken. Per team een omheinde bouwkeet-compound (schutting in teamkleur) en een materiaalwerf. Zijbanen: een
+  graafbaan (grindheuvel om op te klimmen, graafmachine, houtstapel) en een steigerbaan langs een halve bakstenen muur
+  met een steiger als verhoogde loopbrug. Boven elke zijbaan een torenkraan.
+- **Flight Deck** (`carrier`): het vliegdek van een vliegdekschip. Elk team spawnt in een hangar aan zijn eind van het dek
+  en heeft een eiland (de toren) met een brug op de verdieping, open ramen over het dek en een radarmast. Zijbanen: een
+  rij jets met opgeklapte vleugels onder het eiland, en een verhoogde vliegtuiglift met een helikopter. In het midden
+  jets op de katapulten, een straalscherm, een bergingskraan, trekkers en munitiekarren.
+- **Tin Roofs** (`shanty`): een sloppenwijk vol krotten van leem, planken en geverfd beton onder roestige golfplaten.
+  Plankbruggen verbinden de bovenverdieping van de huizen met de platte daken aan de overkant: een tweede route over de
+  wijk. In het midden een binnenplaats met een watertoren op vier poten en basketbalpalen. Zijbanen: een steeg met
+  waslijnen en scooters (jump pad naar een dak), en een marktsteeg met kramen. Spawns in een ommuurd erf.
+- **Galleria** (`mall`): een overdekt winkelcentrum met een lichtkoepel boven het atrium. Spawns in het warenhuis aan elk
+  eind (paspoppen in de etalage), de vlag in het magazijn erachter. Beneden winkels langs beide lange wanden
+  (elektronica, speelgoed, sport, boeken, café, mode), een foodcourt met burgerkraam en een draaimolen in het midden;
+  boven een mezzanine met een speelhal, een bioscoopfoyer, een bowlingbaan en een speelhoek, bereikbaar met roltrappen
+  en jump pads. Winkels, toiletten en magazijnen maken het ook een goede verstopkaart.
+- **Scrapyard** (`scrap`): een autosloperij. Muren van geplette auto's (twee, drie hoog) vormen een doolhof van smalle
+  gangen; een portaalkraan staat over het midden met een auto aan de magneet boven de middelste zone. Per team een
+  poortplein achter een plaatijzeren hek, een kantoor op palen. Zijbanen: een bandenberg om op te klimmen (jump pad naar
+  een autostapel) en een baan met autostapels en een camper.
 - **Skyline Villa** (`villa`): een moderne witte villa van twee verdiepingen met glazen gevels rond een open atrium (de
   middelste zone). Boven de begane grond een dakterras met glazen balustrade, trappen naar het platte dak van de
   slaapvleugel. Rood heeft een leeg zwembad (een verzonken bak van blauwe wol) met ligstoelen en parasols, blauw een
@@ -119,6 +161,13 @@ rood en blauw; spiegel- of puntsymmetrisch zoals de kaart), welke daarvan domina
 zone of vlag in een gebouw krijgt een `level` (hoogte boven de vloer). `tests/mapObjectives.test.ts` eist: staanplek met
 hoofdruimte, ≥ 60% open schijf, bereikbaar vanaf beide spawns, niet zichtbaar vanaf vijandelijke spawns, vlag 8–25 blokken
 van de eigen en > 30 van de vijandelijke spawns. Kandidaten toetsen: `npx tsx scripts/objective-eval.ts <map> zone x z r flag x z`.
+Bomplaatsen (search and destroy, `sites`, A en B in de blauwe helft) plaats je met `npx tsx scripts/site-scan.ts <map>`;
+`tests/mapSites.test.ts` controleert ze.
+
+**Kaartkwaliteit meten** (zie `docs/research/MAPS.md`): `npx tsx scripts/map-metrics.ts` (dekking, zichtlijnen, `vis%`),
+`npx tsx scripts/qa/map-flow.ts` (botsimulatie: tijd tot eerste contact, gevechtsafstand), `npx tsx scripts/qa/map-audit.ts`
+(bereikbaarheid, vallen, spawn-blootstelling) en `npx tsx scripts/ascii-map.ts <map>` (bovenaanzicht in tekst).
+`tests/spawnExposure.test.ts` eist op alle kaarten behalve Classic dat geen plek op de vijandelijke helft een spawn ziet.
 
 Met **Rotate** speelt elke volgende match op de volgende kaart (die het type ondersteunt); de client voegt zich dan automatisch opnieuw bij de
 game (even het laadscherm). Tijdens een match valt er niets aan de kaart te kiezen.
