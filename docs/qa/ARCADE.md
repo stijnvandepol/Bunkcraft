@@ -1,5 +1,134 @@
 # QA: arcade-modes speeltest
 
+## Ronde 3: spelen als een speler, wapens, one-hit kills (oktober 2026)
+
+Aanleiding: Stijn vond na zelf spelen "nog te veel bugs" (de klasse uit de warm-up werkte pas na je volgende dood, en de
+eerdere QA zag dat niet omdat die interne state porde). Deze ronde is gespeeld zoals een speler speelt: de **productiebuild**
+(`npm run build`, `node dist-server/index.js`, eigen poort, `ROOM_CREATE_LIMIT=1000`), Chromium (`--use-angle=metal`) **en**
+WebKit, alleen echte invoer (klikken, toetsen B, Tab, Esc, 1-8, R, rechtermuis, Shift) en alleen wat de pagina laat zien
+(DOM-tekst, screenshots). Productie heeft geen `window.game`. Headless browsers hebben geen Pointer Lock: `scripts/qa/human.ts`
+emuleert die zoals Chrome en Safari doen (een gebaar nodig, Esc wordt door de browser opgegeten en geeft de muis vrij, binnen 1 s
+na Esc opnieuw vergrendelen wordt geweigerd, focusverlies geeft vrij). De code van het spel blijft daarbij ongewijzigd.
+
+### Wat er getest is
+
+| Onderdeel | Script | Resultaat |
+|---|---|---|
+| Klasse kiezen in elke fase | `r3-classes.ts` (Chromium en WebKit), 3 protocolbots maken de match live en schieten je dood | warm-up, live vlak na spawn, live midden in je leven (pas volgend leven), doodscherm met cijfertoets en met B, na respawn: 10/10 in beide browsers |
+| Tussen rondes (Elimination), na de kaartstemming | `r3-modes.ts elim vote` | klasse tussen de rondes zit in je handen bij de volgende ronde; na stemmen (toets 2) laadt de gekozen kaart, klasse en lobby blijven |
+| Privélobby, joinen met code (Safari), met link, lobby's bekijken, weggaan en terugkomen | `r3-flows.ts private browse leave` | code + link, voorbeeldregel bij het typen (kleine letters, streepje), alle drie in één lobby, link verdwijnt uit de adresbalk, CTF-panelen live, terug naar de playlist; dubbelklik in Lobby's bekijken; terugkomen in dezelfde lobby met dezelfde klasse, geen spookspeler |
+| Taal NL in een match, venstergroottes, tabwissel, Esc + direct terug, instellingen | `r3-flows.ts lang resize focus settings` | zie bugs 3, 4, 7; FOV-slider werkt in de match |
+| Elk wapen × elke optiek in de hand | `r3-weapons.ts` (Chromium, WebKit voor scope/combat) | 33/33 combinaties: HUD-naam klopt, heup/ADS/schot/herladen als screenshot |
+| Modes met bots | `r3-modes.ts gungame ctf hardpoint domination` | live, dood, Tab, geen page errors; zie bugs 6, 8, 9 |
+| Server herstart midden in een match | `r3-restart.ts` | "Reconnecting automatically", zelfde lobby, zelfde klasse, zonder klikken |
+| Terugkerende speler na een update | `r3-returning.ts` (persistent profiel met service worker, oude/kapotte localStorage) | nieuwe build laadt, update-toast verschijnt, kapotte opgeslagen klasse valt terug op geldige uitrusting |
+| Shotgun en sniper voor/na | `r3-gunfeel.ts` (de servercode zelf: `rayPlayer`, `spreadDirection`, `pelletPattern`, `damageAt`) | zie wapenoordeel |
+
+### Gerepareerd (met regressietest die faalt zonder de fix)
+
+1. **Create-a-Class: de editor bleef je oude Custom-klasse tonen na een preset-klik** (je kiest Breacher, de kolommen zeggen nog
+   Assault Rifle: de keuze lijkt niets te doen). Repro: B → klik "3 Breacher". De editor toont nu de gekozen klasse en aanpassen
+   begint vanaf die klasse. Ook **schenen de chatregels door het menu**, en de regel onderaan zei altijd "Applies at once right
+   after spawning, else from your next life". Die regel volgt nu de serverregel (`classApplies`, één bron voor client en server):
+   "Applies now" / "Je zit in een gevecht: geldt vanaf je volgende leven" / "Geldt zodra je respawnt", en loopt mee met de klok.
+   e2e: `realms-classes.spec.ts`; unit: `arcadeClasses.test.ts`. Shots: `r3-cac-before.jpg`, `r3-cac-after.jpg`.
+2. **Realms: 429 Too Many Requests voor een huishouden.** Drie browsers achter één adres met de playlist open (LAN-party, gezin)
+   kregen 429 op de spelersaantallen en een fout in Lobby's bekijken (30 lijstverzoeken/min per adres, de playlist pollde elke 5 s,
+   ook onder andere schermen). Nu 120/min (lijsten zijn 5 s gecachet) en de playlist pollt elke 10 s, alleen als hij bovenaan staat
+   in een zichtbare tab. Test: `realms.it.test.ts`.
+3. **Taal wisselen in een match liet de HUD Engels** ("HEALTH", lobbypaneel, stempaneel, het hele Create-a-Class-menu) tot de
+   volgende match; de chatregels bij het joinen (mode-uitleg, spelcode) waren altijd Engels; "Click to play" ook. Alles wordt nu
+   opnieuw getekend bij een taalwissel. In het Nederlands liep "GEZONDHEID" tegen het getal aan ("GEZONDHEID100").
+   e2e: `realms-classes.spec.ts`. Shots: `r3-nl-health-before.jpg`, `r3-nl-hud-after.jpg`.
+4. **Hardpoint: "Hill moves in 0" in de warm-up** (de server heeft dan nog geen heuveltimer). De regel staat er nu alleen als de
+   ronde live is. e2e: `realms-classes.spec.ts`. Shot: `r3-hill-0-wall-before.jpg`.
+5. **216 spawns keken tegen een muur op 1-4 blokken** (richting het midden, maar met een hut of krat ervoor): elk leven begon met
+   "waar ben ik?". Een spawn draait nu tot 75° van het midden af naar het meest open zicht, over alle dekkingsvarianten. Over: de
+   vier teamspawns in de kamers van Bunker (3 blokken). Test: `spawnFacing.test.ts`, audit: `scripts/qa/spawn-facing.ts`.
+6. **Killfeed over de score** (1280×720: een lange regel bedekte de blauwe score) en **tussen Elimination-rondes stapelden banner,
+   rondetoast, spawn-protection-label en lobbypaneel op elkaar**; daarna liep in het midden de chat door het label. Killfeed blijft
+   nu rechts van de scorebalk (lange regel breekt af), het protection-label staat onderaan in het midden. e2e: `arcade-hud.spec.ts`.
+   Shots: `r3-feed-over-score-before.jpg`, `r3-protect-over-chat-before.jpg`, `r3-elim-roundend-after.jpg`.
+7. **Eindscherm met kaartstemming sneed de onderste rijen af**: in een lobby van zes zag de laatste speler zijn eigen regel niet
+   (en bij 12 spelers de helft). De borden laten nu de laagste rijen vallen (nooit de jouwe) met "... en nog N" en passen opnieuw
+   als de stemming binnenkomt of het venster verandert. Ook het Tab-bord. e2e: `arcade-hud.spec.ts`. Shot: `r3-vote-own-row-before.jpg`.
+8. **Objectmarkers ("CAPTURE 44m") over het Tab-scorebord.** Verborgen zolang het bord open is. e2e. Shot: `r3-marker-over-board-before.jpg`.
+9. **Gun game: "2 Knife 3 Knife"** (de modus geeft het mes ook als secundair). Eén messlot. e2e. Shots: `r3-gungame-two-knives-before.jpg`,
+   `r3-gungame-after.jpg`.
+10. **Safari: "Click to play" flitste na het sluiten van een menu.** Safari's `requestPointerLock` geeft geen promise terug en
+    vergrendelt een moment later; het spel besloot meteen "niet vergrendeld", zette de wereld op pauze en toonde het
+    klik-scherm voor een frame. `requestLock` wacht nu op het lock- of error-event (max. 250 ms). e2e met Safari-gedrag.
+11. **Quick play stuurde iedereen naar "Game not found"** als de bestanden van een publieke lobby weg waren (met de hand gewist,
+    backup teruggezet): de lobby bleef in de lijst. Gevonden toen twee QA-servers een datamap deelden. Test: `realms.test.ts`.
+12. **Herladen:** een herlading eindigde op de client pas als de server het bevestigde (een halve ronde ná de animatie: zichtbaar
+    wachten), en een herlaadverzoek in de 0,25 s na een wapenwissel weigerde de server terwijl de client de animatie speelde
+    (tellers liepen uit elkaar). Nu eindigt de client op zijn eigen klok met dezelfde `reloadTimeFor`, accepteert de server een
+    schot tot 0,1 s vóór zijn timer, en vraagt de client niet te vroeg. Test: `match.test.ts`.
+13. **De camerakick lag niet in het richtpunt**: tijdens een rifle-spray stond het richtkruis ~1,2° boven waar de kogels gingen, en
+    vlak na een DMR-schot stond de scope 0,2° te hoog. Tijdens het richten geen camerakick meer, vanaf de heup weinig bij automaten
+    (`viewKick`). Test: `arcadeFeel.test.ts`.
+
+### Wapens: voor → na
+
+`r3-gunfeel.ts`, richtfout σ 0,6° (een goede speler), 4000 schoten per cel, kans dat **één schot doodt**:
+
+| Shotgun (heup) | 3 m | 5 m | 7 m | 9 m | 11 m |
+|---|---|---|---|---|---|
+| voor (10 × 13, willekeurige kegel 4,5°) | 100% | 91% | 44% | 12% | 0% |
+| na (8 × 18, vast patroon 3,2°) | 100% | 100% | 99% | 86% | 31% |
+
+| Bolt-Action Sniper (gericht) | 15 m | 30 m | 50 m | 70 m | 90 m |
+|---|---|---|---|---|---|
+| voor (85 schade, alleen headshot doodt) | 3% | 10% | 8% | 6% | 3% |
+| na (100 schade tot 70 m) | 95% | 65% | 38% | 25% | 4% |
+
+(Bij σ 1,2° doodt de nieuwe shotgun op 7 m nog in 84%, de oude in 38%. De sniper-percentages zijn gewoon de trefkans: elk lichaamsschot tot 70 m is een kill.)
+
+| Wapen | Voor | Na |
+|---|---|---|
+| Shotgun | Willekeurige kegel: op 7 m doodde een gecentreerde pomp in 44% van de gevallen, "pellets in de lucht". Pomp 0,86 s | Vast hagelpatroon (midden, binnenring, buitenring, per schot gedraaid), één pomp doodt tot ~8 m, pomp 0,75 s, zwaardere kick |
+| Bolt-Action Sniper | Alleen een headshot doodde; 0,42 s richten; scope zwaaide meteen 0,32°: een hoofd op 40 m (0,57°) was een gok | Eén bodyshot doodt tot 70 m; 0,3 s richten; de eerste ~0,45 s in de scope 20% sway (quickscope), daarna in ~1 s de volle (0,24°); geen camerakick tijdens richten |
+| Semi-Auto Sniper | Twee bodyshots, geen one-shot headshot | Twee bodyshots **of één headshot** op elke afstand (×1,85) |
+| DMR | Drie schoten tot 60 m | Drie schoten tot 90 m: de lange-afstandskoning naast de semi |
+| Revolver | Twee treffers | Eén headshot doodt tot 30 m (was al zo, nu benoemd), sneller herladen |
+| Mes | Twee steken | **Eén steek** |
+| Alle wapens | Herladen 1,1-4,2 s, altijd even lang | ~20% sneller (rifle 1,3 s, pistol 0,95 s, LMG 3,4 s blijft het traagst, dan de grendel-snipers), tactisch herladen (kogels over) 75% |
+| Nieuw: Battle Rifle | – | Zware automaat met combat scope, vier treffers tot 45 m, snelste op 60 m, 20 kogels, hard te beheersen |
+| Nieuw: Lever-Action Carbine | – | Eén headshot doodt tot ~45 m, twee bodyshots, snel richten (0,24 s), trage hendel; wapen voor wie op het hoofd mikt |
+| Nieuw: Anti-Materiel Rifle | – | Eén treffer doodt op elke afstand; traagst met richten (0,5 s), lopen (×0,85) en doorladen (2 s), 3 kogels, 6,3× scope |
+| Nieuw: Combat Scope (2-2,5×) | – | Op rifle, burst, LMG, battle, DMR, semi-auto en lever; bredere lens, dunne vignet, oplichtende chevron, geen sway |
+| Gun Game | Eindigde met burst, revolver, SMG, mes | Eindigt met one-hit wapens: shotgun, revolver, sniper, mes (één steek wint) |
+
+Elk wapen houdt een niche (`arcadeBalance.test.ts`, bewust aangepast: one-shot kills tellen als niche, grendelwapens rekenen met 70%
+van de richtfactor, het dominantie-criterium kijkt ook naar bodyshot-STK). Tabellen: `docs/GAMEMODES.md`, `npx tsx scripts/ttk-matrix.ts`.
+Screenshots: `r3-cac-new-weapons.jpg`, `r3-combat-scope.jpg`, `r3-sniper-scope.jpg`, `r3-battle-rifle.jpg`, `r3-lever-carbine.jpg`, `r3-antimat.jpg`.
+
+Hitregistratie, hitmarkers en het geluid van wapens/inslagen zijn van een andere agent; daar heb ik niets aan veranderd (de nieuwe
+wapens hebben alleen een geluidsprofiel en herlaadstappen in `weaponSounds.ts` gekregen, naar het voorbeeld van de bestaande).
+
+### Open (prioriteit)
+
+1. **(Hoog, movement-agent)** De bewegingsvalidator corrigeert een eerlijke vlagdrager onder last: station, revolversnelheid,
+   seed 1333, regel `wall`. Kwam boven toen de wapenlijst groeide (de seed-runs pakken een wapen per index); `anticheatMovement.test.ts`
+   gebruikt nu de oude vaste lijst, de false positive zelf is niet opgelost.
+2. **(Midden)** Een lege quick-play lobby vult zich sinds de merge met 8 serverbots: de e2e-suite zet `QUICKPLAY_BOTS=0`. Of de
+   warm-up met bots goed voelt ("Wacht op spelers" verschijnt nooit), is niet als speler getest.
+3. **(Midden)** Op 800×600 overlapt het spawn-protection-label het munitiepaneel, en het lobbypaneel de zonemarker; vanaf 1024 breed is
+   alles vrij. Kleinere schaal of het lobbypaneel smaller maken.
+4. **(Laag)** Serverteksten blijven Engels in het Nederlands: MOTD, "X joined the game", "Server restarting. Reconnecting
+   automatically...", "Game not found".
+5. **(Laag)** Het rode-stip/holo-venster is klein bij het richten (het huis staat ver van het oog); de pauzemenu-knoppen
+   Advancements/Statistics/Copy Seed zijn in de arcade zinloos (grijs). De update-toast verschijnt ook midden in een match.
+6. **(Laag)** "Back to Title Screen" op het disconnect-scherm na een Realms-match gaat naar de titel, niet naar de playlist.
+7. **(Info)** De Lever-Action Carbine staat in het TTK-model laag (het model ziet alleen bodyshots en rekent grendelwapens met 70%
+   richtfactor); zijn rol is de headshot. Speel hem met echte spelers voor er getuned wordt.
+8. **(Info)** Echt richten met de hand tegen bots kon headless niet; het wapenoordeel steunt op de servercode met een richtfout-model
+   (`r3-gunfeel.ts`) en op de screenshots van elk wapen in de hand.
+
+Scripts ronde 3: `scripts/qa/human.ts` (helpers + Pointer-Lock-shim), `r3-classes.ts`, `r3-flows.ts`, `r3-modes.ts`, `r3-weapons.ts`,
+`r3-restart.ts`, `r3-returning.ts`, `r3-gunfeel.ts`, `spawn-facing.ts`, `r3-explore.ts`.
+Let op: de scratchpad van deze sessie wordt door meerdere agents gedeeld; gebruik een eigen submap voor `DATA_DIR`, logs en pid-bestanden.
+
 ## Ronde 2: BunkCraft Realms, arsenaal, geluid, anti-cheat (oktober 2026)
 
 Getest na de Realms-hub (snel spelen, lobby's bekijken, privélobby, lobbypaneel, kaartstemming), de nieuwe wapens en optieken,
