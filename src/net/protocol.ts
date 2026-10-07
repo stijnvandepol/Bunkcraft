@@ -223,7 +223,13 @@ export type ClientMessage =
    */
   | { t: 'loadout'; primary: string; secondary?: string; optic?: string; perk?: string }
   /** Arcade: fire the weapon in a slot. Origin is the client's eye, dir the aim; the server re-checks both. */
-  | { t: 'fire'; slot: 0 | 1 | 2; ox: number; oy: number; oz: number; dx: number; dy: number; dz: number; ads: boolean }
+  /**
+   * A shot. `rk`: the server tick (fractional) the shooter's screen showed the other players at (snapshots carry
+   * `k`); the server rewinds the targets to exactly that moment, within limits. `seq`: the client's shot counter,
+   * echoed in `ammo` and `hit` (spread seed sync, hit feedback). `mv`/`air`: the shooter was moving / airborne
+   * (spread penalty, see shotSpread).
+   */
+  | { t: 'fire'; slot: 0 | 1 | 2; ox: number; oy: number; oz: number; dx: number; dy: number; dz: number; ads: boolean; rk?: number; seq?: number; mv?: boolean; air?: boolean }
   /** Arcade: start reloading the weapon in a slot. */
   | { t: 'reload'; slot: 0 | 1 | 2 }
   /** Arcade: switch weapon slot (so everyone sees what you hold). */
