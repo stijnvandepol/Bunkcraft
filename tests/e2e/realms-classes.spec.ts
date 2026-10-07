@@ -47,6 +47,31 @@ test('create-a-class: a picked preset shows in the editor, applies at once in th
   await expect(page.locator('.chat')).toBeVisible();
 });
 
+test('Safari-style pointer lock (no promise, event later): closing Create-a-Class does not flash "Click to play"', async ({ page }) => {
+  test.setTimeout(120_000);
+  // Safari's requestPointerLock returns undefined and locks a moment later; the game used to decide "not locked" at once.
+  await page.addInitScript(() => {
+    let el: Element | null = null;
+    Object.defineProperty(Document.prototype, 'pointerLockElement', { configurable: true, get: () => el });
+    Element.prototype.requestPointerLock = function (this: Element) {
+      setTimeout(() => { el = this; document.dispatchEvent(new Event('pointerlockchange')); }, 30);
+    } as never;
+    Document.prototype.exitPointerLock = function () { el = null; setTimeout(() => document.dispatchEvent(new Event('pointerlockchange')), 0); };
+    (window as any).ctpSeen = 0;
+    new MutationObserver(() => { if (document.querySelector('.click-to-play')) (window as any).ctpSeen++; }).observe(document, { childList: true, subtree: true });
+  });
+  await quickPlay(page, 'safari_e2e');
+  await page.mouse.click(640, 360); // into the game: a real (emulated) lock
+  await expect.poll(() => page.evaluate(() => !!document.pointerLockElement)).toBe(true);
+  await page.evaluate(() => { (window as any).ctpSeen = 0; });
+  await page.keyboard.press('KeyB');
+  await expect(page.locator('.arc-loadout')).toBeVisible();
+  await page.locator('.arc-loadout button.mc-btn').click();
+  await expect.poll(() => page.evaluate(() => !!document.pointerLockElement)).toBe(true);
+  await play(page, 300);
+  expect(await page.evaluate(() => (window as any).ctpSeen)).toBe(0);
+});
+
 test('hardpoint warm-up: no "Hill moves in 0" before the round is live', async ({ page }) => {
   test.setTimeout(120_000);
   await quickPlay(page, 'hill_e2e', 'hardpoint');

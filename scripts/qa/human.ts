@@ -45,8 +45,8 @@ const POINTER_LOCK_SHIM = `(() => {
       return Promise.reject(new DOMException('The user has exited the lock before this request was completed.', 'SecurityError'));
     }
     el = this;
-    setTimeout(() => fire('pointerlockchange'), 0);
-    return Promise.resolve();
+    // Like Chrome: the change event fires, then the promise resolves.
+    return new Promise((resolve) => setTimeout(() => { fire('pointerlockchange'); resolve(); }, 0));
   };
   const release = (byUser) => {
     if (!el) return;

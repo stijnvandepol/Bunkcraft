@@ -12,6 +12,9 @@ const FIXED_KEYS = new Set(['F1', 'F3', 'Tab']);
  * Keys are tracked by `KeyboardEvent.code`, mouse buttons as "Mouse<button>" (only while
  * the pointer is locked), so every action can be bound to either (see Keybinds.ts).
  */
+/** Longest wait for the browser's answer to a pointer lock request. */
+const LOCK_WAIT_MS = 250;
+
 export class Input {
   private readonly down = new Set<string>();
   private readonly pressed = new Set<string>();
@@ -235,9 +238,10 @@ export class Input {
       this.setSoftLocked(true);
       return;
     }
+    const settled = this.lockSettled();
     try {
       // Raw (unaccelerated) mouse input where supported: lower latency, 1:1 aim.
-      await (this.canvas.requestPointerLock as (o?: { unadjustedMovement?: boolean }) => Promise<void>)({ unadjustedMovement: this.rawInput });
+      await (this.canvas.requestPointerLock as (o?: { unadjustedMovement?: boolean }) => Promise<void> | undefined)({ unadjustedMovement: this.rawInput });
     } catch {
       try {
         await this.canvas.requestPointerLock();
@@ -245,6 +249,25 @@ export class Input {
         // Browsers refuse re-locking for ~1s after ESC; the user can click again.
       }
     }
+    // Safari returns no promise: the lock (or its refusal) arrives as an event a moment later. Wait for it, or the caller
+    // sees "not locked" and flashes the click-to-play screen for a frame before the lock lands.
+    if (!this.locked) await settled;
+  }
+
+  /** Resolves on the next pointerlockchange or pointerlockerror, or after LOCK_WAIT_MS. */
+  private lockSettled(): Promise<void> {
+    return new Promise((resolve) => {
+      const done = () => {
+        document.removeEventListener('pointerlockchange', done);
+        document.removeEventListener('pointerlockerror', done);
+        window.clearTimeout(timer);
+        // The game's own pointerlockchange listener (registered first) has updated `locked` by now.
+        resolve();
+      };
+      const timer = window.setTimeout(done, LOCK_WAIT_MS);
+      document.addEventListener('pointerlockchange', done);
+      document.addEventListener('pointerlockerror', done);
+    });
   }
 
   exitLock(): void {
