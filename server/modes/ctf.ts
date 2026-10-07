@@ -156,6 +156,11 @@ export class CtfLogic extends BaseLogic {
     return !!this.carrying(p);
   }
 
+  /** A flag carrier runs `params.carrySlow` slower. */
+  speedMul(m: Match, p: MatchPlayer): number {
+    return this.carrying(p) ? 1 - (m.def.params?.carrySlow ?? 0.1) : 1;
+  }
+
   modeState(m: Match): ModeState {
     this.ensure(m);
     const now = m.now();

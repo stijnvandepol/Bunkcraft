@@ -301,6 +301,49 @@ TypeScript/Vite-build bleef in de geneste Docker hangen bij "rendering chunks" (
 `--build`-test een Dockerfile `FROM` de testimage; de GHCR-push zelf (gebeurt pas bij de eerste push naar `main`).
 shellcheck en actionlint: schoon.
 
+### 5.2 Automatisch deployen (gedaan)
+
+Gebruik: docs/SERVER.md, "Automatisch deployen". Keuzes:
+
+- **Pull als standaard, push optioneel.** Pull (een timer op de server) heeft geen servertoegang in GitHub nodig en werkt
+  ook als GitHub of SSH even weg is. Push (CI-job `deploy`, SSH) is alleen sneller (seconden i.p.v. ≤ 5 min) en zit achter
+  de Environment `production` (goedkeuren mogelijk). Beide eindigen in hetzelfde script (`autoupdate.sh` →
+  `update.sh`), dus één pad om te testen. Watchtower e.d. vielen af: geen health check met rollback, geen "wacht tot de
+  match klaar is", en een container met de Docker-socket.
+- **Wijziging zien zonder downloaden:** `HEAD /v2/<repo>/manifests/<tag>` met een anoniem token geeft de digest
+  (GHCR, Docker Hub en een lokale registry getest, gelijk aan `docker buildx imagetools inspect`), vergeleken met de
+  `RepoDigests` van de draaiende image. Werkt dat niet (privé-registry), dan `docker compose pull` met Docker's eigen login.
+- **Spelers ontzien:** `/health` kreeg `playersInPlay` (Minecraft-werelden altijd, arcade alleen in countdown/live/roundend).
+  Pas bij 0 deployen, hooguit 30 min wachten, dan een chatmelding 60 s vooraf via de nieuwe `POST /api/admin/announce`.
+  Vlak voor de back-up `POST /api/admin/save`. Beide calls lopen in de container (`node`, token uit de eigen omgeving),
+  dus het token komt nooit op een commandoregel van de host.
+- **Smoketest na elke update** (`scripts/server-check.mjs`, ook in CI vóór het pushen): `/health`, de gamepagina, het
+  hoofdscript (moet echt JavaScript zijn: een ontbrekend bestand valt terug op `index.html` met 200), `/api/server`, en een
+  testgame aanmaken, opzoeken en verwijderen. Faalt hij, dan rollt `update.sh` terug zoals bij een ongezonde start.
+- **Geen deploy-lus:** een teruggedraaide digest staat in `.autoupdate-state` en wordt overgeslagen tot er een nieuwere is.
+- **Kanalen:** `stable` beweegt alleen op `v*`-tags zonder `-` (dus niet op release candidates).
+- **Versie zichtbaar:** build-arg `GIT_SHA` → `/health` (`1.0.0+1a2b3c4`) en het titelscherm (`VITE_GIT_SHA`).
+
+**Getest** in een `ubuntu:24.04`-container met **systemd als PID 1** (privileged, Docker 29.8 uit de officiële repo via
+`install.sh`, containerd-imagestore), lokale `registry:2` als GHCR, timer op 1 minuut:
+
+| Scenario | Uitkomst |
+|---|---|
+| `install.sh --no-start`, daarna nog eens met start | timer `bunkcraft-autoupdate.timer` actief, v1 draait |
+| Nieuwe `latest` gepusht | **de timer pakt hem op** (~105 s): back-up, herstart, smoketest (game aangemaakt + verwijderd), `update ok` in de deploylog |
+| Image die crasht | niet gezond → automatisch terug, digest gemarkeerd; volgende run: "skipping … rolled back before" |
+| Image die `/health` haalt maar verder niets | smoketest faalt (`game page`) → automatisch terug |
+| Speler blijft online (max. wachttijd 1 min) | wacht, chatmelding "restarts in 10 seconds" komt aan, dan update; speler krijgt kick met `reconnect` |
+| Speler vertrekt na 20 s | update direct daarna, zonder melding |
+| `bunkcraft update` terwijl auto-update wacht | geweigerd ("another update is running") |
+| Push-deploy via SSH met de gedocumenteerde forced command | update naar v2; andere commando's draaien toch alleen `deploy`; port forwarding en PTY geweigerd; de gebruiker kan zelf niet bij Docker en sudo staat alleen `bunkcraft deploy` toe |
+| `BUNKCRAFT_TAG=latest@sha256:…` | "pinned by digest: never auto-updated" |
+| `AUTOUPDATE=off` / `bunkcraft autoupdate on` | timer-run stopt meteen / timer weer aan |
+
+Gevonden en opgelost: `install.sh` stopte zonder melding bij een domein dat (nog) niet resolvet (`getent` + `pipefail`),
+vóór zijn eigen waarschuwing daarover. Niet getest: de echte GitHub-job `deploy` en het `stable`-tag (pas bij de eerste
+push naar `main` en de eerste `v*`-tag); de SSH-stap is wel exact zo nagespeeld.
+
 ## 6. Open beslissingen voor Stijn
 
 - **A. Chunkgeneratie naar een worker thread:** gedaan (§2.6). Het "19 %" uit het profiel bleek vooral de join-fase te zijn; in
@@ -310,5 +353,7 @@ shellcheck en actionlint: schoon.
 - **D. Meerdere processen per server?** Pas nodig boven ~150-200 gelijktijdige spelers per machine.
 - **E. Images publiceren op GHCR via CI:** gedaan (§5.1). Na de eerste push naar `main` éénmalig de package op public
   zetten als GitHub hem privé aanmaakt (§5.1).
+- **F. Automatisch deployen:** gedaan (§5.2). Pull staat standaard aan; kies het kanaal (`latest` of `stable`) en zet push
+  alleen aan als je updates binnen seconden wilt.
 - **Repo publiek of privé?** De one-liner in SERVER.md haalt `install.sh` van GitHub; bij een privé-repo moet de server een
   deploy-key of token hebben (of je kopieert de map zelf en draait `./scripts/install.sh`).

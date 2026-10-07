@@ -236,7 +236,7 @@ export const MOB_TYPES = {
       { anim: 'legA', pivot: [-2, 12, 0], boxes: [{ from: [-4, 0, -2], to: [0, 12, 2], colors: ['#3b3a8c', '#33327a', '#46459e'] }] },
       { anim: 'legB', pivot: [2, 12, 0], boxes: [{ from: [0, 0, -2], to: [4, 12, 2], colors: ['#3b3a8c', '#33327a', '#46459e'] }] },
     ],
-    drops: () => stack(ITEM.ROTTEN_FLESH, rnd(0, 2)),
+    drops: (byPlayer: boolean) => zombieDrops(byPlayer),
   },
   creeper: {
     kind: 'creeper', name: 'Creeper', health: 20, width: 0.6, height: 1.7, walkSpeed: 1.0, runSpeed: 2.3, hostile: true, attack: 0,
@@ -344,6 +344,16 @@ const zombieFace = (mouth: string) => (px: (x: number, y: number, c: string) => 
   px(3, 6, mouth); px(4, 6, mouth);
 };
 
+/**
+ * Zombie loot (Java 1.21): 0-2 rotten flesh, and when a player killed it a rare drop 2.5% of the time: an iron ingot,
+ * a carrot or a potato (one of the three).
+ */
+function zombieDrops(byPlayer: boolean): ItemStack[] {
+  const out = stack(ITEM.ROTTEN_FLESH, rnd(0, 2));
+  if (byPlayer && Math.random() < 0.025) out.push(...stack(itemId(['iron_ingot', 'carrot', 'potato'][Math.floor(Math.random() * 3)]), 1));
+  return out;
+}
+
 /** Zombie-shaped mobs (husk, drowned) with their own skin, shirt and trousers. */
 function zombieLike(kind: MobKind, name: string, skin: string[], shirt: string[], pants: string[], mouth: string, extra: Partial<MobType>): MobType {
   return {
@@ -356,7 +366,7 @@ function zombieLike(kind: MobKind, name: string, skin: string[], shirt: string[]
       { anim: 'legA', pivot: [-2, 12, 0], boxes: [{ from: [-4, 0, -2], to: [0, 12, 2], colors: pants }] },
       { anim: 'legB', pivot: [2, 12, 0], boxes: [{ from: [0, 0, -2], to: [4, 12, 2], colors: pants }] },
     ],
-    drops: () => stack(ITEM.ROTTEN_FLESH, rnd(0, 2)),
+    drops: (byPlayer: boolean) => zombieDrops(byPlayer),
     ...extra,
   };
 }

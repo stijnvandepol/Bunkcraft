@@ -208,6 +208,8 @@ export const ATOMIC: FreeArenaMapDef = {
     dominationZones: [0, 1, 2],
     // In the side yard of each house, out of sight of the other house.
     flags: [{ team: 'red', x: -24.5, z: -20.5 }, { team: 'blue', x: 24.5, z: 20.5 }],
+    // Search and destroy: bomb sites in the blue half (see scripts/site-scan.ts).
+    sites: [{ name: 'A', x: 18.5, z: -15.5, r: 3 }, { name: 'B', x: 23.5, z: 16.5, r: 3 }],
   },
   build(variant, b) {
     const { box, paint } = b;

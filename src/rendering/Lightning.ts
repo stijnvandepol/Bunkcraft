@@ -45,6 +45,8 @@ export class Lightning {
       depthWrite: false,
       blending: THREE.AdditiveBlending,
       side: THREE.DoubleSide,
+      // One pass: three would draw a transparent double-sided material twice and look its program up each time.
+      forceSinglePass: true,
       vertexShader: /* glsl */ `
         attribute vec3 iA;
         attribute vec3 iB;

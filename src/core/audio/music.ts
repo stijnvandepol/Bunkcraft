@@ -1,4 +1,5 @@
 import { BIOME } from '../../world/Biomes';
+import { glide } from './glide';
 import {
   PULSE_STEP, chooseMood, generatePhrase, midiToHz, nextGap, pulseAt, type Mood, type MusicMode, type PhraseNote, type PulseEvent,
 } from './musicTheory';
@@ -77,7 +78,7 @@ export class MusicDirector {
 
     // Depth and water darken the music instead of cutting it.
     const cutoff = this.underwater ? 450 : 20000 * (1 - this.cave * 0.9) + 1400 * this.cave;
-    this.muffle.frequency.setTargetAtTime(Math.max(300, cutoff), ctx.currentTime, 0.6);
+    glide(this.muffle.frequency, Math.max(300, cutoff), ctx.currentTime, 0.6, 20);
 
     this.intensity += (this.intensityTarget - this.intensity) * Math.min(1, dt * 0.8);
     if (this.mode === 'off') return;

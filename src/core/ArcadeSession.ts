@@ -4,7 +4,7 @@ import {
   cycleSlot, cycleTarget, impactNormal, reloadProgress, spectateCandidates, spreadPixels, swayOffset,
 } from '../modes/ArcadeLogic';
 import { type GameTypeDef, type Team, TEAM_COLORS, gameTypeDef } from '../modes/GameTypes';
-import { carriesFlag, eventView, localizeServerText, phaseBanner } from '../modes/ModeView';
+import { eventView, localizeServerText, modeSpeedMul, phaseBanner, teamWinTitle } from '../modes/ModeView';
 import {
   type ClassSpec, DEFAULT_CLASS, LAST_CLASS_STORAGE_KEY, LOADOUT_PRESETS, loadSavedClass, saveClass, validateClass,
 } from '../modes/Loadouts';
@@ -170,7 +170,6 @@ export class ArcadeSession {
   private modeState: ModeState | null = null;
   private matchText = '';
   private selfPts = 0;
-  private carrying = false;
   phase: MatchPhase = 'warmup';
   private timeLeft = 0;
   private timeStamp = 0;
@@ -309,9 +308,9 @@ export class ArcadeSession {
 
   /** Movement multiplier for Player.speedMultiplier: always-sprint pace times the weapon's modifier. */
   get speedMultiplier(): number {
-    // A flag carrier is slower (capture the flag); the server announces who carries in the mode state.
-    const carry = this.carrying ? 1 - (this.def.params?.carrySlow ?? 0.1) : 1;
-    return ARCADE_SPEED_MULT * this.weapon.moveSpeed * (1 - 0.2 * this.ads) * carry;
+    // The mode's factor (a flag carrier is slower, the infected faster) comes from the server's mode state and our team.
+    const mode = modeSpeedMul(this.def, this.modeState, this.team, this.d.selfId);
+    return ARCADE_SPEED_MULT * this.weapon.moveSpeed * (1 - 0.2 * this.ads) * mode;
   }
 
   readonly airAccel = ARCADE_AIR_ACCEL;
@@ -559,8 +558,7 @@ export class ArcadeSession {
   private onMode(state: ModeState): void {
     this.modeState = state;
     this.modeHud.setState(state);
-    this.modeVisuals.setState(state);
-    this.carrying = state.kind === 'ctf' && carriesFlag(state.flags, this.d.selfId);
+    this.modeVisuals.setState(state, this.d.selfId);
     this.matchDirty = true;
   }
 
@@ -704,7 +702,7 @@ export class ArcadeSession {
     let title = t('arc.end.draw');
     let color = '#ffffff';
     if (msg.winnerTeam) {
-      title = msg.winnerTeam === 'red' ? t('arc.end.redWins') : t('arc.end.blueWins');
+      title = teamWinTitle(this.def, msg.winnerTeam);
       color = TEAM_COLORS[msg.winnerTeam];
     } else if (msg.winnerId) {
       title = msg.winnerId === this.d.selfId ? t('arc.end.youWin') : t('arc.end.wins', this.nameOf(msg.winnerId));
@@ -1079,9 +1077,11 @@ export class ArcadeSession {
       c.scoreLimit = this.info.scoreLimit; c.selfKills = this.selfKills; c.leader = this.def.ladder ? '' : this.leader;
       c.text = this.matchText;
       const ladder = this.def.ladder;
-      c.selfScore = ladder ? `${Math.min(this.selfPts + 1, ladder.length)}/${ladder.length}` : undefined;
+      // Gun game: the level; king of the hill (points, no teams): the points towards the limit.
+      c.selfScore = ladder ? `${Math.min(this.selfPts + 1, ladder.length)}/${ladder.length}`
+        : this.def.scoreColumn && !this.teams && this.info.scoreLimit > 0 ? `${this.selfPts}/${this.info.scoreLimit}` : undefined;
       hud.setMatch(this.phase, left, c);
-      const round = this.modeState?.kind === 'rounds' ? this.modeState.round : 1;
+      const round = this.modeState?.kind === 'rounds' || this.modeState?.kind === 'bomb' ? this.modeState.round : 1;
       hud.setBanner(this.phase === 'warmup' ? this.lobby.banner(this.roster, sec) : phaseBanner(this.phase, left, round));
       if (ladder) this.modeHud.setLadder(this.selfPts, ladder, this.leader);
       if (this.def.hud?.includes('zones') || this.def.hud?.includes('flags')) this.modeHud.setScores(this.scores.red, this.scores.blue, this.info.scoreLimit);

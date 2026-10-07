@@ -1,8 +1,9 @@
 import { ARMOR_SLOTS, INVENTORY_SLOTS } from '../src/items/Inventory';
-import { ALL_ITEMS, ITEM, type ToolKind, getItemDef, itemFromState, itemId, maxDurability, normalizeItem, possibleBlockDrops } from '../src/items/ItemRegistry';
+import { ALL_ITEMS, ITEM, type ToolKind, getItemDef, itemFromState, itemId, maxDurability, normalizeItem, possibleBlockDrops, seedItemOf } from '../src/items/ItemRegistry';
 import { RECIPES } from '../src/items/Recipes';
 import { toolUse } from '../src/items/ToolUse';
 import { BLOCK, BOX_KIND, SHAPE, SHAPE_DOOR, SHAPE_SLAB, VARIANT_MASK } from '../src/world/BlockRegistry';
+import { FARMLAND } from '../src/world/Crops';
 import { SLAB_DOUBLE, SLAB_HALF_MASK } from '../src/world/BlockStates';
 import { BOX_BED } from '../src/world/BoxShapes';
 
@@ -90,6 +91,9 @@ export type EditCost =
 /** The item that places this block state (variant bits kept, facing and other state bits dropped); 0 = none. */
 export function placingItem(id: number, meta: number): number {
   if (id === BLOCK.REDSTONE_WIRE) return REDSTONE_ITEM;
+  // Crops are planted from their seeds (wheat seeds, a carrot, a potato...), never from a block item.
+  const seed = seedItemOf(id);
+  if (seed) return meta === 0 ? seed : 0;
   const item = normalizeItem(itemFromState(id, meta));
   return validItem(item) ? item : 0;
 }
@@ -119,6 +123,8 @@ export function classifyEdit(prev: number, prevMeta: number, id: number, meta: n
     return { kind: 'free' };
   }
   if (id === BLOCK.WATER || id === BLOCK.LAVA) return { kind: 'pour', bucket: id === BLOCK.LAVA ? ITEM.LAVA_BUCKET : ITEM.WATER_BUCKET };
+  // Farmland trampled into dirt by the player landing on it: nothing gained (farmland drops dirt anyway).
+  if (prev === FARMLAND && id === BLOCK.DIRT) return { kind: 'free' };
   for (const tool of TOOL_KINDS) {
     const use = toolUse(tool, prev, above);
     if (use && use.to === id) return { kind: 'tool', tool, drops: use.drops ? { id: itemId(use.drops.name), count: use.drops.count } : undefined };

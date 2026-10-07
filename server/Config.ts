@@ -2,6 +2,7 @@ import { join, resolve } from 'node:path';
 import type { GameMode } from '../src/player/GameMode';
 import { parseGameMode } from './GameServer';
 import { chunkWorkerCount } from './chunkgen/ChunkGenPool';
+import { type BotDifficulty, parseBotDifficulty } from './bots/BotSkill';
 
 /** Everything the server reads from the environment, in one typed place (documented in docs/SERVER.md). */
 export interface Config {
@@ -48,6 +49,12 @@ export interface Config {
   reconnectHintMs: number;
   /** Chunk generation threads (CHUNK_WORKERS): default min(2, cores − 1), 0 = on the main thread. */
   chunkWorkers: number;
+  /** Realms quick play lobbies fill with bots up to this many players (QUICKPLAY_BOTS, 0 = off). */
+  quickPlayBots: number;
+  /** Difficulty of those bots (QUICKPLAY_BOT_DIFFICULTY: easy, normal, hard, veteran). */
+  quickPlayBotDifficulty: BotDifficulty;
+  /** Build the bots' navigation graphs of every arena in the background at start-up (BOT_PREWARM; off under Vitest). */
+  botPrewarm: boolean;
   /** Realms profiles and XP (PROFILES, default on). */
   profiles: boolean;
   /** Most profiles kept in DATA_DIR/profiles (MAX_PROFILES). */
@@ -99,6 +106,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     passwordFailLimit: num(env.PASSWORD_FAIL_LIMIT, 5),
     reconnectHintMs: num(env.RECONNECT_HINT_MS, 8000),
     chunkWorkers: chunkWorkerCount(env.CHUNK_WORKERS),
+    quickPlayBots: Math.max(0, Math.floor(num(env.QUICKPLAY_BOTS, 8))),
+    quickPlayBotDifficulty: parseBotDifficulty(env.QUICKPLAY_BOT_DIFFICULTY?.toLowerCase()) ?? 'normal',
+    botPrewarm: flag(env.BOT_PREWARM, !env.VITEST),
     profiles: flag(env.PROFILES, true),
     maxProfiles: Math.max(0, Math.floor(num(env.MAX_PROFILES, 50_000))),
     profileCreateLimit: Math.max(1, Math.floor(num(env.PROFILE_CREATE_LIMIT, 10))),

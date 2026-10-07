@@ -25,6 +25,8 @@ export const CLASSIC: ArenaMapDef = {
     ],
     dominationZones: [0, 1, 2],
     flags: [{ team: 'red', x: -44, z: 18 }, { team: 'blue', x: 44, z: 18 }],
+    // Search and destroy: bomb sites in the blue half (see scripts/site-scan.ts).
+    sites: [{ name: 'A', x: 16.5, z: -12.5, r: 3 }, { name: 'B', x: 16.5, z: 12.5, r: 3 }],
   },
   build(variant, b) {
     const { box, paint } = b;

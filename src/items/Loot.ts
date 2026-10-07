@@ -196,7 +196,7 @@ export const LOOT_TABLES: Record<string, LootTable> = {
         entries: [
           e('saddle', 20), e('golden_apple', 15), e('bread', 20), e('wheat', 20, [1, 4]), e('bucket', 10), e('redstone', 15, [1, 4]),
           e('coal', 15, [1, 4]), e('iron_ingot', 15, [1, 4]), e('gold_ingot', 5, [1, 4]), e('diamond', 3, [1, 2]), e('melon_seeds', 10, [2, 4]),
-          e('pumpkin_seeds', 10, [2, 4]), e('wheat_seeds', 10, [1, 4]), e('lapis_lazuli', 5, [1, 4]),
+          e('pumpkin_seeds', 10, [2, 4]), e('beetroot_seeds', 10, [2, 4]), e('wheat_seeds', 10, [1, 4]), e('lapis_lazuli', 5, [1, 4]),
         ],
       },
       { rolls: [1, 4], entries: [e('bone', 10, [1, 8]), e('gunpowder', 10, [1, 8]), e('rotten_flesh', 10, [1, 8]), e('string', 10, [1, 8])] },
@@ -211,7 +211,7 @@ export const LOOT_TABLES: Record<string, LootTable> = {
         entries: [
           e('golden_apple', 20), e('iron_ingot', 10, [1, 5]), e('gold_ingot', 5, [1, 3]), e('redstone', 5, [4, 9]), e('lapis_lazuli', 5, [4, 9]),
           e('diamond', 3, [1, 2]), e('coal', 10, [3, 8]), e('bread', 15, [1, 3]), e('melon_seeds', 10, [2, 4]), e('pumpkin_seeds', 10, [2, 4]),
-          e('iron_pickaxe', 1), e('emerald', 2, [1, 2]),
+          e('beetroot_seeds', 10, [2, 4]), e('iron_pickaxe', 1), e('emerald', 2, [1, 2]),
         ],
       },
       { rolls: 3, entries: [e('rail', 20, [4, 8]), e('torch', 15, [2, 8]), e('stick', 10, [2, 6]), e('oak_planks', 10, [2, 6])] },

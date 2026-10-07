@@ -33,6 +33,8 @@ export const BUNKER: ArenaMapDef = {
     ],
     dominationZones: [0, 1, 2],
     flags: [{ team: 'red', x: -23.5, z: 0, level: 0 }, { team: 'blue', x: 23.5, z: 0, level: 0 }],
+    // Search and destroy: bomb sites in the blue half (see scripts/site-scan.ts).
+    sites: [{ name: 'A', x: 21.5, z: -8.5, r: 3 }, { name: 'B', x: 21.5, z: 8.5, r: 3 }],
   },
   build(_variant, b) {
     const { box, paint } = b;

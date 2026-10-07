@@ -1,6 +1,6 @@
 # BunkCraft game types
 
-Singleplayer en **Multiplayer** zijn Minecraft: Multiplayer maakt, toont en joint alleen Minecraft-games. De zeven
+Singleplayer en **Multiplayer** zijn Minecraft: Multiplayer maakt, toont en joint alleen Minecraft-games. De twaalf
 **arcade-game types** (snel, wapens met hitscan, een vaste arena) zitten onder **BunkCraft Realms** op het titelscherm.
 Het contract staat in `src/modes/GameTypes.ts`, `src/modes/Weapons.ts` en het arcade-deel van `src/net/protocol.ts`.
 Dit document beschrijft de **client**; de server (match, hitscan, health, respawn) staat in `docs/SERVER.md`.
@@ -53,6 +53,11 @@ kunt.
 | Hardpoint | `hardpoint` | Eén zone (de heuvel) telt: het team dat er alleen staat krijgt 1 punt per seconde, samen = betwist. De heuvel verspringt elke 60 s (met 5 s pauze). Eerste op 250 punten. |
 | Domination | `domination` | Drie vaste punten: alleen in een punt staan neemt het in 6 s in (een punt van de ander eerst neutraliseren); elk eigen punt geeft 1 punt per 2 s. Eerste op 100. |
 | Capture the Flag | `ctf` | Pak de vlag van de ander door hem aan te raken, breng hem naar je eigen vlag terwijl die thuis staat. Drager is 10% trager, laat de vlag vallen bij zijn dood; je eigen team brengt een gevallen vlag direct terug, anders na 12 s. Eerste op 3 captures. |
+| Kill Confirmed | `killconfirmed` | Team deathmatch, maar een kill telt pas als iemand de **dog tag** pakt die het slachtoffer laat vallen: een tegenstander bevestigt (+1 voor zijn team), een teamgenoot van het slachtoffer weigert (niemand scoort). Tags verdwijnen na 30 s. Eerste op 50. |
+| Search & Destroy | `snd` | Rondes met één leven. De aanvallers planten de bom door 4 s op bomsite **A** of **B** te staan (weglopen = opnieuw); daarna wordt de rondeklok de lont (35 s) en ontmantelt een verdediger hem door 6 s op de bom te staan. Aanvallers winnen door ontploffing of door alle verdedigers uit te schakelen; verdedigers door ontmantelen, door alle aanvallers vóór de plant uit te schakelen of als de tijd zonder bom afloopt. Na de plant beslist alleen de bom nog (of het uitschakelen van alle verdedigers). Rust: zijwissel na *limiet − 1* rondes. Eerste op 4 rondes. |
+| Infected | `infected` | Iedereen begint als overlevende met eigen klasse. Na 8 s raakt één willekeurige speler besmet: alleen een mes, 12% sneller, één steek is dodelijk. Wie sterft (en wie later joint) wordt besmet. De laatste overlevende wordt omgeroepen, krijgt 3 bonuspunten en dezelfde snelheid. Besmetten winnen zodra niemand meer overleeft, overlevenden als de tijd (5 min) afloopt. Punten: 1 per kill, overlevenden 1 per 10 s. |
+| Sharpshooter | `sharpshooter` | Free for all zonder wapenkeuze: iedereen heeft hetzelfde willekeurige wapen (plus pistool en mes), elke 45 s een ander (nooit twee keer hetzelfde achter elkaar). Eerste op 30 kills. |
+| King of the Hill | `koth` | Free for all op één wandelende heuvel (de hardpoint-zones, elke 45 s een andere, 4 s pauze): wie er **alleen** staat krijgt 1 punt per seconde, met z'n tweeën = betwist. Kills tellen niet. Eerste op 60 punten. |
 
 Bij een privélobby (Realms) stel je de limieten in die het type aanbiedt (uit `GameTypeDef.options`: bijvoorbeeld **Score Limit**
 10–50 kills bij tdm, **Rounds to Win** en **Round Time** bij elimination, **Captures to Win** bij ctf; gun game heeft geen
@@ -139,7 +144,105 @@ De regels draaien op de server (`server/modes/<logic>.ts`, zie `docs/SERVER.md`)
 - **Gebeurtenissen** geven een korte banner en een geluid (`AudioEngine.playModeCue`: goed, slecht, alarm als je eigen vlag
   wordt gepakt, neutraal).
 
-Screenshots: `docs/screenshots/modes/` (gemaakt met `python3 scripts/mode-shots.py <map> [poort]`).
+Screenshots: `docs/screenshots/modes/` (gemaakt met `python3 scripts/mode-shots.py <map> [poort]` en, voor de modes hieronder,
+`python3 scripts/mode-shots-extra.py <map> [poort]`).
+
+### Kill Confirmed, Search & Destroy, Infected, Sharpshooter, King of the Hill (oktober 2026)
+
+Elke mode is een `GameTypeDef` plus een klasse in `server/modes/` (`confirm.ts`, `snd.ts`, `infected.ts`, `sharpshooter.ts`,
+`koth.ts`). Alles is server-autoritair: de client tekent alleen de `mode`-toestand en `event`s.
+
+- **Kill Confirmed:** zwevende, draaiende dog tags in de kleur van het team van de gevallen speler (één `InstancedMesh`, max.
+  40 tags) en markeringen door muren voor de **4 dichtstbijzijnde** (CONFIRM geel, DENY blauw). Alleen je eigen pick-ups geven
+  een banner ("Kill confirmed" / "Kill denied"), anders zou elke tag van het potje het scherm vullen. Scoreboardkolom **Tags**.
+- **Search & Destroy:** markeringen **A** en **B** met de plant- of ontmantelvoortgang als ring, opdracht per kant (PLANT,
+  PLANTING, DEFEND, STOP THE PLANT; na de plant GUARD of DEFUSE en alleen nog de bomsite), oranje ringen op de grond, een bom-
+  model met een rood lampje dat sneller knippert naarmate de lont opraakt. Links: rondepips, "3 v 2", je rol
+  ("Attack: plant the bomb at A or B" / "Defend A and B"), knipperend "Bomb at A: 21" en "Sides swap in N rounds". Aanvallers
+  starten altijd aan de rode kant (x < 0) en verdedigers bij de sites, ongeacht hun teamkleur. Kolom **Bomb** (plants + defuses).
+- **Infected:** teams zijn rollen: blauw = overlevenden, rood = besmet (`GameTypeDef.teamRoles`); de topbalk toont de aantallen
+  en het eindscherm "De besmetten winnen!" / "De overlevenden winnen!". Paneel: "Infection in 5", daarna je opdracht en
+  "3 survivors · 2 infected". Teams worden nooit herverdeeld (`ModeLogic.keepTeams`). Snelheid en mesdamage via de nieuwe
+  hooks `speedMul` (ook in de bewegingscontrole van de server) en `damageMul`; de client neemt dezelfde factor over met
+  `modeSpeedMul` (`src/modes/ModeView.ts`), net als de vlagdrager in ctf.
+- **Sharpshooter:** paneel "EVERYONE HAS / Bolt-Action Sniper / New weapon in 17" en een banner bij elke wissel; de server deelt
+  het wapen uit via `gear` (volle magazijnen, wapen in de hand).
+- **King of the Hill:** de heuvel kleurt **goud** als jij hem houdt, rood als een ander, oranje bij betwisting (HOLDING / TAKE IT /
+  CAPTURE). Linksboven `27/60` (je punten), geen team-scorebalk. Kolom **Points**.
+- **Geluid:** de bestaande cues (`playModeCue`): alarm bij plant en uitbraak, goed/slecht bij ontmantelen, ontploffen,
+  bevestigen en besmetten, neutraal bij zijwissel en wapenwissel; start-stinger bij elke live-fase.
+- **Bomsites op de kaarten:** `objectives.sites` (`SiteDef`: naam, x, z, r = 3, `level` standaard 0 = de vloer, ook onder een
+  dak). Alle elf kaarten hebben er twee, in de blauwe helft. `scripts/site-scan.ts` zoekt kandidaten: in elke dekkingsvariant
+  open vloer, voor beide kanten bereikbaar, niet zichtbaar vanaf de aanvallersspawns, verdedigers er duidelijk eerst (looptijd
+  ≤ 75% van de aanvallers, mikpunt ~45%), A en B op ≥ 16 blokken en (bij vrije kaarten) aanvallerslooptijden binnen 15%.
+  `tests/mapSites.test.ts` bewaakt dezelfde regels.
+- **Server-bots:** `ModeLogic.objectives(m, p)` geeft per speler doelen (`BotGoal`: capture, defend, pickup, defuse, hunt, flee
+  met positie, straal, prioriteit en eventueel een doelspeler): tags oprapen, planten/bewaken/ontmantelen, de heuvel in,
+  besmetten jagen op de dichtstbijzijnde overlevende en overlevenden houden afstand. Sharpshooter heeft geen doel (gewoon vechten).
+- **Tests:** Vitest per mode (`tests/modeKillConfirmed|SearchDestroy|Infected|Sharpshooter|KingOfTheHill.test.ts`), view-teksten
+  (`tests/modeViewNew.test.ts`), quick play en limieten (`tests/modesQuickPlay.test.ts`), bomsites (`tests/mapSites.test.ts`), en
+  `scripts/modes-bots.ts killconfirmed snd infected sharpshooter koth` speelt elke mode met twee bots **tot het einde** tegen
+  een echte server (ontploffing én ontmanteling, één messteek, wapenwissel, heuvel tot de limiet; zonder bewegingscorrecties).
+- **Bewust niet gebouwd: Hide & Seek / Prop Hunt.** Eerlijk en server-gevalideerd vraagt het een kleinere hitbox per speler in
+  de hitscan (`rayPlayer` kent nu één maat), een blokvermomming die op het raster snapt en door de anti-wallhack-filtering heen
+  klopt, en eigen rendering van verstopte spelers. Dat raakt hitregistratie en rendering waar andere agents nu aan werken; zie
+  de roadmap.
+
+## Bots
+
+Server-side bots (`server/bots/`) zorgen dat een speler alleen (of met een paar vrienden) altijd een volle, leuke match
+heeft. Ze zijn **echte matchspelers**: een sessie zonder socket in `GameServer`, met dezelfde rate limits, en alles wat ze
+doen gaat als gewoon clientbericht (`pos`, `fire`, `reload`, `weapon`, `loadout`) door `handleArcade`. Dus dezelfde
+bewegingscontrole (`ArcadeGuard`/`MovementValidator`, ook de `step`-klok), dezelfde schotcontrole (eenheidsvector, oorsprong
+binnen 0,6 blok), dezelfde schade, spawnlogica, lag-compensatie en aim-statistiek als mensen. Ze weten niet meer dan een
+client: hun eigen staat, zichtlijnen (kogeldoorlatende blokken, dus niet door glas), de HUD-modusstatus, schoten binnen
+gehoorsafstand (40 blokken, met demper 12) en wie hen raakt.
+
+- **Herkenbaar:** naam `[BOT] Viper` enz. (haken mogen niet in spelersnamen, dus niemand kan zich als bot voordoen) en
+  `bot: 1` in de roster. Scorebord, killfeed en naamtags tonen de tag vanzelf. Bots komen en gaan zonder chatregel.
+- **Vullen:** Snel spelen-lobby's vullen tot `QUICKPLAY_BOTS` spelers (standaard 8, niveau `QUICKPLAY_BOT_DIFFICULTY`).
+  Elke seconde stelt de server bij: komt er een mens bij, dan gaat er eerst een bot weg (uit het grotere team, liefst een
+  dode, nooit een vlagdrager als het anders kan); een volle lobby met bots weigert nooit een mens. Teams blijven gelijk: bij
+  twee of meer verschil verlaat een bot het grote team en komt er een terug in het kleine. Met de laatste mens gaan ook
+  de bots weg (de kamer wordt leeg en laadt uit). Matchmaking en lijsten tellen alleen mensen; de lijst toont `+N bots`.
+- **Privélobby:** *Bots* (0 tot lobbygrootte − 1) en *Botniveau* in het scherm *Privélobby maken*; die bots blijven,
+  maar maken ook plaats als een mens een plek nodig heeft. Opgeslagen als `bots` in `world.json`.
+- **Niveaus** (`server/bots/BotSkill.ts`): reactietijd (0,7 / 0,45 / 0,32 / 0,25 s), draaisnelheid (170-450 °/s, altijd
+  onder de 600 °/s waarop de aim-controle een "snap" ziet), een zwevende richtfout die na het oppakken van een doel uitdooft
+  (Ornstein-Uhlenbeck), volgvertraging op bewegende doelen, kans op hoofd i.p.v. borst (4-28 %), blikveld en
+  waarneemafstand, terugtrekken bij weinig health, strafe-neiging en richten door het vizier. Elke bot varieert ±10 %.
+  Terugslag duwt hun blik omhoog zoals bij een speler; ze vuren pas als hun blik op het punt staat waar ze *denken* dat het
+  doel is, dus de fout wordt echte missers.
+- **Balans** (`tests/botBalance.test.ts`, gesimuleerde duels met echte `Match`-gevechten tegen twee referentiespelers in
+  `tests/helpers/humanProfiles.ts`): makkelijk wint ~14 % tegen een gemiddelde speler, normaal ~38 %, moeilijk ~58 %,
+  veteraan ~79 %; tegen een geoefende speler wint moeilijk ~17 % en veteraan ~34 %.
+- **Bewegen:** dezelfde `Player`-fysica als de browser (botsing, step-up, springen, luchtcontrole), op 60 Hz op de echte
+  klok, met `step` in elk positierapport. Paden over een **navigatiegraaf** per kaartvariant (`NavGraph.ts`): staanplekken
+  per halve blokhoogte en bewegingen (lopen, diagonaal, halve trede, springen tot 1 blok, vallen tot 4, ladders), allemaal
+  getoetst met `MovementValidator.inSolid`, dus elke route is er een die de anti-cheat accepteert. De graaf bouwt uit elke
+  blokbron (nieuwe kaarten werken zonder aanpassing), wordt per kaartvariant gedeeld door alle lobby's en bij het opstarten
+  op de achtergrond voorgebouwd (`BOT_PREWARM`). A* met typed arrays; bochten afsnijden alleen waar het hele lijf past.
+- **Spelen per mode:** tdm/ffa/gun game/elimination: jagen (geluid, geraakt worden, laatst gezien), anders zwerven richting
+  de vijandelijke helft. Hardpoint: naar de actieve heuvel en daarbinnen telkens een andere plek. Domination: het goedkoopste
+  punt om te nemen of te verdedigen, verspreid over het team. CTF: een derde verdedigt de eigen basis, de rest haalt de
+  vlag; de drager rent naar huis (eerst de eigen vlag terughalen als die ligt), anderen jagen op de vijandelijke drager of
+  escorteren de eigen. Gun game: altijd het ladderwapen, mes-niveau = erop af. Tijdens warm-up lopen ze rond zonder te
+  vechten, in intermission/countdown/roundend staan ze stil.
+- **Gevecht:** doelkeuze (dichtbij, in het vizier, wie schiet, vlagdrager), afstand houden per wapen (shotgun 5, smg 9,
+  geweren 18, sniper/DMR 35), strafen op begaanbare plekken, af en toe springen (moeilijk/veteraan), wisselen naar het
+  secundaire wapen als het primaire leeg is op korte afstand, herladen als het rustig is. **Dekking:** onder de
+  terugtrekgrens (of herladend op afstand) zoekt een bot een plek binnen 11 blokken die de dreiging niet kan zien, wacht tot
+  de health terug is en gaat weer.
+- **Klassen:** een preset naar kaartgrootte (grote kaarten meer lange wapens, kleine meer smg/shotgun) via het gewone
+  `loadout`-bericht. Bots hebben geen Realms-profiel: zoals een gast spelen ze met de unlocks van level 1 (geweer, smg,
+  shotgun, pistool) en verdienen ze geen XP.
+- **Kosten** (`scripts/bench-bots.ts`, M1 Pro): 1 mens + 11 bots ≈ 0,1 ms per lobbytick van 33 ms; 6 zulke lobby's samen
+  0,7 ms per tick (p99 1,7 ms). Denken (waarnemen, kiezen, paden) loopt gespreid op ~10 Hz per bot met een budget van
+  1,5 ms per tick per lobby en hooguit 3 padzoektochten per tick; bewegen en richten elke tick.
+- **Tests:** `botNav` (graaf op elke kaart en variant, alle spawns/zones/vlaggen bereikbaar, elke kant een geldige move),
+  `botDecisions` (aim, klasse, CTF/hardpoint-doelen, dekking, vulregels), `botMatch` (hele TDM- en CTF-matches tot het
+  einde, hardpoint/domination/gun game, elke kaart, vulregels, kamerinstellingen, en **nul** anti-cheat-meldingen:
+  geen correcties, geen vervangen schotoorsprong, aim-verdenking onder de waarschuwingsgrens), `botBalance`, `botPerf`.
 
 ## Wat anders is dan in de sandbox
 
@@ -438,8 +541,10 @@ invoer via `game.input.down.add('Mouse0')` (zie de gotchas in `CLAUDE.md`). In e
    keuzes van het type begrensd), recente games en joinscherm pakken het vanzelf op.
 2. **Regels:** een kleine klasse in `server/modes/<id>.ts` die `ModeLogic` implementeert (meestal `extends BaseLogic`, dat
    deathmatch-gedrag geeft) en een regel in `createLogic` (`server/modes/index.ts`). Zie `docs/SERVER.md`.
-3. **Kaartdata:** heeft het type zones of vlaggen nodig, zet ze in `objectives` van de kaarten (`src/modes/maps/*`, wereld-
-   coördinaten; `scripts/objective-eval.ts` toetst kandidaten aan de regels van `tests/mapObjectives.test.ts`).
+3. **Kaartdata:** heeft het type zones, vlaggen of bomsites nodig, zet ze in `objectives` van de kaarten (`src/modes/maps/*`, wereld-
+   coördinaten; `scripts/objective-eval.ts` toetst kandidaten aan de regels van `tests/mapObjectives.test.ts`, `scripts/site-scan.ts`
+   zoekt bomsites). Hooks voor regels die meer doen dan scoren: `teamFor`, `keepTeams`, `speedMul`, `damageMul`, `pickSpawn`,
+   `loadoutFor` (mag per speler `undefined` geven) en `objectives` voor server-bots.
 4. **Client:** een nieuwe `ModeState`-soort in `protocol.ts` plus een widget in `ModeHud.ts`/`ModeView.ts`; de rest
    (fases, banners, respawnregel, ladder) volgt uit de def.
 5. **Tests:** Vitest met de stub-host (`tests/helpers/matchHost.ts`, voorbeelden in `tests/modes.test.ts`) en een run met echte

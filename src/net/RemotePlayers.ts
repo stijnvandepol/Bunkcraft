@@ -257,10 +257,13 @@ export class RemotePlayers {
 
   snapshot(entries: SnapshotEntry[], selfId: number, now: number, serverTick = -1): void {
     now = this.clock.stamp(now, serverTick);
-    for (const [id, x, y, z, yaw, pitch, flags] of entries) {
+    for (let ei = 0; ei < entries.length; ei++) {
+      const e = entries[ei];
+      const id = e[0];
       if (id === selfId) continue;
       const r = this.players.get(id);
       if (!r) continue;
+      const flags = e[6];
       if (flags & SNAP_FLAG_STALE) {
         // Out of view (arcade): keep the last position, fade out; no new samples.
         if (r.staleAt < 0) r.staleAt = now;
@@ -271,8 +274,10 @@ export class RemotePlayers {
       r.staleAt = -1;
       r.lastSeen = now;
       if (r.culled) { r.culled = false; this.syncListed(r); }
-      r.buffer.push({ t: now, x, y, z, yaw, pitch, flags });
-      if (r.buffer.length > 30) r.buffer.shift();
+      // A full buffer recycles its oldest sample: 30 Hz × 15 players of small objects were steady garbage.
+      const s = r.buffer.length >= 30 ? r.buffer.shift()! : { t: 0, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, flags: 0 };
+      s.t = now; s.x = e[1]; s.y = e[2]; s.z = e[3]; s.yaw = e[4]; s.pitch = e[5]; s.flags = flags;
+      r.buffer.push(s);
     }
   }
 

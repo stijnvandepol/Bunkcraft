@@ -21,3 +21,7 @@ dist-server
 
 # Server settings and secrets (scripts/install.sh)
 .env
+
+# Deploy state (scripts/update.sh, scripts/autoupdate.sh)
+.update.lock
+.autoupdate-state

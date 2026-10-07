@@ -170,6 +170,13 @@ export const MINECRAFT_LAYOUT: PackLayout = {
   textures: {
     ...Object.fromEntries(MINECRAFT_SAME_NAME.map((n) => [n, n])),
     farmland_top: 'farmland',
+    // One texture per crop: the ripe stage (younger stages are cut from it, see world/Crops.ts).
+    wheat_crop: 'wheat_stage7',
+    carrots_crop: 'carrots_stage3',
+    potatoes_crop: 'potatoes_stage3',
+    beetroots_crop: 'beetroots_stage3',
+    stem: 'pumpkin_stem',
+    attached_stem: 'attached_pumpkin_stem',
     hay_top: 'hay_block_top',
     hay_side: 'hay_block_side',
     carved_pumpkin_front: 'carved_pumpkin',

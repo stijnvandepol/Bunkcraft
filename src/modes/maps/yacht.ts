@@ -272,6 +272,8 @@ export const YACHT: FreeArenaMapDef = {
     ],
     dominationZones: [0, 1, 2],
     flags: [{ team: 'red', x: -34.5, z: -17.5 }, { team: 'blue', x: 34.5, z: 17.5 }],
+    // Search and destroy: bomb sites in the blue half (see scripts/site-scan.ts).
+    sites: [{ name: 'A', x: 14.5, z: -14.5, r: 3 }, { name: 'B', x: 16.5, z: 5.5, r: 3 }],
   },
   build(_variant, b) {
     half(b, 1, BOW);

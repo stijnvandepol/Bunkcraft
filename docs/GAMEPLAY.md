@@ -313,9 +313,46 @@ In multiplayer rekent de server alles uit en stuurt de wijzigingen in dezelfde b
 gaan niet over het net (ze veranderen niets aan wat je ziet). Vallende blokken komen als apart `fall`-bericht. Zie
 [`docs/screenshots/growth-trees.png`](screenshots/growth-trees.png), `growth-leaf-decay.png`, `growth-falling-sand.png` en `growth-cane-cactus.png`.
 
-**Voor andere systemen (landbouw):** `RandomTicker.register(blockId, (w, x, y, z) => …)` voegt gedrag toe zonder `RandomTicks.ts` aan te
-passen (`w.setBlock`, `w.setMeta` voor een stille leeftijd, `w.brightness`, `w.randomInt`, `w.breakBlock`); `registerBoneMeal` en
-`registerSupportedPlant`/`registerBlockUpdate` (`BlockUpdates.ts`) werken op dezelfde manier.
+**Voor andere systemen:** `RandomTicker.register(blockId, (w, x, y, z) => …)` voegt gedrag toe zonder `RandomTicks.ts` aan te
+passen (`w.setBlock`, `w.setMeta` voor een stille leeftijd, `w.brightness`, `w.rainingAt`, `w.randomInt`, `w.breakBlock`); `registerBoneMeal`
+(met optioneel een `valid(meta)`-check) en `registerSupportedPlant`/`registerBlockUpdate` (`BlockUpdates.ts`) werken op dezelfde manier.
+Landbouw (hieronder) is zo gebouwd.
+
+## Landbouw
+
+Minecraft Java 1.21 (CropBlock, StemBlock, FarmBlock; getallen van minecraft.wiki). Regels in `src/world/Farming.ts`, blokdata in
+`src/world/Crops.ts`, buit in `ItemRegistry.cropDrops`.
+
+| Wat | Regel |
+|---|---|
+| Akkergrond maken | Schoffel op gras, aarde of pad, **alleen met lucht erboven**. Nieuwe akkergrond is droog (vocht 0) |
+| Vocht | Water binnen 4 blokken horizontaal, op dezelfde hoogte of één hoger (niet eronder), of regen erop: vocht 7 (donkerder). Anders per random tick één stap droger; droog en zonder gewas wordt het aarde. Alleen nat ↔ niet-nat gaat over het net, de tussenstappen zijn stil |
+| Vertrappen | Landen op akkergrond: kans valafstand − 0,5 (een sprong ≈ 75 %) dat het aarde wordt; spelers in elke modus, mobs als breedte² × hoogte > 0,512 (koe, varken, schaap; geen kip) en `mobGriefing` aan staat. Een massief blok erop maakt er ook aarde van. Het gewas erop breekt met zijn buit |
+| Planten | Tarwezaad, wortel, aardappel, bietenzaad, pompoen- en meloenzaad op akkergrond (rechtsklik; een wortel of aardappel op akkergrond wordt geplant, niet gegeten). Gewassen zijn niet vervangbaar door blokken |
+| Groei | Random tick bij ruw licht ≥ 9 op het gewas (hemellicht telt 's nachts mee, zoals `getRawBrightness(pos, 0)`): kans 1 / (⌊25 / f⌋ + 1). Bieten slaan 1 op 3 ticks over |
+| Groeisnelheid f | 1 + akkergrond onder het gewas (droog 1, nat 3) + ¼ daarvan voor elk van de 8 blokken eromheen; gehalveerd als hetzelfde gewas aan beide assen ernaast staat, of diagonaal. Losse rij op natte grond: f = 10 (kans 1/3); vol veld: 5 (1/6); los op droge grond: 2 (1/13) |
+| Fasen | Tarwe, wortels, aardappels 0–7 (wortel en aardappel 4 zichtbare fasen), bieten 0–3, stengels 0–7 |
+| Pompoen en meloen | Rijpe stengel: bij een geslaagde groeirol een vrucht op een willekeurige kant (lucht, op akkergrond of aarde-achtig blok); de stengel buigt ernaartoe. Weg vrucht = weer een rijpe stengel. Akkergrond onder de vrucht wordt aarde |
+| Bone meal | +2–5 fasen (bieten ⌊(2–5)/3⌋: 75 % +1); een stengel die rijp wordt krijgt meteen een random tick. Een rijp gewas neemt geen bone meal |
+| Buit | Onrijp: 1 zaad/wortel/aardappel. Rijpe tarwe: 1 tarwe + 1 + B(3 + Fortune, 4/7) zaad; rijpe bieten idem met bietenzaad; wortels en aardappels 2 + B(3 + Fortune, 4/7), aardappels 2 % een giftige aardappel; stengels B(3, (fase + 1)/15) zaad. Gras: zaad 1 op 8, Fortune + 0–2×niveau |
+| Voedsel | Brood 5/6, gebakken aardappel 5/6 (oven), pompoentaart 8/4,8 (pompoen + suiker + ei, 2×2), bietensoep 6/7,2 (6 bieten + kom, kom terug), giftige aardappel 2/1,2 met 60 % kans 5 s Poison. Hooibaal 9 tarwe, jack o'lantern = uitgesneden pompoen + fakkel |
+| Bronnen | Gras (tarwezaad), zombies (2,5 % bij een spelerkill: ijzer, wortel of aardappel), kisten (dungeon en mijnschacht nu ook bietenzaad, dorp wortels en aardappels) |
+| Fokken | Nieuwe gewassen tellen via de tags in `Breeding.ts` (kip: bietenzaad, varken: bieten) |
+
+**F3** toont de staat van het gewas onder het richtpunt (`age: 3 (of 7)`, `moisture: 7`, `attached, facing: east`). Creative: middelklik
+op een gewas geeft het zaad; zaden staan in Natural Blocks en Ingredients.
+
+**Multiplayer:** de server laat gewassen groeien en stuurt elke fase als blokwijziging. Planten gaat via `authorizeEdit`: een gewas
+kost zijn zaad (alleen fase 0; een rijp gewas uit het niets wordt geweigerd), schoffelen en vertrappen (akkergrond → aarde) zijn gratis,
+een gewas buiten akkergrond wordt geweigerd. Bone meal loopt via het bestaande `bonemeal`-bericht.
+
+**Voor dorpen (structuren):** `cropState('wheat', 7)`, `cropBlock(kind)`, `farmlandState(wet)`, `attachedStemMeta(facing)`, `isCrop`
+uit `Crops.ts` geven blok + state; de module heeft geen gedrag en is veilig voor de generator.
+
+Bewust anders: gewassen breken niet af in het donker (Minecraft: ruw licht < 8 en geen lucht), akkergrond is een volle kubus (Minecraft 15/16),
+een water-emmer of stroming op een gewas geeft altijd de onrijpe buit (de stroming kent de fase niet), en een ontploffing laat geen gewasbuit vallen.
+Screenshots: [`docs/screenshots/farming/`](screenshots/farming/) (`farming-stages.png`, `farming-ripe.png`, `farming-wet-dry.png`,
+`farming-growing-*.png`, `farming-f3.png`); opnieuw maken met `python3 scripts/farming-shots.py docs/screenshots/farming <vite-poort>`.
 
 ## Redstone
 
@@ -333,11 +370,11 @@ passen (`w.setBlock`, `w.setMeta` voor een stille leeftijd, `w.brightness`, `w.r
 
 ## Roadmap
 
-1. **Block states:** **gedaan** voor slabs, trappen, deuren en vloeistoffen ([`BLOCKSTATES.md`](BLOCKSTATES.md)); ladders, muurfakkels, gewassen en een oven met een richting volgen op dezelfde basis.
+1. **Block states:** **gedaan** voor slabs, trappen, deuren, vloeistoffen en gewassen ([`BLOCKSTATES.md`](BLOCKSTATES.md)); ladders, muurfakkels en een oven met een richting volgen op dezelfde basis.
 2. **Vloeistofstroming:** **gedaan** (water en lava, emmers).
 3. **Vallend zand en grind** als entity.
 4. **Meer mobs:** skeleton (pijlen) en spin (klimmen).
-5. **Meer blokken en items:** XP, enchanting, anvil en grindstone zijn **gedaan**; landbouw met groeifases, brouwen, schilden en boten (zie `CONTENT.md`, tier 2).
+5. **Meer blokken en items:** XP, enchanting, anvil, grindstone en landbouw zijn **gedaan**; brouwen, schilden en boten (zie `CONTENT.md`, tier 2).
 6. **Multiplayer:** zie [`MULTIPLAYER.md`](MULTIPLAYER.md).
 
 ## Bronnen
