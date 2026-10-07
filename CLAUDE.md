@@ -46,7 +46,7 @@ Server configuration uses environment variables (`PORT`, `DATA_DIR`, `SEED`, `GA
 - `src/player/`: `Player` (AABB physics), `PlayerStats` (health, hunger, air, Minecraft numbers at 20 ticks/s), `GameMode`.
 - `src/net/` + `server/`: JSON protocol (`src/net/protocol.ts`, shared). The server owns the edits, time and player records (`data/world.json`) and validates reach, ids, rates and speed. Clients apply edits optimistically and roll back on reject. Multiplayer v1 is peaceful (no server-side mobs yet).
   Server terrain is generated on worker threads (`server/chunkgen/`, `CHUNK_WORKERS`); not-yet-arrived chunks read as UNLOADED, `ServerWorld.ensureChunk` generates one synchronously when it cannot wait.
-- `src/ui/`: Minecraft 1.21-style menus, integer GUI scale (`--s`), OFL pixel font (`public/fonts`), HUD, inventories, chat and the F3 overlay.
+- `src/ui/`: shooter-first home and arena menus in the own visual identity (`Brand.ts`, `RealmsMenu.ts`; see `docs/research/IDENTITY.md`), Minecraft-style menus only for Build & Survival (beta), integer GUI scale (`--s`), OFL pixel font (`public/fonts`), HUD, inventories, chat and the F3 overlay.
 
 Docs:
 - `docs/RESEARCH.md`: visuals, performance, technology choice.
