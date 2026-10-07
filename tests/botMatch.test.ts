@@ -105,10 +105,11 @@ describe('bots play full matches', () => {
 
   it('hardpoint and domination: bots score points by holding zones', () => {
     for (const type of ['hardpoint', 'domination'] as const) {
-      const l = lobby(type, 'rotate', { scoreLimit: 50 });
+      const l = lobby(type, 'rotate', { scoreLimit: 500 });
       const w = watch(l);
       l.join('Tester');
       l.run(10 + 90);
+      expect(l.match.phase, type).toBe('live');
       expect(l.match.scores.red + l.match.scores.blue, type).toBeGreaterThan(20);
       expect(w.cheats).toEqual([]);
     }

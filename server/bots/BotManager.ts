@@ -63,6 +63,8 @@ const ADD_PER_STEP = 4;
 
 export class BotManager {
   readonly bots = new Map<number, Bot>();
+  /** The bots in a reused array for the tick loop. */
+  private readonly list: Bot[] = [];
   settings: BotSettings | undefined;
   readonly env: BotEnv;
   private nextAdjust = 0;
@@ -128,7 +130,9 @@ export class BotManager {
   }
 
   private remove(id: number): void {
+    const bot = this.bots.get(id);
     this.bots.delete(id);
+    if (bot) this.list.splice(this.list.indexOf(bot), 1);
     this.host.removeBot(id);
   }
 
@@ -195,10 +199,11 @@ export class BotManager {
     const id = this.host.addBot(name, (newId) => {
       bot = new Bot(newId, name, skill, this.env, index, posInterval);
       this.bots.set(newId, bot);
+      this.list.push(bot);
       return (msg) => this.deliver(newId, msg);
     });
     if (id === null) {
-      if (bot) this.bots.delete((bot as Bot).id);
+      if (bot) { this.bots.delete((bot as Bot).id); this.list.splice(this.list.indexOf(bot), 1); }
       return false;
     }
     return true;
@@ -247,7 +252,7 @@ export class BotManager {
     if (drop) heard.splice(0, drop);
     this.env.pathTokens = PATHS_PER_TICK;
     // Rotating start: under budget pressure every bot still gets its turn to think.
-    const list = [...this.bots.values()];
+    const list = this.list;
     const n = list.length;
     this.rotate = (this.rotate + 1) % Math.max(1, n);
     for (let i = 0; i < n; i++) {

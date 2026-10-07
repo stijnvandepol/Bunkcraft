@@ -16,6 +16,7 @@ const EYE = PHYSICS.EYE_HEIGHT;
 /** Chest and head heights above the feet (aim points). */
 const CHEST = 1.1;
 const HEAD = HITBOX.height - HITBOX.head / 2;
+const SIGHT_POINTS = [CHEST, HEAD] as const;
 
 /** What the bots of one lobby share: the match, the map, the clock budget and what was heard. */
 export interface BotEnv {
@@ -206,7 +207,7 @@ export class Bot {
 
   /** Line of sight from the eye to the chest or head of a player at (x, y, z). */
   private sees(ex: number, ey: number, ez: number, x: number, y: number, z: number): boolean {
-    for (const h of [CHEST, HEAD]) {
+    for (const h of SIGHT_POINTS) {
       const dx = x - ex, dy = y + h - ey, dz = z - ez, d = Math.hypot(dx, dy, dz);
       if (d < 0.5) return true;
       if (traceBlocks(this.env.blocks, ex, ey, ez, dx / d, dy / d, dz / d, d) >= d - 0.05) return true;

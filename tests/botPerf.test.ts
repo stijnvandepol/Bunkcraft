@@ -25,13 +25,13 @@ describe('bot tick cost', () => {
     for (let t = 0; t < 30 * 12; t++) { clock.ms += 1000 / 30; for (const l of lobbies) l.tick(); }
     for (const l of lobbies) expect(l.bots.count).toBe(11);
     const before = lobbies.map((l) => ({ ...l.bots.perf }));
-    let worstTick = 0;
+    const ticks: number[] = [];
     for (let t = 0; t < 30 * 20; t++) {
       clock.ms += 1000 / 30;
       for (const l of lobbies) {
         const t0 = performance.now();
         l.tick();
-        worstTick = Math.max(worstTick, performance.now() - t0);
+        ticks.push(performance.now() - t0);
       }
     }
     lobbies.forEach((l, i) => {
@@ -42,6 +42,9 @@ describe('bot tick cost', () => {
       // Thinking is spread: hardly any think is pushed to a later tick by the budget.
       expect(p.skippedThinks - b.skippedThinks).toBeLessThan((p.thinks - b.thinks) * 0.1 + 5);
     });
-    expect(worstTick).toBeLessThan(33 * TIME_SLACK);
+    // Whole server ticks (match, snapshots, bots): the 99th percentile far below the 33 ms tick. Not the maximum: one
+    // garbage collection or a descheduled process on a busy machine says nothing about the bots.
+    ticks.sort((a, b) => a - b);
+    expect(ticks[Math.floor(ticks.length * 0.99)]).toBeLessThan(15 * TIME_SLACK);
   });
 });
