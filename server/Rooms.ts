@@ -383,6 +383,28 @@ export class Rooms {
     return room ? { code: room.code, ...room.server.info() } : null;
   }
 
+  /** See GameServer.playersInPlay. */
+  get playersInPlay(): number {
+    let n = 0;
+    for (const r of this.loaded.values()) n += r.server.playersInPlay;
+    return n;
+  }
+
+  /** A server message to every loaded game; returns the number of players reached. */
+  announce(text: string): number {
+    let n = 0;
+    for (const r of this.loaded.values()) {
+      r.server.announce(text);
+      n += r.server.playerCount;
+    }
+    return n;
+  }
+
+  /** Writes every loaded game to disk now (before a backup or a planned restart). */
+  saveAll(): void {
+    for (const r of this.loaded.values()) r.server.save();
+  }
+
   shutdown(reconnectMs?: number): void {
     clearInterval(this.timer);
     for (const r of this.loaded.values()) r.server.shutdown(reconnectMs);

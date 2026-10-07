@@ -2,7 +2,7 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { join } from 'node:path';
 import { isIP } from 'node:net';
-import { normalizeCode } from '../src/net/protocol';
+import { normalizeCode, sanitizeChat } from '../src/net/protocol';
 import type { GameServer } from './GameServer';
 import { log } from './Log';
 import { type Gauges, metrics } from './Metrics';
@@ -86,7 +86,7 @@ export function authorizeAdmin(
   return true;
 }
 
-/** /api/admin/*: overview, games, kick, close, address blocks. The caller has checked the token. */
+/** /api/admin/*: overview, games, kick, close, address blocks, announce, save. The caller has checked the token. */
 export async function adminApi(ctx: AdminContext, req: IncomingMessage, res: ServerResponse, path: string): Promise<void> {
   const { json } = ctx;
   const parts = path.replace(/^\/api\/admin\/?/, '').split('/').filter(Boolean);
@@ -133,6 +133,21 @@ export async function adminApi(ctx: AdminContext, req: IncomingMessage, res: Ser
       const ok = ctx.rooms.close(code, remove);
       return json(res, ok ? 200 : 404, ok ? { ok: true } : { error: 'Game not found' });
     }
+  }
+  // Deploys (scripts/autoupdate.sh): warn every player in every game, and write every world to disk first.
+  if (parts[0] === 'announce' && parts.length === 1 && method === 'POST') {
+    const text = sanitizeChat(String((await body()).text ?? '')).slice(0, 200);
+    if (!text) return json(res, 400, { error: 'Empty message' });
+    ctx.main?.announce(text);
+    const reached = (ctx.main?.playerCount ?? 0) + (ctx.rooms?.announce(text) ?? 0);
+    log.warn('admin announce', { text, reached });
+    return json(res, 200, { ok: true, reached });
+  }
+  if (parts[0] === 'save' && parts.length === 1 && method === 'POST') {
+    ctx.main?.save();
+    ctx.rooms?.saveAll();
+    log.info('admin save');
+    return json(res, 200, { ok: true });
   }
   if (parts[0] === 'ip-bans') {
     if (method === 'GET' && parts.length === 1) return json(res, 200, { ips: ctx.bans.list() });

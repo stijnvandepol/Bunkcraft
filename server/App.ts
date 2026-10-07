@@ -296,6 +296,8 @@ export async function startServer(config: Config): Promise<RunningServer> {
       return json(res, draining ? 503 : 200, {
         ok: !draining, version, uptime: Math.round((Date.now() - metrics.startedAt) / 1000),
         players: gauges().players, rooms: rooms?.count ?? 0,
+        // Players a restart would interrupt now (Minecraft worlds, running matches): auto-update waits for 0.
+        playersInPlay: (main?.playersInPlay ?? 0) + (rooms?.playersInPlay ?? 0),
         // Enough for an uptime check or a quick `curl` to tell a healthy server from an overloaded one.
         roomsLoaded: gauges().roomsLoaded, tickP99Ms: round2(metrics.tickWindow.p99),
         loopLagP99Ms: round2(metrics.loopLag.p99), rssMB: Math.round(process.memoryUsage.rss() / 1048576),

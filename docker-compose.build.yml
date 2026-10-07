@@ -7,6 +7,10 @@
 services:
   bunkcraft:
     image: bunkcraft:local
-    build: .
+    build:
+      context: .
+      # Shown on the title screen and in /health; update.sh sets it to the checked-out commit.
+      args:
+        GIT_SHA: ${GIT_SHA:-}
     # Never look for bunkcraft:local in a registry; 'up --build' or 'compose build' makes it.
     pull_policy: never
