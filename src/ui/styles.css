@@ -988,7 +988,8 @@ html, body {
 .mode-pips { display: flex; gap: calc(var(--s) * 2); }
 .mode-pips i { width: calc(var(--s) * 5); height: calc(var(--s) * 5); border: var(--s) solid #000; background: rgba(255, 255, 255, 0.2); }
 .mode-alive { font-size: calc(var(--fs) * 1.2); }
-.arc-hud.board-open .mode-ladder, .arc-hud.board-open .mode-panel { visibility: hidden; }
+/* The objective markers drew over the Tab scoreboard ("CAPTURE 44m" on the column headers). */
+.arc-hud.board-open .mode-ladder, .arc-hud.board-open .mode-panel, .arc-hud.board-open .mode-markers { visibility: hidden; }
 .mode-ladder { background: rgba(0, 0, 0, 0.45); padding: calc(var(--s) * 3) calc(var(--s) * 4); display: flex; flex-direction: column; gap: var(--s); }
 .mode-ladder-level { color: #ffd23f; }
 .mode-ladder-weapon { font-size: calc(var(--fs) * 1.4); }

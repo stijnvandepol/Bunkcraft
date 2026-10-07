@@ -355,10 +355,14 @@ export class ArcadeHud {
     const sig = `${names.join('|')}#${selected}#${keys.join('|')}`;
     if (sig === this.lastSlots) return;
     this.lastSlots = sig;
+    // Gun game hands out the knife as the secondary too: one "Knife" slot, not "2 Knife 3 Knife".
+    const twin = names[1] !== undefined && names[1] === names[2];
+    const shown = twin && selected === 1 ? 2 : selected;
     for (let i = 0; i < 3; i++) {
       const el = this.slotEls[i];
       el.replaceChildren(h('b', { text: keys[i] ?? '' }), ` ${names[i] ?? ''}`);
-      el.classList.toggle('selected', i === selected);
+      el.classList.toggle('selected', i === shown);
+      el.classList.toggle('hidden', twin && i === 1);
     }
   }
 

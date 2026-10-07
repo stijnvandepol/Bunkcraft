@@ -78,6 +78,23 @@ test('arcade: with the map vote up, your own row stays on the end screen in a fu
   expect(row.y + row.height).toBeLessThanOrEqual(board.y + board.height + 1);
 });
 
+test('arcade: gun game shows one knife slot, not "2 Knife 3 Knife"', async ({ page }) => {
+  await startPreview(page, 'gungame', 'atomic');
+  await page.evaluate(() => (window as any).game.onServerMessage({ t: 'gear', primary: 'rifle', secondary: 'knife', optic: 'iron', perk: 'none' }));
+  await expect(page.locator('.arc-slot:visible')).toHaveCount(2);
+  await expect(page.locator('.arc-slot:visible').nth(1)).toContainText('Knife');
+});
+
+test('arcade: the Tab scoreboard hides the objective markers drawn over it', async ({ page }) => {
+  await startPreview(page, 'domination', 'villa');
+  await page.evaluate(() => (window as any).game.previewServer.demo());
+  await page.waitForFunction(() => document.querySelectorAll('.mode-marker:not(.hidden)').length > 0, undefined, { timeout: 30_000 });
+  await page.evaluate(() => (window as any).game.input.down.add('Tab'));
+  await expect(page.locator('.arc-board')).toBeVisible();
+  await expect(page.locator('.mode-markers')).toBeHidden();
+  await page.evaluate(() => (window as any).game.input.down.delete('Tab'));
+});
+
 test('arcade: an objective marker at the screen edge keeps its whole caption on screen (wide "CONTESTED" label)', async ({ page }) => {
   await startPreview(page, 'domination', 'villa');
   // Three contested points, the player turning around: markers stick to the left and right edges.
