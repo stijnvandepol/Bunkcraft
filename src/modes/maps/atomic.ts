@@ -213,7 +213,7 @@ function homestead(b: LayoutBuilder, s: 1 | -1, p: Palette): void {
   box(-34, -32, -22, -21, 1, 2, AIR);
   box(-33, -32, -20, -20, 1, 2, AIR);
   box(-35, -31, -23, -20, 4, 4, BLOCK.SPRUCE_SLAB);
-  box(-34, -34, -22, -22, 1, 1, BLOCK.HAY);
+  box(-34, -34, -22, -22, 1, 1, C.HAY);
   box(-32, -32, -22, -22, 1, 1, BLOCK.ANVIL);
   box(-29, -28, -18, -17, 1, 2, BLOCK.OAK_PLANKS);
   box(-29, -28, -18, -17, 3, 3, BLOCK.BRICK_SLAB);
@@ -238,7 +238,7 @@ function homestead(b: LayoutBuilder, s: 1 | -1, p: Palette): void {
   for (const x of [-15, -13]) box(x, x, 16, 17, 1, 1, BLOCK.WHITE_WOOL);
   tree(t, -29, 20, BLOCK.OAK_LOG, BLOCK.OAK_LEAVES, 3, 1);
   paint(-35, -34, 16, 22, C.PODZOL);
-  box(-35, -35, 16, 22, 1, 1, BLOCK.HAY);
+  box(-35, -35, 16, 22, 1, 1, C.HAY);
   hedge(t, -14, -12, 13, 14, 2);
 
   // --- Street, west kerb: a parked car, a hydrant, a civil defence siren -------------------
