@@ -374,7 +374,7 @@ function summarize(all: Shot[], kills: { victim: number; t: number }[]) {
 
 async function main(): Promise<void> {
   const data = mkdtempSync(join(tmpdir(), 'bunk-hitreg-'));
-  start('npx', ['tsx', 'server/index.ts'], { PORT: String(SP), DATA_DIR: data, ROOM_CREATE_LIMIT: '1000', MAX_CONN_PER_IP: '100', LOG_FORMAT: 'text', ARCADE_SHOT_DEBUG: '1' });
+  start('npx', ['tsx', 'server/index.ts'], { PORT: String(SP), DATA_DIR: data, ROOM_CREATE_LIMIT: '1000', MAX_CONN_PER_IP: '100', LOG_FORMAT: 'text', ARCADE_SHOT_DEBUG: '1', PROFILES: 'off' });
   start('npx', ['tsx', resolve('scripts/qa/lag-proxy.ts'), `--listen=${LP}`, `--target=${SP}`, `--rtt=${RTT}`, `--jitter=${JITTER}`], {}, process.cwd());
   start('npx', ['vite', '--config', 'scripts/qa/vite.qa.config.ts', '--port', String(VP), '--strictPort'], { QA_SERVER_PORT: String(LP) });
   const server = `http://localhost:${SP}`, base = `http://localhost:${VP}`;
