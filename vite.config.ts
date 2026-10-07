@@ -70,6 +70,10 @@ export default defineConfig({
     ...(STATIC ? { outDir: 'dist-static' } : {}),
     rollupOptions: {
       output: {
+        // "-b2": browsers cached a broken precompressed copy under the old content-hashed names for a year
+        // (immutable), so the names had to change once. Bump only for that kind of cache poisoning.
+        entryFileNames: 'assets/[name]-b2-[hash].js',
+        chunkFileNames: 'assets/[name]-b2-[hash].js',
         // three.js changes far less often than the game: its own long-term cached file.
         manualChunks(id) {
           if (id.includes('node_modules/three/')) return 'three';
