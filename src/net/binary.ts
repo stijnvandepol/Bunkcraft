@@ -37,11 +37,21 @@ export const BIN_SNAP_Q = 3;
  * id, an end point more than 1024 blocks away. A field added to `shot` later therefore keeps working.
  */
 export const BIN_SHOT = 4;
-/** Binary format version a client understands: 1 = snap/ent floats, 2 = also the quantised snapshot, 3 = also `shot`. */
-export const BINARY_VERSION = 3;
+/**
+ * Binary format version a client understands: 1 = snap/ent floats, 2 = also the quantised snapshot, 3 = also `shot`,
+ * 4 = the quantised snapshot with the server tick.
+ */
+export const BINARY_VERSION = 4;
 /** First binary version with the quantised arcade snapshot and with the binary `shot`. */
 export const BINARY_VERSION_SNAP_Q = 2;
 export const BINARY_VERSION_SHOT = 3;
+/**
+ * Quantised snapshot with the server tick (binary version 4): kind 5, then the kind-3 header, then u32 tick, then
+ * the same 13-byte entries. The tick lets the client tell the server which moment it drew (lag compensation).
+ */
+export const BIN_SNAP_QK = 5;
+/** First binary version with the server tick in the quantised snapshot. */
+export const BINARY_VERSION_SNAP_TICK = 4;
 export const SNAP_Q_ENTRY_BYTES = 13;
 const Q = 32;
 
@@ -140,16 +150,21 @@ export function encodeEnt(m: MobEntry[], i: ItemEntry[], a: ArrowEntry[], b: Tnt
 const r2 = (v: number): number => Math.round(v * 100) / 100;
 const i16 = (v: number): number => Math.max(-32768, Math.min(32767, Math.round(v)));
 
-/** Quantised snapshot relative to `origin` (whole blocks): positions to 1/32 block, ±1024 blocks around it. */
-export function encodeSnapQ(players: SnapshotEntry[], ox: number, oy: number, oz: number): ArrayBuffer {
-  const buf = new ArrayBuffer(9 + players.length * SNAP_Q_ENTRY_BYTES);
+/**
+ * Quantised snapshot relative to `origin` (whole blocks): positions to 1/32 block, ±1024 blocks around it. With a
+ * server `tick` (≥ 0) it is the version-3 frame (kind 4) that carries it.
+ */
+export function encodeSnapQ(players: SnapshotEntry[], ox: number, oy: number, oz: number, tick = -1): ArrayBuffer {
+  const head = tick >= 0 ? 13 : 9;
+  const buf = new ArrayBuffer(head + players.length * SNAP_Q_ENTRY_BYTES);
   const v = new DataView(buf);
-  v.setUint8(0, BIN_SNAP_Q);
+  v.setUint8(0, tick >= 0 ? BIN_SNAP_QK : BIN_SNAP_Q);
   v.setUint16(1, players.length, true);
   v.setInt16(3, ox, true);
   v.setInt16(5, oy, true);
   v.setInt16(7, oz, true);
-  let o = 9;
+  if (tick >= 0) v.setUint32(9, tick >>> 0, true);
+  let o = head;
   for (const p of players) {
     v.setUint16(o, p[0], true);
     v.setInt16(o + 2, i16((p[1] - ox) * Q), true);
@@ -215,20 +230,21 @@ export function decodeBinary(buf: ArrayBuffer): ServerMessage | null {
     }
     return { t: 'snap', players };
   }
-  if (kind === BIN_SNAP_Q) {
-    if (buf.byteLength < 9) return null;
+  if (kind === BIN_SNAP_Q || kind === BIN_SNAP_QK) {
+    const head = kind === BIN_SNAP_QK ? 13 : 9;
+    if (buf.byteLength < head) return null;
     const n = v.getUint16(1, true);
-    if (buf.byteLength !== 9 + n * SNAP_Q_ENTRY_BYTES) return null;
+    if (buf.byteLength !== head + n * SNAP_Q_ENTRY_BYTES) return null;
     const ox = v.getInt16(3, true), oy = v.getInt16(5, true), oz = v.getInt16(7, true);
     const players: SnapshotEntry[] = [];
-    let o = 9;
+    let o = head;
     for (let k = 0; k < n; k++, o += SNAP_Q_ENTRY_BYTES) {
       players.push([
         v.getUint16(o, true), ox + v.getInt16(o + 2, true) / Q, oy + v.getInt16(o + 4, true) / Q, oz + v.getInt16(o + 6, true) / Q,
         decAngle(v.getUint16(o + 8, true)), decAngle(v.getUint16(o + 10, true)), v.getUint8(o + 12), 0,
       ]);
     }
-    return { t: 'snap', players };
+    return kind === BIN_SNAP_QK ? { t: 'snap', players, k: v.getUint32(9, true) } : { t: 'snap', players };
   }
   if (kind === BIN_SHOT) {
     if (buf.byteLength < 23) return null;

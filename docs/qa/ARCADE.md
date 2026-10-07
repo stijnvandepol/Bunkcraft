@@ -1,6 +1,6 @@
 # QA: arcade-modes speeltest
 
-## Ronde 3: spelen als een speler, wapens, one-hit kills (oktober 2026)
+## Ronde 3a: spelen als een speler, wapens, one-hit kills (oktober 2026)
 
 Aanleiding: Stijn vond na zelf spelen "nog te veel bugs" (de klasse uit de warm-up werkte pas na je volgende dood, en de
 eerdere QA zag dat niet omdat die interne state porde). Deze ronde is gespeeld zoals een speler speelt: de **productiebuild**
@@ -128,6 +128,59 @@ wapens hebben alleen een geluidsprofiel en herlaadstappen in `weaponSounds.ts` g
 Scripts ronde 3: `scripts/qa/human.ts` (helpers + Pointer-Lock-shim), `r3-classes.ts`, `r3-flows.ts`, `r3-modes.ts`, `r3-weapons.ts`,
 `r3-restart.ts`, `r3-returning.ts`, `r3-gunfeel.ts`, `spawn-facing.ts`, `r3-explore.ts`.
 Let op: de scratchpad van deze sessie wordt door meerdere agents gedeeld; gebruik een eigen submap voor `DATA_DIR`, logs en pid-bestanden.
+
+## Ronde 3b: hit registration, hitmarkers, geluid (oktober 2026)
+
+Melding van Stijn: "hit registration is vaag". Gemeten, oorzaken gevonden en gerepareerd (zie *Treffers en lag compensation* in
+`docs/GAMEMODES.md`).
+
+**Oorzaken (met meting):**
+1. Terugspoelen te kort: de server spoelde ping/2 + interpolatie terug, het scherm loopt een volle ping + interpolatie achter.
+   Een rennend doel (7,3 b/s) stond bij 150 ms 0,5-0,7 blok verder dan getekend. Nu stuurt de client de getekende servertick mee
+   (`fire.rk`); gemeten afstand tussen getekend en getest doel: gem. 0,005-0,03 blok (was 0,2-0,3 in de simulatie).
+2. Model en hitbox liepen uiteen: het model was 2,0 hoog, de hitbox 1,8 (bovenkant van het hoofd raakte niets, schouders
+   telden als hoofd) en de armen (tot 0,5 opzij) vielen buiten de 0,6 brede doos. Nu model op 0,9 en hitboxen per modeldeel.
+3. Spreiding was apart willekeurig op client en server: je tracer zei niets over de kogel. Nu met een gedeeld zaadje.
+4. De cameraterugslag tilde het beeld (en het richtkruis) boven de kogelrichting; het richtkruis zakt nu mee, bij ADS geen camerakick.
+5. Kleinere: een speler die terugkwam in beeld werd op zijn nieuwste positie getekend (vóór de interpolatie), een gerespawnde
+   speler hield `deathTime` 20, glasscherven overschreven het richtpunt van de volgende hagelkorrels.
+
+**Simulatie** (`npx tsx scripts/hitreg-sim.ts`: echte servercode, de echte snapshotklok, schieten op willekeurige punten van het
+getekende model, 30 s per regel; miss% = schoten die op het scherm raak waren maar niet telden):
+
+| beweging | ping ± jitter | voor | na |
+|---|---|---|---|
+| stil | 0 | 20,0% | 0,3% |
+| strafen | 0 / 50±10 / 150±30 | 15,7% / 33,0% / 76,2% | 0,0% / 1,4% / 1,0% |
+| springen | 50±10 / 150±30 | 33,0% / 79,5% | 1,4% / 1,4% |
+| rennen | 50±10 / 150±30 | 29,2% / 70,8% | 0,3% / 0,3% |
+
+Overgebleven missers: voeten in volle pas (de beendoos dekt ±80° zwaai niet helemaal). Regressietest: `tests/hitreg.test.ts`
+(0/50/150 ms met jitter, strafen/springen/rennen/stil: hoogstens 3% missers op hoofd/romp/armen).
+
+**Echte browsers** (`npx tsx scripts/qa/hitreg-browser.ts --rtt=… --jitter=…`: eigen server, lagproxy, QA-Vite, twee bots die in
+het zicht strafen, een tweede Chromium die strafet en springt, de schutter zet het richtkruis op getekende modeldelen; geteld:
+op het scherm raak, server zegt mis; schoten na een dodelijk schot tellen niet). Machine druk (andere agents), 90-120 s per run:
+
+| ping ± jitter | voor (oude code, DMR) | na (nieuwe code) |
+|---|---|---|
+| 0 | 16% (7/44) | 8% (7/86) |
+| 50 ± 10 | 15-19% | 9% (9/97) |
+| 150 ± 30 | 43-55% | 10-12% (14/113) |
+
+Let op: de "na"-runs schoten met de rifle (ADS-spreiding 0,4°; de DMR is sinds de Realms-voortgang pas vanaf level 4 te kiezen en
+de client hield dat tegen), de "voor"-runs met de DMR (0,1°). Bij de nieuwe code stond het geteste doel steeds op 0,01 blok van
+het getekende (`ARCADE_SHOT_DEBUG=1`); de resterende afkeuringen zijn dus spreiding op 20-45 blokken en voeten in volle pas,
+geen lag. Open: de browsermeting overdoen met een spreidingsvrij wapen voor beide (DMR ontgrendelen of de claim op de
+voorspelde kogel baseren) en langere runs.
+
+**Hitmarkers:** alleen na serverbevestiging, X van vier balkjes met pop en fade, wit/goud/rood, schadegetallen als optie,
+boven de scope, op het richtpunt. **Geluid:** inslagen per materiaal, langsfluitende kogels, ducking onder treffer/kill/schade,
+hartslag bij lage health, punchier schoten met variatie, herlaadklop; captions voor de nieuwe geluiden. `audio-report.py` en
+cheat-bots/modes-bots zijn na de laatste merge nog niet opnieuw gedraaid (usage-limiet).
+
+**Kogels door glas:** gebouwd en getest (één raam of haag, 20%/10% minder schade, tweede raam stopt), maar staat UIT
+(`GLASS_PASSES_DEFAULT`): de nieuwe kaarten schermen hun spawns af met glas en bladeren. Eerst die ramen dicht, dan aanzetten.
 
 ## Ronde 2: BunkCraft Realms, arsenaal, geluid, anti-cheat (oktober 2026)
 

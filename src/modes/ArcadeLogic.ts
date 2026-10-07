@@ -327,17 +327,6 @@ export function swayOffset(t: number, amp: number, out: { x: number; y: number }
 
 // ---------------------------------------------------------------- recoil
 
-/**
- * Camera part of the visual kick (radians). The camera kick is not in the aim, so a kicked camera puts the crosshair
- * or reticle above where the next bullet goes: none of it when aimed (the reticle is the truth), a little from the hip
- * for automatics (a rifle spray sat 1.2° low under the crosshair with the full kick), the full kick for slow single
- * shots (shotgun, bolt action) whose next shot comes after it has died down. The weapon model shows the rest.
- */
-export function viewKick(kick: number, adsEased: number, w: Pick<WeaponDef, 'pellets' | 'bolt' | 'rpm'>): number {
-  const share = w.pellets > 1 || w.bolt || w.rpm <= 150 ? 1 : 0.35;
-  return kick * share * (1 - Math.min(1, Math.max(0, adsEased)));
-}
-
 /** Shortest pause after a shot before the aim recovers. */
 export const RECOIL_REST_SEC = 0.09;
 

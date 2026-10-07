@@ -134,6 +134,7 @@ export function videoSettingsScreen(store: SettingsStore, nav: OptionsNav): HTML
       slider(30, MAX_FPS_UNLIMITED, 10, s.maxFps, framerateLabel, (v) => store.set('maxFps', v)),
       slider(50, 500, 25, s.entityDistance, (v) => t('video.entityDistance', v), (v) => store.set('entityDistance', v)),
       cycleButton<'crosshair' | 'hotbar' | 'off'>(t('video.attackIndicator'), ['crosshair', 'hotbar', 'off'], { crosshair: t('video.attackIndicator.crosshair'), hotbar: t('video.attackIndicator.hotbar'), off: t('common.off') }, s.attackIndicator, (v) => store.set('attackIndicator', v)),
+      toggle(t('video.damageNumbers'), s.damageNumbers, (v) => store.set('damageNumbers', v)),
       fullscreenButton(),
     ));
     refresh();

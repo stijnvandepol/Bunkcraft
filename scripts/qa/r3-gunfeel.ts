@@ -39,10 +39,10 @@ function oneShotKill(w: WeaponDef, dist: number, ads: boolean, oldPellets: boole
   for (let k = 0; k < w.pellets; k++) {
     if (w.pellets > 1 && !oldPellets) { pelletPattern(k, w.pellets, rot, rand(), pp); spreadDirection(dx, dy, dz, spread, pp[0], pp[1], dir); }
     else spreadDirection(dx, dy, dz, spread, rand(), rand(), dir);
-    const h = rayPlayer(ox, oy, oz, dir[0], dir[1], dir[2], tx, ty, tz);
+    const h = rayPlayer(ox, oy, oz, dir[0], dir[1], dir[2], tx, ty, tz, 0, 0);
     if (!h) continue;
     hit = true;
-    dmg += damageAt(w, h.t) * (h.head ? w.headshot : 1);
+    dmg += damageAt(w, h.t) * (h.part === 'head' ? w.headshot : 1);
   }
   return { kill: Math.round(dmg) >= PLAYER_MAX_HEALTH, hit };
 }

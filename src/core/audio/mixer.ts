@@ -1,14 +1,15 @@
 /**
  * The mix graph.
  *
- *   sfx ─┐                      ┌─ caveSend ─ convolver ─ caveWet ─┐
- *        ├─ world ─ waterLP ────┤                                   ├─ master ─ compressor ─ softClip ─ out
- * ambient┘                      └──────────────────────────────────┤
- *   ui ──────────────────────────────────────────────────────────── ┤
- *   music ───────────────────────────────────────────────────────── ┘
+ *   sfx ─┐                             ┌─ caveSend ─ convolver ─ caveWet ─┐
+ *        ├─ world ─ duck ─ waterLP ────┤                                   ├─ master ─ compressor ─ softClip ─ out
+ * ambient┘                             └──────────────────────────────────┤
+ *   ui ─────────────────────────────────────────────────────────────────── ┤
+ *   music ─ musicDuck ──────────────────────────────────────────────────── ┘
  *
  * Category gains (sound / ambient / ui / music) sit in front of the master bus, which ends in a compressor
- * and a soft clipper, so explosions plus sixteen players firing cannot clip the output.
+ * and a soft clipper, so explosions plus sixteen players firing cannot clip the output. `duck` and `musicDuck`
+ * dip the world and the music for a moment when a sound that matters plays (hit confirm, kill, low health).
  */
 export interface Mix {
   sfx: GainNode;
@@ -21,6 +22,9 @@ export interface Mix {
   caveWet: GainNode;
   master: GainNode;
   compressor: DynamicsCompressorNode;
+  /** Ducking stages: world sounds and music dip under important UI cues (see AudioEngine.duck). */
+  duck: GainNode;
+  musicDuck: GainNode;
 }
 
 /** Transparent below 0.7, then a smooth knee that never exceeds ~0.92. */
@@ -54,11 +58,13 @@ export function buildMix(ctx: BaseAudioContext): Mix {
   const waterLP = ctx.createBiquadFilter();
   waterLP.type = 'lowpass';
   waterLP.frequency.value = 20000;
+  const duck = ctx.createGain();
+  const musicDuck = ctx.createGain();
   sfx.connect(world);
   ambient.connect(world);
-  world.connect(waterLP).connect(master);
+  world.connect(duck).connect(waterLP).connect(master);
   ui.connect(master);
-  music.connect(master);
+  music.connect(musicDuck).connect(master);
 
   // Cave reverb: sfx and ambience bleed into a short dark room.
   const caveSend = ctx.createGain();
@@ -69,7 +75,7 @@ export function buildMix(ctx: BaseAudioContext): Mix {
   caveWet.gain.value = 0;
   waterLP.connect(caveSend).connect(conv).connect(caveWet).connect(master);
 
-  return { sfx, ambient, ui, music, waterLP, caveWet, master, compressor };
+  return { sfx, ambient, ui, music, waterLP, caveWet, master, compressor, duck, musicDuck };
 }
 
 /** Short decaying stereo noise: a small stone room. */

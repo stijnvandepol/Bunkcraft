@@ -635,6 +635,7 @@ export class Game {
     if (s.reducedMotion) this.renderer.uniforms.uSway.value = 0;
     applyAccessibilityDocument(s);
     this.subtitles.setEnabled(s.subtitles);
+    if (this.arcade) this.arcade.hud.damageNumbers = s.damageNumbers;
     const palette = paletteFor(s.colorBlindSafe);
     TEAM_COLORS.red = palette.teamA;
     TEAM_COLORS.blue = palette.teamB;
@@ -1216,6 +1217,7 @@ export class Game {
       send,
       audio: this.audio, player: p, cam: this.cam, remote: this.remote, particles: this.renderer.particles,
       getBlock: this.getBlock,
+      getMeta: this.getMeta,
       getLight: (x, y, z) => this.world ? this.world.getLight(x, y, z) : 0xf0,
       selfId: welcome.id, selfName: name, info,
       feedback: this.feedback,
@@ -1223,6 +1225,7 @@ export class Game {
       onMapChange: () => this.rejoinServer(),
     });
     this.arcade = session;
+    session.hud.damageNumbers = this.settings.values.damageNumbers;
     session.hud.onLoadoutClose = () => void this.resumeGame();
     session.setBindings(this.input);
     this.renderer.scene.add(session.tracers.mesh);
@@ -1267,7 +1270,7 @@ export class Game {
   private onServerMessage(msg: ServerMessage): void {
     const world = this.world;
     switch (msg.t) {
-      case 'snap': this.remote.snapshot(msg.players, this.net?.id ?? -1, performance.now() / 1000); break;
+      case 'snap': this.remote.snapshot(msg.players, this.net?.id ?? -1, performance.now() / 1000, msg.k ?? -1); break;
       case 'ent': this.netEntities?.apply(msg, performance.now() / 1000); break;
       case 'fall': this.netFalling?.apply(msg.f, performance.now() / 1000); break;
       case 'hurt':
@@ -2271,6 +2274,7 @@ export class Game {
       `${GAME_MODE_NAMES[this.mode]} · ${p.flying ? 'Flying' : p.onGround ? 'On ground' : 'Airborne'}${p.sprinting ? ' · Sprinting' : ''}${p.inWater ? ' · In water' : ''}`,
       `Health ${this.stats.health} · Food ${this.stats.hunger} (sat ${this.stats.saturation.toFixed(1)}) · Air ${this.stats.air}`,
       `${this.audio.debugLine()} · enclosure ${this.audio.env.enclosure.toFixed(2)}`,
+      ...(this.arcade ? [this.arcade.hitregLine()] : []),
     ], [
       mem ? `Mem: ${Math.round((mem.usedJSHeapSize / mem.totalJSHeapSize) * 100)}% ${(mem.usedJSHeapSize / 1048576).toFixed(0)}/${(mem.totalJSHeapSize / 1048576).toFixed(0)}MB` : 'Mem: n/a',
       `World blocks: ${(worldBlocks / 1e6).toFixed(2)}M (${(worldBlocks / 1048576).toFixed(1)} MB) · edited chunks ${world.edits.size}`,

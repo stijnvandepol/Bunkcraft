@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BREATH_HOLD_SEC, BREATH_SPENT_SEC, RecoilState, SCOPE_SETTLE, SCOPE_SWAY, ScopeBreath, swayOffset, viewKick } from '../src/modes/ArcadeLogic';
+import { BREATH_HOLD_SEC, BREATH_SPENT_SEC, RecoilState, SCOPE_SETTLE, SCOPE_SWAY, ScopeBreath, swayOffset } from '../src/modes/ArcadeLogic';
 import { AIM_CLIMB, WEAPONS, fireInterval, weaponDef } from '../src/modes/Weapons';
 import {
   GUN_SOUNDS, MECH_KINDS, MULTI_KILL_WINDOW, RELOAD_STEPS, SUPPRESSED_EARSHOT, gunEarshot, medalFor, outdoorShare, reloadSteps,
@@ -59,13 +59,6 @@ describe('scope breath and sway', () => {
 });
 
 describe('recoil', () => {
-  it('the camera kick never moves the reticle off the aim when aimed, and only a little from the hip for automatics', () => {
-    for (const w of WEAPONS) expect(viewKick(0.05, 1, w), w.id).toBe(0);
-    expect(viewKick(0.05, 0, weaponDef('rifle')!)).toBeLessThan(0.02);
-    expect(viewKick(0.05, 0, weaponDef('shotgun')!)).toBe(0.05);
-    expect(viewKick(0.05, 0, weaponDef('sniper')!)).toBe(0.05);
-  });
-
   it('follows the weapon pattern, climbs less when aiming and recovers most of the climb after the trigger', () => {
     const lmg = weaponDef('lmg')!;
     const r = new RecoilState();
