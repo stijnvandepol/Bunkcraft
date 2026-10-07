@@ -15,6 +15,15 @@ export interface Settings {
   particles: ParticleLevel;
   fov: number;
   sensitivity: number;
+  /** Arcade aiming: look sensitivity while aiming in % (on top of the zoom scaling), how it follows the zoom, and hold or toggle. */
+  adsSensitivity: number;
+  adsScaling: 'uniform' | 'monitor';
+  adsMode: 'hold' | 'toggle';
+  /** Arcade crosshair: shape, colour, size in % and whether it opens with the spread. */
+  crosshairStyle: 'cross' | 'dot' | 'circle';
+  crosshairColor: 'white' | 'green' | 'cyan' | 'yellow' | 'red' | 'pink';
+  crosshairSize: number;
+  crosshairDynamic: boolean;
   soundVolume: number;
   musicVolume: number;
   /** Ambience (wind, rain, caves, birds) and interface sounds, 0..100. */
@@ -112,6 +121,13 @@ export const DEFAULT_SETTINGS: Settings = {
   particles: 'all',
   fov: 70,
   sensitivity: 100,
+  adsSensitivity: 100,
+  adsScaling: 'uniform',
+  adsMode: 'hold',
+  crosshairStyle: 'cross',
+  crosshairColor: 'white',
+  crosshairSize: 100,
+  crosshairDynamic: true,
   soundVolume: 80,
   musicVolume: 50,
   ambientVolume: 80,
@@ -217,6 +233,8 @@ const NUMBER_RANGES = {
   renderScale: [50, 200],
   fov: [30, 110],
   sensitivity: [10, 200],
+  adsSensitivity: [25, 200],
+  crosshairSize: [50, 200],
   soundVolume: [0, 100],
   musicVolume: [0, 100],
   ambientVolume: [0, 100],
@@ -249,12 +267,16 @@ const ENUM_VALUES = {
   spatialAudio: ['stereo', 'hrtf'],
   language: ['en', 'nl'],
   attackIndicator: ['crosshair', 'hotbar', 'off'],
+  adsScaling: ['uniform', 'monitor'],
+  adsMode: ['hold', 'toggle'],
+  crosshairStyle: ['cross', 'dot', 'circle'],
+  crosshairColor: ['white', 'green', 'cyan', 'yellow', 'red', 'pink'],
   touchControls: ['auto', 'on', 'off'],
   padLayout: ['default', 'southpaw'],
 } as const satisfies Partial<Record<keyof Settings, readonly string[]>>;
 
 const BOOLEAN_KEYS = [
-  'dynamicResolution', 'viewBobbing', 'invertMouse', 'rawInput', 'autoJump', 'chatColors', 'chatSuggestions', 'damageNumbers',
+  'dynamicResolution', 'viewBobbing', 'invertMouse', 'rawInput', 'autoJump', 'chatColors', 'chatSuggestions', 'damageNumbers', 'crosshairDynamic',
   'subtitles', 'reducedMotion', 'reduceFlashes', 'colorBlindSafe', 'highContrast',
   'toggleSneak', 'toggleSprint', 'toggleAttack', 'toggleUse',
   'touchAutoJump', 'touchGestures', 'touchLeftHanded', 'touchSprintPush',

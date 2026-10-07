@@ -1,4 +1,5 @@
 import { TEAM_COLORS, type Team } from '../modes/GameTypes';
+import { type CrosshairColor, CROSSHAIR_COLORS, type CrosshairStyle } from '../modes/AimMath';
 import { type KillFeedEntry, damageAngle, formatClock, kdRatio, sortRoster } from '../modes/ArcadeLogic';
 import { type ClassSpec, LOADOUT_PRESETS, presetFor, sameClass, validateClass } from '../modes/Loadouts';
 import {
@@ -140,6 +141,8 @@ export class ArcadeHud {
   private lastHealth = -1;
   private lastGap = -1;
   private crosshairVisible = true;
+  private lastAlpha = -1;
+  private crosshairStyle: CrosshairStyle = 'cross';
   private scopeOn = false;
   private scopeKind: 'scope' | 'combat' = 'scope';
   private lastRespawnPending = '';
@@ -187,7 +190,7 @@ export class ArcadeHud {
     );
 
     // -- crosshair, hit marker, damage indicators
-    this.crosshair = h('div', { class: 'arc-xh' }, h('i', { class: 't' }), h('i', { class: 'b' }), h('i', { class: 'l' }), h('i', { class: 'r' }), h('i', { class: 'dot' }));
+    this.crosshair = h('div', { class: 'arc-xh s-cross' }, h('i', { class: 't' }), h('i', { class: 'b' }), h('i', { class: 'l' }), h('i', { class: 'r' }), h('i', { class: 'o' }), h('i', { class: 'dot' }));
     // Hit marker: four bars from the centre on the diagonals (a crisp X at every GUI scale), popping in and fading.
     this.hit = h('div', { class: 'arc-hit' }, h('i', { class: 'a' }), h('i', { class: 'b' }), h('i', { class: 'c' }), h('i', { class: 'd' }));
     // Crosshair, hit marker and damage numbers sit where the bullets go (see setAimOffset).
@@ -440,16 +443,36 @@ export class ArcadeHud {
     if (pct >= 0) this.reloadFill.style.width = `${pct}%`;
   }
 
-  /** Crosshair gap (pixels from the centre to the inner end of each line); hidden while scoped. */
-  setCrosshair(gap: number, visible: boolean): void {
-    if (visible !== this.crosshairVisible) {
-      this.crosshairVisible = visible;
-      this.crosshair.classList.toggle('hidden', !visible);
+  /**
+   * Crosshair: `gap` is the distance in pixels from the centre to the inner end of each line (the radius of the ring),
+   * `alpha` 0..1 how visible it is (it fades out while the sights come up).
+   */
+  setCrosshair(gap: number, alpha: number): void {
+    const a = Math.round(alpha * 20) / 20;
+    if (a !== this.lastAlpha) {
+      this.lastAlpha = a;
+      const visible = a > 0;
+      if (visible !== this.crosshairVisible) {
+        this.crosshairVisible = visible;
+        this.crosshair.classList.toggle('hidden', !visible);
+      }
+      this.crosshair.style.opacity = a >= 1 ? '' : String(a);
     }
     const g = Math.round(gap * 2) / 2;
     if (g === this.lastGap) return;
     this.lastGap = g;
     this.crosshair.style.setProperty('--g', `${g}px`);
+  }
+
+  /** Crosshair look from the settings: shape, colour and size in %. */
+  setCrosshairStyle(style: CrosshairStyle, color: CrosshairColor, sizePct: number): void {
+    if (style !== this.crosshairStyle) {
+      this.crosshair.classList.remove(`s-${this.crosshairStyle}`);
+      this.crosshairStyle = style;
+      this.crosshair.classList.add(`s-${style}`);
+    }
+    this.crosshair.style.setProperty('--col', CROSSHAIR_COLORS[color]);
+    this.crosshair.style.setProperty('--z', String(Math.round(sizePct) / 100));
   }
 
   /** Scope overlay; `breath` 0..1 is the breath left for steadying (-1 hides the meter), `holding` while Shift steadies, `spent` while out of breath. */
@@ -760,6 +783,7 @@ export class ArcadeHud {
     }
     this.lastHealth = this.lastGap = this.lastProtect = -1;
     this.crosshairVisible = true;
+    this.lastAlpha = -1;
     this.scopeOn = false;
     this.lastMag = -1;
     this.lastAmmoDef = null;

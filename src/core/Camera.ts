@@ -36,6 +36,8 @@ export class CameraController {
   kick = 0;
   /** Arcade: field-of-view multiplier while aiming down the sights (1 = none). */
   zoom = 1;
+  /** How fast the field of view follows its target (per second): the arcade raises it so a snappy aim is not smoothed away. */
+  fovRate = 8;
   /** Sprinting widens the field of view; arcade games sprint all the time and turn this off. */
   sprintFov = true;
 
@@ -95,7 +97,7 @@ export class CameraController {
     // Drawing a bow zooms in (Minecraft: up to 15% at full draw).
     if (this.bowPull > 0) fovTarget *= 1 - this.bowPull * this.bowPull * 0.15 * fe;
     fovTarget *= this.zoom;
-    this.fov = approach(this.fov, fovTarget, 8, dt);
+    this.fov = approach(this.fov, fovTarget, this.fovRate, dt);
     if (Math.abs(cam.fov - this.fov) > 0.01) {
       cam.fov = this.fov;
       cam.updateProjectionMatrix();

@@ -1,8 +1,12 @@
 import * as THREE from 'three';
 import {
   ARCADE_AIR_ACCEL, ARCADE_SPEED_MULT, FireControl, KillFeed, RecoilState, SPAWN_PROTECTION, SPECTATE_KILLER_SECONDS, ScopeBreath, currentSpread,
-  cycleSlot, cycleTarget, impactNormal, reloadProgress, spectateCandidates, spreadPixels, swayOffset,
+  cycleSlot, cycleTarget, impactNormal, reloadProgress, spectateCandidates, swayOffset,
 } from '../modes/ArcadeLogic';
+import {
+  AdsBlend, AdsInput, type AdsMode, type AdsScaling, CROSSHAIR_MIN_GAP, CrosshairBloom, type CrosshairColor, type CrosshairStyle, adsClassOf, adsSensitivity,
+  adsSwayAmplitude, crosshairAlpha, crosshairGap,
+} from '../modes/AimMath';
 import { type GameTypeDef, type Team, TEAM_COLORS, gameTypeDef } from '../modes/GameTypes';
 import { eventView, localizeServerText, modeSpeedMul, phaseBanner, teamWinTitle } from '../modes/ModeView';
 import {
@@ -38,6 +42,7 @@ import type { AudioEngine } from './Audio';
 import { type SurfaceLookup, surfaceLookup } from './audio/playerSounds';
 import { BOLT_DELAY, MULTI_KILL_WINDOW, type MechKind, gunEarshot, medalFor, medalText, reloadSteps } from './audio/weaponSounds';
 import { t } from '../ui/i18n';
+import type { Settings } from './Settings';
 import type { CameraController } from './Camera';
 import type { Input } from './Input';
 import { KB } from './Keybinds';
@@ -206,8 +211,20 @@ export class ArcadeSession {
   /** The weapon in hand is still coming up until then (the server refuses a reload before that too). */
   private equipUntil = 0;
   private readonly trigger = new FireControl();
+  /** Aim blend: `ads` is linear in the weapon's aim time (gameplay), `adsEased` what the eye sees (FOV, weapon pose, crosshair). */
   private ads = 0;
+  private adsEased = 0;
+  private readonly adsBlend = new AdsBlend();
+  private readonly adsInput = new AdsInput();
+  private readonly bloom = new CrosshairBloom();
+  /** Aim settings (see setAimSettings): look sensitivity while aiming, hold or toggle, the crosshair. */
+  private adsPercent = 100;
+  private adsScaling: AdsScaling = 'uniform';
+  private adsMode: AdsMode = 'hold';
+  private crosshairDynamic = true;
   private wantAds = false;
+  /** Field of view multiplier of the optic in hand when fully aimed. */
+  private optZoom = 1;
   private kick = 0;
   private readonly recoil = new RecoilState();
   private readonly breath = new ScopeBreath();
@@ -359,9 +376,21 @@ export class ArcadeSession {
     return this.slot === 0 ? opticFor(this.weapon, this.cls.optic) : this.weapon.optics[0];
   }
 
-  /** Look sensitivity scale: aiming through a zoom turns slower so aim stays precise. */
+  /**
+   * Look sensitivity scale: aiming through a zoom turns slower so aim stays precise. The scaling follows the optic's zoom
+   * (uniform: with the field of view; monitor distance: the same on-screen distance) and the "ADS sensitivity" setting.
+   */
   get sensitivityScale(): number {
-    return this.d.cam.zoom;
+    return adsSensitivity(this.optZoom, this.d.cam.baseFov, this.adsScaling, this.adsPercent, this.adsEased);
+  }
+
+  /** Aim and crosshair options from the settings (applied at once, also while playing). */
+  setAimSettings(s: Settings): void {
+    this.adsPercent = s.adsSensitivity;
+    this.adsScaling = s.adsScaling;
+    this.adsMode = s.adsMode;
+    this.crosshairDynamic = s.crosshairDynamic;
+    this.hud.setCrosshairStyle(s.crosshairStyle as CrosshairStyle, s.crosshairColor as CrosshairColor, s.crosshairSize);
   }
 
   get weapon(): WeaponDef {
@@ -670,7 +699,9 @@ export class ArcadeSession {
     this.health = 0;
     this.hud.setHealth(0);
     this.hud.setDeath({ killer, weapon, head, killerTeam: team });
-    this.ads = 0;
+    this.ads = this.adsEased = 0;
+    this.adsBlend.reset();
+    this.adsInput.reset();
     this.viewmodel.visible = false;
   }
 
@@ -840,6 +871,8 @@ export class ArcadeSession {
     if (announce && slot === this.slot) return;
     if (announce) this.prevSlot = this.slot;
     this.slot = slot;
+    this.adsBlend.reset();
+    this.adsInput.reset();
     const w = this.weapon;
     const equip = switchDelayFor(this.cls.perk, EQUIP_SEC);
     this.viewmodel.setWeapon(w, this.optic, this.cls.perk === 'suppressor');
@@ -949,7 +982,7 @@ export class ArcadeSession {
     // Muzzle in the world: the weapon model's muzzle transformed by the view model's pose is close
     // enough to a fixed offset from the camera.
     const cam = this.d.cam.camera;
-    const e = this.ads * this.ads * (3 - 2 * this.ads);
+    const e = this.adsEased;
     // The weapon is drawn with its own 62° camera: scale the sideways offsets to the main camera's field of view.
     const k = 0.6009 / Math.tan((cam.fov * Math.PI) / 360);
     const mz = muzzleFor(w.id, sup, tmpMuzzle);
@@ -1081,18 +1114,24 @@ export class ArcadeSession {
       }
     }
 
-    // Aim down the sights: linear in the weapon's aim time (optic and perk), eased for the view.
+    // Aim down the sights: linear in the weapon's aim time (optic and perk), eased per weapon class for the view.
     const optic = this.optic;
-    const wantAds = canAct && input.rightDown && w.zoom < 1 && !ammo.reloading;
+    const cls = adsClassOf(w);
+    const adsOk = canAct && w.zoom < 1 && !ammo.reloading;
+    // Hold the button, or press once (toggle); reloading, switching and dying put the sights down.
+    const wantAds = this.adsInput.update(this.adsMode, input.rightDown, adsOk && input.rightClicked, !adsOk) && adsOk;
     if (wantAds !== this.wantAds) {
       this.wantAds = wantAds;
       this.d.audio.playMech(wantAds ? 'adsin' : 'adsout');
     }
-    const step = dt / Math.max(0.05, adsTimeFor(w, optic, this.cls.perk));
-    this.ads = wantAds ? Math.min(1, this.ads + step) : Math.max(0, this.ads - step * 1.4);
+    this.adsBlend.update(dt, wantAds, adsTimeFor(w, optic, this.cls.perk), cls);
+    this.ads = this.adsBlend.t;
+    const eased = this.adsEased = this.adsBlend.eased;
+    this.optZoom = opticZoom(w, optic);
     const cam = this.d.cam;
-    const eased = this.ads * this.ads * (3 - 2 * this.ads);
-    cam.zoom = 1 + (opticZoom(w, optic) - 1) * eased;
+    cam.zoom = 1 + (this.optZoom - 1) * eased;
+    // The view follows the eased blend closely (the camera's usual FOV smoothing would lag behind a snappy aim).
+    cam.fovRate = 30;
     this.updateAimFeel(f, input, w, optic);
     this.updateMechanics(now, w, ammo);
     this.updateRemotes(f);
@@ -1109,7 +1148,7 @@ export class ArcadeSession {
     this.protect = Math.max(0, this.protect - dt);
 
     const reload = ammo.reloading ? reloadProgress(now - ammo.since, ammo.duration) : -1;
-    this.viewmodel.update(dt, this.ads, reload, f.bobPhase, f.bobStrength, f.lookX, f.lookY, f.light, f.aspect);
+    this.viewmodel.update(dt, this.ads, this.adsEased, reload, f.bobPhase, f.bobStrength, f.lookX, f.lookY, f.light, f.aspect);
     this.tracers.update(dt);
     this.updateHud(f, w, ammo, reload, input);
     // The note follows the clock: the quick-swap window closes while the menu is open.
@@ -1127,9 +1166,12 @@ export class ArcadeSession {
     hud.setAmmo(w, ammo.mag, reload);
     const scoped = this.scoped;
     hud.setScope(this.magnified, scoped ? this.breath.breath : -1, this.breath.holding, this.breath.spent, this.optic === 'combat' ? 'combat' : 'scope');
-    const spread = w.magazine === 0 ? 0.5 : currentSpread(w, this.ads, Math.hypot(p.vx, p.vz) > 0.5, !p.onGround);
-    // Aimed down the sights the sights (or the reticle) are the crosshair.
-    hud.setCrosshair(2 + spreadPixels(spread, this.d.cam.camera.fov, window.innerHeight), !this.magnified && !this.dead && this.ads < 0.6);
+    // Hip fire: the crosshair is the spread cone as drawn on screen (moving and jumping open it) and fades out while the sights
+    // come up (the sights or the reticle are the crosshair then).
+    const spread = w.magazine === 0 ? 0.5 : currentSpread(w, this.ads, this.moving, !p.onGround);
+    const target = this.crosshairDynamic ? crosshairGap(spread, this.d.cam.camera.fov, window.innerHeight) : CROSSHAIR_MIN_GAP + 3;
+    const gap = this.bloom.update(f.dt, target);
+    hud.setCrosshair(gap, this.magnified || this.dead ? 0 : crosshairAlpha(this.adsEased));
     // The camera kick tilts the view up while the aim stays: draw the crosshair (and hit marker) where bullets go.
     const kick = this.d.cam.appliedKick;
     hud.setAimOffset(kick > 0 ? (Math.tan(kick) / Math.tan((this.d.cam.camera.fov * Math.PI) / 360)) * (window.innerHeight / 2) : 0);
@@ -1199,11 +1241,15 @@ export class ArcadeSession {
     const moving = Math.hypot(p.vx, p.vz) > 0.5 || !p.onGround;
     const cue = this.breath.update(dt, f.now, this.scoped, f.controls && input.actionDown(KB.SPRINT), moving);
     if (cue) this.d.audio.playBreath(cue === 'hold');
-    // Sway: a figure-eight around the aim while scoped, fading out when not.
+    // Sway: a figure-eight around the aim while scoped, a smaller drift (the weapon's weight) through open sights, fading out when not.
     this.swayTime += dt;
     let tx = 0, ty = 0;
+    const open = this.ads > 0.5 && !this.d.cam.reducedMotion && !this.dead;
     if (this.scoped) {
       swayOffset(this.swayTime, this.breath.amp, tmpSway);
+      tx = tmpSway.x * DEG; ty = tmpSway.y * DEG;
+    } else if (open && adsSwayAmplitude(w, optic, moving) > 0) {
+      swayOffset(this.swayTime, adsSwayAmplitude(w, optic, moving) * this.adsEased, tmpSway);
       tx = tmpSway.x * DEG; ty = tmpSway.y * DEG;
     } else {
       tx = this.swayYaw * Math.max(0, 1 - dt * 8);
@@ -1218,7 +1264,6 @@ export class ArcadeSession {
     if (rec !== 0) p.pitch += rec * DEG;
     const limit = Math.PI / 2 - 0.001;
     p.pitch = Math.max(-limit, Math.min(limit, p.pitch));
-    void w;
   }
 
   /** Reload steps (mag out, mag in, bolt) as the reload progresses, and the bolt of a bolt-action after a shot. */
@@ -1332,6 +1377,7 @@ export class ArcadeSession {
     for (const s of this.glintSprites) s.visible = false;
     this.d.cam.kick = 0;
     this.d.cam.zoom = 1;
+    this.d.cam.fovRate = 8;
     this.d.cam.sprintFov = true;
     this.d.player.speedMultiplier = 1;
     this.d.player.airAccel = PHYSICS.AIR_ACCEL;

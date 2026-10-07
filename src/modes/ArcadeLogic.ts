@@ -49,11 +49,20 @@ export function spreadPixels(spreadDeg: number, fovDeg: number, height: number):
   return (Math.tan((spreadDeg * Math.PI) / 180) / half) * (height / 2);
 }
 
-/** Cone half-angle (degrees) for the current stance: aiming tightens it, moving and air loosen it. */
+/**
+ * Spread multipliers for moving and for being in the air: hip fire pays for them, aiming barely does (that is what the
+ * sights are for). Shared with the server (see `shotSpread`), so the crosshair, the tracers and the verdict agree.
+ */
+export const SPREAD_MOVING = { hip: 1.3, ads: 1.08 } as const;
+export const SPREAD_AIR = { hip: 1.4, ads: 1.25 } as const;
+
+/** Cone half-angle (degrees) for the current stance: aiming tightens it, moving and air loosen it (hip fire more than aimed). */
 export function currentSpread(w: WeaponDef, ads: number, moving: boolean, airborne: boolean): number {
-  const base = w.spread + (w.adsSpread - w.spread) * Math.min(1, Math.max(0, ads));
-  const penalty = (moving ? 1.15 : 1) * (airborne ? 1.4 : 1);
-  return base * penalty;
+  const a = Math.min(1, Math.max(0, ads));
+  const base = w.spread + (w.adsSpread - w.spread) * a;
+  const move = moving ? SPREAD_MOVING.hip + (SPREAD_MOVING.ads - SPREAD_MOVING.hip) * a : 1;
+  const air = airborne ? SPREAD_AIR.hip + (SPREAD_AIR.ads - SPREAD_AIR.hip) * a : 1;
+  return base * move * air;
 }
 
 // ---------------------------------------------------------------- fire control

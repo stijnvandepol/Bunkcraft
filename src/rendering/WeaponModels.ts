@@ -192,7 +192,8 @@ export const WEAPON_MODELS: Record<string, WeaponModel> = {
       [-0.018, -0.04, -0.02, 0.018, 0.05, 0.05, DARK], // frame
       [-0.019, -0.15, 0.02, 0.019, -0.035, 0.08, WOOD], // grip
       [-0.006, 0.04, -0.29, 0.006, 0.058, -0.28, STEEL, 'iron'], // front sight
-      [-0.008, 0.05, 0.03, 0.008, 0.058, 0.05, STEEL], // hammer
+      [-0.008, 0.05, 0.03, 0.008, 0.058, 0.05, STEEL, 'iron'], // rear sight
+      [-0.005, 0.045, 0.05, 0.005, 0.052, 0.07, STEEL], // hammer
     ],
   },
   pistol: {
@@ -292,11 +293,46 @@ function shift(boxes: Box[], dx: number, dy: number, dz: number): Box[] {
   return boxes.map((b) => [b[0] + dx, b[1] + dy, b[2] + dz, b[3] + dx, b[4] + dy, b[5] + dz, b[6]] as Box);
 }
 
+const SIGHT_DARK = '#1b1d20', SIGHT_TIP = '#f4f0e0';
+
+/**
+ * Open sights of a weapon, built from the positions of its tagged `iron` boxes: a thin front post whose bright tip sits exactly on the
+ * sight line (the height `sightY`), and a rear sight of two uprights with a notch between them, a little higher than the line. Aimed, the
+ * post stands in the notch on the screen centre. A weapon with a single tagged box (a bead) gets a rear sight over the receiver.
+ */
+function ironSights(m: WeaponModel, tagged: Box[]): Box[] {
+  const front = tagged.reduce((a, b) => (b[2] < a[2] ? b : a));
+  const rear = tagged.length > 1 ? tagged.reduce((a, b) => (b[2] > a[2] ? b : a)) : null;
+  const top = m.sightY;
+  const out: Box[] = [];
+  const [fz0, fz1] = [front[2], Math.max(front[5], front[2] + 0.014)];
+  out.push([-0.0075, front[1], fz0, 0.0075, top - 0.009, fz1, SIGHT_DARK]);
+  out.push([-0.0075, top - 0.009, fz0, 0.0075, top, fz1, SIGHT_TIP]);
+  const [rz0, rz1, ry] = rear ? [rear[2], Math.max(rear[5], rear[2] + 0.02), rear[1]] : [0.03, 0.055, 0.04];
+  const up = top + 0.007;
+  out.push([-0.032, ry, rz0, -0.0135, up, rz1, SIGHT_DARK]);
+  out.push([0.0135, ry, rz0, 0.032, up, rz1, SIGHT_DARK]);
+  return out;
+}
+
+/** z (weapon space) of the middle of the open sights: the aimed pose turns the weapon around this point. */
+export function sightZFor(id: string): number {
+  const iron = WEAPON_MODELS[id].boxes.filter((b) => b[7] === 'iron');
+  if (iron.length === 0) return 0;
+  const front = iron.reduce((a, b) => (b[2] < a[2] ? b : a));
+  const rear = iron.length > 1 ? iron.reduce((a, b) => (b[2] > a[2] ? b : a)) : null;
+  return rear ? ((front[2] + front[5]) / 2 + (rear[2] + rear[5]) / 2) / 2 : (front[2] + front[5]) / 2 * 0.5 + 0.02;
+}
+
 /** All boxes of a weapon with its optic, suppressor and camo (Realms weapon levels; the camo paints the weapon, not its attachments). */
 function assemble(id: string, optic: OpticId, sup: boolean, camo = 'none'): Box[] {
   const m = WEAPON_MODELS[id];
   const own = camo === 'none' ? m.boxes : camoBoxes(m.boxes, camo);
-  let boxes = optic === 'iron' ? own : own.filter((b) => b[7] !== 'iron');
+  let boxes = own.filter((b) => b[7] !== 'iron');
+  if (optic === 'iron') {
+    const tagged = own.filter((b) => b[7] === 'iron');
+    if (tagged.length > 0) boxes = boxes.concat(ironSights(m, tagged));
+  }
   if (optic !== 'iron') boxes = boxes.concat(shift(OPTIC_MODELS[optic].boxes, 0, m.rail[0], m.rail[1]));
   if (sup && id !== 'knife') boxes = boxes.concat(shift(SUPPRESSOR, m.muzzle[0], m.muzzle[1], m.muzzle[2]));
   return boxes;

@@ -915,16 +915,32 @@ html, body {
 .arc-reload { width: calc(var(--s) * 70); height: calc(var(--s) * 4); background: rgba(0, 0, 0, 0.6); border: var(--s) solid #000; }
 .arc-reload-fill { height: 100%; width: 0; background: #ffff55; }
 
-/* Crosshair: four lines that open with the spread (--g = gap in pixels). */
-.arc-xh { position: absolute; left: 50%; top: 50%; width: 0; height: 0; --g: 8px; }
-.arc-xh i { position: absolute; background: #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.75); }
-.arc-xh .t, .arc-xh .b { width: 2px; height: calc(var(--s) * 4); left: -1px; }
-.arc-xh .l, .arc-xh .r { height: 2px; width: calc(var(--s) * 4); top: -1px; }
+/*
+ * Crosshair (arcade): shape, colour (--col) and size (--z) come from the settings; --g is the gap from the centre in pixels
+ * and opens with the spread (the radius of the ring). Whole-pixel sizes at every GUI scale; a dark outline on every part.
+ */
+.arc-xh { position: absolute; left: 50%; top: 50%; width: 0; height: 0; --g: 8px; --col: #fff; --z: 1; --len: calc(var(--s) * 4 * var(--z)); --w: 2px; }
+.arc-xh i { position: absolute; background: var(--col); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.75); }
+@supports (width: round(1.4px, 1px)) {
+  .arc-xh { --len: round(calc(var(--s) * 4 * var(--z)), 1px); --w: max(2px, round(calc(2px * var(--z)), 1px)); }
+}
+.arc-xh .t, .arc-xh .b { width: var(--w); height: var(--len); left: calc(var(--w) / -2); }
+.arc-xh .l, .arc-xh .r { height: var(--w); width: var(--len); top: calc(var(--w) / -2); }
 .arc-xh .t { bottom: var(--g); }
 .arc-xh .b { top: var(--g); }
 .arc-xh .l { right: var(--g); }
 .arc-xh .r { left: var(--g); }
-.arc-xh .dot { width: 2px; height: 2px; left: -1px; top: -1px; }
+.arc-xh .dot { width: var(--w); height: var(--w); left: calc(var(--w) / -2); top: calc(var(--w) / -2); }
+.arc-xh .o { display: none; border-radius: 50%; background: transparent; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.75), inset 0 0 0 1px rgba(0, 0, 0, 0.75); }
+/* Dot: a bigger dot, nothing else. */
+.arc-xh.s-dot .t, .arc-xh.s-dot .b, .arc-xh.s-dot .l, .arc-xh.s-dot .r { display: none; }
+.arc-xh.s-dot .dot { --d: max(3px, calc(var(--w) * 2)); width: var(--d); height: var(--d); left: calc(var(--d) / -2); top: calc(var(--d) / -2); border-radius: 50%; }
+/* Circle: a ring as wide as the spread cone, a small dot in the middle. */
+.arc-xh.s-circle .t, .arc-xh.s-circle .b, .arc-xh.s-circle .l, .arc-xh.s-circle .r { display: none; }
+.arc-xh.s-circle .o {
+  display: block; box-sizing: border-box; width: calc(var(--g) * 2 + var(--w)); height: calc(var(--g) * 2 + var(--w));
+  left: calc(var(--g) * -1 - var(--w) / 2); top: calc(var(--g) * -1 - var(--w) / 2); border: var(--w) solid var(--col);
+}
 
 /* Hit marker: four diagonal ticks. */
 .arc-aim { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; }

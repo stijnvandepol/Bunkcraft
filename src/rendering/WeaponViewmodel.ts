@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { type OpticId, type WeaponDef, isMagnified } from '../modes/Weapons';
 import {
-  type Box, OPTIC_MODELS, WEAPON_MODELS, buildBoxGeometry, createWeaponMaterial, muzzleFor, sightYFor, weaponFrontGeometry, weaponGeometry,
+  type Box, OPTIC_MODELS, WEAPON_MODELS, buildBoxGeometry, createWeaponMaterial, muzzleFor, sightYFor, sightZFor, weaponFrontGeometry, weaponGeometry,
 } from './WeaponModels';
 
 const SKIN = '#c99a7a';
@@ -13,30 +13,57 @@ const LEFT_HAND_Z: Record<string, number> = {
 const BOLT_TIME = 0.55;
 const tmpMuzzle: [number, number, number] = [0, 0, 0];
 
-/** Reticle textures (drawn once): a red dot, and a holographic ring with a dot. */
+/**
+ * Reticle textures (drawn once, 128 px): a red dot with a white-hot core, and a holographic ring with four ticks and a dot.
+ * The plane they are drawn on is sized in screen pixels (see RETICLE_PX), so the dot stays crisp and the same size on every screen.
+ */
 function reticleTexture(kind: 'reddot' | 'holo'): THREE.CanvasTexture {
   const c = document.createElement('canvas');
-  c.width = c.height = 64;
+  c.width = c.height = 128;
   const ctx = c.getContext('2d')!;
-  const glow = ctx.createRadialGradient(32, 32, 0, 32, 32, kind === 'reddot' ? 30 : 8);
-  glow.addColorStop(0, 'rgba(255,90,70,1)');
-  glow.addColorStop(0.35, 'rgba(255,40,30,0.9)');
-  glow.addColorStop(1, 'rgba(255,0,0,0)');
-  ctx.fillStyle = glow;
-  ctx.fillRect(0, 0, 64, 64);
-  if (kind === 'holo') {
-    ctx.strokeStyle = 'rgba(255,60,50,0.95)';
-    ctx.lineWidth = 3;
+  const glow = (r: number, a: number) => {
+    const g = ctx.createRadialGradient(64, 64, 0, 64, 64, r);
+    g.addColorStop(0, `rgba(255,60,40,${a})`);
+    g.addColorStop(1, 'rgba(255,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 128, 128);
+  };
+  const disc = (r: number, fill: string) => {
+    ctx.fillStyle = fill;
     ctx.beginPath();
-    ctx.arc(32, 32, 26, 0, Math.PI * 2);
+    ctx.arc(64, 64, r, 0, Math.PI * 2);
+    ctx.fill();
+  };
+  if (kind === 'reddot') {
+    glow(60, 0.55);
+    disc(11, 'rgba(255,50,35,1)');
+    disc(6, 'rgba(255,190,170,1)');
+  } else {
+    glow(18, 0.5);
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = 'rgba(255,40,30,0.3)';
+    ctx.lineWidth = 8;
+    ctx.beginPath();
+    ctx.arc(64, 64, 52, 0, Math.PI * 2);
     ctx.stroke();
-    ctx.fillStyle = 'rgba(255,60,50,0.95)';
-    for (const [x, y, w, hgt] of [[30, 2, 4, 8], [30, 54, 4, 8], [2, 30, 8, 4], [54, 30, 8, 4]]) ctx.fillRect(x, y, w, hgt);
+    ctx.strokeStyle = 'rgba(255,70,55,1)';
+    ctx.lineWidth = 3.4;
+    ctx.beginPath();
+    ctx.arc(64, 64, 52, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(255,70,55,1)';
+    for (const [x, y, w, hgt] of [[62, 4, 4, 14], [62, 110, 4, 14], [4, 62, 14, 4], [110, 62, 14, 4]]) ctx.fillRect(x, y, w, hgt);
+    disc(5, 'rgba(255,60,45,1)');
+    disc(2.6, 'rgba(255,200,185,1)');
   }
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.NoColorSpace;
+  t.anisotropy = 4;
   return t;
 }
+
+/** Size of the reticle planes in screen pixels on a 720 px tall screen (scaled with the height): dot with its glow, holographic ring. */
+const RETICLE_PX = { reddot: 30, holo: 70 } as const;
 
 /** Distance in front of the camera (view space z) of the weapon origin while aiming. */
 const ADS_Z = -0.5;
@@ -94,9 +121,19 @@ export class WeaponViewmodel {
   private sightY = 0;
   private sleeve = '#4f5a3a';
   private def: WeaponDef | null = null;
-  /** Red dot / holo reticles: one plane per kind, shown on the sight line while aiming. */
+  /**
+   * Red dot / holo reticles: one plane per kind. They hang in the view (not on the weapon) at the exact screen centre, the point the
+   * bullets go through, and sit at the depth of the optic's window.
+   */
   private readonly reticles: Record<'reddot' | 'holo', THREE.Mesh>;
   private reticle: THREE.Mesh | null = null;
+  private reticleDepth = 0.5;
+  private reticleKind: 'reddot' | 'holo' | null = null;
+  /** The local point of the weapon that is kept on the screen centre while aiming (sight line height and the z of the window or sights). */
+  private pivotZ = 0;
+  private readonly tmpQuat = new THREE.Quaternion();
+  private readonly tmpPivot = new THREE.Vector3();
+  private readonly tmpSize = new THREE.Vector2();
   /** Bolt-action cycle 0..1 (1 = idle) and how long a weapon takes to come up (Quickdraw). */
   private bolt = 1;
   private equipTime = EQUIP_TIME;
@@ -120,16 +157,16 @@ export class WeaponViewmodel {
       forceSinglePass: true,
     }));
     this.flash.visible = false;
-    const reticle = (kind: 'reddot' | 'holo', size: number) => {
-      const m = new THREE.Mesh(new THREE.PlaneGeometry(size, size), new THREE.MeshBasicMaterial({
+    const reticle = (kind: 'reddot' | 'holo') => {
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({
         map: reticleTexture(kind), transparent: true, blending: THREE.AdditiveBlending, depthTest: false, depthWrite: false,
       }));
       m.renderOrder = 10;
       m.visible = false;
-      this.root.add(m);
+      this.scene.add(m);
       return m;
     };
-    this.reticles = { reddot: reticle('reddot', 0.014), holo: reticle('holo', 0.05) };
+    this.reticles = { reddot: reticle('reddot'), holo: reticle('holo') };
     this.root.add(this.weaponMesh, this.armsMesh, this.flash);
     this.scene.add(this.root);
     this.scene.matrixAutoUpdate = false; // see Renderer: only the moving root updates its subtree
@@ -217,7 +254,9 @@ export class WeaponViewmodel {
     this.sightY = sightYFor(id, this.optic);
     for (const r of Object.values(this.reticles)) r.visible = false;
     this.reticle = this.optic === 'reddot' || this.optic === 'holo' ? this.reticles[this.optic] : null;
-    if (this.reticle) this.reticle.position.set(0, this.sightY, m.rail[1] + OPTIC_MODELS[this.optic as 'reddot' | 'holo'].windowZ);
+    this.reticleKind = this.optic === 'reddot' || this.optic === 'holo' ? this.optic : null;
+    // The pivot of the aimed pose: the reticle window, the scope's eyepiece, or the middle of the open sights.
+    this.pivotZ = this.optic === 'iron' ? sightZFor(id) : m.rail[1] + OPTIC_MODELS[this.optic].windowZ;
   }
 
   /** A shot went out: kick and muzzle flash. */
@@ -238,13 +277,14 @@ export class WeaponViewmodel {
   }
 
   /**
-   * @param ads      aim blend 0..1
+   * @param ads      aim blend 0..1, linear in the aim time (which parts of the model show)
+   * @param eased    the same blend eased for the eye (where the weapon is)
    * @param reload   reload progress 0..1, or −1 when not reloading
    * @param bob      walk phase / strength from the camera
    * @param lookX    mouse movement this frame (pixels)
    * @param light    brightness scale 0..1 from the world light at the player
    */
-  update(dt: number, ads: number, reload: number, bobPhase: number, bobAmount: number, lookX: number, lookY: number, light: number, aspect: number): void {
+  update(dt: number, ads: number, eased: number, reload: number, bobPhase: number, bobAmount: number, lookX: number, lookY: number, light: number, aspect: number): void {
     const def = this.def;
     if (!def) return;
     this.time += dt;
@@ -263,7 +303,7 @@ export class WeaponViewmodel {
     this.swayY = approach(this.swayY, Math.max(-1, Math.min(1, lookY * 0.02)), 9, dt);
 
     const model = WEAPON_MODELS[def.id];
-    const e = ads * ads * (3 - 2 * ads);
+    const e = Math.min(1, Math.max(0, eased));
     const calm = 1 - e * 0.85;
     const bx = Math.cos(bobPhase) * 0.012 * bobAmount * calm;
     const by = -Math.abs(Math.sin(bobPhase)) * 0.018 * bobAmount * calm;
@@ -276,8 +316,7 @@ export class WeaponViewmodel {
 
     // Hip and aim poses; aiming puts the sight line on the screen centre.
     const hipX = 0.18, hipY = -0.18, hipZ = -0.62;
-    // Aiming: sight line on the centre.
-    const adsX = 0, adsY = -this.sightY * 0.85 - 0.003, adsZ = ADS_Z;
+    const adsX = 0, adsY = -this.sightY * 0.85, adsZ = ADS_Z;
     const r = this.root;
     r.position.set(
       hipX + (adsX - hipX) * e + bx - 0.2 * sw,
@@ -293,21 +332,29 @@ export class WeaponViewmodel {
       reloadT * 0.9 - this.swayX * 0.015 - sw * 0.7 + boltT * 0.35,
       'YXZ',
     );
+    // Kick, sway and bob turn the weapon around its sight, not around the grip: the sight line stays exactly on the screen
+    // centre (where the bullets go) while the muzzle and the body move.
+    if (e > 0) {
+      const v = this.tmpPivot.set(0, this.sightY * 0.85, this.pivotZ * 0.85).applyQuaternion(this.tmpQuat.setFromEuler(r.rotation));
+      r.position.x -= e * (r.position.x + v.x);
+      r.position.y -= e * (r.position.y + v.y);
+    }
+    // The reticle hangs at the window's depth on the view axis.
+    this.reticleDepth = Math.max(0.2, -(r.position.z + this.pivotZ * 0.85));
     void model;
     this.material.color.setScalar(light * (this.flashLeft > 0 ? 1.5 : 1));
     // A scoped weapon disappears behind the scope overlay when fully aimed.
     this.weaponMesh.visible = !(isMagnified(this.optic) && ads > 0.92);
     // Aiming: no stock and no hands in the way of the sights.
     // (Both picked in apply(): looking them up here built a string key every frame.)
-    const geo = (ads > 0.5 ? this.frontGeometry : this.hipGeometry) ?? this.weaponMesh.geometry;
+    const front = e > 0.55;
+    const geo = (front ? this.frontGeometry : this.hipGeometry) ?? this.weaponMesh.geometry;
     if (this.weaponMesh.geometry !== geo) this.weaponMesh.geometry = geo;
-    this.armsMesh.visible = this.weaponMesh.visible && ads < 0.5;
+    this.armsMesh.visible = this.weaponMesh.visible && !front;
     const ret = this.reticle;
     if (ret) {
-      ret.visible = ads > 0.35;
-      // Undo the root's sideways slimming so the dot stays round.
-      ret.scale.x = 1 / (1 - 0.1 * e);
-      (ret.material as THREE.MeshBasicMaterial).opacity = Math.min(1, (ads - 0.35) * 3);
+      ret.visible = e > 0.5;
+      (ret.material as THREE.MeshBasicMaterial).opacity = Math.min(1, (e - 0.5) * 4);
     }
   }
 
@@ -316,6 +363,15 @@ export class WeaponViewmodel {
     const autoClear = renderer.autoClear;
     renderer.autoClear = false;
     renderer.clearDepth();
+    const ret = this.reticle;
+    if (ret && ret.visible && this.reticleKind) {
+      // A plane `px` pixels wide at depth d is px * 2 d tan(fov/2) / height world units: the same on every screen.
+      renderer.getDrawingBufferSize(this.tmpSize);
+      const px = RETICLE_PX[this.reticleKind] * (this.tmpSize.y / 720);
+      const size = (px * 2 * this.reticleDepth * Math.tan((this.camera.fov * Math.PI) / 360)) / Math.max(1, this.tmpSize.y);
+      ret.scale.set(size, size, 1);
+      ret.position.set(0, 0, -this.reticleDepth);
+    }
     renderer.render(this.scene, this.camera);
     renderer.autoClear = autoClear;
   }

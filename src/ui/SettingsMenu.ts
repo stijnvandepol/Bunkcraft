@@ -163,6 +163,7 @@ function controlsScreen(store: SettingsStore, nav: OptionsNav): HTMLDivElement {
   return menuScreen(t('controls.title'), [
     h('div', { class: 'grid2' },
       button(t('controls.mouse'), () => nav.push(mouseScreen(store, nav))),
+      button(t('controls.crosshair'), () => nav.push(crosshairScreen(store, nav))),
       cycleButton<'on' | 'off'>(t('controls.autoJump'), ['off', 'on'], onOff(), s.autoJump ? 'on' : 'off', (v) => store.set('autoJump', v === 'on')),
       h('div', { class: 'wide' }, button(t('controls.keybinds'), () => nav.push(keyBindsScreen(store, nav)))),
     ),
@@ -176,6 +177,23 @@ function mouseScreen(store: SettingsStore, nav: OptionsNav): HTMLDivElement {
       slider(10, 200, 1, s.sensitivity, (v) => t('mouse.sensitivity', v), (v) => store.set('sensitivity', v)),
       cycleButton<'on' | 'off'>(t('mouse.invert'), ['off', 'on'], onOff(), s.invertMouse ? 'on' : 'off', (v) => store.set('invertMouse', v === 'on')),
       cycleButton<'on' | 'off'>(t('mouse.raw'), ['on', 'off'], onOff(), s.rawInput ? 'on' : 'off', (v) => store.set('rawInput', v === 'on')),
+      slider(25, 200, 1, s.adsSensitivity, (v) => t('mouse.adsSensitivity', v), (v) => store.set('adsSensitivity', v)),
+      cycleButton<'uniform' | 'monitor'>(t('mouse.adsScaling'), ['uniform', 'monitor'], { uniform: t('mouse.adsScaling.uniform'), monitor: t('mouse.adsScaling.monitor') }, s.adsScaling, (v) => store.set('adsScaling', v)),
+      cycleButton<'hold' | 'toggle'>(t('mouse.adsMode'), ['hold', 'toggle'], { hold: t('mouse.adsMode.hold'), toggle: t('mouse.adsMode.toggle') }, s.adsMode, (v) => store.set('adsMode', v)),
+    ),
+  ], [button(t('common.done'), () => nav.pop())], { list: true });
+}
+
+/** Arcade crosshair: shape, colour, size and whether it opens with the spread. */
+function crosshairScreen(store: SettingsStore, nav: OptionsNav): HTMLDivElement {
+  const s = store.values;
+  const colors = { white: t('crosshair.color.white'), green: t('crosshair.color.green'), cyan: t('crosshair.color.cyan'), yellow: t('crosshair.color.yellow'), red: t('crosshair.color.red'), pink: t('crosshair.color.pink') };
+  return menuScreen(t('crosshair.title'), [
+    h('div', { class: 'grid2' },
+      cycleButton<'cross' | 'dot' | 'circle'>(t('crosshair.style'), ['cross', 'dot', 'circle'], { cross: t('crosshair.style.cross'), dot: t('crosshair.style.dot'), circle: t('crosshair.style.circle') }, s.crosshairStyle, (v) => store.set('crosshairStyle', v)),
+      cycleButton<keyof typeof colors>(t('crosshair.color'), ['white', 'green', 'cyan', 'yellow', 'red', 'pink'], colors, s.crosshairColor, (v) => store.set('crosshairColor', v)),
+      slider(50, 200, 5, s.crosshairSize, (v) => t('crosshair.size', v), (v) => store.set('crosshairSize', v)),
+      cycleButton<'on' | 'off'>(t('crosshair.dynamic'), ['on', 'off'], onOff(), s.crosshairDynamic ? 'on' : 'off', (v) => store.set('crosshairDynamic', v === 'on')),
     ),
   ], [button(t('common.done'), () => nav.pop())], { list: true });
 }

@@ -635,7 +635,10 @@ export class Game {
     if (s.reducedMotion) this.renderer.uniforms.uSway.value = 0;
     applyAccessibilityDocument(s);
     this.subtitles.setEnabled(s.subtitles);
-    if (this.arcade) this.arcade.hud.damageNumbers = s.damageNumbers;
+    if (this.arcade) {
+      this.arcade.hud.damageNumbers = s.damageNumbers;
+      this.arcade.setAimSettings(s);
+    }
     const palette = paletteFor(s.colorBlindSafe);
     TEAM_COLORS.red = palette.teamA;
     TEAM_COLORS.blue = palette.teamB;
@@ -1226,6 +1229,7 @@ export class Game {
     });
     this.arcade = session;
     session.hud.damageNumbers = this.settings.values.damageNumbers;
+    session.setAimSettings(this.settings.values);
     session.hud.onLoadoutClose = () => void this.resumeGame();
     session.setBindings(this.input);
     this.renderer.scene.add(session.tracers.mesh);
