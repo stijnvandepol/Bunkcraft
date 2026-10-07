@@ -1,7 +1,9 @@
 import * as THREE from 'three';
 import type { EntityManager } from '../entities/EntityManager';
 import type { PlayerInventory } from '../items/Inventory';
-import { ITEM, SHIELD, blockDrop, breakSeconds, getItemDef, isBlockItem, itemBlock, itemFromState, itemId, itemMeta, miningWear } from '../items/ItemRegistry';
+import {
+  ITEM, SHIELD, blockDrops, breakSeconds, getItemDef, isBlockItem, itemBlock, itemFromState, itemId, itemMeta, miningWear, plantedBy, seedItemOf,
+} from '../items/ItemRegistry';
 import { toolUse } from '../items/ToolUse';
 import { type MiningEnchants } from '../items/ItemRegistry';
 import { fireAspectTicks, levelOf, meleeBonus } from '../items/EnchantRules';
@@ -203,7 +205,8 @@ export class Interaction {
     // ---- Use: eat or place (right mouse) ----
     const held = this.d.hotbar.selectedStack;
     const food = getItemDef(held.id)?.food;
-    const canEat = food && hasSurvivalRules(mode) && this.d.stats.hunger < 20;
+    // A carrot or potato aimed at farmland is planted, not eaten (Minecraft tries "use on block" first).
+    const canEat = food && hasSurvivalRules(mode) && this.d.stats.hunger < 20 && !(hit.hit && !mobHit && this.plantTarget(held.id));
     this.shieldDisabled = Math.max(0, this.shieldDisabled - dt);
     if (held.id === SHIELD && input.rightDown && this.shieldDisabled <= 0) {
       this.shieldRaise += dt;
@@ -232,7 +235,7 @@ export class Interaction {
       if (this.eatTime >= EAT_TIME) {
         this.d.stats.eat(food.hunger, food.saturation);
         const fx = this.d.stats.effects;
-        if (food.poison) fx.add('poison', 0, food.poison, this.d.stats);
+        if (food.poison && Math.random() < (food.poisonChance ?? 1)) fx.add('poison', 0, food.poison, this.d.stats);
         for (const e of FOOD_EFFECTS[getItemDef(held.id)?.name ?? ''] ?? []) fx.add(e.id, e.amp, e.ticks, this.d.stats);
         this.d.inventory.consumeSlot(this.d.hotbar.selected);
         if (food.returns) this.d.inventory.add({ id: itemId(food.returns), count: 1 });
@@ -262,9 +265,10 @@ export class Interaction {
     }
 
     // ---- Pick block (creative) ----
-    if (input.middleClicked && hit.hit && mode === 'creative' && getBlockDef(hit.id)?.inInventory) {
+    // (a crop gives the item that plants it, like Minecraft's pick block)
+    if (input.middleClicked && hit.hit && mode === 'creative' && (getBlockDef(hit.id)?.inInventory || seedItemOf(hit.id))) {
       const inv = this.d.inventory;
-      const item = itemFromState(hit.id, this.getMeta(hit.x, hit.y, hit.z));
+      const item = seedItemOf(hit.id) || itemFromState(hit.id, this.getMeta(hit.x, hit.y, hit.z));
       let slot = -1;
       for (let i = 0; i < 9; i++) if (inv.get(i).id === item) slot = i;
       if (slot >= 0) this.d.hotbar.select(slot);
@@ -474,6 +478,7 @@ export class Interaction {
 
     const light = world.getLight(hit.x, hit.y + 1, hit.z);
     const above = world.getBlock(hit.x, hit.y + 1, hit.z);
+    const aboveMeta = world.getMeta(hit.x, hit.y + 1, hit.z);
     const brokenMeta = world.getMeta(hit.x, hit.y, hit.z);
     const broken = world.breakBlock(hit.x, hit.y, hit.z);
     if (broken) {
@@ -481,18 +486,17 @@ export class Interaction {
       renderer.particles.spawnBreak(hit.x, hit.y, hit.z, broken, light, world.tintAt(hit.x, hit.z, broken, brokenMeta));
       audio.play('break', stateSound(def, brokenMeta));
       if (survival) {
-        const drop = blockDrop(broken, held, brokenMeta, ench);
-        if (drop) entities.dropItem(drop, hit.x + 0.5, hit.y + 0.3, hit.z + 0.5);
+        const drops = blockDrops(broken, held, brokenMeta, ench);
+        for (const drop of drops) entities.dropItem(drop, hit.x + 0.5, hit.y + 0.3, hit.z + 0.5);
         // Ores give experience unless Silk Touch kept the ore whole (and only when the tool can harvest them).
-        if (drop && !ench.silk_touch) {
+        if (drops.length > 0 && !ench.silk_touch) {
           const xp = oreXp(getBlockDef(broken)?.name ?? '');
           if (xp > 0) entities.spawnXp(hit.x + 0.5, hit.y + 0.4, hit.z + 0.5, xp);
         }
         // A plant or torch on top breaks with its support and drops too.
         // (the upper half of a door that went with the lower one is no extra drop)
         if (above !== world.getBlock(hit.x, hit.y + 1, hit.z) && !(SHAPE[broken] === SHAPE_DOOR && above === broken)) {
-          const top = blockDrop(above, 0);
-          if (top) entities.dropItem(top, hit.x + 0.5, hit.y + 1.3, hit.z + 0.5);
+          for (const top of blockDrops(above, 0, aboveMeta)) entities.dropItem(top, hit.x + 0.5, hit.y + 1.3, hit.z + 0.5);
         }
         stats.addExhaustion(0.005);
         for (let w = miningWear(held, broken, brokenMeta); w > 0; w--) inventory.damageTool(hotbar.selected);
@@ -535,6 +539,11 @@ export class Interaction {
       this.useBoneMeal(mode);
       return;
     }
+    // Seeds, carrots and potatoes plant their crop on farmland.
+    if (plantedBy(item)) {
+      this.plant(item, mode);
+      return;
+    }
     const dust = item === REDSTONE_ITEM;
     if (!item || (!isBlockItem(item) && !dust)) return;
     if (itemBlock(item) === BLOCK.CHEST && this.d.chestsAllowed && !this.d.chestsAllowed()) return;
@@ -573,11 +582,37 @@ export class Interaction {
     this.breakProgress = 0;
   }
 
+  /** Where the held seed item would plant its crop: the free cell in front of the clicked face, with farmland under it. */
+  private readonly plantSpot = { x: 0, y: 0, z: 0, id: 0 };
+  /** Fills `plantSpot` (reused: this runs every frame while holding a carrot) and returns true when there is one. */
+  private plantTarget(item: number): boolean {
+    const id = plantedBy(item);
+    const hit = this.ray;
+    if (!id || !hit.hit) return false;
+    const x = hit.x + hit.nx, y = hit.y + hit.ny, z = hit.z + hit.nz;
+    if (this.getBlock(x, y, z) !== BLOCK.AIR || !plantCanStand(id, this.getBlock, x, y, z)) return false;
+    const t = this.plantSpot;
+    t.x = x; t.y = y; t.z = z; t.id = id;
+    return true;
+  }
+
+  /** Plants the crop of the held seeds (wheat seeds, carrot, potato, beetroot, pumpkin and melon seeds) on farmland. */
+  private plant(item: number, mode: GameMode): void {
+    const { world, hotbar, inventory, audio, hand } = this.d;
+    const t = this.plantSpot;
+    if (!this.plantTarget(item) || !world.setBlock(t.x, t.y, t.z, t.id, 0)) return;
+    this.d.onStat?.('placed');
+    audio.play('place', 'grass');
+    hand.swingHand();
+    if (hasSurvivalRules(mode)) inventory.consumeSlot(hotbar.selected);
+    this.breakProgress = 0;
+  }
+
   /** Bone meal: only on blocks it does something to; used up in survival. */
   private useBoneMeal(mode: GameMode): void {
     const { hotbar, inventory, audio, hand, renderer, world } = this.d;
     const hit = this.ray;
-    if (!boneMealTarget(hit.id) || !this.d.boneMeal?.(hit.x, hit.y, hit.z)) return;
+    if (!boneMealTarget(hit.id, world.getMeta(hit.x, hit.y, hit.z)) || !this.d.boneMeal?.(hit.x, hit.y, hit.z)) return;
     hand.swingHand();
     audio.play('place', 'grass');
     renderer.particles.spawnFace(hit.x, hit.y, hit.z, 0, 1, 0, BLOCK.GRASS, world.getLight(hit.x, hit.y + 1, hit.z), 6, 0x80ff60);

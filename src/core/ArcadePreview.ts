@@ -294,7 +294,66 @@ export class ArcadePreviewServer {
       this.setScores(2, 1);
     } else if (def.logic === 'gungame') {
       this.ladder(6);
+    } else if (def.logic === 'confirm') {
+      // Tags around the player: two enemy ones to confirm, one of ours to deny.
+      const tags = [0, 1, 2].map((i) => ({
+        id: i + 1, x: this.centerX + 3 + i * 2.5, y: this.floorY + 1, z: this.centerZ - 4 - i * 1.5, team: (i === 2 ? this.team || 'red' : 'blue') as Team,
+      }));
+      this.modeState({ kind: 'tags', tags });
+      this.pts.set(this.selfId, 7);
+      this.bots.forEach((b, i) => this.pts.set(b.id, 6 - i));
+      this.setScores(23, 19);
+      this.text = `First to ${this.info.scoreLimit} confirms`;
+      this.sendMatch();
+      this.sendRoster();
+    } else if (def.logic === 'snd') {
+      const sites = map.sites.map((x, i) => ({ name: x.name, x: x.x, y: x.y, z: x.z, r: x.r, progress: i === 0 ? 0.35 : 0, planted: false }));
+      this.modeState({ kind: 'bomb', round: 5, need: this.info.scoreLimit, wins: { red: 2, blue: 2 }, alive: { red: 3, blue: 2 }, attackers: 'red', sites, fuseIn: 0, swapIn: 2 });
+      this.text = `Round 5 · first to ${this.info.scoreLimit}`;
+      this.setScores(2, 2);
+    } else if (def.logic === 'infected') {
+      // You survive; two bots are infected already.
+      this.team = 'blue';
+      this.bots.forEach((b, i) => { b.team = i < 2 ? 'red' : 'blue'; });
+      this.modeState({ kind: 'infected', survivors: 4, infected: 2, outbreakIn: 0, last: 0 });
+      this.text = '4 survivors left';
+      this.bots.forEach((b, i) => this.pts.set(b.id, 9 - i));
+      this.pts.set(this.selfId, 6);
+      this.setScores(2, 4);
+      this.sendRoster();
+    } else if (def.logic === 'sharpshooter') {
+      this.primary = 'sniper';
+      this.host.deliver({ t: 'gear', primary: 'sniper', secondary: 'pistol' });
+      this.modeState({ kind: 'roulette', weapon: 'sniper', switchIn: 17 });
+    } else if (def.logic === 'koth') {
+      const zones = map.zones.map((z, i) => ({
+        name: z.name, x: z.x, y: z.y, z: z.z, r: z.r, active: i === 0, owner: '' as const, progress: 0, progressTeam: '' as const,
+        contested: false, red: i === 0 ? 1 : 0, blue: 0, holder: i === 0 ? this.selfId : 0,
+      }));
+      this.modeState({ kind: 'zones', variant: 'koth', zones, rotateIn: 31, gap: false });
+      this.pts.set(this.selfId, 27);
+      this.bots.forEach((b, i) => this.pts.set(b.id, 22 - i * 4));
+      this.text = `Hill: ${map.zones[0]?.name ?? ''} · first to ${this.info.scoreLimit}`;
+      this.sendMatch();
+      this.sendRoster();
     }
+  }
+
+  /** Infected: you turn (knife, red team, the panel line changes). */
+  infectSelf(last = 0): void {
+    this.team = 'red';
+    this.primary = 'knife';
+    this.host.deliver({ t: 'gear', primary: 'knife', secondary: 'knife' });
+    this.modeState({ kind: 'infected', survivors: last ? 1 : 3, infected: last ? 6 : 4, outbreakIn: 0, last });
+    this.sendRoster();
+  }
+
+  /** Search and destroy: the bomb is down at the first site with `fuse` seconds left. */
+  plantBomb(fuse = 21): void {
+    const map = getMap(this.info.map);
+    const sites = map.sites.map((x, i) => ({ name: x.name, x: x.x, y: x.y, z: x.z, r: x.r, progress: i === 0 ? 0.4 : 0, planted: i === 0 }));
+    this.modeState({ kind: 'bomb', round: 5, need: this.info.scoreLimit, wins: { red: 2, blue: 2 }, alive: { red: 1, blue: 2 }, attackers: 'red', sites, fuseIn: fuse, swapIn: 2 });
+    this.setPhase('live', fuse, `Round 5 · first to ${this.info.scoreLimit}`);
   }
 
   /** Gun game: puts you on a ladder level (0-based) and the bots around it. */

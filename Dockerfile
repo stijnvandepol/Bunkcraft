@@ -13,7 +13,10 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY . .
-RUN npm run build && mkdir -p /out/data
+# The commit being built (CI passes --build-arg GIT_SHA=<sha>): the title screen shows it (VITE_GIT_SHA).
+# Declared after npm ci so a new commit does not invalidate the dependency layer.
+ARG GIT_SHA=""
+RUN VITE_GIT_SHA="$GIT_SHA" npm run build && mkdir -p /out/data
 
 # ---- runtime: plain Node and two build outputs. No node_modules, no TypeScript at runtime. ----
 # No RUN in this stage: nothing executes for the target architecture, so arm64 builds fine on amd64 without QEMU.
@@ -22,6 +25,9 @@ WORKDIR /app
 # Heap limits fit the compose memory limit (docker-compose.yml); measured in docs/research/SERVER-DEPLOY.md.
 ENV NODE_ENV=production PORT=3000 DATA_DIR=/app/data \
     NODE_OPTIONS="--max-old-space-size=384 --max-semi-space-size=16"
+# /health reports "<package version>+<short commit>" (server/App.ts), so 'bunkcraft status' shows what is live.
+ARG GIT_SHA=""
+ENV GIT_SHA=${GIT_SHA}
 # The server reads its version from package.json; dist-server/index.js bundles ws and the shared game code,
 # dist-server/genWorker.js is the chunk generation thread (CHUNK_WORKERS).
 COPY package.json ./

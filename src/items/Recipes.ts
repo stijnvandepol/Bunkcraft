@@ -169,6 +169,10 @@ add(id('paper'), 3, 'table', one(CUBE_ID.sugar_cane, 3));
 add(id('book'), 1, 'hand', one(id('paper'), 3), one(id('leather')));
 add(id('melon_seeds'), 1, 'hand', one(id('melon_slice')));
 add(id('pumpkin_seeds'), 4, 'hand', one(CUBE_ID.pumpkin));
+// Farming (Java 1.21): pumpkin pie is shapeless (fits the 2×2 grid), beetroot soup needs 6 beetroots and a bowl.
+add(id('pumpkin_pie'), 1, 'hand', one(CUBE_ID.pumpkin), one(id('sugar')), one(id('egg')));
+add(id('beetroot_soup'), 1, 'table', one(id('beetroot'), 6), one(id('bowl')));
+add(CUBE_ID.jack_o_lantern, 1, 'hand', one(CUBE_ID.carved_pumpkin), one(B.TORCH));
 
 // ---------------------------------------------------------------- dyes and coloured blocks
 add(id('white_dye'), 1, 'hand', one(id('bone_meal')));

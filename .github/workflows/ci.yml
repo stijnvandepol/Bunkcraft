@@ -125,10 +125,12 @@ jobs:
           DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest,index
         with:
           images: ${{ steps.name.outputs.image }}
-          # latest = newest main, not newest release tag.
+          # Channels a server follows with BUNKCRAFT_TAG (docs/SERVER.md, "Automatisch deployen"):
+          # latest = every green push to main; stable = only release tags v1.2.3 (not pre-releases like v1.3.0-rc.1).
           flavor: latest=false
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=stable,enable=${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-') }}
             type=sha,prefix=sha-,format=short
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
@@ -149,15 +151,17 @@ jobs:
           platforms: linux/amd64
           load: true
           tags: bunkcraft:smoke
+          build-args: GIT_SHA=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      - name: Smoke test (compose hardening, /health and the game page)
+      - name: Smoke test (compose hardening, /health, the game page, the API and a throw-away game)
         run: |
           docker run -d --name smoke --read-only --tmpfs /tmp --cap-drop ALL \
-            --security-opt no-new-privileges:true -p 127.0.0.1:3000:3000 bunkcraft:smoke
+            --security-opt no-new-privileges:true -e ADMIN_TOKEN=smoke-test-token -p 127.0.0.1:3000:3000 bunkcraft:smoke
           for _ in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:3000/health | grep -q '"ok":true'; then
-              curl -fsS -o /dev/null http://127.0.0.1:3000/
+            if curl -fsS http://127.0.0.1:3000/health | grep -q "\"version\":\"[^\"]*+${GITHUB_SHA:0:7}\""; then
+              # The same check a server runs after every deploy (scripts/update.sh).
+              docker exec -i smoke node --input-type=module - smoke < scripts/server-check.mjs
               docker rm -f smoke >/dev/null
               exit 0
             fi
@@ -178,6 +182,8 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
+          # /health and the title screen show the commit, so you can see what is live.
+          build-args: GIT_SHA=${{ github.sha }}
           labels: ${{ steps.meta.outputs.labels }}
           annotations: ${{ steps.meta.outputs.annotations }}
           cache-from: type=gha
@@ -200,3 +206,46 @@ jobs:
             echo "${TAGS}"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # Optional push deploy: right after a new image is published, the server updates over SSH (docs/SERVER.md,
+  # "Automatisch deployen"). Off until the repository variable DEPLOY_ENABLED is 'true'; the secrets live in the
+  # GitHub Environment "production" (where required reviewers can make every deploy wait for a click).
+  # The SSH key can only run 'bunkcraft deploy' on the server (forced command), which follows the server's own
+  # channel: a push to main does nothing on a server on BUNKCRAFT_TAG=stable.
+  deploy:
+    needs: [image]
+    if: vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: production
+    # Never two deploys at once, and a queued one is not cancelled by a newer push.
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    # No token needed: the job only talks to the server.
+    permissions: {}
+    steps:
+      - name: Deploy over SSH (bunkcraft deploy)
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_PORT: ${{ vars.DEPLOY_PORT }}
+        run: |
+          if [ -z "$DEPLOY_HOST" ] || [ -z "$DEPLOY_USER" ] || [ -z "$DEPLOY_SSH_KEY" ] || [ -z "$DEPLOY_KNOWN_HOSTS" ]; then
+            echo "::notice::Push deploy skipped: set DEPLOY_HOST, DEPLOY_USER, DEPLOY_SSH_KEY and DEPLOY_KNOWN_HOSTS in the 'production' environment."
+            exit 0
+          fi
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/deploy_key ~/.ssh/known_hosts
+          # StrictHostKeyChecking=yes: only the pinned host key is accepted. The server ignores the command
+          # and runs its forced command; 'deploy' is sent for readability of its logs.
+          ssh -i ~/.ssh/deploy_key -p "${DEPLOY_PORT:-22}" -o BatchMode=yes -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" -o ConnectTimeout=20 \
+            -o ServerAliveInterval=30 "$DEPLOY_USER@$DEPLOY_HOST" deploy
+      - name: Remove the key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key

@@ -111,6 +111,10 @@ export class Renderer {
 
     this.scene.add(this.sky.mesh, this.clouds.mesh, this.particles.mesh, this.precipitation.mesh, this.lightning.mesh, this.highlight.group);
     this.scene.matrixWorldAutoUpdate = true;
+    // The scene itself never moves. With matrixAutoUpdate on, its updateMatrix() every frame flagged it changed and
+    // forced every descendant to recompute its world matrix (one matrix multiply per object per frame); now only
+    // objects that move (matrixAutoUpdate or matrixWorldNeedsUpdate) are recomputed.
+    this.scene.matrixAutoUpdate = false;
     this.resize();
   }
 

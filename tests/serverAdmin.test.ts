@@ -77,6 +77,25 @@ describe('admin API', () => {
     expect((await fetch(`${t.base}/api/rooms/${code}`)).status).toBe(404);
   });
 
+  it('announces to every game and saves every world (auto-update before a restart)', async () => {
+    const t = await start({ ADMIN_TOKEN: 'tok-tok-tok-tok' });
+    const h = { ...auth('tok-tok-tok-tok'), 'content-type': 'application/json' };
+    const { code } = await createRoom(t.base, { name: 'Announce Test' });
+    const p = await joinRoom(t, code, 'listener', { key: KEY_A });
+    const health = await (await fetch(`${t.base}/health`)).json() as { players: number; playersInPlay: number };
+    expect(health).toMatchObject({ players: 1, playersInPlay: 1 }); // a Minecraft world is always "in play"
+
+    const heard = p.client.chatContaining('restarts in 60');
+    const res = await fetch(`${t.base}/api/admin/announce`, { method: 'POST', headers: h, body: JSON.stringify({ text: 'Update: the server restarts in 60 seconds' }) });
+    expect(await res.json()).toEqual({ ok: true, reached: 1 });
+    expect((await heard).system).toBe(true);
+    expect((await fetch(`${t.base}/api/admin/announce`, { method: 'POST', headers: h, body: '{"text":"  "}' })).status).toBe(400);
+    expect((await fetch(`${t.base}/api/admin/announce`, { method: 'POST', body: '{"text":"x"}' })).status).toBe(401);
+
+    expect((await fetch(`${t.base}/api/admin/save`, { method: 'POST', headers: h })).status).toBe(200);
+    expect(existsSync(join(t.dir, 'rooms', code, 'world.json'))).toBe(true);
+  });
+
   it('blocks an address: open connections drop and new ones are refused', async () => {
     const t = await start({ ADMIN_TOKEN: 'tok-tok-tok-tok' });
     const h = { ...auth('tok-tok-tok-tok'), 'content-type': 'application/json' };

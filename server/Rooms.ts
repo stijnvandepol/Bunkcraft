@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomInt } from 'node:crypto';
-import { type GameType, gameTypeDef, parseGameType } from '../src/modes/GameTypes';
+import { type GameType, type MapFeature, gameTypeDef, parseGameType } from '../src/modes/GameTypes';
 import { DEFAULT_MAP, MAP_IDS, type MapSetting, getMap, mapFor, parseMapId, parseMapSetting } from '../src/modes/maps';
 import { CODE_ALPHABET, CODE_LENGTH, type MatchPhase, normalizeCode } from '../src/net/protocol';
 import {
@@ -12,6 +12,9 @@ import { GameServer, parseGameMode } from './GameServer';
 import { log } from './Log';
 import { RateLimiter } from './Security';
 import type { ChunkGenPool } from './chunkgen/ChunkGenPool';
+import { parseBotSettings } from './bots/BotManager';
+import type { BotDifficulty } from './bots/BotSkill';
+import type { ProfileService } from './progression/ProfileService';
 
 export { RateLimiter };
 
@@ -36,6 +39,11 @@ export interface RoomOptions {
   genPool?: ChunkGenPool | null;
   /** Most games the public list shows (default 50). */
   listMax?: number;
+  /** Quick play lobbies fill up with bots to this many players (0 = no bots; env QUICKPLAY_BOTS). */
+  quickPlayBots?: number;
+  quickPlayBotDifficulty?: BotDifficulty;
+  /** Realms progression shared by every game (absent = no XP). */
+  profiles?: ProfileService | null;
 }
 
 /** Hashes and flags for a new game, computed by the caller (hashing is async). */
@@ -59,6 +67,8 @@ export interface ListedRoom {
   phase?: MatchPhase;
   timeLeft?: number;
   currentMap?: string;
+  /** Bots playing besides the `players` (people). */
+  bots?: number;
 }
 
 /** Answer of quick play: the lobby to join, and whether it was just opened. */
@@ -97,13 +107,19 @@ export interface MatchRequest {
   maxPlayers?: unknown;
   /** Rotating arcade lobbies: the map of the first match (server-side only, quick play). */
   startMap?: unknown;
+  /** Arcade lobbies: bots to add (private lobby host), 0 to the lobby size minus one. */
+  bots?: unknown;
+  /** Bot difficulty: easy, normal, hard or veteran. */
+  botDifficulty?: unknown;
+  /** Fill the lobby with bots up to this many players (server-side only, quick play). */
+  botFill?: unknown;
 }
 
 export const SCORE_LIMIT_RANGE = { min: 5, max: 100 };
 export const TIME_LIMIT_RANGE = { min: 120, max: 1800 };
 
 /** A map the game type can be played on: the chosen one when it has the data, "rotate" stays (the match skips maps without it). */
-function mapSettingFor(setting: MapSetting, requires: readonly ('zones' | 'flags')[] | undefined): MapSetting {
+function mapSettingFor(setting: MapSetting, requires: readonly MapFeature[] | undefined): MapSetting {
   const id = parseMapId(setting);
   return id ? mapFor(id, requires) : setting;
 }
@@ -162,6 +178,12 @@ export class Rooms {
     const cleanSeed = seed?.trim().slice(0, 32) || undefined;
     // Arcade game types ignore the Minecraft game mode and bring their own match settings.
     const type = gameTypeDef(parseGameType(match.gameType));
+    const lobbySize = match.maxPlayers !== undefined
+      ? clampSetting(match.maxPlayers, { min: LOBBY_SIZE_RANGE.min, max: Math.min(LOBBY_SIZE_RANGE.max, this.opts.maxPlayers) }, this.opts.maxPlayers)
+      : undefined;
+    const bots = type.arcade
+      ? parseBotSettings(match.botFill !== undefined ? { fill: match.botFill, difficulty: match.botDifficulty } : { count: match.bots, difficulty: match.botDifficulty }, lobbySize ?? this.opts.maxPlayers)
+      : undefined;
     const server = new GameServer({
       ...this.serverOptions(code),
       dataDir: join(this.opts.dataDir, code), worldName: cleanName, seed: cleanSeed, gameMode: mode,
@@ -175,9 +197,8 @@ export class Rooms {
         timeLimitSec: clampSetting(match.timeLimitSec, rangeFor(TIME_LIMIT_RANGE, type.options?.time), type.timeLimitSec),
         mapId: mapSettingFor(parseMapSetting(match.mapId) ?? DEFAULT_MAP, type.requires),
         ...(parseMapId(match.startMap) ? { startMap: parseMapId(match.startMap)! } : {}),
-        ...(match.maxPlayers !== undefined ? {
-          lobbySize: clampSetting(match.maxPlayers, { min: LOBBY_SIZE_RANGE.min, max: Math.min(LOBBY_SIZE_RANGE.max, this.opts.maxPlayers) }, this.opts.maxPlayers),
-        } : {}),
+        ...(lobbySize !== undefined ? { lobbySize } : {}),
+        ...(bots ? { bots } : {}),
       } : {}),
     });
     this.loaded.set(code, { server, lastActive: Date.now() });
@@ -223,6 +244,7 @@ export class Rooms {
       inventoryGuard: this.opts.inventoryGuard,
       binary: this.opts.binary,
       genPool: this.opts.genPool,
+      profiles: this.opts.profiles,
       onMetaChange: () => { const r = this.loaded.get(code); if (r) this.writeMeta(code, r.server); },
     };
   }
@@ -260,6 +282,7 @@ export class Rooms {
           code, name: m.name, gameType: m.gameType, gameMode: m.gameMode, players,
           maxPlayers: m.maxPlayers, locked: m.locked, ...(m.map ? { map: m.map } : {}),
           ...(status ? { phase: status.phase, timeLeft: status.timeLeft, currentMap: status.map } : {}),
+          ...(live?.server.botCount ? { bots: live.server.botCount } : {}),
         });
       }
       rooms.sort((a, b) => b.players - a.players || a.name.localeCompare(b.name));
@@ -305,7 +328,11 @@ export class Rooms {
     // Every new lobby starts on a random map the mode can use, so not every lobby opens on the same arena.
     const maps = MAP_IDS.filter((id) => getMap(id).supports(def.requires));
     const startMap = maps[randomInt(maps.length)];
-    const code = this.create((c) => quickPlayName(mode, c), undefined, undefined, { gameType: mode, mapId: 'rotate', startMap }, { listed: true });
+    // A lone player gets a full match at once: bots fill the lobby and step aside as people come in.
+    const fill = this.opts.quickPlayBots ?? 0;
+    const code = this.create((c) => quickPlayName(mode, c), undefined, undefined, {
+      gameType: mode, mapId: 'rotate', startMap, ...(fill > 0 ? { botFill: fill, botDifficulty: this.opts.quickPlayBotDifficulty ?? 'normal' } : {}),
+    }, { listed: true });
     if (!code) return { error: 'full' };
     return { code, created: true };
   }
@@ -388,6 +415,28 @@ export class Rooms {
   info(raw: string): RoomInfo | null {
     const room = this.get(raw);
     return room ? { code: room.code, ...room.server.info() } : null;
+  }
+
+  /** See GameServer.playersInPlay. */
+  get playersInPlay(): number {
+    let n = 0;
+    for (const r of this.loaded.values()) n += r.server.playersInPlay;
+    return n;
+  }
+
+  /** A server message to every loaded game; returns the number of players reached. */
+  announce(text: string): number {
+    let n = 0;
+    for (const r of this.loaded.values()) {
+      r.server.announce(text);
+      n += r.server.playerCount;
+    }
+    return n;
+  }
+
+  /** Writes every loaded game to disk now (before a backup or a planned restart). */
+  saveAll(): void {
+    for (const r of this.loaded.values()) r.server.save();
   }
 
   shutdown(reconnectMs?: number): void {

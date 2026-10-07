@@ -4,7 +4,7 @@ import {
   cycleSlot, cycleTarget, impactNormal, reloadProgress, spectateCandidates, spreadPixels, swayOffset, viewKick,
 } from '../modes/ArcadeLogic';
 import { type GameTypeDef, type Team, TEAM_COLORS, gameTypeDef } from '../modes/GameTypes';
-import { carriesFlag, eventView, localizeServerText, phaseBanner } from '../modes/ModeView';
+import { eventView, localizeServerText, modeSpeedMul, phaseBanner, teamWinTitle } from '../modes/ModeView';
 import {
   type ClassSpec, DEFAULT_CLASS, LAST_CLASS_STORAGE_KEY, LOADOUT_PRESETS, classApplies, loadSavedClass, saveClass, validateClass,
 } from '../modes/Loadouts';
@@ -23,6 +23,9 @@ import { WeaponViewmodel } from '../rendering/WeaponViewmodel';
 import { ArcadeHud, type ScoreboardContext } from '../ui/ArcadeHud';
 import { ModeHud } from '../ui/ModeHud';
 import { MatchLobby } from '../ui/MatchLobby';
+import { ProgressPanel } from '../ui/ProgressPanel';
+import { applyReport, currentRank, onProfile } from '../net/ProfileApi';
+import { lockClass } from '../modes/progression/Unlocks';
 import { ModeVisuals } from '../rendering/ModeVisuals';
 import { BLOCK } from '../world/BlockRegistry';
 import { type RayHit, createRayHit, raycast } from '../world/Raycast';
@@ -150,12 +153,14 @@ export class ArcadeSession {
   readonly modeVisuals = new ModeVisuals();
   /** Realms pre-match lobby (warm-up panel) and the map vote after a match. */
   readonly lobby: MatchLobby;
+  /** Realms XP report on the match-end screen. */
+  readonly progress = new ProgressPanel();
+  private readonly offProfile: () => void;
   private modeState: ModeState | null = null;
   private matchText = '';
   /** The server's match line as sent (English), localized into `matchText`. */
   private matchRaw = '';
   private selfPts = 0;
-  private carrying = false;
   phase: MatchPhase = 'warmup';
   private timeLeft = 0;
   private timeStamp = 0;
@@ -251,7 +256,12 @@ export class ArcadeSession {
     this.lobby.onVote = (map) => this.d.send({ t: 'vote', map });
     this.hud.el.append(this.lobby.el);
     // The vote sits under the result in the match-end overlay.
-    this.hud.el.querySelector('.arc-end')?.append(this.lobby.voteEl);
+    this.hud.el.querySelector('.arc-end')?.append(this.progress.el, this.lobby.voteEl);
+    // Realms profile: Create-a-Class shows what is unlocked, your weapons wear their camos.
+    this.offProfile = onProfile((p) => {
+      this.hud.setRank(currentRank());
+      this.viewmodel.setCamos(p?.equip.camos ?? {});
+    });
     this.players.set(d.selfId, { name: d.selfName, team: '' });
     this.surfaceAt = surfaceLookup(d.getBlock);
     this.custom = loadSavedClass(storage()) ?? { ...DEFAULT_CLASS };
@@ -282,9 +292,9 @@ export class ArcadeSession {
 
   /** Movement multiplier for Player.speedMultiplier: always-sprint pace times the weapon's modifier. */
   get speedMultiplier(): number {
-    // A flag carrier is slower (capture the flag); the server announces who carries in the mode state.
-    const carry = this.carrying ? 1 - (this.def.params?.carrySlow ?? 0.1) : 1;
-    return ARCADE_SPEED_MULT * this.weapon.moveSpeed * (1 - 0.2 * this.ads) * carry;
+    // The mode's factor (a flag carrier is slower, the infected faster) comes from the server's mode state and our team.
+    const mode = modeSpeedMul(this.def, this.modeState, this.team, this.d.selfId);
+    return ARCADE_SPEED_MULT * this.weapon.moveSpeed * (1 - 0.2 * this.ads) * mode;
   }
 
   readonly airAccel = ARCADE_AIR_ACCEL;
@@ -389,6 +399,10 @@ export class ArcadeSession {
       case 'mode': this.onMode(msg.state); break;
       case 'event': this.onEvent(msg, now); break;
       case 'vote': this.lobby.setVote(msg); this.refreshEnd(); break; // the vote panel takes room from the board
+      case 'progress':
+        this.progress.show(msg.report);
+        applyReport(msg.report);
+        break;
       default: break;
     }
   }
@@ -421,6 +435,7 @@ export class ArcadeSession {
       this.ended = false;
       this.endTitle = null;
       this.hud.setMatchEnd(null);
+      this.progress.hide();
       this.d.remote.reviveAll();
     }
     if (msg.info.map && msg.info.map !== (this.info.map ?? 'classic')) {
@@ -450,6 +465,7 @@ export class ArcadeSession {
   private onRoster(players: RosterEntry[]): void {
     this.roster = players;
     this.rosterVersion++;
+    this.hud.setRanks(players);
     this.matchDirty = true;
     this.refreshEnd();
     let best: RosterEntry | null = null;
@@ -528,8 +544,7 @@ export class ArcadeSession {
   private onMode(state: ModeState): void {
     this.modeState = state;
     this.modeHud.setState(state);
-    this.modeVisuals.setState(state);
-    this.carrying = state.kind === 'ctf' && carriesFlag(state.flags, this.d.selfId);
+    this.modeVisuals.setState(state, this.d.selfId);
     this.matchDirty = true;
   }
 
@@ -674,7 +689,7 @@ export class ArcadeSession {
     let title = t('arc.end.draw');
     let color = '#ffffff';
     if (msg.winnerTeam) {
-      title = msg.winnerTeam === 'red' ? t('arc.end.redWins') : t('arc.end.blueWins');
+      title = teamWinTitle(this.def, msg.winnerTeam);
       color = TEAM_COLORS[msg.winnerTeam];
     } else if (msg.winnerId) {
       title = msg.winnerId === this.d.selfId ? t('arc.end.youWin') : t('arc.end.wins', this.nameOf(msg.winnerId));
@@ -765,7 +780,8 @@ export class ArcadeSession {
 
   /** Tells the server the class for the next life (it applies at once right after a spawn). */
   private sendClass(c: ClassSpec): void {
-    this.nextClass = validateClass(c);
+    // Within the Realms unlocks (the server checks the same table; guests have the starting kit).
+    this.nextClass = lockClass(c, currentRank());
     const n = this.nextClass;
     this.d.send({ t: 'loadout', primary: n.primary, secondary: n.secondary, optic: n.optic, perk: n.perk });
     this.hud.markClass(n);
@@ -986,9 +1002,11 @@ export class ArcadeSession {
       c.scoreLimit = this.info.scoreLimit; c.selfKills = this.selfKills; c.leader = this.def.ladder ? '' : this.leader;
       c.text = this.matchText;
       const ladder = this.def.ladder;
-      c.selfScore = ladder ? `${Math.min(this.selfPts + 1, ladder.length)}/${ladder.length}` : undefined;
+      // Gun game: the level; king of the hill (points, no teams): the points towards the limit.
+      c.selfScore = ladder ? `${Math.min(this.selfPts + 1, ladder.length)}/${ladder.length}`
+        : this.def.scoreColumn && !this.teams && this.info.scoreLimit > 0 ? `${this.selfPts}/${this.info.scoreLimit}` : undefined;
       hud.setMatch(this.phase, left, c);
-      const round = this.modeState?.kind === 'rounds' ? this.modeState.round : 1;
+      const round = this.modeState?.kind === 'rounds' || this.modeState?.kind === 'bomb' ? this.modeState.round : 1;
       hud.setBanner(this.phase === 'warmup' ? this.lobby.banner(this.roster, sec) : phaseBanner(this.phase, left, round));
       if (ladder) this.modeHud.setLadder(this.selfPts, ladder, this.leader);
       if (this.def.hud?.includes('zones') || this.def.hud?.includes('flags')) this.modeHud.setScores(this.scores.red, this.scores.blue, this.info.scoreLimit);
@@ -1147,6 +1165,8 @@ export class ArcadeSession {
 
   /** Leaving the game: drop effects and remote state. */
   dispose(): void {
+    this.offProfile();
+    this.progress.hide();
     this.hud.reset();
     this.modeHud.reset();
     this.lobby.reset();

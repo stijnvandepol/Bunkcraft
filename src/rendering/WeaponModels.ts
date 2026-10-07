@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { OpticId } from '../modes/Weapons';
+import { camoBoxes } from './WeaponCamo';
 
 /**
  * Procedural weapon models: a handful of coloured boxes per weapon, no assets. Units are blocks,
@@ -291,10 +292,11 @@ function shift(boxes: Box[], dx: number, dy: number, dz: number): Box[] {
   return boxes.map((b) => [b[0] + dx, b[1] + dy, b[2] + dz, b[3] + dx, b[4] + dy, b[5] + dz, b[6]] as Box);
 }
 
-/** All boxes of a weapon with its optic and suppressor. */
-function assemble(id: string, optic: OpticId, sup: boolean): Box[] {
+/** All boxes of a weapon with its optic, suppressor and camo (Realms weapon levels; the camo paints the weapon, not its attachments). */
+function assemble(id: string, optic: OpticId, sup: boolean, camo = 'none'): Box[] {
   const m = WEAPON_MODELS[id];
-  let boxes = optic === 'iron' ? m.boxes : m.boxes.filter((b) => b[7] !== 'iron');
+  const own = camo === 'none' ? m.boxes : camoBoxes(m.boxes, camo);
+  let boxes = optic === 'iron' ? own : own.filter((b) => b[7] !== 'iron');
   if (optic !== 'iron') boxes = boxes.concat(shift(OPTIC_MODELS[optic].boxes, 0, m.rail[0], m.rail[1]));
   if (sup && id !== 'knife') boxes = boxes.concat(shift(SUPPRESSOR, m.muzzle[0], m.muzzle[1], m.muzzle[2]));
   return boxes;
@@ -353,12 +355,12 @@ const STOCK_FROM_Z = 0.085;
  * One shared geometry per weapon id + optic + suppressor (first-person view and every remote player
  * use it). Built on first use; the cache key is a short string, so callers should only ask on changes.
  */
-export function weaponGeometry(id: string, optic: OpticId = 'iron', sup = false): THREE.BufferGeometry | null {
+export function weaponGeometry(id: string, optic: OpticId = 'iron', sup = false, camo = 'none'): THREE.BufferGeometry | null {
   if (!WEAPON_MODELS[id]) return null;
-  const key = `${id}|${optic}|${sup ? 1 : 0}`;
+  const key = `${id}|${optic}|${sup ? 1 : 0}${camo === 'none' ? '' : `|${camo}`}`;
   let g = geometries.get(key);
   if (!g) {
-    g = buildBoxGeometry(assemble(id, optic, sup));
+    g = buildBoxGeometry(assemble(id, optic, sup, camo));
     geometries.set(key, g);
   }
   return g;
@@ -375,14 +377,14 @@ export function adsCutZ(id: string, optic: OpticId): number {
 }
 
 /** The weapon cut off at `adsCutZ` (no stock, no receiver behind a red dot or holo), for the first-person aiming view. */
-export function weaponFrontGeometry(id: string, optic: OpticId = 'iron', sup = false): THREE.BufferGeometry | null {
+export function weaponFrontGeometry(id: string, optic: OpticId = 'iron', sup = false, camo = 'none'): THREE.BufferGeometry | null {
   if (!WEAPON_MODELS[id]) return null;
-  const key = `${id}|${optic}|${sup ? 1 : 0}`;
+  const key = `${id}|${optic}|${sup ? 1 : 0}${camo === 'none' ? '' : `|${camo}`}`;
   let g = frontGeometries.get(key);
   if (!g) {
     const cut = adsCutZ(id, optic);
     const clip = optic === 'reddot' || optic === 'holo';
-    const boxes = assemble(id, optic, sup).filter((b) => b[2] < cut)
+    const boxes = assemble(id, optic, sup, camo).filter((b) => b[2] < cut)
       .map((b) => (clip && b[5] > cut ? [b[0], b[1], b[2], b[3], b[4], cut, b[6]] as Box : b));
     g = buildBoxGeometry(boxes);
     frontGeometries.set(key, g);

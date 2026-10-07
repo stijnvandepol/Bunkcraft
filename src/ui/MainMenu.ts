@@ -43,6 +43,8 @@ export interface MenuActions {
 }
 
 export const VERSION = 'BunkCraft 1.0';
+/** The commit this build came from (the Docker image sets VITE_GIT_SHA), so the title screen shows what is live. */
+const BUILD_SHA = String(import.meta.env.VITE_GIT_SHA ?? '').slice(0, 7);
 
 /** `npm run build:static`: hosted without a game server (itch.io, GitHub Pages ...). */
 const STATIC_BUILD = import.meta.env.VITE_STATIC === '1';
@@ -146,7 +148,7 @@ export class MainMenu {
         ),
       ),
       installButton('pwa-install-title'),
-      h('div', { class: 'footer-left', text: VERSION }),
+      h('div', { class: 'footer-left', text: BUILD_SHA ? `${VERSION} (${BUILD_SHA})` : VERSION }),
       h('div', { class: 'footer-right', text: t('title.disclaimer') }),
     ));
   }

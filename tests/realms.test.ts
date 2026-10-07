@@ -18,7 +18,7 @@ const lobby = (code: string, over: Partial<LobbyCandidate> = {}): LobbyCandidate
 
 describe('Realms matchmaking: pickLobby', () => {
   it('lists every arcade mode in the playlist, and not Minecraft', () => {
-    expect(REALMS_MODES).toEqual(['tdm', 'ffa', 'gungame', 'elimination', 'hardpoint', 'domination', 'ctf']);
+    expect(REALMS_MODES).toEqual(['tdm', 'ffa', 'gungame', 'elimination', 'hardpoint', 'domination', 'ctf', 'killconfirmed', 'snd', 'infected', 'sharpshooter', 'koth']);
   });
 
   it('returns null when there is no lobby of the mode (create a new one)', () => {

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { BLOCK, FACE_LAYER, OPAQUE, SOLID } from '../world/BlockRegistry';
 import { FOG_GLSL, LIGHT_GLSL, type WorldUniforms } from './Materials';
+import { uploadPrefix } from './uploadRange';
 
 const MAX = 1024;
 
@@ -37,13 +38,14 @@ export class Particles {
     g.setAttribute('position', new THREE.Float32BufferAttribute([-0.5, -0.5, 0, 0.5, -0.5, 0, 0.5, 0.5, 0, -0.5, 0.5, 0], 3));
     g.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, 1, 0, 1, 1, 0, 1], 2));
     g.setIndex([0, 1, 2, 0, 2, 3]);
-    this.iPos = new THREE.InstancedBufferAttribute(new Float32Array(MAX * 3), 3).setUsage(THREE.DynamicDrawUsage);
-    this.iData = new THREE.InstancedBufferAttribute(new Float32Array(MAX * 4), 4).setUsage(THREE.DynamicDrawUsage);
-    this.iLight = new THREE.InstancedBufferAttribute(new Float32Array(MAX * 2), 2).setUsage(THREE.DynamicDrawUsage);
+    // The attributes share the simulation's arrays (swap-remove keeps them dense): no copy per frame.
+    this.iPos = new THREE.InstancedBufferAttribute(this.pos, 3).setUsage(THREE.DynamicDrawUsage);
+    this.iData = new THREE.InstancedBufferAttribute(this.data, 4).setUsage(THREE.DynamicDrawUsage);
+    this.iLight = new THREE.InstancedBufferAttribute(this.light, 2).setUsage(THREE.DynamicDrawUsage);
     g.setAttribute('iPos', this.iPos);
     g.setAttribute('iData', this.iData);
     g.setAttribute('iLight', this.iLight);
-    this.iTint = new THREE.InstancedBufferAttribute(new Float32Array(MAX * 4), 4).setUsage(THREE.DynamicDrawUsage);
+    this.iTint = new THREE.InstancedBufferAttribute(this.tint, 4).setUsage(THREE.DynamicDrawUsage);
     g.setAttribute('iTint', this.iTint);
     g.instanceCount = 0;
     this.geometry = g;
@@ -188,14 +190,10 @@ export class Particles {
     // Nothing alive now and nothing uploaded last frame: skip the subarray views and update ranges.
     if (n === 0 && this.uploaded === 0) return;
     this.uploaded = n;
-    (this.iPos.array as Float32Array).set(p.subarray(0, n * 3));
-    (this.iData.array as Float32Array).set(this.data.subarray(0, n * 4));
-    (this.iLight.array as Float32Array).set(this.light.subarray(0, n * 2));
-    (this.iTint.array as Float32Array).set(this.tint.subarray(0, n * 4));
-    this.iPos.clearUpdateRanges(); this.iPos.addUpdateRange(0, n * 3); this.iPos.needsUpdate = true;
-    this.iData.clearUpdateRanges(); this.iData.addUpdateRange(0, n * 4); this.iData.needsUpdate = true;
-    this.iLight.clearUpdateRanges(); this.iLight.addUpdateRange(0, n * 2); this.iLight.needsUpdate = true;
-    this.iTint.clearUpdateRanges(); this.iTint.addUpdateRange(0, n * 4); this.iTint.needsUpdate = true;
+    uploadPrefix(this.iPos, n * 3);
+    uploadPrefix(this.iData, n * 4);
+    uploadPrefix(this.iLight, n * 2);
+    uploadPrefix(this.iTint, n * 4);
     this.geometry.instanceCount = n;
     this.mesh.visible = n > 0;
   }

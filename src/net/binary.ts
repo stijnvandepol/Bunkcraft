@@ -28,8 +28,20 @@ export const BIN_ENT = 2;
  * The held item is not sent (arcade players hold weapons, announced by `holds`) and decodes as 0.
  */
 export const BIN_SNAP_Q = 3;
-/** Binary format version a client understands: 1 = snap/ent floats, 2 = also the quantised snapshot. */
-export const BINARY_VERSION = 2;
+/**
+ * Arcade `shot` (binary version 3; every shot of every player goes to everybody, so it was half the arcade traffic as
+ * JSON, ~100 bytes each):
+ *   u8 kind 4, u16 id, u8 flags (1 = suppressed), f32 ox, f32 oy, f32 oz,
+ *   i16 ex − ox, i16 ey − oy, i16 ez − oz (1/32 block), u8 n, n bytes weapon id (ASCII)        (23 + n bytes)
+ * The encoder declines (JSON instead) for anything it cannot carry exactly: other fields, a long or non-ASCII weapon
+ * id, an end point more than 1024 blocks away. A field added to `shot` later therefore keeps working.
+ */
+export const BIN_SHOT = 4;
+/** Binary format version a client understands: 1 = snap/ent floats, 2 = also the quantised snapshot, 3 = also `shot`. */
+export const BINARY_VERSION = 3;
+/** First binary version with the quantised arcade snapshot and with the binary `shot`. */
+export const BINARY_VERSION_SNAP_Q = 2;
+export const BINARY_VERSION_SHOT = 3;
 export const SNAP_Q_ENTRY_BYTES = 13;
 const Q = 32;
 
@@ -125,6 +137,7 @@ export function encodeEnt(m: MobEntry[], i: ItemEntry[], a: ArrowEntry[], b: Tnt
   return buf;
 }
 
+const r2 = (v: number): number => Math.round(v * 100) / 100;
 const i16 = (v: number): number => Math.max(-32768, Math.min(32767, Math.round(v)));
 
 /** Quantised snapshot relative to `origin` (whole blocks): positions to 1/32 block, ±1024 blocks around it. */
@@ -147,6 +160,33 @@ export function encodeSnapQ(players: SnapshotEntry[], ox: number, oy: number, oz
     v.setUint8(o + 12, u8(p[6]));
     o += SNAP_Q_ENTRY_BYTES;
   }
+  return buf;
+}
+
+const SHOT_KEYS = new Set(['t', 'id', 'weapon', 'ox', 'oy', 'oz', 'ex', 'ey', 'ez', 'sup']);
+const SHOT_MAX_WEAPON = 32;
+
+/** Binary `shot` frame (see BIN_SHOT); null when the message has anything the format cannot carry. */
+export function encodeShot(msg: Extract<ServerMessage, { t: 'shot' }>): ArrayBuffer | null {
+  for (const k in msg) if (!SHOT_KEYS.has(k)) return null;
+  const w = msg.weapon;
+  if (typeof w !== 'string' || w.length > SHOT_MAX_WEAPON || (msg.sup !== undefined && msg.sup !== 1)) return null;
+  for (let i = 0; i < w.length; i++) if (w.charCodeAt(i) > 127) return null;
+  const dx = Math.round((msg.ex - msg.ox) * Q), dy = Math.round((msg.ey - msg.oy) * Q), dz = Math.round((msg.ez - msg.oz) * Q);
+  if (!(Math.abs(dx) <= 32767 && Math.abs(dy) <= 32767 && Math.abs(dz) <= 32767) || !(msg.id >= 0 && msg.id <= 65535)) return null;
+  const buf = new ArrayBuffer(23 + w.length);
+  const v = new DataView(buf);
+  v.setUint8(0, BIN_SHOT);
+  v.setUint16(1, msg.id, true);
+  v.setUint8(3, msg.sup === 1 ? 1 : 0);
+  v.setFloat32(4, msg.ox, true);
+  v.setFloat32(8, msg.oy, true);
+  v.setFloat32(12, msg.oz, true);
+  v.setInt16(16, dx, true);
+  v.setInt16(18, dy, true);
+  v.setInt16(20, dz, true);
+  v.setUint8(22, w.length);
+  for (let i = 0; i < w.length; i++) v.setUint8(23 + i, w.charCodeAt(i));
   return buf;
 }
 
@@ -189,6 +229,21 @@ export function decodeBinary(buf: ArrayBuffer): ServerMessage | null {
       ]);
     }
     return { t: 'snap', players };
+  }
+  if (kind === BIN_SHOT) {
+    if (buf.byteLength < 23) return null;
+    const n = v.getUint8(22);
+    if (buf.byteLength !== 23 + n) return null;
+    let weapon = '';
+    for (let i = 0; i < n; i++) weapon += String.fromCharCode(v.getUint8(23 + i));
+    // Two decimals like the JSON form (f32 would otherwise show 12.340000152...).
+    const ox = r2(v.getFloat32(4, true)), oy = r2(v.getFloat32(8, true)), oz = r2(v.getFloat32(12, true));
+    const msg: Extract<ServerMessage, { t: 'shot' }> = {
+      t: 'shot', id: v.getUint16(1, true), weapon, ox, oy, oz,
+      ex: r2(ox + v.getInt16(16, true) / Q), ey: r2(oy + v.getInt16(18, true) / Q), ez: r2(oz + v.getInt16(20, true) / Q),
+    };
+    if (v.getUint8(3) & 1) msg.sup = 1;
+    return msg;
   }
   if (kind === BIN_ENT) {
     if (buf.byteLength < 9) return null;

@@ -1,6 +1,7 @@
 import type { Difficulty } from '../world/Difficulty';
 import type { GameType, Team } from '../modes/GameTypes';
 import type { GameMode } from '../player/GameMode';
+import type { ProgressReport } from '../modes/progression/Profile';
 
 /**
  * Multiplayer protocol (JSON over one WebSocket at /ws). Shared by the browser client
@@ -53,6 +54,10 @@ export interface RosterEntry {
   ping: number;
   /** Objective score of the mode (gun game level, captures); absent in modes without one. */
   pts?: number;
+  /** A server-side bot (its name also starts with "[BOT] "). */
+  bot?: 1;
+  /** Realms rank: prestige * 100 + level (progression/Levels.ts rankCode); absent for guests and bots. */
+  rk?: number;
 }
 
 /**
@@ -78,6 +83,20 @@ export interface ZoneState {
   /** Living players inside, per team. */
   red: number;
   blue: number;
+  /** King of the hill (no teams): id of the player who holds the hill alone, 0 = nobody. */
+  holder?: number;
+}
+
+/** A dog tag (kill confirmed) lying where a player died; `team` is the team of the player who dropped it. */
+export interface TagState { id: number; x: number; y: number; z: number; team: Team }
+
+/** A bomb site (search and destroy). */
+export interface SiteState {
+  name: string;
+  x: number; y: number; z: number; r: number;
+  /** Plant progress 0..1 (before the plant) or defuse progress 0..1 (after it). */
+  progress: number;
+  planted: boolean;
 }
 
 /** A flag (capture the flag): at its base, carried by a player or lying where the carrier died. */
@@ -93,17 +112,47 @@ export interface FlagState {
   hx: number; hy: number; hz: number;
 }
 
+/** Hardpoint and king of the hill have one live hill that moves; domination has every point live at once. */
+export type ZoneVariant = 'hardpoint' | 'domination' | 'koth';
+
 /** Mode-specific HUD state (`mode` message), replaced as a whole on every update. */
 export type ModeState =
-  | { kind: 'zones'; variant: 'hardpoint' | 'domination'; zones: ZoneState[]; rotateIn: number; gap: boolean }
+  | { kind: 'zones'; variant: ZoneVariant; zones: ZoneState[]; rotateIn: number; gap: boolean }
   | { kind: 'ctf'; flags: FlagState[] }
-  | { kind: 'rounds'; round: number; need: number; wins: { red: number; blue: number }; alive: { red: number; blue: number } };
+  | { kind: 'rounds'; round: number; need: number; wins: { red: number; blue: number }; alive: { red: number; blue: number } }
+  | { kind: 'tags'; tags: TagState[] }
+  | {
+    kind: 'bomb'; round: number; need: number; wins: { red: number; blue: number }; alive: { red: number; blue: number };
+    /** The team that attacks (plants) this round. */
+    attackers: Team;
+    sites: SiteState[];
+    /** Seconds until the planted bomb goes off (0 = not planted). */
+    fuseIn: number;
+    /** Rounds until the sides swap (0 = never again). */
+    swapIn: number;
+  }
+  | {
+    kind: 'infected';
+    /** Living survivors and infected players (team blue = survivors, red = infected). */
+    survivors: number; infected: number;
+    /** Seconds until the first player turns (0 once the outbreak happened). */
+    outbreakIn: number;
+    /** The last survivor (0 while there are more). */
+    last: number;
+  }
+  | { kind: 'roulette'; weapon: string; switchIn: number };
 
 /** One-off happenings the client turns into a banner and a sound. */
+export type { ProgressReport };
+
 export type ModeEventKind =
   | 'flag-taken' | 'flag-dropped' | 'flag-returned' | 'flag-captured'
   | 'zone-captured' | 'zone-lost' | 'zone-moved'
-  | 'round-start' | 'round-win' | 'level-up' | 'level-down';
+  | 'round-start' | 'round-win' | 'level-up' | 'level-down'
+  | 'tag-confirmed' | 'tag-denied'
+  | 'bomb-planted' | 'bomb-defused' | 'bomb-exploded' | 'side-swap'
+  | 'outbreak' | 'infected' | 'last-survivor'
+  | 'weapon-rotate';
 
 /** Settings the server announces for an arcade game. */
 export interface MatchInfo {
@@ -184,7 +233,8 @@ export type ClientMessage =
    * `password` the room password, `bin` asks for binary snap/ent frames (see binary.ts).
    */
   /** `binv`: highest binary format understood (2 = quantised arcade snapshots, see binary.ts); absent = 1. */
-  | { t: 'hello'; v: number; name: string; key?: string; owner?: string; password?: string; bin?: boolean; binv?: number }
+  /** `profile`: the Realms profile token (POST /api/profile) for server-side XP and the rank icon; optional. */
+  | { t: 'hello'; v: number; name: string; key?: string; owner?: string; password?: string; bin?: boolean; binv?: number; profile?: string }
   /**
    * `step` (optional, older clients leave it out): the client's physics clock, 60 Hz steps simulated so far. The
    * arcade movement validator times the jump curve and the speed budget with it (arrival times bunch up under load).
@@ -342,6 +392,8 @@ export type ServerMessage =
   | { t: 'kill'; killer: number; victim: number; weapon: string; head: boolean }
   /** The match ended; a new one starts after `restartIn` seconds. winner: team, a player id or 0 for a draw. */
   | { t: 'matchend'; winnerTeam: Team | ''; winnerId: number; restartIn: number }
+  /** Realms progression after a match (or after leaving one): XP breakdown, level before/after, unlocks. Only to players with a profile. */
+  | { t: 'progress'; report: ProgressReport }
   /**
    * Map vote between two matches (rotating lobbies): the offered map ids, the votes per map, your own vote and
    * the seconds until the next match. Empty `options` = no vote. Optional: older clients ignore it.

@@ -129,6 +129,16 @@ function food(px: Px, r: Rand, kind: string): void {
       line(px, [[6, 11], [10, 7]], '#8a6a30');
       break;
     }
+    case 'poisonous_potato':
+      blob(px, 8, 9, 5.5, 4, () => pick(['#a8b850', '#98a840', '#b4c460']));
+      line(px, [[6, 8], [9, 10], [10, 7]], '#6a7a28');
+      line(px, [[6, 11], [10, 7]], '#7a8a30');
+      break;
+    case 'beetroot_soup':
+      blob(px, 8, 10, 6, 3.5, (_x, y) => (y < 9 ? '#a8203a' : '#5a3a22'));
+      line(px, [[5, 9], [7, 8], [9, 8], [11, 9]], '#c83a52');
+      line(px, [[6, 9], [10, 9]], '#e8dcc8');
+      break;
     case 'carrot': case 'golden_carrot': {
       const gold = kind === 'golden_carrot';
       const pal = gold ? ['#f0c828', '#e0b418'] : ['#e8821e', '#d87414', '#f29630'];

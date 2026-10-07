@@ -1,6 +1,7 @@
 /* ---------------------------------------------------------------- BunkCraft Realms (menus) */
 
 .realms-header { flex-direction: column; gap: calc(var(--s) * 3); flex-basis: calc(var(--s) * 46) !important; }
+.realms-header.with-profile { flex-basis: calc(var(--s) * 92) !important; }
 .realms-name { display: flex; align-items: center; gap: calc(var(--s) * 4); }
 .mc-btn.realms-small { width: auto; height: calc(var(--s) * 14); padding: 0 calc(var(--s) * 5); }
 

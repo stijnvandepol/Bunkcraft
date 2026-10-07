@@ -81,12 +81,15 @@ const NATURAL = [
   'mud', 'red_sand', 'ice', 'granite', 'diorite', 'andesite', 'tuff', 'calcite', 'cobbled_deepslate', 'raw_iron', 'raw_gold', 'raw_copper', 'coal',
   'lapis_lazuli', 'redstone', 'diamond', 'emerald', 'flint', 'string', 'bone', 'feather', 'gunpowder', 'porkchop', 'beef', 'mutton', 'chicken',
   'rotten_flesh', 'spider_eye', 'glowstone_dust', 'stick', 'wheat_seeds', 'leather',
+  // Farming: crops grow from seeds (grass), carrots and potatoes come from zombies and chests, eggs from chickens.
+  'wheat', 'carrot', 'potato', 'beetroot', 'beetroot_seeds', 'egg', 'apple',
+  'carved_pumpkin', // shears on a pumpkin
 ];
 /**
- * Results nobody can make yet, and why: wheat and the foods that need farming, mud (needs wheat),
- * and the dyes without a source (brown needs cocoa, black an ink sac, gray needs black).
+ * Results nobody can make yet, and why: the cooked foods (furnace recipes are not chained here) and the dyes without
+ * a source (brown needs cocoa, black an ink sac, gray needs black).
  */
-const OUT_OF_REACH = /^(Packed Mud|Mud Brick|Hay Bale|Wheat|Bread|Golden Apple|Golden Carrot|Baked Potato|Cooked|.*(Black|Gray|Brown).*)/;
+const OUT_OF_REACH = /^(Baked Potato|Cooked|.*(Black|Gray|Brown).*)/;
 
 describe('recipes are craftable from survival resources', () => {
   it('reaches every result from natural items except the known gaps', () => {

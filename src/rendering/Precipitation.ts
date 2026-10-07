@@ -81,6 +81,9 @@ export class Precipitation {
       transparent: true,
       depthWrite: false,
       side: THREE.DoubleSide,
+      // One pass: three would draw a transparent double-sided material twice (back faces, then front faces) and look
+      // its program up both times. Thin streaks without depth writes look the same in one pass.
+      forceSinglePass: true,
       vertexShader: /* glsl */ `
         attribute vec4 iSeed;
         uniform sampler2D uMask;
