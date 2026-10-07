@@ -8,6 +8,9 @@ import {
 import type { MatchPhase, RosterEntry } from '../net/protocol';
 import { h } from './dom';
 import { t } from './i18n';
+import type { Rank } from '../modes/progression/Levels';
+import { classUnlocked, isUnlocked, unlockLevel } from '../modes/progression/Unlocks';
+import { rankBadge } from './RankBadge';
 
 const MAX_DAMAGE_MARKERS = 6;
 /** Damage numbers on screen at once and how long each floats (s; the CSS animation matches). */
@@ -236,7 +239,7 @@ export class ArcadeHud {
     LOADOUT_PRESETS.forEach((pr, i) => {
       const card = h('div', { class: 'arc-chip', title: `${classLine(pr)} · ${perkName(pr.perk)}: ${t(`arc.class.${pr.id}`, pr.description)}` },
         h('b', { text: String(i + 1) }), ` ${pr.name}`);
-      card.addEventListener('click', () => this.onClass?.(pr, false));
+      card.addEventListener('click', () => { if (classUnlocked(pr, this.rank)) this.onClass?.(pr, false); });
       this.presetCards.set(pr.id, card);
       presets.append(card);
     });
@@ -248,7 +251,7 @@ export class ArcadeHud {
     const column = (title: string, field: keyof typeof this.pick, items: { id: string; label: string; tag?: string; desc?: string }[]) => {
       const col = h('div', { class: 'arc-cac-col' }, h('div', { class: 'arc-cac-head', text: title }));
       for (const it of items) {
-        const b = h('div', { class: 'arc-cac-item', title: it.desc ?? '' }, h('span', { text: it.label }), it.tag ? h('em', { text: it.tag }) : null);
+        const b = h('div', { class: 'arc-cac-item', title: it.desc ?? '', 'data-tag': it.tag ?? '' }, h('span', { text: it.label }), h('em', { text: it.tag ?? '' }));
         b.addEventListener('click', () => this.editCustom(field, it.id));
         this.pick[field].set(it.id, b);
         col.append(b);
@@ -287,7 +290,35 @@ export class ArcadeHud {
     this.renderCustom();
   }
 
+  /**
+   * Realms unlocks: items above the player's level are shown greyed out with the level they need and cannot be
+   * picked; presets that use one are greyed out too. (The server enforces the same table.)
+   */
+  setRank(rank: Rank): void {
+    this.rank = rank;
+    for (const field of ['primary', 'secondary', 'optic', 'perk'] as const) {
+      for (const [id, el] of this.pick[field]) {
+        const open = isUnlocked(field, id, rank);
+        el.classList.toggle('locked', !open);
+        const em = el.querySelector('em');
+        if (em) em.textContent = open ? el.dataset.tag ?? '' : t('arc.cac.locked', unlockLevel(field, id));
+      }
+    }
+    for (const pr of LOADOUT_PRESETS) this.presetCards.get(pr.id)?.classList.toggle('locked', !classUnlocked(pr, rank));
+  }
+
+  private rank: Rank = { level: 1, prestige: 0 };
+  /** Realms rank per player name, from the roster (kill feed icons). */
+  private readonly ranks = new Map<string, number>();
+
+  /** Rank icons for the kill feed follow the roster. */
+  setRanks(roster: readonly RosterEntry[]): void {
+    this.ranks.clear();
+    for (const p of roster) if (p.rk) this.ranks.set(p.name, p.rk);
+  }
+
   private editCustom(field: keyof typeof this.pick, id: string): void {
+    if (!isUnlocked(field, id, this.rank)) return;
     const next = { ...this.custom, [field]: id };
     // A new primary keeps the optic only when it fits; else the weapon's default.
     if (field === 'primary' && !opticAllowed(weaponDef(id)!, next.optic)) next.optic = weaponDef(id)!.optics[0];
@@ -497,10 +528,10 @@ export class ArcadeHud {
 
   setKillFeed(entries: readonly KillFeedEntry[], selfName: string): void {
     this.feed.replaceChildren(...entries.map((e) => h('div', { class: `arc-feed-row${e.killer === selfName || e.victim === selfName ? ' self' : ''}` },
-      h('span', { style: `color:${teamColor(e.killerTeam)}`, text: e.killer }),
+      h('span', { style: `color:${teamColor(e.killerTeam)}` }, rankBadge(this.ranks.get(e.killer)), e.killer),
       h('span', { class: 'arc-feed-weapon', text: weaponTag(e.weapon) }),
       e.head ? h('span', { class: 'arc-feed-head', text: 'HS' }) : null,
-      h('span', { style: `color:${teamColor(e.victimTeam)}`, text: e.victim }),
+      h('span', { style: `color:${teamColor(e.victimTeam)}` }, rankBadge(this.ranks.get(e.victim)), e.victim),
     )));
   }
 
@@ -698,7 +729,7 @@ function renderBoard(host: HTMLElement, roster: readonly RosterEntry[], ctx: Sco
   sortRoster(roster).forEach((p, i) => {
     rows.push(h('div', { class: `arc-row${cols}${p.id === ctx.selfId ? ' self' : ''}` },
       h('span', { class: 'rank', text: String(i + 1) }),
-      h('span', { class: 'name', style: `color:${teamColor(p.team)}`, text: p.name }),
+      h('span', { class: 'name', style: `color:${teamColor(p.team)}` }, rankBadge(p.rk), p.name),
       ctx.scoreColumn ? h('span', { text: String(ctx.scoreColumn === 'Level' ? (p.pts ?? 0) + 1 : p.pts ?? 0) }) : null,
       h('span', { text: String(p.kills) }), h('span', { text: String(p.deaths) }),
       h('span', { text: kdRatio(p.kills, p.deaths) }), h('span', { text: p.ping > 0 ? String(Math.round(p.ping)) : '-' })));
