@@ -115,6 +115,7 @@ export class ArcadeHud {
   private lastGap = -1;
   private crosshairVisible = true;
   private scopeOn = false;
+  private scopeKind: 'scope' | 'combat' = 'scope';
   private lastRespawnPending = '';
   private lastRespawnClass: ClassSpec | null = null;
   private lastMag = -1;
@@ -186,8 +187,10 @@ export class ArcadeHud {
     // Scope: black surround, the lens edge, a duplex reticle with mil-dots and a centre gap, the breath meter.
     const dots = h('div', { class: 'arc-scope-dots' });
     for (let i = -4; i <= 4; i++) if (i !== 0) dots.append(h('b', { style: `--i:${i}` }), h('b', { class: 'dv', style: `--i:${i}` }));
+    // The combat scope (2.5x) shares the overlay: a wider lens, a thin vignette and a lit chevron instead of the duplex.
     this.scope = h('div', { class: 'arc-scope hidden' },
-      h('div', { class: 'arc-scope-lens' }, h('i', { class: 'h' }), h('i', { class: 'v' }), h('i', { class: 'hl' }), h('i', { class: 'hr' }), h('i', { class: 'vb' }), dots),
+      h('div', { class: 'arc-scope-lens' }, h('i', { class: 'h' }), h('i', { class: 'v' }), h('i', { class: 'hl' }), h('i', { class: 'hr' }), h('i', { class: 'vb' }), dots,
+        h('div', { class: 'arc-scope-chev' }), h('div', { class: 'arc-scope-stadia' })),
       this.scopeBreath, this.scopeHint);
     this.medal = h('div', { class: 'arc-medal hidden' });
     this.board = h('div', { class: 'arc-board hidden' });
@@ -357,10 +360,14 @@ export class ArcadeHud {
   }
 
   /** Scope overlay; `breath` 0..1 is the breath left for steadying (-1 hides the meter), `holding` while Shift steadies, `spent` while out of breath. */
-  setScope(on: boolean, breath = -1, holding = false, spent = false): void {
+  setScope(on: boolean, breath = -1, holding = false, spent = false, kind: 'scope' | 'combat' = 'scope'): void {
     if (on !== this.scopeOn) {
       this.scopeOn = on;
       this.scope.classList.toggle('hidden', !on);
+    }
+    if (on && kind !== this.scopeKind) {
+      this.scopeKind = kind;
+      this.scope.classList.toggle('combat', kind === 'combat');
     }
     if (!on) return;
     const q = breath < 0 ? -1 : Math.round(breath * 50);

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { type OpticId, type WeaponDef } from '../modes/Weapons';
+import { type OpticId, type WeaponDef, isMagnified } from '../modes/Weapons';
 import {
   type Box, OPTIC_MODELS, WEAPON_MODELS, buildBoxGeometry, createWeaponMaterial, muzzleFor, sightYFor, weaponFrontGeometry, weaponGeometry,
 } from './WeaponModels';
@@ -8,6 +8,7 @@ const SKIN = '#c99a7a';
 /** z of the supporting (left) hand along the weapon; weapons without an entry are held one-handed. */
 const LEFT_HAND_Z: Record<string, number> = {
   rifle: -0.4, smg: -0.22, shotgun: -0.38, sniper: -0.45, lmg: -0.4, burst: -0.36, dmr: -0.42, semisniper: -0.44, mpistol: -0.13,
+  battle: -0.42, lever: -0.34, antimat: -0.5,
 };
 const BOLT_TIME = 0.55;
 const tmpMuzzle: [number, number, number] = [0, 0, 0];
@@ -141,7 +142,7 @@ export class WeaponViewmodel {
 
   /** Whether the optic is a scope (the HUD overlay takes over when fully aimed). */
   get scoped(): boolean {
-    return this.optic === 'scope';
+    return isMagnified(this.optic);
   }
 
   /** Where the weapon sits (z in view space) when fully aimed. */
@@ -208,7 +209,7 @@ export class WeaponViewmodel {
     this.flashLeft = this.sup ? FLASH_TIME * 0.5 : FLASH_TIME;
     this.flash.rotation.z = Math.random() * Math.PI;
     const id = this.def.id;
-    const s = (id === 'shotgun' ? 1.8 : id === 'sniper' || id === 'semisniper' ? 1.5 : id === 'pistol' || id === 'mpistol' ? 0.8 : 1) * (this.sup ? 0.35 : 1);
+    const s = (id === 'shotgun' || id === 'antimat' ? 1.8 : id === 'sniper' || id === 'semisniper' || id === 'lever' || id === 'battle' ? 1.4 : id === 'pistol' || id === 'mpistol' ? 0.8 : 1) * (this.sup ? 0.35 : 1);
     this.flash.scale.setScalar(s * (0.8 + Math.random() * 0.4));
   }
 
@@ -276,7 +277,7 @@ export class WeaponViewmodel {
     void model;
     this.material.color.setScalar(light * (this.flashLeft > 0 ? 1.5 : 1));
     // A scoped weapon disappears behind the scope overlay when fully aimed.
-    this.weaponMesh.visible = !(this.optic === 'scope' && ads > 0.92);
+    this.weaponMesh.visible = !(isMagnified(this.optic) && ads > 0.92);
     // Aiming: no stock and no hands in the way of the sights.
     const geo = (ads > 0.5 ? weaponFrontGeometry(def.id, this.optic, this.sup) : weaponGeometry(def.id, this.optic, this.sup)) ?? this.weaponMesh.geometry;
     if (this.weaponMesh.geometry !== geo) this.weaponMesh.geometry = geo;

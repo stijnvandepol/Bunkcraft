@@ -74,8 +74,8 @@ export interface GameTypeDef {
  */
 export const GUN_GAME_FINALE = ['shotgun', 'revolver', 'sniper', 'knife'];
 export const GUN_GAME_LADDER: string[] = [
-  'rifle', 'smg', 'lmg', 'burst', 'dmr', 'shotgun', 'mpistol', 'semisniper',
-  'smg', 'rifle', 'pistol', 'burst', 'lmg', ...GUN_GAME_FINALE,
+  'rifle', 'smg', 'battle', 'lmg', 'burst', 'dmr', 'shotgun', 'mpistol', 'semisniper',
+  'lever', 'smg', 'rifle', 'pistol', 'antimat', 'burst', ...GUN_GAME_FINALE,
 ];
 
 const minutes = (...m: number[]) => m.map((x) => x * 60);

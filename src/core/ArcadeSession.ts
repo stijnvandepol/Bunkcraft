@@ -10,7 +10,7 @@ import {
 } from '../modes/Loadouts';
 import {
   AIM_CLIMB, DEFAULT_PRIMARY, DEFAULT_SECONDARY, type OpticId, PLAYER_MAX_HEALTH, RESPAWN_SECONDS, type WeaponDef, adsTimeFor, fireInterval,
-  isPerk, magazineFor, opticFor, opticZoom, reloadTimeFor, switchDelayFor, weaponDef,
+  isMagnified, isPerk, magazineFor, opticFor, opticZoom, reloadTimeFor, switchDelayFor, weaponDef,
 } from '../modes/Weapons';
 import { type ClientMessage, type MatchInfo, type MatchPhase, type ModeState, type RosterEntry, SNAP_FLAG_ADS, type ServerMessage } from '../net/protocol';
 import type { RemotePlayers } from '../net/RemotePlayers';
@@ -189,6 +189,8 @@ export class ArcadeSession {
   private swayPitch = 0;
   private swayTime = 0;
   private scoped = false;
+  /** Looking through a magnified optic (scope or combat scope): the overlay is up. */
+  private magnified = false;
   /** Next reload step to play per slot, and the pending bolt cycle (time of the next stage, 0 = none). */
   private readonly reloadStep = [0, 0, 0];
   private boltAt = 0;
@@ -572,6 +574,7 @@ export class ArcadeSession {
     this.dead = true;
     this.streak = 0;
     this.scoped = false;
+    this.magnified = false;
     this.hud.setScope(false);
     if (first) {
       this.deadAt = now;
@@ -945,10 +948,10 @@ export class ArcadeSession {
     const now = f.now;
     hud.setAmmo(w, ammo.mag, reload);
     const scoped = this.scoped;
-    hud.setScope(scoped, scoped ? this.breath.breath : -1, this.breath.holding, this.breath.spent);
+    hud.setScope(this.magnified, scoped ? this.breath.breath : -1, this.breath.holding, this.breath.spent, this.optic === 'combat' ? 'combat' : 'scope');
     const spread = w.magazine === 0 ? 0.5 : currentSpread(w, this.ads, Math.hypot(p.vx, p.vz) > 0.5, !p.onGround);
     // Aimed down the sights the sights (or the reticle) are the crosshair.
-    hud.setCrosshair(2 + spreadPixels(spread, this.d.cam.camera.fov, window.innerHeight), !scoped && !this.dead && this.ads < 0.6);
+    hud.setCrosshair(2 + spreadPixels(spread, this.d.cam.camera.fov, window.innerHeight), !this.magnified && !this.dead && this.ads < 0.6);
     hud.setProtection(this.protect);
     hud.frame(now, p.yaw);
     if (this.feed.prune(now)) hud.setKillFeed(this.feed.entries, this.d.selfName);
@@ -1005,7 +1008,9 @@ export class ArcadeSession {
   private updateAimFeel(f: ArcadeFrame, input: Input, w: WeaponDef, optic: OpticId): void {
     const p = this.d.player;
     const dt = f.dt;
-    this.scoped = optic === 'scope' && this.ads > 0.92 && !this.dead;
+    // Magnified optics show the scope overlay; only the sniper scope sways (the combat scope is steady).
+    this.magnified = isMagnified(optic) && this.ads > 0.92 && !this.dead;
+    this.scoped = this.magnified && optic === 'scope';
     const moving = Math.hypot(p.vx, p.vz) > 0.5 || !p.onGround;
     const cue = this.breath.update(dt, f.now, this.scoped, f.controls && input.actionDown(KB.SPRINT), moving);
     if (cue) this.d.audio.playBreath(cue === 'hold');

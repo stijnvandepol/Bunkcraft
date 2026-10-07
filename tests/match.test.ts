@@ -508,11 +508,11 @@ describe('weapon handling', () => {
     expect(host.of('ammo', 1).at(-1)).toMatchObject({ mag: 29, reloading: false });
   });
 
-  it('reloads are arcade fast: every gun reloads in at most 2.1 s, except the LMG; the LMG and the bolt-action sniper are the slowest', () => {
+  it('reloads are arcade fast: at most 2.1 s, except the heavy LMG and anti-materiel rifle; the LMG and bolt-actions are the slowest', () => {
     const guns = WEAPONS.filter((w) => w.magazine > 0);
-    for (const w of guns) if (w.id !== 'lmg') expect(w.reloadSec, w.id).toBeLessThanOrEqual(2.1);
-    const slowest = [...guns].sort((a, b) => b.reloadSec - a.reloadSec).slice(0, 2).map((w) => w.id);
-    expect(slowest.sort()).toEqual(['lmg', 'sniper']);
+    for (const w of guns) if (w.id !== 'lmg' && w.id !== 'antimat') expect(w.reloadSec, w.id).toBeLessThanOrEqual(2.1);
+    const slowest = [...guns].sort((a, b) => b.reloadSec - a.reloadSec).slice(0, 3).map((w) => w.id);
+    expect(slowest.sort()).toEqual(['antimat', 'lmg', 'sniper']);
     for (const w of guns) expect(reloadTimeFor(w, 1), w.id).toBeLessThan(reloadTimeFor(w, 0));
   });
 
@@ -634,7 +634,7 @@ describe('maps in the match', () => {
 describe('weapon data', () => {
   it('has the contract weapons', () => {
     expect(WEAPONS.map((w) => w.id)).toEqual([
-      'rifle', 'smg', 'shotgun', 'lmg', 'burst', 'dmr', 'semisniper', 'sniper', 'pistol', 'mpistol', 'revolver', 'knife',
+      'rifle', 'smg', 'shotgun', 'lmg', 'burst', 'dmr', 'semisniper', 'sniper', 'battle', 'lever', 'antimat', 'pistol', 'mpistol', 'revolver', 'knife',
     ]);
   });
 });

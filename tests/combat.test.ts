@@ -35,8 +35,8 @@ describe('weapon table', () => {
     expect(weaponDef('nope')).toBeUndefined();
   });
 
-  it('every bullet weapon needs at least two body hits to kill, except the one-shot weapons (bolt-action sniper)', () => {
-    const ONE_SHOT = new Set(['sniper']);
+  it('every bullet weapon needs at least two body hits to kill, except the one-shot weapons (bolt-action and anti-materiel)', () => {
+    const ONE_SHOT = new Set(['sniper', 'antimat']);
     for (const w of WEAPONS) {
       const body = Math.ceil(PLAYER_MAX_HEALTH / (w.damage * w.pellets));
       const head = Math.ceil(PLAYER_MAX_HEALTH / (w.damage * w.headshot * w.pellets));

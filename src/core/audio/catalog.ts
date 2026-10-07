@@ -79,7 +79,7 @@ export function buildCatalog(): CatalogEntry[] {
   add('player.eat', 0.3, (e) => e.playEat());
   add('player.burp', 0.5, (e) => e.playBurp());
   for (const w of WEAPONS) {
-    const long = w.id === 'shotgun' || w.id === 'revolver' || w.id === 'sniper' || w.id === 'semisniper';
+    const long = w.id === 'shotgun' || w.id === 'revolver' || w.id === 'sniper' || w.id === 'semisniper' || w.id === 'antimat' || w.id === 'lever';
     add(`weapon.${w.id}`, long ? 1.6 : 1.1, (e) => e.playGun(w.id, 1));
     if (w.slot === 'melee') continue;
     add(`weapon.${w.id}.indoors`, 1.1, (e) => { setupEnv(e, (env) => { env.enclosure = 0.85; }); e.playGun(w.id, 1); });
