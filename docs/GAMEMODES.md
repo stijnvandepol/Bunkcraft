@@ -186,8 +186,9 @@ gehoorsafstand (40 blokken, met demper 12) en wie hen raakt.
   secundaire wapen als het primaire leeg is op korte afstand, herladen als het rustig is. **Dekking:** onder de
   terugtrekgrens (of herladend op afstand) zoekt een bot een plek binnen 11 blokken die de dreiging niet kan zien, wacht tot
   de health terug is en gaat weer.
-- **Klassen:** een preset naar kaartgrootte (grote kaarten meer DMR/sniper, kleine meer smg/shotgun) via het gewone
-  `loadout`-bericht.
+- **Klassen:** een preset naar kaartgrootte (grote kaarten meer lange wapens, kleine meer smg/shotgun) via het gewone
+  `loadout`-bericht. Bots hebben geen Realms-profiel: zoals een gast spelen ze met de unlocks van level 1 (geweer, smg,
+  shotgun, pistool) en verdienen ze geen XP.
 - **Kosten** (`scripts/bench-bots.ts`, M1 Pro): 1 mens + 11 bots ≈ 0,1 ms per lobbytick van 33 ms; 6 zulke lobby's samen
   0,7 ms per tick (p99 1,7 ms). Denken (waarnemen, kiezen, paden) loopt gespreid op ~10 Hz per bot met een budget van
   1,5 ms per tick per lobby en hooguit 3 padzoektochten per tick; bewegen en richten elke tick.
