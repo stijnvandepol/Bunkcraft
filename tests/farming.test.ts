@@ -11,7 +11,7 @@ import { BLOCK, CUBE_ID, META_MASK, TEXTURE_NAMES, getBlockDef } from '../src/wo
 import { BlockUpdates } from '../src/world/BlockUpdates';
 import { isValidMeta } from '../src/world/BlockShapes';
 import {
-  CROPS, CROP_BLOCK, FARMLAND, FARMLAND_WET, attachedStemMeta, cropAge, cropBlock, cropState, farmlandState, isCrop, isStem, stemAttached, stemFacing,
+  CROPS, CROP_BLOCK, FARMLAND, FARMLAND_WET, FARMLAND_WET_TINT, attachedStemMeta, cropAge, cropBlock, cropState, farmlandState, isCrop, isStem, stemAttached, stemFacing,
 } from '../src/world/Crops';
 import {
   CROP_LIGHT, canTrample, farmStateText, growthOdds, growthSpeed, isNearWater, trample, trampleChance,
@@ -22,6 +22,8 @@ import { needsSupport, plantCanStand } from '../src/world/PlantRules';
 import { RandomTicker } from '../src/world/RandomTicks';
 import { FOOD_TAGS, isBreedFood } from '../src/entities/Breeding';
 import { GrowthWorld, seeded } from './helpers/growthWorld';
+import { ChunkMesher } from '../src/rendering/ChunkMesher';
+import { CHUNK_AREA, CHUNK_VOLUME, blockIndex } from '../src/world/constants';
 
 const B = BLOCK;
 const SOIL_Y = 60;
@@ -518,5 +520,52 @@ describe('placement guard (multiplayer)', () => {
     expect(g.authorizeDrop(itemId('wheat'), 1)).toBe(true);
     expect(g.authorizeDrop(itemId('wheat_seeds'), 4)).toBe(true);
     expect(g.authorizeDrop(itemId('wheat'), 1)).toBe(false);
+  });
+});
+
+describe('crop meshing (one texture per crop)', () => {
+  const mesher = new ChunkMesher();
+  /** Meshes one chunk holding farmland at y 10 and `id`/`meta` on top of it at (4, 11, 4). */
+  function meshCrop(id: number, meta: number, farmMeta = 0): ReturnType<ChunkMesher['mesh']> {
+    const chunks = Array.from({ length: 9 }, () => new Uint8Array(CHUNK_VOLUME));
+    const metas: (Uint8Array | null)[] = Array.from({ length: 9 }, () => null);
+    const c = chunks[4], m = new Uint8Array(CHUNK_VOLUME);
+    c[blockIndex(4, 10, 4)] = FARMLAND; m[blockIndex(4, 10, 4)] = farmMeta;
+    c[blockIndex(4, 11, 4)] = id; m[blockIndex(4, 11, 4)] = meta;
+    metas[4] = m;
+    return mesher.mesh(chunks, Array.from({ length: 9 }, () => new Uint8Array(CHUNK_AREA)), true, metas);
+  }
+  const top = (g: { packed: Uint16Array }): number => {
+    let max = 0;
+    for (let i = 1; i < g.packed.length; i += 4) max = Math.max(max, g.packed[i]);
+    return max / 16;
+  };
+  const tint = (g: { tint: Uint8Array }, v = 0): number => (g.tint[v * 4] << 16) | (g.tint[v * 4 + 1] << 8) | g.tint[v * 4 + 2];
+
+  it('a crop is four double-sided planes as tall as its stage, tinted per stage', () => {
+    const young = meshCrop(WHEAT, 0).cutout!;
+    expect(young.index.length).toBe(4 * 12);
+    expect(top(young) - 11).toBeCloseTo(CROPS[0].heights[0] / 16);
+    expect(top(meshCrop(WHEAT, 7).cutout!) - 11).toBe(1);
+    expect(tint(young)).toBe(CROPS[0].tints[0]);
+    expect(tint(meshCrop(WHEAT, 7).cutout!)).toBe(CROPS[0].tints[7]);
+  });
+
+  it('a stem is a cross; an attached stem one plane in the bent texture with the attached colour', () => {
+    expect(meshCrop(CROP_BLOCK.MELON_STEM, 3).cutout!.index.length).toBe(2 * 12);
+    const att = meshCrop(CROP_BLOCK.MELON_STEM, attachedStemMeta(3)).cutout!;
+    expect(att.index.length).toBe(12);
+    expect(att.data[0]).toBe(TEXTURE_NAMES.indexOf('attached_stem'));
+    expect(tint(att)).toBe(0xe0c71c);
+  });
+
+  it('wet farmland is drawn with the darker tint, dry farmland untinted', () => {
+    const tintOfTop = (farmMeta: number): number => {
+      const g = meshCrop(B.AIR, 0, farmMeta).opaque!;
+      for (let v = 0; v < g.data.length / 4; v++) if ((g.data[v * 4 + 1] & 7) === 2) return tint(g, v);
+      return -1;
+    };
+    expect(tintOfTop(0)).toBe(0xffffff);
+    expect(tintOfTop(7)).toBe(FARMLAND_WET_TINT);
   });
 });
