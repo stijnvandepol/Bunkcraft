@@ -67,6 +67,8 @@ export default defineConfig({
       env: {
         PORT: String(GAME_PORT), DATA_DIR, ROOM_CREATE_LIMIT: '1000', MAX_CONN_PER_IP: '1000', BACKUP_KEEP: '0',
         STATIC_DIR: 'tests/e2e', LOG_LEVEL: 'warn',
+        // Quick play lobbies without bot fill: the lobby tests check the human-only warm-up (waiting for a second player).
+        QUICKPLAY_BOTS: '0',
       },
     },
     {

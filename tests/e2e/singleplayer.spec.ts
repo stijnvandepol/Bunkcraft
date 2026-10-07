@@ -1,4 +1,4 @@
-import { clickButton, createWorld, expect, openTitle, play, test, waitForWorld } from './fixtures';
+import { clickButton, createWorld, expect, openSandbox, openTitle, play, test, waitForWorld } from './fixtures';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 test('singleplayer: create a world, walk, break and place, craft, save and reload @webkit', async ({ page }) => {
@@ -86,6 +86,7 @@ test('singleplayer: create a world, walk, break and place, craft, save and reloa
 
   // Reload the page: the world list has it, and the edits come back.
   await openTitle(page);
+  await openSandbox(page);
   await clickButton(page, 'Singleplayer');
   await page.locator('.world-item', { hasText: 'E2E World' }).click();
   await clickButton(page, 'Play Selected World');
@@ -111,7 +112,7 @@ test('settings survive a reload @webkit', async ({ page }) => {
   await openTitle(page);
   expect(await page.evaluate(() => (window as any).game.settings.values.fov)).toBe(70);
 
-  await clickButton(page, 'Options...');
+  await clickButton(page, 'Settings');
   await expect(page.getByText(/FOV/i).first()).toBeVisible();
 });
 

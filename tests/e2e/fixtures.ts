@@ -31,7 +31,7 @@ export const test = base.extend<GameFixtures>({
 });
 export { expect };
 
-/** Waits for the dev build's window.game hook and the title screen. */
+/** Waits for the dev build's window.game hook and the home screen. */
 export async function openTitle(page: Page, path = '/'): Promise<void> {
   await page.goto(path);
   await page.waitForFunction(() => {
@@ -42,6 +42,12 @@ export async function openTitle(page: Page, path = '/'): Promise<void> {
 
 export async function clickButton(page: Page, text: string | RegExp): Promise<void> {
   await page.getByRole('button', { name: text }).first().click();
+}
+
+/** Home → Build & Survival (beta): the door to the sandbox menus (Singleplayer, Multiplayer). */
+export async function openSandbox(page: Page): Promise<void> {
+  await page.locator('.home-build').click();
+  await expect(page.getByRole('heading', { name: 'Build & Survival' })).toBeVisible();
 }
 
 /** Waits until a world is loaded (world generation is asynchronous), keeping the window in front so it is not throttled. */
@@ -75,8 +81,9 @@ export async function play(page: Page, ms: number): Promise<void> {
   }
 }
 
-/** Title → Singleplayer → Create New World in creative mode; returns once the world is loaded and playing. */
+/** Home → Build & Survival → Singleplayer → Create New World; returns once the world is loaded and playing. */
 export async function createWorld(page: Page, name: string, mode: 'Creative' | 'Survival' = 'Creative'): Promise<void> {
+  await openSandbox(page);
   await clickButton(page, 'Singleplayer');
   await page.getByRole('button', { name: 'Create New World' }).first().click();
   await page.locator('input.mc-input:visible').first().fill(name);

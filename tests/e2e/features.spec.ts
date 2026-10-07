@@ -1,5 +1,5 @@
 import { type Page } from '@playwright/test';
-import { command, createWorld, expect, openTitle, play, test, waitForWorld, clickButton } from './fixtures';
+import { command, createWorld, expect, openSandbox, openTitle, play, test, waitForWorld, clickButton } from './fixtures';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -139,6 +139,7 @@ test('the main game systems work in a fresh creative world', async ({ page }) =>
   // ---- save: the chest contents come back after a reload
   await page.evaluate(() => (window as any).game.saveGame());
   await openTitle(page);
+  await openSandbox(page);
   await clickButton(page, 'Singleplayer');
   await page.locator('.world-item', { hasText: 'Systems' }).click();
   await clickButton(page, 'Play Selected World');
@@ -153,6 +154,8 @@ test('the main game systems work in a fresh creative world', async ({ page }) =>
   // ---- i18n: Dutch menus
   await page.evaluate(() => (window as any).game.settings.set('language', 'nl'));
   await openTitle(page);
+  await expect(page.locator('.bc-play')).toContainText('Spelen');
+  await page.locator('.home-build').click();
   await expect(page.getByRole('button', { name: 'Alleen spelen' })).toBeVisible();
   await page.evaluate(() => (window as any).game.settings.set('language', 'en'));
 });
