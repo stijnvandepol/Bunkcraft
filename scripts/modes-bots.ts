@@ -16,7 +16,7 @@ import { WebSocket } from 'ws';
 import { GUN_GAME_LADDER, type GameType } from '../src/modes/GameTypes';
 import { ARENA_FLOOR_Y, type ArenaMap, getMap } from '../src/modes/maps';
 import { PROTOCOL_VERSION, type ClientMessage, type ModeState, type ServerMessage } from '../src/net/protocol';
-import { clientStep } from './lib/arenaPath';
+import { type RoutePoint, arenaPath, clientStep, follow } from './lib/arenaPath';
 
 const args = process.argv.slice(2);
 const base = args.find((a) => a.startsWith('--url='))?.slice(6) ?? 'http://localhost:3000';
@@ -34,37 +34,17 @@ const check = (name: string, ok: boolean) => {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const SPEED = 6; // blocks per second: under the arcade run speed (the server validates movement, see server/anticheat)
 
-/** A walking path over open floor cells (4-neighbour BFS), as cell centres. */
-function path(map: ArenaMap, from: [number, number], to: [number, number], variant = 0): [number, number][] {
-  const b = map.bounds, w = b.maxX - b.minX, d = b.maxZ - b.minZ;
-  const open = (x: number, z: number) => map.inBounds(x + 0.5, z + 0.5)
-    && map.blockAt(variant, x, ARENA_FLOOR_Y + 1, z) === 0 && map.blockAt(variant, x, ARENA_FLOOR_Y + 2, z) === 0;
-  const idx = (x: number, z: number) => (x - b.minX) * d + (z - b.minZ);
-  const prev = new Int32Array(w * d).fill(-1);
-  const sx = Math.floor(from[0]), sz = Math.floor(from[1]), tx = Math.floor(to[0]), tz = Math.floor(to[1]);
-  const q = [idx(sx, sz)];
-  prev[q[0]] = q[0];
-  for (let h = 0; h < q.length; h++) {
-    const c = q[h], x = Math.floor(c / d) + b.minX, z = (c % d) + b.minZ;
-    if (x === tx && z === tz) break;
-    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-      const nx = x + dx, nz = z + dz;
-      if (!open(nx, nz) || prev[idx(nx, nz)] >= 0) continue;
-      prev[idx(nx, nz)] = c;
-      q.push(idx(nx, nz));
-    }
-  }
-  if (prev[idx(tx, tz)] < 0) throw new Error(`no path to ${tx},${tz} on ${map.id}`);
-  const out: [number, number][] = [[to[0], to[1]]];
-  for (let c = prev[idx(tx, tz)]; c !== prev[c]; c = prev[c]) out.push([Math.floor(c / d) + b.minX + 0.5, (c % d) + b.minZ + 0.5]);
-  return out.reverse();
-}
+/**
+ * Where a bot stands for an objective: the centre of the block cell it is in, with the objective's feet height.
+ * (A zone centre on a block corner, like x=0, would put the body half inside the next cell, which can be solid.)
+ */
+const at = (o: { x: number; z: number; y: number }): [number, number, number] => [Math.floor(o.x) + 0.5, Math.floor(o.z) + 0.5, o.y];
 
 class Bot {
   readonly log: ServerMessage[] = [];
   id = 0;
   x = 0; y = ARENA_FLOOR_Y + 1; z = 0;
-  route: [number, number][] = [];
+  route: RoutePoint[] = [];
   /** Cover layout of the room (from the welcome seed): paths must use the server's blocks. */
   variant = 0;
   fresh = false;
@@ -100,21 +80,18 @@ class Bot {
         if (!this.id) return;
         if (this.fresh) this.fresh = false;
         else {
-          let step = this.speed / 10;
-          while (step > 0 && this.route.length) {
-            const [tx, tz] = this.route[0];
-            const dx = tx - this.x, dz = tz - this.z, dist = Math.hypot(dx, dz);
-            if (dist <= step) { this.x = tx; this.z = tz; this.route.shift(); step -= dist; } else { this.x += (dx / dist) * step; this.z += (dz / dist) * step; step = 0; }
-          }
+          follow(this, this.route, this.speed / 10);
         }
         this.send({ t: 'pos', x: this.x, y: this.y, z: this.z, yaw: 0, pitch: 0, flags: 4, held: 0, step: clientStep() });
       }, 100);
     });
   }
 
-  /** Walks to a floor point; resolves when there (or after `timeoutMs`). */
-  async walk(to: [number, number], timeoutMs = 20000): Promise<boolean> {
-    this.route = path(this.map(), [this.x, this.z], to, this.variant);
+  /** Walks to a point (x, z and optionally the feet height, for objectives on an upper level); resolves when there (or after `timeoutMs`). */
+  async walk(to: [number, number, number?], timeoutMs = 20000): Promise<boolean> {
+    const route = arenaPath(this.map(), this.variant, [this.x, this.z, this.y], to);
+    if (!route) throw new Error(`no path to ${to.join(',')} on ${this.map().id}`);
+    this.route = route;
     for (let t = 0; t < timeoutMs && this.route.length; t += 100) await sleep(100);
     return Math.hypot(this.x - to[0], this.z - to[1]) < 0.6;
   }
@@ -182,8 +159,8 @@ async function waitFor(cond: () => boolean, ms: number): Promise<boolean> {
 
 /** Brings the victim next to the shooter on open floor (2 blocks apart). */
 async function meet(shooter: Bot, victim: Bot): Promise<void> {
-  const spot: [number, number] = [shooter.x, shooter.z];
-  const next = path(shooter.map(), [victim.x, victim.z], spot, shooter.variant);
+  const next = arenaPath(shooter.map(), shooter.variant, [victim.x, victim.z, victim.y], [shooter.x, shooter.z, shooter.y]);
+  if (!next) throw new Error(`no path to the shooter on ${shooter.map().id}`);
   const near = next.length > 3 ? next[next.length - 3] : next[0];
   await victim.walk(near);
 }
@@ -225,7 +202,7 @@ async function zones(type: 'hardpoint' | 'domination'): Promise<void> {
   check(`${type}: goes live`, await waitFor(() => a.phase === 'live', 15000));
   check(`${type}: mode state with zones`, a.mode?.kind === 'zones' && a.mode.zones.length >= 3);
   const z = getMap(mapId).zones[type === 'hardpoint' ? 0 : getMap(mapId).dominationZones[0]];
-  check(`${type}: a walks into ${z.name}`, await a.walk([z.x + 0.5, z.z + 0.5]));
+  check(`${type}: a walks into ${z.name}`, await a.walk(at(z)));
   const team = a.team as 'red' | 'blue';
   if (type === 'hardpoint') {
     await sleep(500);
@@ -250,10 +227,10 @@ async function ctf(): Promise<void> {
   check('ctf: both flags at home', a.mode?.kind === 'ctf' && a.mode.flags.every((f) => f.status === 'home'));
   const map = getMap(mapId);
   const own = map.flags.find((f) => f.team === a.team)!, enemy = map.flags.find((f) => f.team !== a.team)!;
-  check('ctf: a reaches the enemy flag', await a.walk([enemy.x, enemy.z], 30000));
+  check('ctf: a reaches the enemy flag', await a.walk(at(enemy), 30000));
   check('ctf: a picks it up', await waitFor(() => a.events('flag-taken').some((e) => e.id === a.id), 2000));
   check('ctf: the mode state shows a as the carrier', a.mode?.kind === 'ctf' && a.mode.flags.some((f) => f.carrier === a.id && f.status === 'carried'));
-  check('ctf: a carries it home', await a.walk([own.x, own.z], 30000));
+  check('ctf: a carries it home', await a.walk(at(own), 30000));
   check('ctf: capture', await waitFor(() => a.events('flag-captured').some((e) => e.id === a.id), 2000));
   check('ctf: one capture on the board, both flags home', a.scores[a.team as 'red'] === 1 && a.mode?.kind === 'ctf' && a.mode.flags.every((f) => f.status === 'home'));
   a.close(); b.close();
@@ -302,7 +279,7 @@ async function snd(): Promise<void> {
   const bomb = () => a.mode as Extract<ModeState, { kind: 'bomb' }> | null;
   const attacker = bomb()?.attackers === a.team ? a : b, defender = attacker === a ? b : a;
   check('snd: the attacker starts in the red half, the defender in the blue half', attacker.x < 0 && defender.x > 0);
-  check(`snd: the attacker walks onto site ${site.name}`, await attacker.walk([site.x, site.z], 30000));
+  check(`snd: the attacker walks onto site ${site.name}`, await attacker.walk(at(site), 30000));
   check('snd: planted', await waitFor(() => a.events('bomb-planted').length === 1, 7000));
   check('snd: the round clock is the fuse now', a.mode?.kind === 'bomb' && a.mode.fuseIn > 25 && a.mode.sites.some((x) => x.planted));
   check('snd: the bomb goes off, the attackers take round 1', await waitFor(() => a.events('bomb-exploded').length === 1, 40000) && a.events('round-win').at(-1)?.team === attacker.team);
@@ -310,12 +287,12 @@ async function snd(): Promise<void> {
   check('snd: round 2 goes live with the sides swapped', await waitFor(() => a.phase === 'live' && bomb()?.attackers === defender.team, 20000) && a.events('side-swap').length === 1);
   const att2 = defender, def2 = attacker;
   check('snd: the new attacker spawned in the red half', att2.x < 0 && def2.x > 0);
-  check(`snd: round 2: the attacker plants at ${site.name}`, await att2.walk([site.x, site.z], 30000) && await waitFor(() => a.events('bomb-planted').length === 2, 7000));
+  check(`snd: round 2: the attacker plants at ${site.name}`, await att2.walk(at(site), 30000) && await waitFor(() => a.events('bomb-planted').length === 2, 7000));
   // The attacker walks back to its spawn: off the site, so the defender defuses alone.
   const home = att2.of('spawn').at(-1)!;
   void att2.walk([home.x, home.z]);
   await sleep(1500);
-  check('snd: the defender walks onto the bomb', await def2.walk([site.x, site.z], 30000));
+  check('snd: the defender walks onto the bomb', await def2.walk(at(site), 30000));
   check('snd: defused', await waitFor(() => a.events('bomb-defused').length === 1, 9000));
   check('snd: the match ends 2-0 for the first attacker\'s team', await waitFor(() => ended(a), 3000) && a.of('matchend')[0].winnerTeam === def2.team);
   check('snd: the roster counts the plants and the defuse', (a.of('roster').at(-1)?.players.reduce((n, p) => n + (p.pts ?? 0), 0) ?? 0) === 3);
@@ -368,7 +345,7 @@ async function koth(): Promise<void> {
   check('koth: goes live', await waitFor(() => a.phase === 'live', 15000));
   check('koth: free for all (no teams)', a.team === '' && b.team === '');
   const z = getMap(mapId).zones[0];
-  check(`koth: a walks into ${z.name}`, await a.walk([z.x + 0.5, z.z + 0.5], 30000));
+  check(`koth: a walks into ${z.name}`, await a.walk(at(z), 30000));
   check('koth: a holds the hill', await waitFor(() => a.mode?.kind === 'zones' && a.mode.zones[0].holder === a.id, 2000));
   check('koth: the match ends at 5 points, a wins', await waitFor(() => ended(a), 9000) && a.of('matchend')[0].winnerId === a.id);
   check('koth: the roster shows a\'s points', (a.of('roster').at(-1)?.players.find((p) => p.id === a.id)?.pts ?? 0) >= 5);
