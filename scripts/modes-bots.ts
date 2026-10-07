@@ -5,7 +5,7 @@
  * domination points, flag pick-up and capture.
  *
  *   ROOM_CREATE_LIMIT=1000 npm run server          # in one terminal (port 3000)
- *   npx tsx scripts/modes-bots.ts [gungame|elimination|hardpoint|domination|ctf ...] [--url=http://localhost:3000]
+ *   npx tsx scripts/modes-bots.ts [gungame|elimination|hardpoint|domination|ctf ...] [--url=http://localhost:3000] [--map=quarter]
  *
  * Takes a minute or two (every mode has a 10 s warm-up) and exits 0 when every check passed.
  */
@@ -17,6 +17,8 @@ import { clientStep } from './lib/arenaPath';
 
 const args = process.argv.slice(2);
 const base = args.find((a) => a.startsWith('--url='))?.slice(6) ?? 'http://localhost:3000';
+/** The map of the elimination, zone and flag runs (it must have zones and flags). */
+const MAP = args.find((a) => a.startsWith('--map='))?.slice(6) ?? 'quarter';
 const ALL: GameType[] = ['gungame', 'elimination', 'hardpoint', 'domination', 'ctf'];
 const modes = args.filter((a) => !a.startsWith('--')) as GameType[];
 const run = modes.length ? modes : ALL;
@@ -193,7 +195,7 @@ async function gungame(): Promise<void> {
 }
 
 async function elimination(): Promise<void> {
-  const [a, b] = await pair('elimination', 'quarter', 2, 60);
+  const [a, b] = await pair('elimination', MAP, 2, 60);
   check('elimination: the bots are on different teams', a.team !== '' && a.team !== b.team);
   check('elimination: warm-up, then the intermission of round 1', await waitFor(() => a.phase === 'intermission', 15000));
   check('elimination: countdown, then live', await waitFor(() => a.phase === 'countdown', 8000) && await waitFor(() => a.phase === 'live', 6000));
@@ -210,7 +212,7 @@ async function elimination(): Promise<void> {
 }
 
 async function zones(type: 'hardpoint' | 'domination'): Promise<void> {
-  const mapId = 'quarter';
+  const mapId = MAP;
   const [a, b] = await pair(type, mapId);
   check(`${type}: goes live`, await waitFor(() => a.phase === 'live', 15000));
   check(`${type}: mode state with zones`, a.mode?.kind === 'zones' && a.mode.zones.length >= 3);
@@ -234,7 +236,7 @@ async function zones(type: 'hardpoint' | 'domination'): Promise<void> {
 }
 
 async function ctf(): Promise<void> {
-  const mapId = 'quarter';
+  const mapId = MAP;
   const [a, b] = await pair('ctf', mapId);
   check('ctf: goes live', await waitFor(() => a.phase === 'live', 15000));
   check('ctf: both flags at home', a.mode?.kind === 'ctf' && a.mode.flags.every((f) => f.status === 'home'));

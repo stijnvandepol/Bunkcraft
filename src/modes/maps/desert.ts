@@ -39,7 +39,7 @@ export const DESERT: ArenaMapDef = {
   objectives: {
     // Hardpoint order: the lane in the middle, the lanes by the houses, then the two ends of the market hall.
     zones: [
-      { name: 'Lane', x: 0, z: 13.5, r: 5 },
+      { name: 'Lane', x: 0, z: 16, r: 5 },
       { name: 'West Houses', x: -24.5, z: 13.5, r: 4 },
       { name: 'East Houses', x: 24.5, z: 13.5, r: 4 },
       { name: 'West Hall', x: -12.5, z: -24.5, r: 4 },
