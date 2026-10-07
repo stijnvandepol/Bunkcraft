@@ -89,9 +89,9 @@ wat al is doorgevoerd.
    - Een `meta`-byte per blok in een lazy `Chunk.meta`, door de generatie-workers, de mesher, botsing, raycast, save (record v2 + migratie) en netwerk (protocol 4) heen.
    - **Slabs en trappen** (9 materialen, Minecraft-plaatsingsregels, hoekvormen afgeleid uit de buren, loopt omhoog met stap 0,6) en de **eikenhouten deur** (2 blokken, scharnier, open/dicht, breekt samen).
    - **Stromend water en lava** met de Minecraft 1.21-regels (water 7 blokken per 5 ticks, lava 3 blokken per 30 ticks, oneindige bron, obsidiaan/cobblestone, vallend water) en **emmers** (ijzeren emmer, water- en lavaemmer). Budget van 600 updates en 200 blokwijzigingen per tick; in multiplayer simuleert de server.
-   - Nog te doen op deze basis: **ladders, muurfakkels, gewassen** (groeifase in `meta`), **oven met een richting** (en een brandende staat), **bed** (2 blokken), vallend zand en grind, waterlogged slabs, stroming die entities meeduwt, lava-fakkels/vuur, trapdoors en hekken (zelfde `partial`-machinerie).
+   - Nog te doen op deze basis: **ladders, muurfakkels** (gewassen: **gedaan**), **oven met een richting** (en een brandende staat), **bed** (2 blokken), vallend zand en grind, waterlogged slabs, stroming die entities meeduwt, lava-fakkels/vuur, trapdoors en hekken (zelfde `partial`-machinerie).
    - Bewust anders dan Minecraft: de trapvorm wordt afgeleid uit de buren (niet opgeslagen) en lava vertraagt niet willekeurig (`random.nextInt(4)`).
-5. **Landbouw (M):** saplings (**gedaan**), tarwe, brood en een schoffel. Hernieuwbaar hout en voedsel.
+5. **Landbouw (M):** **Gedaan** (saplings, akkergrond met vocht en vertrappen, tarwe, wortels, aardappels, bieten, pompoen- en meloenstengels, bone meal, Fortune-buit, brood/taart/soep; server-sync en plaatsingsguard; zie [`GAMEPLAY.md`](GAMEPLAY.md#landbouw)). Open: composter, cacao, zoete bessen, hooibaal die valschade dempt, dorpelingen die oogsten, gewassen die in het donker afbreken.
 6. **Meer survival-inhoud (M):** harnas met een armor-bar: **Gedaan** (zie §4b). XP-orbs met een XP-balk, enchanting, anvil en grindstone: **Gedaan** (zie §4c). Skeleton (schiet elke 2 s, verbrandt in daglicht; drops botten en pijlen) en spin (klimt, springt, neutraal in fel licht; drops draad en spinnenoog met Poison) zijn **Gedaan**.
 7. **Structuren (M per stuk):** dungeon met spawner en kisten, mijnschachten, later dorpen.
 8. **Eindspel (L):** een "Underworld"-dimensie of een stronghold met een eindbaas en credits.
@@ -106,7 +106,7 @@ Ontwerp, tellingen en tier-lijst: [`CONTENT.md`](CONTENT.md). **Gedaan:**
 - **`ItemStack.data`** (enchants en dergelijke) is er, wordt opgeslagen en over het netwerk meegestuurd; stapels met verschillende data voegen nooit samen.
 - Harnas (armor-balk, schadeformule, slijtage), schoffel, schaar, tooluse (akkergrond, paden, strippen, pompoen snijden), kist (27 slots), bed, ladder.
 - Creative inventory met tabs, scrollen, zoeken en tooltips; receptenboek met tabs en zoeken; ~420 recepten.
-- **Nog te doen (tier 2):** landbouw (tarwe, wortels en aardappels, hoofdreden dat brood, koekjes en modderstenen nog niet te maken zijn), brouwen, smithing en
+- **Nog te doen (tier 2):** cacao (koekjes, bruine kleurstof), brouwen, smithing en
   netherite, blast furnace, smoker, schild, hengel, kaarsen, banners, koraal, ruitjes met doorzichtigheid (gekleurd glas is alpha-getest),
   kisten in multiplayer, een echte kist-animatie, kisten met richting-afhankelijke dubbele variant, vallend zand en grind, en dat de worldgen de nieuwe blokken
   (graniet, diorite, andesiet, tuff, calciet, deepslate, nieuwe ertsen, bloemen, junglebomen) nog moet plaatsen.
@@ -168,7 +168,7 @@ Screenshots: `docs/screenshots/redstone_lever_lamp.png`, `redstone_clock_a.png`,
 | ~~Grotgeluiden en muziek die per biome wisselt~~ (klaar, zie hieronder) | S |
 | Vuurvliegjes en vallende bladeren | S |
 | Suikerriet, pompoenen, meloenen, paddenstoelen, waterlelies | **Gedaan** in de generator (v3), behalve waterlelies (blok bestaat nog niet). Groei via random ticks: andere ontwikkelaar |
-| Weer: regen, sneeuw, onweer, bliksem, maanfasen, sterren met twinkel | **Gedaan** (`Weather.ts`, `Precipitation.ts`, `Lightning.ts`; zie [`GAMEPLAY.md`](GAMEPLAY.md#weer-en-lucht)). Open: regengeluid en donder via `AudioEngine.setWeather`, sneeuwlagen en bevriezend water (block states + random ticks), farmland-hydratatie en vuur-blussen via `Weather.isRainingAt`, geladen creepers, onweer-slapen |
+| Weer: regen, sneeuw, onweer, bliksem, maanfasen, sterren met twinkel | **Gedaan** (`Weather.ts`, `Precipitation.ts`, `Lightning.ts`; zie [`GAMEPLAY.md`](GAMEPLAY.md#weer-en-lucht)). Open: regengeluid en donder via `AudioEngine.setWeather`, sneeuwlagen en bevriezend water (block states + random ticks), vuur-blussen via `Weather.isRainingAt` (farmland-hydratatie in de regen: **gedaan**), geladen creepers, onweer-slapen |
 | Rivieren | **Gedaan** (generator v3) |
 | Nieuwe biomes: moeras, savanne, jungle, badlands | **Gedaan** (generator v3). Open: mangrove-moeras, mushroom fields, ice spikes, jungle-lianen (geen vine-blok), waterlelies |
 
@@ -344,8 +344,7 @@ ertsaders, `genVersion` voor bestaande werelden).
 1. Random-tick systeem: **Gedaan** (`RandomTicks.ts`, `Growth.ts`, `BlockUpdates.ts`, `Trees.ts`; zie [`GAMEPLAY.md`](GAMEPLAY.md#groei-en-vallende-blokken)).
    Saplings (alle 7 houtsoorten), bladverval, gras/mycelium, suikerriet, cactus, paddenstoelen, ijs, bone meal, vallend zand en grind; singleplayer en server.
    Meting (`scripts/bench-randomticks.ts`, CPU-tijd op een zwaar belaste machine): singleplayer render distance 12 / sim-afstand 8 chunks ≈ 0,1 ms per tick,
-   server ≈ 0,05–0,08 ms per speler; in de browser (Playwright, `scripts/growth-shots.py`) p50 0,2 ms. Open: farmland en gewassen (via
-   `RandomTicker.register` en `registerBoneMeal`), vuur, sneeuwlagen (geen blok), bamboe/kelp/vines (geen blokken), grote 2×2-bomen (dark oak, jungle,
+   server ≈ 0,05–0,08 ms per speler; in de browser (Playwright, `scripts/growth-shots.py`) p50 0,2 ms. Farmland en gewassen: **gedaan** (`Farming.ts`). Open: vuur, sneeuwlagen (geen blok), bamboe/kelp/vines (geen blokken), grote 2×2-bomen (dark oak, jungle,
    spruce), big oak, de `/gamerule randomTickSpeed`-UI (setter: `RandomTicker.setSpeed`, server: `ServerEntities.setRandomTickSpeed`), geluid bij landen.
 2. Block entities (kisten, ovens, spawners) met opslag per wereld en server-sync. **Gedaan voor kist, dubbele kist en oven** (singleplayer save v4, `world.json` op de server, `container`-protocol); spawner, bord, bed en banner kunnen zich registreren met `registerBlockEntityKind`.
 3. Eén centrale schade-pijplijn (moeilijkheidsgraad, harnas, effecten, enchantments). **Gedaan** (zie `GAMEPLAY.md`):
@@ -360,7 +359,7 @@ ertsaders, `genVersion` voor bestaande werelden).
    slapen versnelt nu direct naar de ochtend
    (geen tijd-animatie) en de server kent geen fase "iedereen in bed maar nog geen 100 ticks" in de HUD.
 
-**Fase 1, early game loop:** ~~saplings en bladverval~~ (gedaan), landbouw (schoffel, farmland, tarwe, brood, bone meal), bed met
+**Fase 1, early game loop:** ~~saplings en bladverval~~ (gedaan), ~~landbouw (schoffel, farmland, tarwe, brood, bone meal)~~ (gedaan), bed met
 spawnpunt en nacht overslaan, difficulty en game rules, harnas, attack cooldown met crits en sweep, kist met loot-tabellen,
 ~~vallend zand en grind~~ (gedaan), XP-orbs, ladders/hekken/trapdoors/knoppen, echte oven met kooktijd.
 
