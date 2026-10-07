@@ -532,7 +532,7 @@ export class ArcadeHud {
     this.board.classList.toggle('hidden', !visible);
     // The objective panels (gun game ladder) step aside while the scoreboard is up.
     this.el.classList.toggle('board-open', visible);
-    if (visible) renderBoard(this.board, roster, ctx);
+    if (visible) fitBoard(this.board, roster, ctx);
   }
 
   // ---------------------------------------------------------------- death, end, loadout
@@ -595,13 +595,21 @@ export class ArcadeHud {
     // A full-screen result: the score bar, kill feed and panels under it showed through its title and the map vote.
     this.el.classList.toggle('end-open', info !== null);
     this.lastEndCount = -1;
-    if (!info) return;
+    this.endInfo = info;
+    if (!info) { window.removeEventListener('resize', this.refitEnd); return; }
+    window.addEventListener('resize', this.refitEnd);
     this.setProtection(0); // nothing of the round shows through the end screen
     this.medal.classList.add('hidden');
     this.endTitle.textContent = info.title;
     this.endTitle.style.color = info.color;
-    renderBoard(this.endBoard, info.roster, info.ctx);
+    fitBoard(this.endBoard, info.roster, info.ctx);
   }
+
+  /** The end screen's board fitted again (window resized). */
+  private endInfo: { roster: readonly RosterEntry[]; ctx: ScoreboardContext } | null = null;
+  private readonly refitEnd = (): void => {
+    if (this.endInfo) fitBoard(this.endBoard, this.endInfo.roster, this.endInfo.ctx);
+  };
 
   setNextMatch(seconds: number): void {
     const n = Math.max(0, Math.ceil(seconds));
@@ -694,8 +702,14 @@ function statRows(def: WeaponDef, optic: OpticId = 'iron', perk: PerkId = 'none'
   ];
 }
 
-/** Scoreboard table: rank, name (team colour), kills, deaths, K/D and ping; yours is highlighted. */
-function renderBoard(host: HTMLElement, roster: readonly RosterEntry[], ctx: ScoreboardContext): void {
+/** Renders the board, then drops rows (never your own) until it fits its box: no player is cut off unseen. */
+function fitBoard(host: HTMLElement, roster: readonly RosterEntry[], ctx: ScoreboardContext): void {
+  renderBoard(host, roster, ctx);
+  for (let limit = roster.length - 1; limit >= 3 && host.scrollHeight > host.clientHeight + 1; limit--) renderBoard(host, roster, ctx, limit);
+}
+
+/** Scoreboard table: rank, name (team colour), kills, deaths, K/D and ping; yours is highlighted. At most `limit` players. */
+function renderBoard(host: HTMLElement, roster: readonly RosterEntry[], ctx: ScoreboardContext, limit = Infinity): void {
   const rows: HTMLElement[] = [];
   const cols = ctx.scoreColumn ? ' pts' : '';
   const header = h('div', { class: `arc-row head${cols}` },
@@ -703,7 +717,18 @@ function renderBoard(host: HTMLElement, roster: readonly RosterEntry[], ctx: Sco
     ctx.scoreColumn ? h('span', { text: scoreColumnLabel(ctx.scoreColumn) }) : null,
     h('span', { text: t('arc.board.kills') }), h('span', { text: t('arc.board.deaths') }), h('span', { text: 'K/D' }), h('span', { text: 'Ping' }));
   rows.push(header);
-  sortRoster(roster).forEach((p, i) => {
+  const sorted = sortRoster(roster);
+  const shown: [RosterEntry, number][] = sorted.map((p, i) => [p, i]);
+  let more = 0;
+  if (sorted.length > limit) {
+    // Too many rows for the room: the best ones, and your own row always (it was cut off the end screen, QA round 3).
+    const keep = Math.max(1, limit - 1);
+    const selfAt = sorted.findIndex((p) => p.id === ctx.selfId);
+    shown.length = keep;
+    if (selfAt >= keep) shown[keep - 1] = [sorted[selfAt], selfAt];
+    more = sorted.length - keep;
+  }
+  shown.forEach(([p, i]) => {
     rows.push(h('div', { class: `arc-row${cols}${p.id === ctx.selfId ? ' self' : ''}` },
       h('span', { class: 'rank', text: String(i + 1) }),
       h('span', { class: 'name', style: `color:${teamColor(p.team)}`, text: p.name }),
@@ -711,6 +736,7 @@ function renderBoard(host: HTMLElement, roster: readonly RosterEntry[], ctx: Sco
       h('span', { text: String(p.kills) }), h('span', { text: String(p.deaths) }),
       h('span', { text: kdRatio(p.kills, p.deaths) }), h('span', { text: p.ping > 0 ? String(Math.round(p.ping)) : '-' })));
   });
+  if (more > 0) rows.push(h('div', { class: 'arc-row more', text: t('arc.board.more', more) }));
   const children: HTMLElement[] = [];
   if (ctx.teams) {
     children.push(h('div', { class: 'arc-board-scores' },

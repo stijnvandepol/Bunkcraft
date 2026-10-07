@@ -95,7 +95,8 @@ try {
     await key(a, 'Digit2');
     await wait(a, 500);
     const mine = await text(a, '.mvote-mine');
-    check('vote: key 2 votes for the second map', mine.length > 0 && cards[1] !== undefined && cards[1].split('\n')[0].trim().length > 0 && mine.includes(cards[1].split('\n')[0].trim()), mine);
+    const second = (cards[1] ?? '').split('\n').map((x) => x.trim()).find((x) => x && !/^\[\d\]$/.test(x)) ?? '?';
+    check('vote: key 2 votes for the second map', mine.includes(second), `${mine} (card: ${second})`);
     // The next match on the voted map: the client rejoins and builds it.
     await until(a, 'next match', async () => !(await visible(a, '.arc-end:not(.hidden)')) && (await inMatch(a)), 120_000);
     await wait(a, 3000);

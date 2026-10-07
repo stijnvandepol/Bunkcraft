@@ -56,6 +56,28 @@ test('arcade: a long kill feed row stays clear of the score bar (it covered the 
   expect(feed.x).toBeGreaterThanOrEqual(top.x + top.width);
 });
 
+test('arcade: with the map vote up, your own row stays on the end screen in a full lobby (it was cut off at the bottom)', async ({ page }) => {
+  await startPreview(page, 'tdm', 'atomic');
+  await page.evaluate(() => {
+    const g = (window as any).game;
+    const self = g.arcade.d.selfId;
+    g.previewServer.phase = 'ended';
+    g.previewServer.endAt = g.previewServer.t + 60;
+    const players = Array.from({ length: 11 }, (_, i) => ({ id: 800 + i, name: `bot${i}`, team: i % 2 ? 'red' : 'blue', kills: 20 - i, deaths: 3, ping: 20, pts: 0 }));
+    players.push({ id: self, name: 'You', team: 'red', kills: 0, deaths: 9, ping: 20, pts: 0 });
+    g.onServerMessage({ t: 'roster', players });
+    g.onServerMessage({ t: 'matchend', winnerTeam: 'blue', winnerId: 0, restartIn: 20 });
+    g.onServerMessage({ t: 'vote', options: ['classic', 'villa', 'town'], counts: [0, 0, 0], endsIn: 15 });
+  });
+  await expect(page.locator('.arc-end')).toBeVisible();
+  await expect(page.locator('.mvote')).toBeVisible();
+  const self = page.locator('.arc-end-board .arc-row.self');
+  await expect(self).toHaveCount(1);
+  const row = (await self.boundingBox())!;
+  const board = (await page.locator('.arc-end-board').boundingBox())!;
+  expect(row.y + row.height).toBeLessThanOrEqual(board.y + board.height + 1);
+});
+
 test('arcade: an objective marker at the screen edge keeps its whole caption on screen (wide "CONTESTED" label)', async ({ page }) => {
   await startPreview(page, 'domination', 'villa');
   // Three contested points, the player turning around: markers stick to the left and right edges.

@@ -388,7 +388,7 @@ export class ArcadeSession {
       case 'gear': this.onGear(msg); break;
       case 'mode': this.onMode(msg.state); break;
       case 'event': this.onEvent(msg, now); break;
-      case 'vote': this.lobby.setVote(msg); break;
+      case 'vote': this.lobby.setVote(msg); this.refreshEnd(); break; // the vote panel takes room from the board
       default: break;
     }
   }

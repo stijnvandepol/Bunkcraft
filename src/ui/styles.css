@@ -1053,6 +1053,7 @@ html, body {
 .arc-row { display: grid; grid-template-columns: calc(var(--s) * 16) 1fr calc(var(--s) * 30) calc(var(--s) * 34) calc(var(--s) * 30) calc(var(--s) * 30); gap: calc(var(--s) * 4); padding: calc(var(--s) * 1) calc(var(--s) * 3); background: rgba(255, 255, 255, 0.05); }
 .arc-row.pts { grid-template-columns: calc(var(--s) * 16) 1fr calc(var(--s) * 30) calc(var(--s) * 30) calc(var(--s) * 34) calc(var(--s) * 30) calc(var(--s) * 30); }
 .arc-row.head { color: #a0a0a0; background: transparent; }
+.arc-row.more { display: block; color: #a0a0a0; background: transparent; text-align: center; }
 .arc-row.self { background: rgba(255, 255, 255, 0.2); }
 .arc-row span { text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .arc-row .name, .arc-row .rank { text-align: left; }

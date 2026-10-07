@@ -130,6 +130,7 @@ const EN = {
 
   // In-match arcade HUD
   'arc.health': 'HEALTH',
+  'arc.board.more': '... and {0} more',
   'arc.scope.steady': 'Hold Shift to steady',
   'arc.scope.breath': 'Out of breath',
   'arc.protection': 'SPAWN PROTECTION {0}',
@@ -600,6 +601,7 @@ const NL: Record<I18nKey, string> = {
   'lobby.tab': 'Houd Tab ingedrukt voor het scorebord',
 
   'arc.health': 'GEZONDHEID',
+  'arc.board.more': '... en nog {0}',
   'arc.scope.steady': 'Houd Shift vast voor een vaste hand',
   'arc.scope.breath': 'Buiten adem',
   'arc.protection': 'SPAWNBESCHERMING {0}',
