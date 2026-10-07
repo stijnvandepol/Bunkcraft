@@ -341,6 +341,11 @@ export type ServerMessage =
   | { t: 'hit'; victim: number; damage: number; head: boolean; killed: boolean }
   /** You took damage from `from` at direction (dx, dz) relative to the world. */
   | { t: 'damaged'; from: number; damage: number; dx: number; dz: number }
+  /**
+   * Arcade killstreak reward (radar sweep): where the living opponents of `by`'s side stood, as flat x, z pairs,
+   * shown for `sec` seconds. Sent to `by` (and its team in team modes).
+   */
+  | { t: 'radar'; by: number; pts: number[]; sec: number }
   /** Kill feed entry (also tells everyone a player is down until the next spawn). */
   | { t: 'kill'; killer: number; victim: number; weapon: string; head: boolean }
   /** The match ended; a new one starts after `restartIn` seconds. winner: team, a player id or 0 for a draw. */

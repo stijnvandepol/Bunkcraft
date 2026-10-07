@@ -38,6 +38,9 @@ export { DEFAULT_REWIND, MAX_REWIND } from './anticheat/LagComp';
 /** Fire messages may arrive this much (s) earlier than the weapon's cadence allows (network jitter). */
 const FIRE_SLACK = 0.04;
 const HISTORY_SIZE = 24;
+/** Killstreak: every this many kills in one life sends a radar sweep, shown this long. */
+export const RADAR_STREAK = 5;
+export const RADAR_SECONDS = 4;
 /** Spawn choice: shots remembered, how long and how near they count, and the distance beyond which a spawn is safe. */
 const FIGHT_MEMORY = 32;
 export const SPAWN_FIGHT_SECONDS = 3;
@@ -132,6 +135,8 @@ export interface MatchPlayer {
   /** When this life began and whether a shot went out in it (early class swap). */
   spawnedAt: number;
   firedThisLife: boolean;
+  /** Kills since the last death (killstreak rewards). */
+  streak: number;
   slots: [Slot, Slot, Slot];
   slot: 0 | 1 | 2;
   switchReadyAt: number;
@@ -228,7 +233,7 @@ export class Match {
     const p: MatchPlayer = {
       id, name, team, kills: 0, deaths: 0, pts: 0, joinSeq: ++this.joinCounter, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, alive: false, health: PLAYER_MAX_HEALTH,
       lastDamageAt: -1e9, lastHpSent: PLAYER_MAX_HEALTH, respawnAt: 0, protectedUntil: 0,
-      primary: DEFAULT_PRIMARY, secondary: DEFAULT_SECONDARY, optic: 'iron', perk: 'none', next: { ...DEFAULT_CLASS }, spawnedAt: now, firedThisLife: false,
+      primary: DEFAULT_PRIMARY, secondary: DEFAULT_SECONDARY, optic: 'iron', perk: 'none', next: { ...DEFAULT_CLASS }, spawnedAt: now, firedThisLife: false, streak: 0,
       slots: [newSlot(DEFAULT_PRIMARY, 'none'), newSlot(DEFAULT_SECONDARY, 'none'), newSlot('knife', 'none')], slot: 0,
       switchReadyAt: 0, history: Array.from({ length: HISTORY_SIZE }, () => ({ t: 0, x: 0, y: 0, z: 0, h: HITBOX.height })), historyHead: 0, historyCount: 0,
       height: HITBOX.height,
@@ -501,12 +506,25 @@ export class Match {
     victim.respawnAt = delay < 0 ? Infinity : now + delay;
     victim.historyCount = 0;
     if (killer) killer.kills++;
+    victim.streak = 0;
     this.logic.onKill(this, killer, victim, w, head, now);
+    if (killer && killer !== victim && ++killer.streak % RADAR_STREAK === 0) this.radar(killer);
     this.sendHp(victim, true);
     this.host.broadcast({ t: 'kill', killer: killer?.id ?? 0, victim: victim.id, weapon: w.id, head });
     this.broadcastRoster();
     this.broadcastMatch();
     this.checkEnd(now);
+  }
+
+  /** Killstreak reward: one radar sweep of the opponents' positions for the killer (and its team). */
+  private radar(by: MatchPlayer): void {
+    const pts: number[] = [];
+    for (const o of this.players.values()) {
+      if (o === by || !o.alive || (this.teams && o.team === by.team)) continue;
+      pts.push(r2(o.x), r2(o.z));
+    }
+    const msg: ServerMessage = { t: 'radar', by: by.id, pts, sec: RADAR_SECONDS };
+    for (const o of this.players.values()) if (o === by || (this.teams && o.team === by.team)) this.host.send(o.id, msg);
   }
 
   // ---------------------------------------------------------------- lag compensation

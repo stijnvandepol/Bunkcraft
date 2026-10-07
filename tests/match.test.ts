@@ -522,6 +522,35 @@ describe('pose hitboxes (arcade crouch and slide)', () => {
   });
 });
 
+describe('killstreak radar', () => {
+  it('every fifth kill in one life sweeps the opponents for the killer\'s team; a death resets the streak', () => {
+    const { host, match, advance } = setup('tdm');
+    for (const [id, name] of [[1, 'a'], [2, 'b'], [3, 'c'], [4, 'd']] as const) { match.join(id, name); match.ready(id); }
+    advance(WARMUP_SECONDS + SPAWN_PROTECTION + 0.4);
+    const killer = match.players.get(1)!;
+    const victim = [...match.players.values()].find((p) => p.team !== killer.team)!;
+    const killOnce = () => {
+      match.setPosition(1, 0.5, 65, 0.5);
+      match.setPosition(victim.id, 0.5, 65, 10.5);
+      advance(0.5);
+      for (let i = 0; i < 8 && victim.alive; i++) { match.fire(1, aim(killer, body(10.5))); advance(0.11); }
+      expect(victim.alive).toBe(false);
+      advance(RESPAWN_SECONDS + SPAWN_PROTECTION + 0.3);
+    };
+    host.clear();
+    for (let k = 0; k < 4; k++) killOnce();
+    expect(host.of('radar')).toHaveLength(0);
+    killOnce();
+    const radar = host.sent.filter((s) => s.msg.t === 'radar');
+    // The killer and its teammates, not the opponents.
+    expect(radar.map((s) => s.id).sort()).toEqual([...match.players.values()].filter((p) => p.team === killer.team).map((p) => p.id).sort());
+    const msg = radar[0].msg as Extract<ServerMessage, { t: 'radar' }>;
+    expect(msg.by).toBe(1);
+    // The other (living) opponent is on it; the one just killed is not.
+    expect(msg.pts.length).toBe(2);
+  });
+});
+
 describe('spawn selection', () => {
   it('tdm spawns on the team side, ffa furthest from the others', () => {
     const { match } = setup('tdm');

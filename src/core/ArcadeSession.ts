@@ -23,6 +23,8 @@ import { muzzleFor } from '../rendering/WeaponModels';
 import { WeaponViewmodel } from '../rendering/WeaponViewmodel';
 import { ArcadeHud, type ScoreboardContext } from '../ui/ArcadeHud';
 import { ModeHud } from '../ui/ModeHud';
+import { RadarPings } from '../ui/RadarPings';
+import { ARENA_FLOOR_Y } from '../modes/maps/ArenaMap';
 import { MatchLobby } from '../ui/MatchLobby';
 import { ModeVisuals } from '../rendering/ModeVisuals';
 import { BLOCK } from '../world/BlockRegistry';
@@ -149,6 +151,8 @@ export class ArcadeSession {
   /** Objective HUD (zones, flags, rounds, ladder) and the flags/zone rings in the world. */
   readonly modeHud: ModeHud;
   readonly modeVisuals = new ModeVisuals();
+  /** Killstreak radar sweep markers. */
+  private readonly radar = new RadarPings();
   /** Realms pre-match lobby (warm-up panel) and the map vote after a match. */
   readonly lobby: MatchLobby;
   private modeState: ModeState | null = null;
@@ -249,6 +253,7 @@ export class ArcadeSession {
     this.teams = this.def.teams;
     this.modeHud = new ModeHud(this.def);
     this.hud.el.append(this.modeHud.el);
+    this.hud.el.append(this.radar.el);
     this.lobby = new MatchLobby(this.def, d.selfId);
     this.lobby.onVote = (map) => this.d.send({ t: 'vote', map });
     this.hud.el.append(this.lobby.el);
@@ -391,6 +396,12 @@ export class ArcadeSession {
       case 'mode': this.onMode(msg.state); break;
       case 'event': this.onEvent(msg, now); break;
       case 'vote': this.lobby.setVote(msg); break;
+      case 'radar':
+        this.radar.show(msg.pts, ARENA_FLOOR_Y + 1, msg.sec, now);
+        this.hud.showMedal(msg.by === this.d.selfId ? t('arc.radar.own') : t('arc.radar.team', this.nameOf(msg.by)), '#ff5555', now);
+        this.d.audio.playModeCue('good');
+        this.d.feedback?.caption(t('arc.radar.caption'), this.d.player.x, this.d.player.z);
+        break;
       default: break;
     }
   }
@@ -982,6 +993,7 @@ export class ArcadeSession {
     me.team = this.team; me.id = this.d.selfId;
     this.modeHud.frame(now, this.d.cam.camera, window.innerWidth, window.innerHeight, me, this.nameOfFn, this.carrierPos);
     this.modeVisuals.update(now, this.carrierPos);
+    this.radar.frame(now, this.d.cam.camera, window.innerWidth, window.innerHeight);
 
     // Scoreboard while the key is held.
     const showBoard = f.controls && input.actionDown(KB.SCOREBOARD) && !this.ended;
