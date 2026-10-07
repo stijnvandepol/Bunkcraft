@@ -15,7 +15,7 @@ const [cmd = 'health', ...args] = process.argv.slice(2);
 
 async function get(path, init = {}) {
   const res = await fetch(base + path, { ...init, signal: AbortSignal.timeout(10_000) });
-  return { status: res.status, text: await res.text() };
+  return { status: res.status, type: res.headers.get('content-type') ?? '', text: await res.text() };
 }
 const admin = (path, body = {}) => get(`/api/admin/${path}`, {
   method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify(body),
@@ -49,7 +49,8 @@ try {
     const script = /src="(\/assets\/[^"]+\.js)"/.exec(page.text)?.[1];
     if (!script) fail('game page has no /assets/*.js script');
     const js = await get(script);
-    if (js.status !== 200 || js.text.length < 1000) fail(`${script} ${js.status}`);
+    // A missing file falls back to index.html (200, text/html): only real JavaScript passes.
+    if (js.status !== 200 || !js.type.includes('javascript') || js.text.length < 1000) fail(`${script}: ${js.status} ${js.type}`);
     const server = await get('/api/server');
     if (server.status !== 200) fail(`/api/server ${server.status}`);
     const info = JSON.parse(server.text);

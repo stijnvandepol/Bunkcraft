@@ -27,7 +27,7 @@
 set -euo pipefail
 SELF="$(readlink -f "$0")"
 cd "$(dirname "$SELF")/.."
-# shellcheck source=lib/deploy.sh
+# shellcheck source=scripts/lib/deploy.sh
 . scripts/lib/deploy.sh
 
 # Everything runs inside main(): bash reads a script while it runs, and the pull may replace this file.
@@ -51,7 +51,7 @@ main() {
     *[!A-Za-z0-9._:@-]*) die "invalid tag '$tag'" ;;
   esac
   if [ "$dry" = 0 ]; then
-    take_lock || die "another update is running (an auto-update may be waiting for players to finish a match); see 'bunkcraft autoupdate status'."
+    take_lock 0 || die "another update is running (an auto-update may be waiting for players to finish a match); see 'bunkcraft autoupdate status'."
   fi
   if [ "$rollback" = 1 ]; then manual_rollback; return; fi
 

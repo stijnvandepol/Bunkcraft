@@ -28,7 +28,7 @@
 set -euo pipefail
 SELF="$(readlink -f "$0")"
 cd "$(dirname "$SELF")/.."
-# shellcheck source=lib/deploy.sh
+# shellcheck source=scripts/lib/deploy.sh
 . scripts/lib/deploy.sh
 
 STATE=.autoupdate-state

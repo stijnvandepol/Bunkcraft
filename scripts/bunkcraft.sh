@@ -15,7 +15,7 @@
 #   bunkcraft deploy       the auto-update flow now, also when AUTOUPDATE=off (push deploys over SSH)
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")/.."
-# shellcheck source=lib/deploy.sh
+# shellcheck source=scripts/lib/deploy.sh
 . scripts/lib/deploy.sh
 
 UNIT=/etc/systemd/system/bunkcraft-autoupdate
