@@ -339,9 +339,9 @@ describe('hitscan', () => {
     expect(s3.host.of('shot')).toHaveLength(1);
   });
 
-  it('a wall stops the bullet; glass, leaves, bars and plants do not', () => {
+  it('a wall stops the bullet; glass, leaves and plants do not', () => {
     for (const [id, blocked] of [[BLOCK.STONE_BRICKS, true], [BLOCK.GLASS, false], [BLOCK.STAINED_GLASS, false], [BLOCK.GLASS_PANE, false],
-      [BLOCK.OAK_LEAVES, false], [BLOCK.IRON_BARS, false], [BLOCK.TALL_GRASS, false]] as const) {
+      [BLOCK.OAK_LEAVES, false], [BLOCK.TALL_GRASS, false]] as const) {
       const { host, match } = liveDuel();
       for (const y of [65, 66, 67]) host.blockMap.set(`0,${y},5`, id);
       match.fire(1, aim(match.players.get(1)!, body(10.5)));
@@ -353,7 +353,7 @@ describe('hitscan', () => {
     }
   });
 
-  it('a shot through a window costs a fifth of the damage per pane, and a wall of glass still stops it', () => {
+  it('a shot through a window costs a fifth of the damage, and a wall of glass still stops it', () => {
     const open = liveDuel();
     open.match.fire(1, aim(open.match.players.get(1)!, body(10.5)));
     const full = open.host.of('hit', 1)[0].damage;

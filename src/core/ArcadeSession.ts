@@ -132,6 +132,8 @@ function glintTexture(): THREE.CanvasTexture {
 }
 const tmpAim = { x: 0, y: 0, z: 0 };
 const tmpDir: [number, number, number] = [0, 0, 0];
+/** Face normal scratch for glass bursts (tmpAim holds the shot's aim while its pellets are traced). */
+const tmpNormal = { x: 0, y: 0, z: 0 };
 const tmpRand: [number, number] = [0, 0];
 const tmpPose = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0 };
 /** Tracers drawn per shot at most (a shotgun's pellets are thinned out evenly). */
@@ -944,8 +946,8 @@ export class ArcadeSession {
     for (let j = 0; j < tr.thin; j++) {
       if (tr.thinT[j] >= end) break;
       const bx = tr.thinX[j], by = tr.thinY[j], bz = tr.thinZ[j], id = tr.thinId[j];
-      impactNormal(ox + dx * tr.thinT[j], oy + dy * tr.thinT[j], oz + dz * tr.thinT[j], dx, dy, dz, tmpAim);
-      this.d.particles.spawnFace(bx, by, bz, tmpAim.x, tmpAim.y, tmpAim.z, id, this.d.getLight(bx, by, bz), 6);
+      impactNormal(ox + dx * tr.thinT[j], oy + dy * tr.thinT[j], oz + dz * tr.thinT[j], dx, dy, dz, tmpNormal);
+      this.d.particles.spawnFace(bx, by, bz, tmpNormal.x, tmpNormal.y, tmpNormal.z, id, this.d.getLight(bx, by, bz), 6);
       if (listener < 40) {
         gunAt.x = ox + dx * tr.thinT[j]; gunAt.y = oy + dy * tr.thinT[j]; gunAt.z = oz + dz * tr.thinT[j];
         this.d.audio.playBulletImpact(Math.max(0.2, 1 - listener / 40), gunAt, id);
@@ -1209,6 +1211,14 @@ export class ArcadeSession {
     s.scale.setScalar(0.035 * flicker * (0.6 + 0.4 * (facing - 0.93) / 0.07));
     s.visible = true;
   };
+
+  /** F3 line: shots that looked like hits on screen and how many of them the server denied. */
+  hitregLine(): string {
+    const c = this.hitreg.counts;
+    if (c.claimed === 0) return 'Hit reg: no on-screen hits yet';
+    const pct = (n: number, d: number) => `${Math.round((n / d) * 1000) / 10}%`;
+    return `Hit reg: ${c.claimed} on-screen hits, ${pct(c.denied, c.claimed)} denied · heads ${c.headAgreed}/${c.headClaimed} · interpolation ${Math.round(this.d.remote.interpDelay * 1000)} ms`;
+  }
 
   /** Draws the first-person weapon (after the world pass). */
   render(three: THREE.WebGLRenderer): void {

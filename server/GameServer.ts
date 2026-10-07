@@ -45,6 +45,8 @@ import type { ProfileService } from './progression/ProfileService';
 import { type RateLimiter, hashIp, newToken, safeEqual, tokenMatches, verifyPassword, hashToken } from './Security';
 
 const TICK_MS = 50; // 20 ticks per second, like Minecraft
+/** Blocks per second above which the server counts a shooter as moving (spread penalty), whatever the client says. */
+const MOVING_SPEED = 3;
 const DAY_SECONDS = 1200;
 const SAVE_INTERVAL_MS = 30_000;
 /** A game tick at least this long (wall clock) is counted and logged with its phases. */
@@ -1087,6 +1089,9 @@ export class GameServer {
       this.logger.debug('cheat', { name: s.name, kind: 'shot', rule: 'origin', error: Math.round(err * 100) / 100 });
       m = { ...msg, ox: s.x, oy: s.y + 1.62, oz: s.z };
     }
+    // Spread penalty for moving: the client says so, and the server's own velocity estimate overrules a client that
+    // claims to stand still while running (its tracers then disagree with the server, its problem).
+    if (!m.mv && Math.hypot(s.velX, s.velZ) > MOVING_SPEED) m = { ...m, mv: true };
     s.lastFireAt = now;
     return match.fire(s.id, m);
   }

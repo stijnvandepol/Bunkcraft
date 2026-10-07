@@ -81,7 +81,9 @@ function homestead(b: LayoutBuilder, s: 1 | -1, p: Palette, variant: number): vo
   box(-19, -19, -1, 1, 5, 6, AIR);
   // Back: sliding door to the patio, windows.
   box(-30, -30, -2, -1, 1, 2, AIR);
-  box(-30, -30, -7, -5, 2, 2, BLOCK.GLASS);
+  // Two wide, not three: bullets pass a window now, and the third pane lined up the spawn with the open front door
+  // and the Roundabout.
+  box(-30, -30, -6, -5, 2, 2, BLOCK.GLASS);
   box(-30, -30, -6, -5, 5, 6, BLOCK.GLASS);
   // Sides: a window on the north yard, an upstairs window on each side, a side door to the alley.
   box(-26, -25, -10, -10, 2, 2, BLOCK.GLASS);

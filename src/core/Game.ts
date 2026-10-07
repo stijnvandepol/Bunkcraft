@@ -2235,6 +2235,7 @@ export class Game {
       `${GAME_MODE_NAMES[this.mode]} · ${p.flying ? 'Flying' : p.onGround ? 'On ground' : 'Airborne'}${p.sprinting ? ' · Sprinting' : ''}${p.inWater ? ' · In water' : ''}`,
       `Health ${this.stats.health} · Food ${this.stats.hunger} (sat ${this.stats.saturation.toFixed(1)}) · Air ${this.stats.air}`,
       `${this.audio.debugLine()} · enclosure ${this.audio.env.enclosure.toFixed(2)}`,
+      ...(this.arcade ? [this.arcade.hitregLine()] : []),
     ], [
       mem ? `Mem: ${Math.round((mem.usedJSHeapSize / mem.totalJSHeapSize) * 100)}% ${(mem.usedJSHeapSize / 1048576).toFixed(0)}/${(mem.totalJSHeapSize / 1048576).toFixed(0)}MB` : 'Mem: n/a',
       `World blocks: ${(worldBlocks / 1e6).toFixed(2)}M (${(worldBlocks / 1048576).toFixed(1)} MB) · edited chunks ${world.edits.size}`,

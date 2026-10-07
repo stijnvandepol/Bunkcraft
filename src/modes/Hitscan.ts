@@ -8,8 +8,8 @@ import { currentSpread } from './ArcadeLogic';
  * prediction), DOM-free:
  *  - player hitboxes that follow the drawn model (head, torso, raised arms, legs; turned with the yaw and,
  *    for head and arms, the pitch),
- *  - the bullet's path through the voxels with materials (glass, leaves, bars and fences let it through
- *    at a damage cost; slabs, stairs and walls stop it only where their shape is),
+ *  - the bullet's path through the voxels with materials (one window or hedge: glass, panes and leaves let it
+ *    through at a damage cost; slabs, stairs, fences, bars and walls stop it only where their shape is),
  *  - seeded spread, so the tracer you see is the bullet the server tests.
  */
 
@@ -174,23 +174,31 @@ const PASS = 0, STOP = 1, THIN = 2, SHAPED = 3;
 /** Per block id: PASS, STOP, THIN (see-through: passes at a damage cost) or SHAPED (test its collision boxes). */
 export const BULLET = new Uint8Array(256);
 /**
- * Damage kept per see-through block (THIN): glass 0.8, leaves and iron bars 0.9. Fences and walls are SHAPED: a
- * bullet stops on their posts and rails (their collision boxes), so a railing is still cover.
+ * Damage kept per see-through block (THIN): glass 0.8, leaves 0.9 (once per window: two glass cells in a row are one
+ * pane). Fences and walls are SHAPED: a bullet stops on their posts and rails (their collision boxes), so a railing
+ * is still cover; iron bars stop it like a block.
  */
 export const BULLET_KEEP = new Float32Array(256);
-/** A bullet stops after this many see-through blocks (a wall of glass is still a wall). */
+/** A bullet stops after this many see-through cells (a wall of glass is still a wall)... */
 export const MAX_THIN = 4;
+/**
+ * ...and at the second window or hedge: shooting into or out of a house works, through two of them (spawn to spawn
+ * across a street of houses) does not. The maps' spawn sight-line tests rely on it.
+ */
+export const MAX_PANES = 1;
 
 for (let id = 0; id < 256; id++) {
   const def = getBlockDef(id);
   if (!def || id === BLOCK.AIR) { BULLET[id] = PASS; continue; }
   const glass = def.name.includes('glass');
   const leaves = def.name.endsWith('leaves');
-  const thinBox = SHAPE[id] === SHAPE_BOX && (def.name.includes('pane') || def.name.includes('bars'));
+  const thinBox = SHAPE[id] === SHAPE_BOX && def.name.includes('pane');
   if ((glass && (SHAPE[id] === SHAPE_CUBE || SHAPE[id] === SHAPE_BOX)) || leaves || thinBox) {
     BULLET[id] = THIN;
     BULLET_KEEP[id] = glass ? 0.8 : 0.9;
   } else if (!SOLID[id]) BULLET[id] = PASS;
+  // Iron bars stop bullets like a block (a lone bar's shape is a thin post the maps use as a screen).
+  else if (def.name.includes('bars')) BULLET[id] = STOP;
   else if (PARTIAL[id] || SHAPE[id] === SHAPE_BOX) BULLET[id] = SHAPED;
   else BULLET[id] = STOP;
 }
@@ -269,6 +277,7 @@ export function traceBullet(
   let axis = 0;
   /** The previous cell was a see-through block (the same window continues). */
   let inRun = false;
+  let panes = 0;
   while (t <= maxDist) {
     if (tMaxX < tMaxY && tMaxX < tMaxZ) { t = tMaxX; x += stepX; tMaxX += tDeltaX; axis = 0; }
     else if (tMaxY < tMaxZ) { t = tMaxY; y += stepY; tMaxY += tDeltaY; axis = 1; }
@@ -279,7 +288,8 @@ export function traceBullet(
     if (kind !== THIN) inRun = false;
     if (kind === PASS) continue;
     if (kind === THIN) {
-      if (out.thin < MAX_THIN) {
+      if (!inRun) panes++;
+      if (out.thin < MAX_THIN && panes <= MAX_PANES) {
         const i = out.thin;
         out.thinX[i] = x; out.thinY[i] = y; out.thinZ[i] = z; out.thinId[i] = id; out.thinT[i] = t;
         const mul = inRun ? 1 : BULLET_KEEP[id];

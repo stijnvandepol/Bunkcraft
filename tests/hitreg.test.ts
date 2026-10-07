@@ -124,27 +124,32 @@ describe('render tick: the client tells the server which moment it drew', () => 
 });
 
 describe('bullets through windows', () => {
-  it('passes a window, counts a two-cell window once, and stops at the fifth glass block', () => {
+  it('passes one window (a two-cell window counts once), stops at a second one and in a wall of glass', () => {
     const glass = new Set(['3,0,0', '4,0,0']);
     const world = { getBlock: (x: number, y: number, z: number) => (glass.has(`${x},${y},${z}`) ? BLOCK.GLASS : BLOCK.AIR) };
     const tr = traceBullet(world, 0.5, 0.5, 0.5, 1, 0, 0, 20, createBulletTrace());
     expect(tr.blocked).toBe(false);
     expect(tr.thin).toBe(2);
     expect(tr.keep).toBeCloseTo(0.8, 6);
-    for (let x = 6; x < 12; x += 2) glass.add(`${x},0,0`);
-    const thick = traceBullet(world, 0.5, 0.5, 0.5, 1, 0, 0, 20, createBulletTrace());
+    glass.add('8,0,0');
+    const two = traceBullet(world, 0.5, 0.5, 0.5, 1, 0, 0, 20, createBulletTrace());
+    expect(two.blocked).toBe(true);
+    expect(two.x).toBe(8);
+    const wall = new Set(['3,0,0', '4,0,0', '5,0,0', '6,0,0', '7,0,0']);
+    const thick = traceBullet({ getBlock: (x, y, z) => (wall.has(`${x},${y},${z}`) ? BLOCK.GLASS : BLOCK.AIR) }, 0.5, 0.5, 0.5, 1, 0, 0, 20, createBulletTrace());
     expect(thick.blocked).toBe(true);
-    expect(thick.x).toBe(10);
+    expect(thick.x).toBe(7);
   });
 
-  it('stone, slabs where the slab is, and fences (posts and rails) still stop bullets', () => {
+  it('stone, slabs where the slab is, fences and iron bars (posts and rails) still stop bullets', () => {
     const one = (id: number, y = 0.5) => traceBullet({ getBlock: (x, yy) => (x === 3 && yy === 0 ? id : BLOCK.AIR) }, 0.5, y, 0.5, 1, 0, 0, 20, createBulletTrace());
     expect(one(BLOCK.STONE).blocked).toBe(true);
     expect(one(BLOCK.STONE_SLAB, 0.25).blocked).toBe(true);
     expect(one(BLOCK.STONE_SLAB, 0.75).blocked).toBe(false);
     expect(one(BLOCK.FENCE, 0.5).blocked).toBe(true); // the post
     expect(one(BLOCK.OAK_LEAVES).blocked).toBe(false);
-    expect(one(BLOCK.IRON_BARS).blocked).toBe(false);
+    expect(one(BLOCK.GLASS_PANE).blocked).toBe(false);
+    expect(one(BLOCK.IRON_BARS).blocked).toBe(true); // the centre post
   });
 });
 
