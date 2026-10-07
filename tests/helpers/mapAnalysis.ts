@@ -73,3 +73,38 @@ export function openShare(map: ArenaMap, variant: number, x: number, z: number, 
   }
   return total ? open / total : 0;
 }
+
+/**
+ * Walking distance in cells (4-neighbour, same step rules as `reachable`) from a set of start cells on the floor
+ * to every standing spot; `keyOf(x, z, y)` → steps. Used to balance bomb sites (search and destroy).
+ */
+export function walkDistances(map: ArenaMap, variant: number, starts: readonly { x: number; z: number }[]): Map<number, number> {
+  const at = blockFn(map, variant);
+  const b = map.bounds;
+  const air = (x: number, y: number, z: number) => at(x, y, z) === BLOCK.AIR;
+  const ok = (x: number, y: number, z: number) => SOLID[at(x, y, z)] === 1 && !TALL[at(x, y, z)] && air(x, y + 1, z) && air(x, y + 2, z);
+  const dist = new Map<number, number>();
+  let frontier: [number, number, number][] = [];
+  for (const s of starts) {
+    const x = Math.floor(s.x), z = Math.floor(s.z), k = keyOf(x, z, ARENA_FLOOR_Y);
+    if (!dist.has(k)) { dist.set(k, 0); frontier.push([x, z, ARENA_FLOOR_Y]); }
+  }
+  for (let d = 1; frontier.length; d++) {
+    const next: [number, number, number][] = [];
+    for (const [x, z, y] of frontier) {
+      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = x + dx, nz = z + dz;
+        if (nx < b.minX || nx >= b.maxX || nz < b.minZ || nz >= b.maxZ) continue;
+        for (let ny = y + 1; ny >= ARENA_FLOOR_Y; ny--) {
+          if (!ok(nx, ny, nz) || dist.has(keyOf(nx, nz, ny))) continue;
+          if (ny <= y && !(air(nx, y + 1, nz) && air(nx, y + 2, nz))) continue;
+          if (ny > y && !air(x, y + 3, z)) continue;
+          dist.set(keyOf(nx, nz, ny), d);
+          next.push([nx, nz, ny]);
+        }
+      }
+    }
+    frontier = next;
+  }
+  return dist;
+}

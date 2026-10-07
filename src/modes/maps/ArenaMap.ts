@@ -23,7 +23,11 @@ export interface FlagDef { team: 'red' | 'blue'; x: number; z: number; level?: n
  * A bomb site (search and destroy) in world coordinates. Both sites lie in the defenders' half (x > 0, the
  * blue spawns): the attackers always start from the red spawns (x < 0), whatever their colour.
  */
-export interface SiteDef { name: string; x: number; z: number; r: number; level?: number }
+export interface SiteDef {
+  name: string; x: number; z: number; r: number;
+  /** Standing level in blocks above the floor (default 0: the floor, even under a roof). */
+  level?: number;
+}
 /** Map data a game type can need (see `ArenaMap.supports`). */
 export type MapRequirement = 'zones' | 'flags' | 'sites';
 
@@ -201,7 +205,8 @@ export class ArenaMap {
 
   /** Bomb sites with their standing level (search and destroy). */
   get sites(): Site[] {
-    return this.siteCache ??= (this.objectives?.sites ?? []).map((s) => ({ ...s, y: s.level !== undefined ? ARENA_FLOOR_Y + 1 + s.level : this.heightAt(0, s.x, s.z) + 1 }));
+    // Sites may sit under a roof (a warehouse, a hall): the level is the floor unless the map says otherwise.
+    return this.siteCache ??= (this.objectives?.sites ?? []).map((s) => ({ ...s, y: ARENA_FLOOR_Y + 1 + (s.level ?? 0) }));
   }
 
   /** Whether the map has the data a game type asks for. */

@@ -39,8 +39,8 @@ export class StubHost implements MatchHost {
 }
 
 /**
- * The classic arena with objectives for the tests: three zones (centre, one per flank) and a flag per
- * team, so the mode tests do not depend on what the shipped maps define.
+ * The classic arena with objectives for the tests: three zones (centre, one per flank), a flag per
+ * team and two bomb sites, so the mode tests do not depend on what the shipped maps define.
  */
 export function objectiveMap(): ArenaMap {
   const def: ArenaMapDef = {
@@ -53,6 +53,8 @@ export function objectiveMap(): ArenaMap {
         { name: 'Blue flank', x: 30, z: 20, r: 5 },
       ],
       flags: [{ team: 'red', x: -36, z: 12 }, { team: 'blue', x: 36, z: 12 }],
+      // Bomb sites in the blue half, on the floor.
+      sites: [{ name: 'A', x: 24, z: -16, r: 3, level: 0 }, { name: 'B', x: 24, z: 16, r: 3, level: 0 }],
     },
   };
   return new ArenaMap(def);
