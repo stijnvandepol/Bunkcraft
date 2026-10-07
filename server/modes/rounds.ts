@@ -13,9 +13,9 @@ import { BaseLogic, type MatchResult, teamWinner } from './ModeLogic';
  * banner) → intermission ...
  */
 export class RoundsLogic extends BaseLogic {
-  private round = 0;
+  protected round = 0;
 
-  private get cfg() {
+  protected get cfg() {
     return { postSec: 4, intermissionSec: 5, countdownSec: 3 };
   }
 
@@ -32,7 +32,7 @@ export class RoundsLogic extends BaseLogic {
     return m.teamSize('red') > 0 && m.teamSize('blue') > 0;
   }
 
-  private nextRound(m: Match): void {
+  protected nextRound(m: Match): void {
     this.round++;
     m.respawnAll(m.now());
     m.setPhase('intermission', m.def.rounds?.intermissionSec ?? this.cfg.intermissionSec);
@@ -50,17 +50,20 @@ export class RoundsLogic extends BaseLogic {
       case 'countdown':
         m.setPhase('live', m.info.timeLimitSec);
         break;
-      case 'live': {
-        // Round timer: the team with more survivors wins, equal numbers draw the round.
-        const red = m.aliveCount('red'), blue = m.aliveCount('blue');
-        this.endRound(m, red > blue ? 'red' : blue > red ? 'blue' : '', now);
+      case 'live':
+        this.onRoundTimeout(m, now);
         break;
-      }
       case 'roundend':
         this.nextRound(m);
         break;
       default: break;
     }
+  }
+
+  /** The round timer ran out: the team with more survivors wins, equal numbers draw the round. */
+  protected onRoundTimeout(m: Match, now: number): void {
+    const red = m.aliveCount('red'), blue = m.aliveCount('blue');
+    this.endRound(m, red > blue ? 'red' : blue > red ? 'blue' : '', now);
   }
 
   onTick(m: Match, _dt: number, now: number): void {
@@ -87,14 +90,14 @@ export class RoundsLogic extends BaseLogic {
     }
   }
 
-  private checkWipe(m: Match, now: number): void {
+  protected checkWipe(m: Match, now: number): void {
     const red = m.aliveCount('red'), blue = m.aliveCount('blue');
     if (red === 0 && blue === 0) this.endRound(m, '', now);
     else if (red === 0) this.endRound(m, 'blue', now);
     else if (blue === 0) this.endRound(m, 'red', now);
   }
 
-  private endRound(m: Match, winner: Team | '', now: number): void {
+  protected endRound(m: Match, winner: Team | '', now: number): void {
     if (m.phase !== 'live') return;
     if (winner) m.scores[winner]++;
     m.event('round-win', winner, 0, `Round ${this.round}`);

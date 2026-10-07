@@ -2,6 +2,7 @@ import {
   BLOCK, CUBE_ID, LEAVES_PERSISTENT_BIT, OPAQUE, SAPLING_STAGE_BIT, SHAPE, SHAPE_CROSS,
 } from './BlockRegistry';
 import { CHUNK_HEIGHT } from './constants';
+import { registerFarmingRules } from './Farming';
 import { liquidAmount } from './Liquids';
 import { isLeaves, isLog, plantCanStand } from './PlantRules';
 import { type RandomTickHost, type RandomTickOptions, RandomTicker, type TickContext } from './RandomTicks';
@@ -279,17 +280,25 @@ export function useBoneMeal(w: TickContext, x: number, y: number, z: number): bo
 }
 
 const BONE_MEAL: (((w: TickContext, x: number, y: number, z: number) => boolean) | undefined)[] = [];
+const BONE_MEAL_VALID: (((meta: number) => boolean) | undefined)[] = [];
 const BONE_MEAL_IDS = new Set<number>();
 
-/** Teaches bone meal to act on another block (crops): return true when the item was used. */
-export function registerBoneMeal(blockId: number, fn: (w: TickContext, x: number, y: number, z: number) => boolean): void {
+/**
+ * Teaches bone meal to act on another block (crops): return true when the item was used. `valid` (optional) says for
+ * which states it does anything (a ripe crop takes none), so the client does not use the item up for nothing.
+ */
+export function registerBoneMeal(blockId: number, fn: (w: TickContext, x: number, y: number, z: number) => boolean, valid?: (meta: number) => boolean): void {
   BONE_MEAL[blockId] = fn;
+  BONE_MEAL_VALID[blockId] = valid;
   BONE_MEAL_IDS.add(blockId);
 }
 
-/** Can bone meal do anything to this block (client side check before it asks the server)? */
-export function boneMealTarget(id: number): boolean {
-  return canBoneMeal(id) || BONE_MEAL_IDS.has(id);
+/** Can bone meal do anything to this block (client side check before it asks the server)? `meta` narrows it per state. */
+export function boneMealTarget(id: number, meta?: number): boolean {
+  if (canBoneMeal(id)) return true;
+  if (!BONE_MEAL_IDS.has(id)) return false;
+  const valid = BONE_MEAL_VALID[id];
+  return meta === undefined || !valid || valid(meta);
 }
 
 // ---------------------------------------------------------------- registration
@@ -310,6 +319,7 @@ export function registerGrowthRules(): void {
   RandomTicker.register(CUBE_ID.red_mushroom, mushroomTick(CUBE_ID.red_mushroom));
   RandomTicker.register(CUBE_ID.ice, iceTick);
   RandomTicker.registerSurface(freezeSurface);
+  registerFarmingRules(registerBoneMeal);
 }
 
 /** A ticker with all growth rules registered. */

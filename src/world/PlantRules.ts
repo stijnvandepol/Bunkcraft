@@ -1,4 +1,5 @@
 import { BLOCK, BLOCK_DEFS, CUBE_ID, OPAQUE, SHAPE, SHAPE_CROSS, SHAPE_MODEL } from './BlockRegistry';
+import { CROP_STYLE, FARMLAND } from './Crops';
 import { isLiquid } from './Liquids';
 
 /**
@@ -36,9 +37,9 @@ export const isSoil = (id: number): boolean => SOIL[id] === 1;
 
 type Getter = (x: number, y: number, z: number) => number;
 
-/** Is this block a plant that a block change underneath can uproot (sapling, cane, cactus)? */
+/** Is this block a plant that a block change underneath can uproot (sapling, cane, cactus, crops and stems)? */
 export function needsSupport(id: number): boolean {
-  return id === BLOCK.SAPLING || id === CUBE_ID.sugar_cane || id === BLOCK.CACTUS;
+  return id === BLOCK.SAPLING || id === CUBE_ID.sugar_cane || id === BLOCK.CACTUS || CROP_STYLE[id] !== 0;
 }
 
 /** Full opaque blocks next to a cactus pop it off (the cactus itself and see-through blocks do not). */
@@ -50,12 +51,14 @@ function cactusBlocker(id: number): boolean {
  * May the plant `id` stand at (x, y, z) given its surroundings (Minecraft's canSurvive):
  *  - sapling: on dirt-like soil;
  *  - sugar cane: on cane, or on soil/sand with water beside the block it stands on;
- *  - cactus: on sand or cactus, with no full block beside it.
+ *  - cactus: on sand or cactus, with no full block beside it;
+ *  - crops and stems (Crops.ts): on farmland.
  * Any other plant just needs something solid underneath (the old rule, used by placement).
  */
 export function plantCanStand(id: number, getBlock: Getter, x: number, y: number, z: number): boolean {
   const below = getBlock(x, y - 1, z);
   if (id === BLOCK.SAPLING) return SOIL[below] === 1;
+  if (CROP_STYLE[id] !== 0) return below === FARMLAND;
   if (id === CUBE_ID.sugar_cane) {
     if (below === CUBE_ID.sugar_cane) return true;
     if (CANE_BASE[below] !== 1) return false;

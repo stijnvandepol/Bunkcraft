@@ -51,6 +51,8 @@ export class WorldRules {
   private bedPos: { x: number; y: number; z: number } | null = null;
   /** 0..1 darkness of the sleep overlay. */
   private fade = 0;
+  /** Darkness last written to the overlay (fade × 1000, rounded); −1 = not written since it was hidden. */
+  private shownFade = -1;
   private readonly overlay: HTMLDivElement;
   /** A respawn at the bed waits for the chunks before it checks the bed. */
   pendingBed: Bed | null = null;
@@ -207,14 +209,23 @@ export class WorldRules {
 
   /** Per frame: the overlay darkens while asleep and lifts afterwards. */
   update(dt: number): void {
+    // Awake with the overlay gone (nearly every frame): no DOM writes, no strings. The overlay's class list used to be
+    // written every frame, a mutation and style invalidation per frame in every game.
+    if (!this.sleeping && this.fade === 0) return;
     const target = this.sleeping ? Math.min(1, this.sleepTicks / SLEEP_TICKS) * 0.92 + 0.08 : 0;
     this.fade += (target - this.fade) * Math.min(1, dt * (this.sleeping ? 3 : 2.5));
     if (!this.sleeping && this.fade < 0.01) {
       this.fade = 0;
+      this.shownFade = -1;
       this.overlay.classList.add('hidden');
+      return;
     }
-    this.overlay.style.background = `rgba(0, 0, 0, ${this.fade.toFixed(3)})`;
-    this.overlay.style.opacity = '1';
+    const q = Math.round(this.fade * 1000);
+    if (q !== this.shownFade) {
+      this.shownFade = q;
+      this.overlay.style.background = `rgba(0, 0, 0, ${(q / 1000).toFixed(3)})`;
+      this.overlay.style.opacity = '1';
+    }
     if (this.sleeping) {
       // Stay in bed (no physics while asleep).
       const p = this.host.player;

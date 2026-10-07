@@ -21,6 +21,7 @@ import { EFFECT_DEFS, isEffectId } from '../player/Effects';
 import { NetClient, type WelcomeMessage } from '../net/NetClient';
 import { NetEntities } from '../net/NetEntities';
 import { useBoneMeal } from '../world/Growth';
+import { farmStateText, trample } from '../world/Farming';
 import { type ClientMessage, SNAP_FLAG_CROUCH, SNAP_FLAG_SLIDE, type ServerMessage, formatCode, normalizeCode } from '../net/protocol';
 import { type GameType, TEAM_COLORS, gameTypeDef } from '../modes/GameTypes';
 import { ARCADE_POS_HZ, arcadeInterpDelay } from '../modes/ArcadeLogic';
@@ -29,7 +30,7 @@ import { RemotePlayers } from '../net/RemotePlayers';
 import { Chat } from '../ui/Chat';
 import { PlayerInventory } from '../items/Inventory';
 import { facingFromCameraYaw } from './Facing';
-import { ITEM, type ItemStack, blockDrop, decodeData, encodeData, getItemDef } from '../items/ItemRegistry';
+import { ITEM, type ItemStack, blockDrop, blockDrops, decodeData, encodeData, getItemDef } from '../items/ItemRegistry';
 import type { Station } from '../items/Recipes';
 import { type GameMode, GAME_MODE_NAMES, canFly, hasSurvivalRules } from '../player/GameMode';
 import { PHYSICS } from '../player/Physics';
@@ -708,6 +709,7 @@ export class Game {
     this.renderer.attachWorld(world);
     // Entities live with the world.
     const entities = new EntityManager(world, seed);
+    entities.griefing = () => !!this.worldRules.rules.get('mobGriefing');
     world.onChunkReady = (c) => entities.onChunkReady(c);
     world.onChunkUnloaded = (k) => entities.onChunkUnloaded(k);
     this.entities = entities;
@@ -723,15 +725,19 @@ export class Game {
       const sim = world.enableLiquids();
       sim.onDestroyed = (x, y, z, id) => {
         // Plants and torches washed away drop themselves (survival).
-        const drop = hasSurvivalRules(this.mode) ? blockDrop(id, 0) : null;
-        if (drop) entities.dropItem(drop, x + 0.5, y + 0.3, z + 0.5);
+        if (!hasSurvivalRules(this.mode)) return;
+        for (const drop of blockDrops(id, 0)) entities.dropItem(drop, x + 0.5, y + 0.3, z + 0.5);
       };
       // Plants grow, leaves decay and sand falls (random ticks and block updates); what they break drops as items.
       world.enableGrowth();
       world.skyDarkness = () => Math.round((1 - this.cycle.dayFactor) * 11 + this.weatherSys.weather.skyDarkness);
+      world.rainingAt = (x, y, z) => {
+        const q = this.weatherSys.worldQuery;
+        return !!q && this.weatherSys.weather.isRainingAt(q, x, y, z);
+      };
       world.onBlockDrop = (id, meta, x, y, z) => {
-        const drop = hasSurvivalRules(this.mode) ? blockDrop(id, 0, meta) : null;
-        if (drop) entities.dropItem(drop, x + 0.5, y + 0.3, z + 0.5);
+        if (!hasSurvivalRules(this.mode)) return;
+        for (const drop of blockDrops(id, 0, meta)) entities.dropItem(drop, x + 0.5, y + 0.3, z + 0.5);
       };
       sim.onFizz = (x, y, z) => {
         const p = this.player;
@@ -1221,7 +1227,9 @@ export class Game {
     this.root.append(session.hud.el, session.hud.loadoutEl);
     session.setHudVisible(false);
     for (const pl of welcome.players) session.addPlayer(pl.id, pl.name, pl.team ?? '');
-    this.arcadeHint = `${def.name}: ${def.description}. Tab = scoreboard,${def.loadout === 'ladder' ? '' : ' B = loadout,'} R = reload.`;
+    const slideKey = keyDisplayName(this.input.bound(KB.SNEAK)) || 'Sneak';
+    this.arcadeHint = `${def.name}: ${def.description}. Tab = scoreboard,${def.loadout === 'ladder' ? '' : ' B = loadout,'} R = reload,`
+      + ` ${slideKey} while running = slide (jump out of it to keep the speed).`;
   }
 
   private stopArcade(): void {
@@ -1976,6 +1984,8 @@ export class Game {
     }
     // Fall damage on landing (distance − 3), not in creative or water.
     if (p.landedFall > 0) {
+      // Landing on farmland may trample it into dirt (any game mode, like Minecraft).
+      if (this.world && this.mode !== 'spectator') trample(this.world, Math.floor(p.x), Math.floor(p.y - 0.01), Math.floor(p.z), p.landedFall, Math.random());
       const dmg = Math.ceil(p.landedFall - 3 - stats.effects.jumpBoost());
       if (dmg > 0 && !p.inWater) {
         if (stats.hurt(dmg, { kind: 'fall' }, this.mode).hurt) this.cam.hurtSide = 1;
@@ -2142,7 +2152,7 @@ export class Game {
     this.audio.setListener(eye.x, eye.y, eye.z, p.yaw);
     this.audioProbe.update(dt, this.audio.env, eye.x, eye.y, eye.z, this.cycle.dayFactor, this.underwater);
     this.hud.setUnderwater(this.underwater);
-    this.hud.setHurt(limitFlash(this.arcade ? this.arcade.hurt * 0.8 : this.stats.hurtTime / 10, this.settings.values));
+    this.hud.setHurt(limitFlash(this.arcade ? this.arcade.hurtVignette : this.stats.hurtTime / 10, this.settings.values));
     if (!this.arcade) this.hud.survival.update({
       health: Math.ceil(this.stats.health), hunger: this.stats.hunger, air: this.stats.air, maxAir: MAX_AIR, armor: this.stats.armorPoints,
       hardcore: this.mode === 'hardcore', poison: this.stats.effects.level('poison') > 0, wither: this.stats.effects.level('wither') > 0,
@@ -2227,6 +2237,8 @@ export class Game {
     const worldBlocks = stats.loaded * CHUNK_VOLUME;
     const ray = this.interaction?.ray;
     const target = ray?.hit ? `${getBlockDef(ray.id)?.displayName} @ ${ray.x}, ${ray.y}, ${ray.z}` : '—';
+    // Block state like Minecraft's F3 lists it under the targeted block (crop age, farmland moisture).
+    const targetState = ray?.hit ? farmStateText(ray.id, world.getMeta(ray.x, ray.y, ray.z)) : null;
     const e = this.entities;
     const near = this.countMobsNear(p.x, p.z, 64);
     // Grouped like Minecraft 1.21's F3: left = version, performance, renderer counts, then position and world
@@ -2263,6 +2275,7 @@ export class Game {
       `${this.gpuName.replace(/^ANGLE \(|\)$/g, '').split(',').slice(0, 2).join(',')}`,
       '',
       `Targeted Block: ${target}`,
+      ...(targetState ? [targetState] : []),
       `Holding: ${getItemDef(this.hotbar.selectedBlock)?.displayName ?? 'Empty hand'}`,
       `Seed: ${world.seed}`,
     ]);

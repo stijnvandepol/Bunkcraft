@@ -18,14 +18,17 @@
 #   --dir PATH           where the code lives (BUNKCRAFT_DIR); default: this checkout, else /opt/bunkcraft
 #   --repo URL           git repository to clone (BUNKCRAFT_REPO)
 #   --branch NAME        branch to clone/follow (BUNKCRAFT_BRANCH, default main)
-#   --tag TAG            image version (BUNKCRAFT_TAG in .env): latest (default), sha-<commit>, 1.2.0,
-#                        or latest@sha256:<digest> to pin one exact build
+#   --tag TAG            image version (BUNKCRAFT_TAG in .env): latest (default, every green push to main),
+#                        stable (only releases), sha-<commit>, 1.2.0, or latest@sha256:<digest> (one exact build)
 #   --image NAME         image repository (BUNKCRAFT_IMAGE), for a mirror or a fork
 #   --build              build the image on this server instead of pulling it (needs ~1.5 GB RAM; adds swap)
 #   --pull               switch an earlier --build install back to the ready-made image
 #   --no-firewall        do not touch ufw
 #   --no-swap            do not create a swap file on small machines (only used with --build)
 #   --no-backups         do not install the daily backup timer
+#   --no-autoupdate      do not deploy new builds of the channel by itself (AUTOUPDATE=off in .env);
+#                        'bunkcraft autoupdate on|off' changes it later
+#   --autoupdate-interval SPAN   how often to look for a new build (AUTOUPDATE_INTERVAL, default 5min)
 #   --no-start           prepare everything but do not pull/build/start the containers
 #   --dry-run            print what would happen, change nothing (works without root)
 #   -h, --help
@@ -40,6 +43,7 @@ TAG_ARG="${BUNKCRAFT_TAG:-}"
 IMAGE_ARG="${BUNKCRAFT_IMAGE:-}"
 MODE=""   # build | pull | "" (keep what .env says; pull on a fresh install)
 FIREWALL=1 SWAP=1 BACKUPS=1 START=1 DRY=0
+AUTOUPDATE_ARG="" INTERVAL_ARG=""
 ORIG_ARGS=("$@")
 
 usage() { sed -n '2,/^set -euo/p' "$0" | sed -e '$d' -e 's/^# \{0,1\}//'; }
@@ -63,6 +67,10 @@ while [ $# -gt 0 ]; do
     --no-firewall) FIREWALL=0; shift ;;
     --no-swap) SWAP=0; shift ;;
     --no-backups) BACKUPS=0; shift ;;
+    --no-autoupdate) AUTOUPDATE_ARG=off; shift ;;
+    --autoupdate) AUTOUPDATE_ARG=on; shift ;;
+    --autoupdate-interval) INTERVAL_ARG="${2:?--autoupdate-interval needs a value}"; shift 2 ;;
+    --autoupdate-interval=*) INTERVAL_ARG="${1#*=}"; shift ;;
     --no-start) START=0; shift ;;
     --dry-run) DRY=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -117,6 +125,9 @@ esac
 case "$TAG_ARG$IMAGE_ARG" in
   *[!A-Za-z0-9._:@/-]*) die "--tag/--image contain invalid characters." ;;
 esac
+if [ -n "$INTERVAL_ARG" ] && ! [[ "$INTERVAL_ARG" =~ ^[0-9]+(m|min|h)?$ ]]; then
+  die "--autoupdate-interval '$INTERVAL_ARG': use minutes or hours, e.g. 5min, 15m or 1h."
+fi
 # Build or pull: the argument, else what an earlier run wrote to .env, else pull.
 if [ -z "$MODE" ]; then
   MODE=pull
@@ -228,6 +239,9 @@ set_env BUNKCRAFT_MEMORY "${CONTAINER_MB}m"
 set_env BUNKCRAFT_NODE_OPTIONS "--max-old-space-size=$HEAP_MB --max-semi-space-size=16"
 if [ -n "$TAG_ARG" ]; then set_env BUNKCRAFT_TAG "$TAG_ARG" 1; fi
 if [ -n "$IMAGE_ARG" ]; then set_env BUNKCRAFT_IMAGE "$IMAGE_ARG" 1; fi
+# Auto-update (scripts/autoupdate.sh): on by default; a re-run keeps an earlier choice unless told otherwise.
+if [ -n "$AUTOUPDATE_ARG" ]; then set_env AUTOUPDATE "$AUTOUPDATE_ARG" 1; else set_env AUTOUPDATE on; fi
+if [ -n "$INTERVAL_ARG" ]; then set_env AUTOUPDATE_INTERVAL "$INTERVAL_ARG" 1; else set_env AUTOUPDATE_INTERVAL 5min; fi
 # docker compose reads COMPOSE_FILE from .env, so every later command (update, backup, restart) builds too.
 if [ "$MODE" = build ]; then
   set_env COMPOSE_FILE docker-compose.yml:docker-compose.build.yml 1
@@ -251,7 +265,8 @@ fi
 
 # ---------------------------------------------------------------- DNS sanity check (warning only)
 if have getent; then
-  resolved="$(getent ahosts "$DOMAIN" 2>/dev/null | awk '{ print $1 }' | sort -u | tr '\n' ' ')"
+  # getent fails for a name that does not resolve yet; with pipefail that must not end the install.
+  resolved="$(getent ahosts "$DOMAIN" 2>/dev/null | awk '{ print $1 }' | sort -u | tr '\n' ' ' || true)"
   local_ips="$(hostname -I 2>/dev/null || true)"
   if [ -z "$resolved" ]; then
     warn "$DOMAIN does not resolve yet: create an A/AAAA record to this server, Caddy retries the certificate."
@@ -322,6 +337,20 @@ if [ "$START" = 1 ]; then
   fi
 fi
 
+# ---------------------------------------------------------------- auto-update timer (bunkcraft autoupdate on|off)
+# After the start, so its first run never races the pull/start above.
+AUTOUPDATE_NOW="$AUTOUPDATE_ARG"
+if [ -z "$AUTOUPDATE_NOW" ]; then
+  AUTOUPDATE_NOW="$( [ -f "$ENV_FILE" ] && sed -n 's/^AUTOUPDATE=//p' "$ENV_FILE" | tail -n1 || true)"
+fi
+if [ "${AUTOUPDATE_NOW:-on}" = off ]; then
+  say "auto-update: off (turn on with 'bunkcraft autoupdate on')"
+  run "$DIR/scripts/bunkcraft.sh" autoupdate off >/dev/null
+else
+  say "auto-update: new builds of the channel are deployed by themselves at a quiet moment ('bunkcraft autoupdate off' stops it)"
+  run "$DIR/scripts/bunkcraft.sh" autoupdate on
+fi
+
 if [ "$DRY" = 1 ]; then echo; say "dry run finished: nothing was changed"; exit 0; fi
 cat <<EOF
 
@@ -329,6 +358,7 @@ BunkCraft is running.
   Play:      https://$DOMAIN   (the first visit can take ~30 s while Caddy gets the certificate)
   Admin:     https://$DOMAIN/admin   token: ADMIN_TOKEN in $ENV_FILE
   Metrics:   https://$DOMAIN/metrics with 'Authorization: Bearer <METRICS_TOKEN>'
-  Commands:  bunkcraft status | logs | update | rollback | backup | restart
+  Commands:  bunkcraft status | logs | update | rollback | backup | restart | autoupdate [on|off|status]
+  Version:   https://$DOMAIN/health shows the version and commit that are live
   Settings:  $ENV_FILE (docs/SERVER.md), then 'bunkcraft restart'
 EOF

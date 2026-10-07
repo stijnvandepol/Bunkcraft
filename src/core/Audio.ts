@@ -1,6 +1,7 @@
 import { Ambience, type ListenerState } from './audio/ambience';
 import { STEP_VOLUME, landingKind, landingVolume, splashVolume, type MoveMode } from './audio/cadence';
 import { AudioEnvironment, createEnvironment } from './audio/environment';
+import { glide } from './audio/glide';
 import { buildMix, makeNoiseBuffers, type Mix } from './audio/mixer';
 import { MusicDirector } from './audio/music';
 import type { MusicMode } from './audio/musicTheory';
@@ -1007,9 +1008,9 @@ export class AudioEngine {
     if (!ctx || !this.running) return;
     const env = this.env;
     const now = ctx.currentTime;
-    this.mix.waterLP.frequency.setTargetAtTime(env.underwater ? 650 : 20000, now, env.underwater ? 0.05 : 0.12);
+    glide(this.mix.waterLP.frequency, env.underwater ? 650 : 20000, now, env.underwater ? 0.05 : 0.12, 1);
     if (this.ambientVolume > 0 || this.soundVolume > 0) this.ambience.update(dt, env);
-    this.mix.caveWet.gain.setTargetAtTime(this.ambience.cave * 0.55, now, 0.5);
+    glide(this.mix.caveWet.gain, this.ambience.cave * 0.55, now, 0.5, 0.003);
     this.music.setContext(env.biome, env.dayFactor, this.ambience.cave, env.underwater);
     this.music.update(dt, this.musicVolume > 0);
   }

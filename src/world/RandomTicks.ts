@@ -34,6 +34,8 @@ export interface TickContext {
   randomInt(n: number): number;
   /** Biome id of a column (see Biomes.ts); plains when the host does not know. */
   biomeAt(x: number, z: number): number;
+  /** Is rain falling on this point right now (open sky, a rainy biome)? False when the host has no weather. */
+  rainingAt(x: number, y: number, z: number): boolean;
 }
 
 export type RandomTickHandler = (w: TickContext, x: number, y: number, z: number) => void;
@@ -74,6 +76,8 @@ export interface RandomTickHost {
   /** A block was removed by the simulation (plant uprooted, leaves decayed): the host may drop what it would drop. */
   dropBlock?(id: number, meta: number, x: number, y: number, z: number): void;
   biomeAt?(x: number, z: number): number;
+  /** Rain falling on this point (farmland stays moist in the rain). */
+  rainingAt?(x: number, y: number, z: number): boolean;
   /** Sky light that time of day and weather take away, 0..11. */
   skyDarkness?(): number;
   /** Called around a whole tick so mesh updates can be batched per chunk. */
@@ -226,6 +230,10 @@ export class RandomTicker implements TickContext {
 
   biomeAt(x: number, z: number): number {
     return this.host.biomeAt ? this.host.biomeAt(x, z) : 2;
+  }
+
+  rainingAt(x: number, y: number, z: number): boolean {
+    return this.host.rainingAt ? this.host.rainingAt(x, y, z) : false;
   }
 
   // ---------------------------------------------------------------- the tick

@@ -143,8 +143,9 @@ Totaal: **182 bloktypes** (hoogste id 185 van 254, dus nog ruim 60 vrij), ~480 u
 
 - Beton heeft geen poeder (4 zand + 4 grind + kleurstof → 8 beton); kleurstoffen: bruin (cacao), zwart (inktzak) en grijs (heeft zwart nodig) hebben nog geen bron.
 - Een bed zet je respawnpunt en slaapt 's nachts door, zonder spelers-in-bed-telling of monstercheck.
-- Mud bricks en hooi vragen tarwe, dus landbouw (tier 2). Het brood-, koekje- en taartrecept zijn er, maar wat ze als grondstof nodig hebben ontbreekt nog in de wereld
-  (tarwe, cacao, eieren). Koeien laten sinds de balans-audit 0–2 leer vallen (`docs/qa/BALANCE.md`). `tests/recipes.test.ts` houdt dit lijstje bij ("OUT_OF_REACH").
+- Tarwe, wortels, aardappels en bieten komen nu uit landbouw (zie hieronder), dus brood, hooi, modderstenen, pompoentaart en bietensoep zijn
+  te maken. Cacao ontbreekt nog (koekje, bruine kleurstof). Koeien laten sinds de balans-audit 0–2 leer vallen (`docs/qa/BALANCE.md`).
+  `tests/recipes.test.ts` houdt het lijstje onbereikbare recepten bij ("OUT_OF_REACH").
 - Een kist is een volle kubus (geen kleinere kist met deksel) en heeft geen dubbele variant.
 - Boekenkast blijft 6 planken (vanilla: + 3 boeken); nu leer van koeien komt, kan het vanilla-recept terug.
 - Gouden appel geeft honger en saturatie maar nog geen Absorption en Regeneration (geen effectensysteem).
@@ -153,7 +154,7 @@ Totaal: **182 bloktypes** (hoogste id 185 van 254, dus nog ruim 60 vrij), ~480 u
 
 ### Tier 2 en nooit
 
-Tier 2: comparator, observer, hopper, dispenser, rails, landbouw met groeifases en random ticks, brouwen, smithing en netherite, blast furnace, smoker,
+Tier 2: comparator, observer, hopper, dispenser, rails, composter, cacao, brouwen, smithing en netherite, blast furnace, smoker,
 stonecutter, schild, kruisboog, hengel en vis, boten en minecarts, kaarsen, banners, borden, koraal, amethist, dripstone, azalea, kelp en bamboe, concrete powder,
 doorzichtig glas en ijs, kisten in multiplayer, dubbele kisten, vallende blokken. Nooit: Nether en End (blackstone, crimson/warped, quartz, purpur, end stone,
 prismarine), Deep Dark, Trial Chambers, spawn eggs en operator-blokken.
@@ -180,3 +181,26 @@ Box-vormen 12–19 (`RedstoneShapes.ts`). State bytes:
 | zuiger / kop | 0-2 richting, bit 3 uitgeschoven / sticky |
 
 Textures procedureel (`RedstonePainters.ts`, 14 lagen); de Minetest-`mesecons`-textures zijn niet gebruikt (andere stijl, niet in Pixel Perfection).
+
+### Landbouw
+
+Gedrag en getallen: [`GAMEPLAY.md`](GAMEPLAY.md#landbouw). Blok-ids **235–240** (vrij gebied onder de redstone-ids; de content-tabellen
+groeien vanaf 186 omhoog): tarwe 235, wortels 236, aardappels 237, bieten 238, pompoenstengel 239, meloenstengel 240 (`Crops.ts`,
+`CROP_BLOCK`). Geen blok in de creative inventory; je plant ze met hun zaad. Nieuwe items (append-only): `beetroot_seeds` (461),
+`poisonous_potato` (399), `beetroot_soup` (400). State bytes:
+
+| Blok | Bits |
+|---|---|
+| tarwe, wortels, aardappels | 0-2 leeftijd 0–7 |
+| bieten | 0-1 leeftijd 0–3 |
+| pompoen-/meloenstengel | 0-2 leeftijd, bit 3 vast aan een vrucht, bits 4-5 richting van de vrucht (noord, zuid, west, oost) |
+| akkergrond | 0-2 vocht 0–7 (7 = nat) |
+
+**Textuurlagen: 6** (er waren er nog 9 vrij, nu 253 van 256): `wheat_crop`, `carrots_crop`, `potatoes_crop`, `beetroots_crop`, `stem`,
+`attached_stem`. Eén laag per gewas, de rijpe fase. De mesher (`ChunkMesher.emitCrop`) tekent jongere fasen als een kortere plant die een deel
+van die textuur toont (wortelgewassen het bovenste deel, zodat de knollen pas rijp zichtbaar zijn; tarwe en stengels het onderste deel) met een
+tint per fase: tarwe van groen naar goud (grijze textuur), stengels exact Minecrafts stengelkleur (r = fase·32, g = 255 − fase·8, b = fase·4,
+vast `#E0C71C`). Gewassen gebruiken Minecrafts crop-model (vier vlakken in een #-patroon), stengels een kruis, een vaste stengel één gebogen
+vlak naar de vrucht. Natte akkergrond is de droge textuur met een donkere vertex-tint (`farmland_top` heeft alpha 128, zoals de dye-families),
+dus 0 lagen. Textures procedureel (`FarmPainters.ts`); een Minecraft-jar levert `wheat_stage7`, `carrots_stage3`, `potatoes_stage3`,
+`beetroots_stage3`, `pumpkin_stem` en `attached_pumpkin_stem`.

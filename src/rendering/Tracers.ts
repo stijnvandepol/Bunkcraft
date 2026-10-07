@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { uploadPrefix } from './uploadRange';
 
 const MAX = 64;
 /** Blocks per second the bright streak travels along the bullet path, and its length in blocks. */
@@ -36,6 +37,8 @@ export class Tracers {
       depthWrite: false,
       blending: THREE.AdditiveBlending,
       side: THREE.DoubleSide,
+      // One pass (see WeaponViewmodel's flash): additive, so the face order does not matter.
+      forceSinglePass: true,
       vertexShader: /* glsl */ `
         attribute vec4 iA;
         attribute vec4 iB;
@@ -104,8 +107,8 @@ export class Tracers {
     this.geometry.instanceCount = n;
     this.mesh.visible = n > 0;
     if (n === 0) return;
-    this.a.clearUpdateRanges(); this.a.addUpdateRange(0, n * 4); this.a.needsUpdate = true;
-    this.b.clearUpdateRanges(); this.b.addUpdateRange(0, n * 4); this.b.needsUpdate = true;
+    uploadPrefix(this.a, n * 4);
+    uploadPrefix(this.b, n * 4);
   }
 
   clear(): void {

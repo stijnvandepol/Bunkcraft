@@ -2,12 +2,15 @@
  * Protocol-level run of the objective modes against a real server: for each mode it creates a room,
  * joins two bots over WebSocket, walks them (on a path over the map's floor, at running speed) and
  * shoots, and checks what the server says: gun game levels and gear, elimination rounds, hardpoint and
- * domination points, flag pick-up and capture.
+ * domination points, flag pick-up and capture. The newer modes are played to the end of the match:
+ * kill confirmed (kill, walk over the tag), search and destroy (a detonation round, then a defuse round),
+ * infected (the outbreak, one knife stab), sharpshooter (a weapon rotation, then kills to the limit) and
+ * king of the hill (stand alone in the hill to the limit).
  *
  *   ROOM_CREATE_LIMIT=1000 npm run server          # in one terminal (port 3000)
- *   npx tsx scripts/modes-bots.ts [gungame|elimination|hardpoint|domination|ctf ...] [--url=http://localhost:3000] [--map=quarter]
+ *   npx tsx scripts/modes-bots.ts [gungame|elimination|hardpoint|domination|ctf|killconfirmed|snd|infected|sharpshooter|koth ...] [--url=http://localhost:3000] [--map=quarter]
  *
- * Takes a minute or two (every mode has a 10 s warm-up) and exits 0 when every check passed.
+ * Takes a few minutes (every mode has a 10 s warm-up; a bomb fuse is 35 s) and exits 0 when every check passed.
  */
 import { WebSocket } from 'ws';
 import { GUN_GAME_LADDER, type GameType } from '../src/modes/GameTypes';
@@ -19,7 +22,7 @@ const args = process.argv.slice(2);
 const base = args.find((a) => a.startsWith('--url='))?.slice(6) ?? 'http://localhost:3000';
 /** The map of the elimination, zone and flag runs (it must have zones and flags). */
 const MAP = args.find((a) => a.startsWith('--map='))?.slice(6) ?? 'quarter';
-const ALL: GameType[] = ['gungame', 'elimination', 'hardpoint', 'domination', 'ctf'];
+const ALL: GameType[] = ['gungame', 'elimination', 'hardpoint', 'domination', 'ctf', 'killconfirmed', 'snd', 'infected', 'sharpshooter', 'koth'];
 const modes = args.filter((a) => !a.startsWith('--')) as GameType[];
 const run = modes.length ? modes : ALL;
 
@@ -69,6 +72,10 @@ class Bot {
   team = '';
   mode: ModeState | null = null;
   scores = { red: 0, blue: 0 };
+  /** Blocks per second this bot walks (the infected may run faster). */
+  speed = SPEED;
+  /** The server moved us back (a rejected move): must stay 0 when the bots walk within the rules. */
+  corrections = 0;
   private ws!: WebSocket;
   private timer: NodeJS.Timeout | null = null;
 
@@ -87,12 +94,13 @@ class Bot {
         if (m.t === 'match') { this.phase = m.phase; this.scores = m.scores; }
         if (m.t === 'mode') this.mode = m.state;
         if (m.t === 'kick') reject(new Error(m.reason));
+        if (m.t === 'teleport') this.corrections++;
       });
       this.timer = setInterval(() => {
         if (!this.id) return;
         if (this.fresh) this.fresh = false;
         else {
-          let step = SPEED / 10;
+          let step = this.speed / 10;
           while (step > 0 && this.route.length) {
             const [tx, tz] = this.route[0];
             const dx = tx - this.x, dz = tz - this.z, dist = Math.hypot(dx, dz);
@@ -251,6 +259,122 @@ async function ctf(): Promise<void> {
   a.close(); b.close();
 }
 
+const ended = (b: Bot) => b.of('matchend').length > 0;
+
+/** Kill confirmed to the end: a kills b and walks over the tag, five times (limit 5). */
+async function killconfirmed(): Promise<void> {
+  const [a, b] = await pair('killconfirmed', 'quarter', 5);
+  check('killconfirmed: goes live', await waitFor(() => a.phase === 'live', 15000));
+  await sleep(2200);
+  const team = a.team as 'red' | 'blue';
+  let confirms = 0;
+  for (let i = 0; i < 10 && !ended(a); i++) {
+    await meet(a, b);
+    if (!(await a.shoot(b))) continue;
+    if (confirms === 0) check('killconfirmed: a kill alone does not score', a.scores[team] === 0);
+    // The tag drops where b fell; when that is within reach a confirms it on the spot.
+    const onGround = () => a.mode?.kind === 'tags' && a.mode.tags.length > 0;
+    check(`killconfirmed: tag ${confirms + 1} dropped`, await waitFor(() => onGround() || a.events('tag-confirmed').length > confirms, 1500));
+    if (onGround()) {
+      const st = a.mode as Extract<ModeState, { kind: 'tags' }>;
+      const tag = st.tags[st.tags.length - 1];
+      await a.walk([tag.x, tag.z]);
+    }
+    check(`killconfirmed: confirm ${confirms + 1}`, await waitFor(() => a.events('tag-confirmed').length > confirms, 2000));
+    confirms = a.events('tag-confirmed').length;
+    const spawns = b.of('spawn').length;
+    await waitFor(() => b.of('spawn').length > spawns || ended(a), 5000);
+    await sleep(2200); // spawn protection
+  }
+  check('killconfirmed: the match ends at 5 confirms, a\'s team wins', await waitFor(() => ended(a), 3000) && a.of('matchend')[0].winnerTeam === team && a.scores[team] === 5);
+  check('killconfirmed: no movement corrections', a.corrections + b.corrections === 0);
+  a.close(); b.close();
+}
+
+/** Search and destroy to the end (2 rounds to win, sides swap every round): a detonation, then a defuse. */
+async function snd(): Promise<void> {
+  const mapId = 'quarter';
+  const [a, b] = await pair('snd', mapId, 2, 90);
+  const map = getMap(mapId);
+  const site = map.sites[0];
+  check('snd: the bots are on different teams', a.team !== '' && a.team !== b.team);
+  check('snd: round 1 goes live', await waitFor(() => a.phase === 'live', 25000));
+  const bomb = () => a.mode as Extract<ModeState, { kind: 'bomb' }> | null;
+  const attacker = bomb()?.attackers === a.team ? a : b, defender = attacker === a ? b : a;
+  check('snd: the attacker starts in the red half, the defender in the blue half', attacker.x < 0 && defender.x > 0);
+  check(`snd: the attacker walks onto site ${site.name}`, await attacker.walk([site.x, site.z], 30000));
+  check('snd: planted', await waitFor(() => a.events('bomb-planted').length === 1, 7000));
+  check('snd: the round clock is the fuse now', a.mode?.kind === 'bomb' && a.mode.fuseIn > 25 && a.mode.sites.some((x) => x.planted));
+  check('snd: the bomb goes off, the attackers take round 1', await waitFor(() => a.events('bomb-exploded').length === 1, 40000) && a.events('round-win').at(-1)?.team === attacker.team);
+  // Round 2: the sides swap (round limit 2 = swap every round).
+  check('snd: round 2 goes live with the sides swapped', await waitFor(() => a.phase === 'live' && bomb()?.attackers === defender.team, 20000) && a.events('side-swap').length === 1);
+  const att2 = defender, def2 = attacker;
+  check('snd: the new attacker spawned in the red half', att2.x < 0 && def2.x > 0);
+  check(`snd: round 2: the attacker plants at ${site.name}`, await att2.walk([site.x, site.z], 30000) && await waitFor(() => a.events('bomb-planted').length === 2, 7000));
+  // The attacker walks back to its spawn: off the site, so the defender defuses alone.
+  const home = att2.of('spawn').at(-1)!;
+  void att2.walk([home.x, home.z]);
+  await sleep(1500);
+  check('snd: the defender walks onto the bomb', await def2.walk([site.x, site.z], 30000));
+  check('snd: defused', await waitFor(() => a.events('bomb-defused').length === 1, 9000));
+  check('snd: the match ends 2-0 for the first attacker\'s team', await waitFor(() => ended(a), 3000) && a.of('matchend')[0].winnerTeam === def2.team);
+  check('snd: the roster counts the plants and the defuse', (a.of('roster').at(-1)?.players.reduce((n, p) => n + (p.pts ?? 0), 0) ?? 0) === 3);
+  check('snd: no movement corrections', a.corrections + b.corrections === 0);
+  a.close(); b.close();
+}
+
+/** Infected to the end: the outbreak, the infected runs faster and kills the survivor with one stab. */
+async function infected(): Promise<void> {
+  const [a, b] = await pair('infected', 'quarter', undefined, 120);
+  check('infected: both start as survivors', await waitFor(() => a.phase === 'live', 15000) && a.team === 'blue' && b.team === 'blue');
+  check('infected: the outbreak comes after about 8 s', await waitFor(() => a.events('outbreak').length === 1, 11000));
+  const first = a.events('outbreak')[0].id;
+  const hunter = first === a.id ? a : b, prey = hunter === a ? b : a;
+  check('infected: the infected holds the knife', await waitFor(() => hunter.of('gear').at(-1)?.primary === 'knife', 2000));
+  check('infected: the mode state counts 1 survivor and 1 infected', a.mode?.kind === 'infected' && a.mode.survivors === 1 && a.mode.infected === 1);
+  // The infected runs 10% faster than the bots normally walk: the server's movement check must allow it.
+  hunter.speed = SPEED * 1.1;
+  await meet(prey, hunter);
+  const hits = () => hunter.of('hit').filter((h) => h.victim === prey.id).length;
+  check('infected: one stab kills', await hunter.shoot(prey, 0, 20) && hits() === 1);
+  check('infected: the infected win at once', await waitFor(() => ended(a), 3000) && a.of('matchend')[0].winnerTeam === 'red');
+  check('infected: no movement corrections for the faster infected', hunter.corrections === 0);
+  a.close(); b.close();
+}
+
+/** Sharpshooter to the end: the shared weapon rotates, then five kills (limit 5). */
+async function sharpshooter(): Promise<void> {
+  const [a, b] = await pair('sharpshooter', 'quarter', 5);
+  check('sharpshooter: goes live', await waitFor(() => a.phase === 'live', 15000));
+  const st = () => a.mode as Extract<ModeState, { kind: 'roulette' }> | null;
+  check('sharpshooter: both carry the weapon of the mode state', st()?.kind === 'roulette' && a.of('spawn').at(-1)?.primary === st()!.weapon && b.of('spawn').at(-1)?.primary === st()!.weapon);
+  const first = st()!.weapon;
+  check('sharpshooter: the weapon rotates after 45 s', await waitFor(() => a.events('weapon-rotate').length === 1, 50000));
+  check('sharpshooter: a new weapon for both at once', st()!.weapon !== first && a.of('gear').at(-1)?.primary === st()!.weapon && b.of('gear').at(-1)?.primary === st()!.weapon);
+  for (let i = 0; i < 10 && !ended(a); i++) {
+    await meet(a, b);
+    // Sniper rounds are slow and may miss: the pistol is the same for everybody too.
+    await a.shoot(b, 1, 40);
+    await sleep(2600);
+  }
+  check('sharpshooter: the match ends at 5 kills, a wins', await waitFor(() => ended(a), 3000) && a.of('matchend')[0].winnerId === a.id);
+  a.close(); b.close();
+}
+
+/** King of the hill to the end: a stands alone in the hill until the limit (5 points). */
+async function koth(): Promise<void> {
+  const mapId = 'quarter';
+  const [a, b] = await pair('koth', mapId, 5);
+  check('koth: goes live', await waitFor(() => a.phase === 'live', 15000));
+  check('koth: free for all (no teams)', a.team === '' && b.team === '');
+  const z = getMap(mapId).zones[0];
+  check(`koth: a walks into ${z.name}`, await a.walk([z.x + 0.5, z.z + 0.5], 30000));
+  check('koth: a holds the hill', await waitFor(() => a.mode?.kind === 'zones' && a.mode.zones[0].holder === a.id, 2000));
+  check('koth: the match ends at 5 points, a wins', await waitFor(() => ended(a), 9000) && a.of('matchend')[0].winnerId === a.id);
+  check('koth: the roster shows a\'s points', (a.of('roster').at(-1)?.players.find((p) => p.id === a.id)?.pts ?? 0) >= 5);
+  a.close(); b.close();
+}
+
 async function main(): Promise<void> {
   for (const m of run) {
     console.log(`\n== ${m}`);
@@ -258,6 +382,11 @@ async function main(): Promise<void> {
     else if (m === 'elimination') await elimination();
     else if (m === 'hardpoint' || m === 'domination') await zones(m);
     else if (m === 'ctf') await ctf();
+    else if (m === 'killconfirmed') await killconfirmed();
+    else if (m === 'snd') await snd();
+    else if (m === 'infected') await infected();
+    else if (m === 'sharpshooter') await sharpshooter();
+    else if (m === 'koth') await koth();
   }
 }
 

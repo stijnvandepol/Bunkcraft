@@ -3,6 +3,7 @@ import { TINT_BIRCH, TINT_FOLIAGE, TINT_GRASS, TINT_NONE, TINT_SPRUCE } from './
 import { BOX_BUTTON, BOX_DUST, BOX_LEVER, BOX_PISTON, BOX_PISTON_HEAD, BOX_PLATE, BOX_REPEATER, BOX_RTORCH } from './RedstoneShapes';
 import { BOX_ANVIL, BOX_BED, BOX_CARPET, BOX_FENCE, BOX_GATE, BOX_GRINDSTONE, BOX_LADDER, BOX_NONE, BOX_PANE, BOX_TABLE, BOX_TRAPDOOR, BOX_WALL, isTall } from './BoxShapes';
 import { CUBES, CUBE_FIRST, DYES, type MineTool, PARTIAL_EXT, WALL_MATERIALS, WOODS, titleCase } from './Content';
+import { ATTACHED_STEM_TEXTURE, CROPS, FARMLAND_MOISTURE_MASK } from './Crops';
 
 /**
  * Data-driven block definitions. Everything the mesher, lighting, physics and UI need
@@ -518,6 +519,17 @@ BLOCK_DEFS.push(
     hardness: 1.5, sound: 'stone', metaMask: 15, inInventory: false,
   }),
 );
+// ---- Farming (see Crops.ts and Farming.ts): crops and stems, the growth stage is the state ----
+for (const c of CROPS) {
+  BLOCK_DEFS.push({
+    ...plant(c.id, c.name, c.display, c.texture),
+    inInventory: false,
+    metaMask: c.style === 2 ? 0x3f : c.maxAge,
+    // Stems carry the bent "attached" texture in the front slot (the mesher picks it for an attached stem).
+    textures: c.style === 2 ? { all: c.texture, front: ATTACHED_STEM_TEXTURE } : { all: c.texture },
+  });
+}
+
 // ---- Growth states (see Growth.ts): sapling stage, persistent leaves, sugar cane and cactus age ----
 /** Sapling: the wood is bits 0-2, the growth stage bit 5 (above the variant lookup mask of 31). */
 export const SAPLING_STAGE_BIT = 32;
@@ -526,6 +538,7 @@ export const LEAVES_PERSISTENT_BIT = 1;
 for (const def of BLOCK_DEFS) {
   if (def.id === B.SAPLING) def.metaMask = 7 | SAPLING_STAGE_BIT;
   else if (def.id === B.CACTUS || def.id === CUBE_ID.sugar_cane) def.metaMask = 15;
+  else if (def.id === CUBE_ID.farmland) def.metaMask = FARMLAND_MOISTURE_MASK;
   else if (def.shape === 'cube' && def.sway && def.transparent) def.metaMask = LEAVES_PERSISTENT_BIT;
 }
 
@@ -677,6 +690,10 @@ export const TINTED_TEXTURES: Record<string, { type: number; mode: 'full' | 'mas
   acacia_leaves: { type: TINT_FOLIAGE, mode: 'full', opaque: false },
   dark_oak_leaves: { type: TINT_FOLIAGE, mode: 'full', opaque: false },
   mangrove_leaves: { type: TINT_FOLIAGE, mode: 'full', opaque: false },
+  // Crops tinted per growth stage (Crops.ts); `type` only picks the colour of a UI icon.
+  wheat_crop: { type: TINT_GRASS, mode: 'full', opaque: false },
+  stem: { type: TINT_GRASS, mode: 'full', opaque: false },
+  attached_stem: { type: TINT_GRASS, mode: 'full', opaque: false },
 };
 
 /**
@@ -689,6 +706,8 @@ export const DYED_TEXTURES: Record<string, { opaque: boolean }> = {
   dyed_terracotta: { opaque: true },
   dyed_glazed_terracotta: { opaque: true },
   white_stained_glass: { opaque: false },
+  // Not a dye family: the alpha marks the top of farmland as tintable, wet farmland is drawn darker (Crops.ts).
+  farmland_top: { opaque: true },
 };
 
 /** Model boxes per block id (shape "model"). */

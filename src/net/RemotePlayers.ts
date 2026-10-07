@@ -29,7 +29,7 @@ const TAG_FADE = 0.18;
 /** The ray for the line-of-sight check ends at the head, 1.7 above the feet. */
 const HEAD_HEIGHT = 1.7;
 /** Body lean (radians) of a sliding (back, legs forward) and a crouching (forward) remote player. */
-const POSE_SLIDE_LEAN = 0.85;
+const POSE_SLIDE_LEAN = 0.6;
 const POSE_CROUCH_LEAN = -0.3;
 /** A shot player lies on the ground this long, then is hidden until the respawn. */
 const CORPSE_SECONDS = 1.4;
@@ -276,10 +276,13 @@ export class RemotePlayers {
 
   snapshot(entries: SnapshotEntry[], selfId: number, now: number): void {
     now = this.stamp(now);
-    for (const [id, x, y, z, yaw, pitch, flags] of entries) {
+    for (let ei = 0; ei < entries.length; ei++) {
+      const e = entries[ei];
+      const id = e[0];
       if (id === selfId) continue;
       const r = this.players.get(id);
       if (!r) continue;
+      const flags = e[6];
       if (flags & SNAP_FLAG_STALE) {
         // Out of view (arcade): keep the last position, fade out; no new samples.
         if (r.staleAt < 0) r.staleAt = now;
@@ -290,8 +293,10 @@ export class RemotePlayers {
       r.staleAt = -1;
       r.lastSeen = now;
       if (r.culled) { r.culled = false; this.syncListed(r); }
-      r.buffer.push({ t: now, x, y, z, yaw, pitch, flags });
-      if (r.buffer.length > 30) r.buffer.shift();
+      // A full buffer recycles its oldest sample: 30 Hz × 15 players of small objects were steady garbage.
+      const s = r.buffer.length >= 30 ? r.buffer.shift()! : { t: 0, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, flags: 0 };
+      s.t = now; s.x = e[1]; s.y = e[2]; s.z = e[3]; s.yaw = e[4]; s.pitch = e[5]; s.flags = flags;
+      r.buffer.push(s);
     }
   }
 
@@ -348,7 +353,7 @@ export class RemotePlayers {
       const slide = (c.flags & SNAP_FLAG_SLIDE) !== 0, crouch = !slide && (c.flags & SNAP_FLAG_CROUCH) !== 0;
       const ease = 1 - Math.exp(-14 * dtTag);
       m.lean += ((slide ? POSE_SLIDE_LEAN : crouch ? POSE_CROUCH_LEAN : 0) - m.lean) * ease;
-      m.drop += ((slide ? 0.15 : crouch ? 0.2 : 0) - m.drop) * ease;
+      m.drop += ((slide ? 0.3 : crouch ? 0.2 : 0) - m.drop) * ease;
       m.legLean += ((slide ? -1.0 : crouch ? -POSE_CROUCH_LEAN : 0) - m.legLean) * ease;
       // Limb swing from the distance moved this frame (same smoothing as mobs).
       const moved = Math.hypot(m.x - px, m.z - pz);
@@ -359,7 +364,7 @@ export class RemotePlayers {
       this.placeWeapon(r);
 
       // Name tag above the head.
-      tmp.set(m.x, m.y + 2.15, m.z).project(camera);
+      tmp.set(m.x, m.y + 2.15 * Math.cos(m.lean) - m.drop, m.z).project(camera);
       const dx = camera.position.x - m.x, dy = camera.position.y - m.y, dz = camera.position.z - m.z;
       const d2 = dx * dx + dy * dy + dz * dz;
       const arcade = this.occluder !== null;
@@ -408,7 +413,7 @@ export class RemotePlayers {
     tmpBase.compose(tmpPos, tmpQuat, tmpScale);
     // Crouch and slide lean the body (same transform as the model, see MobRenderer).
     if (m.lean !== 0 || m.drop !== 0) {
-      tmpLocal.makeTranslation(0, -m.drop, 0);
+      tmpLocal.makeTranslation(0, -m.drop, -0.9 * Math.sin(m.lean));
       tmpBase.multiply(tmpLocal);
       tmpLocal.makeRotationX(m.lean);
       tmpBase.multiply(tmpLocal);

@@ -1,5 +1,5 @@
 import { type ArenaMap, DEFAULT_MAP, type Spawn, getMap, mapFor, parseMapId } from '../src/modes/maps';
-import { type GameTypeDef, type Team, gameTypeDef } from '../src/modes/GameTypes';
+import { type GameTypeDef, type MapFeature, type Team, gameTypeDef } from '../src/modes/GameTypes';
 import {
   DEFAULT_PRIMARY, DEFAULT_SECONDARY, type OpticId, PLAYER_MAX_HEALTH, type PerkId, REGEN_DELAY, REGEN_PER_SECOND,
   HITBOX, type WeaponDef, damageAt, fireInterval, magazineFor, opticFor, rangeMulFor, switchDelayFor, weaponDef,
@@ -38,6 +38,15 @@ export { DEFAULT_REWIND, MAX_REWIND } from './anticheat/LagComp';
 /** Fire messages may arrive this much (s) earlier than the weapon's cadence allows (network jitter). */
 const FIRE_SLACK = 0.04;
 const HISTORY_SIZE = 24;
+/** Killstreak: every this many kills in one life sends a radar sweep, shown this long. */
+export const RADAR_STREAK = 5;
+export const RADAR_SECONDS = 4;
+/** Spawn choice: shots remembered, how long and how near they count, and the distance beyond which a spawn is safe. */
+const FIGHT_MEMORY = 32;
+export const SPAWN_FIGHT_SECONDS = 3;
+export const SPAWN_FIGHT_RADIUS = 14;
+/** An opponent this close that can see a spawn makes it a bad one. */
+export const SPAWN_SIGHT_RANGE = 35;
 /** The mode state (zones, flags) is re-sent at least this often. */
 const MODE_INTERVAL = 0.25;
 
@@ -61,12 +70,12 @@ export interface MatchHost {
    * A new match is about to start on `current`: returns the map to play next (the host swaps its
    * bullet world), or null to keep the map. `requires` is the map data the game type needs.
    */
-  nextMap?(current: string, requires?: readonly ('zones' | 'flags')[], preferred?: string): string | null;
+  nextMap?(current: string, requires?: readonly MapFeature[], preferred?: string): string | null;
   /**
    * The match ended: the maps the players may vote on for the next one (the first is the rotation's own pick,
    * which wins a tie), or null when this game does not vote (a fixed map).
    */
-  voteMaps?(current: string, requires?: readonly ('zones' | 'flags')[]): string[] | null;
+  voteMaps?(current: string, requires?: readonly MapFeature[]): string[] | null;
   /** Progression hooks (server/progression/MatchRecorder.ts): all optional, called only while it matters. */
   /** Warm-up is over and the match goes live. */
   onMatchStart?(): void;
@@ -118,6 +127,8 @@ export interface MatchPlayer {
   pts: number;
   /** Order of joining (higher = joined later); decides who moves when the teams get uneven. */
   joinSeq: number;
+  /** A server-side bot (server/bots): marked in the roster, otherwise a player like any other. */
+  bot?: boolean;
   x: number; y: number; z: number;
   yaw: number; pitch: number;
   /** Hitbox height of the current pose (standing, crouching, sliding), as the connection layer accepted it. */
@@ -137,6 +148,8 @@ export interface MatchPlayer {
   /** When this life began and whether a shot went out in it (early class swap). */
   spawnedAt: number;
   firedThisLife: boolean;
+  /** Kills since the last death (killstreak rewards). */
+  streak: number;
   slots: [Slot, Slot, Slot];
   slot: 0 | 1 | 2;
   /** Realms rank for the roster (prestige * 100 + level, see progression/Levels.ts); 0 or absent = none. */
@@ -176,6 +189,11 @@ export class Match {
   private moveId = 0;
   private readonly tmpDir: [number, number, number] = [0, 0, 0];
   private readonly tmpPos: [number, number, number, number] = [0, 0, 0, 0];
+  /** Recent shots (where and when), for the spawn choice. */
+  private readonly fightX = new Float64Array(FIGHT_MEMORY);
+  private readonly fightZ = new Float64Array(FIGHT_MEMORY);
+  private readonly fightT = new Float64Array(FIGHT_MEMORY).fill(-1e9);
+  private fightHead = 0;
   private readonly targets: { o: MatchPlayer; x: number; y: number; z: number; h: number }[] = [];
 
   /** The arena this match is played on. */
@@ -218,10 +236,10 @@ export class Match {
    * Adds a player: picks the team and a spawn and returns them so the welcome message can carry
    * them. Nothing is sent yet; call `ready` once the player is in the game.
    */
-  join(id: number, name: string): MatchPlayer {
+  join(id: number, name: string, bot = false): MatchPlayer {
     const now = this.host.now();
-    let team: Team | '' = '';
-    if (this.teams) {
+    let team: Team | '' = this.teams ? this.logic.teamFor?.(this) ?? '' : '';
+    if (this.teams && !team) {
       let red = 0, blue = 0;
       for (const p of this.players.values()) if (p.team === 'red') red++; else if (p.team === 'blue') blue++;
       // The smaller team; when they are the same size, the one that is behind on points.
@@ -230,10 +248,11 @@ export class Match {
     const p: MatchPlayer = {
       id, name, team, kills: 0, deaths: 0, pts: 0, joinSeq: ++this.joinCounter, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, alive: false, health: PLAYER_MAX_HEALTH,
       lastDamageAt: -1e9, lastHpSent: PLAYER_MAX_HEALTH, respawnAt: 0, protectedUntil: 0,
-      primary: DEFAULT_PRIMARY, secondary: DEFAULT_SECONDARY, optic: 'iron', perk: 'none', next: { ...DEFAULT_CLASS }, spawnedAt: now, firedThisLife: false,
+      primary: DEFAULT_PRIMARY, secondary: DEFAULT_SECONDARY, optic: 'iron', perk: 'none', next: { ...DEFAULT_CLASS }, spawnedAt: now, firedThisLife: false, streak: 0,
       slots: [newSlot(DEFAULT_PRIMARY, 'none'), newSlot(DEFAULT_SECONDARY, 'none'), newSlot('knife', 'none')], slot: 0,
       switchReadyAt: 0, history: Array.from({ length: HISTORY_SIZE }, () => ({ t: 0, x: 0, y: 0, z: 0, h: HITBOX.height })), historyHead: 0, historyCount: 0,
       height: HITBOX.height,
+      ...(bot ? { bot: true } : {}),
     };
     this.players.set(id, p);
     this.resetLife(p, now);
@@ -263,7 +282,7 @@ export class Match {
     this.players.delete(id);
     if (this.vote?.votes.delete(id)) this.broadcastVote();
     this.logic.onLeave?.(this, p, this.host.now());
-    if (this.teams) this.planBalance();
+    if (this.teams && !this.logic.keepTeams) this.planBalance();
     this.broadcastRoster();
     if (this.players.size === 0) this.reset();
   }
@@ -303,7 +322,7 @@ export class Match {
     // change applies at once. In a live round only right after spawning and before the first shot.
     const calm = this.phase === 'warmup' || this.phase === 'countdown' || this.phase === 'roundend' || this.phase === 'intermission';
     const fresh = !p.firedThisLife && now - p.spawnedAt <= CLASS_SWAP_WINDOW;
-    if (p.alive && (calm || fresh) && this.phase !== 'ended' && !this.logic.loadoutFor) {
+    if (p.alive && (calm || fresh) && this.phase !== 'ended' && !this.logic.loadoutFor?.(this, p)) {
       this.equip(p, p.next.primary, p.next.secondary, 'knife', p.next.optic, p.next.perk);
       p.switchReadyAt = now + SWITCH_DELAY;
       this.sendGear(p);
@@ -409,6 +428,9 @@ export class Match {
       } else s.nextFireAt = shotAt + fireInterval(w);
     } else s.nextFireAt = shotAt + fireInterval(w);
     p.firedThisLife = true;
+    // Spawn protection ends with the first shot (no shooting from behind a shield).
+    if (p.protectedUntil > now) p.protectedUntil = now;
+    this.noteFight(p.x, p.z, now);
     if (s.cap > 0) {
       s.mag--;
       this.host.send(id, { t: 'ammo', slot: p.slot, mag: s.mag, reloading: false });
@@ -462,7 +484,7 @@ export class Match {
       }
       if (!tracer) tracer = [ox + dir[0] * tEnd, oy + dir[1] * tEnd, oz + dir[2] * tEnd];
       if (victim && damaging && now >= victim.protectedUntil) {
-        const dmg = damageAt(w, tEnd, s.rangeMul) * (hitHead ? w.headshot : 1);
+        const dmg = damageAt(w, tEnd, s.rangeMul) * (hitHead ? w.headshot : 1) * (this.logic.damageMul?.(this, p, victim, w) ?? 1);
         const prev = dealt.get(victim.id);
         if (prev) { prev.damage += dmg; prev.head ||= hitHead; } else dealt.set(victim.id, { damage: dmg, head: hitHead });
       }
@@ -501,13 +523,26 @@ export class Match {
     victim.respawnAt = delay < 0 ? Infinity : now + delay;
     victim.historyCount = 0;
     if (killer) killer.kills++;
+    victim.streak = 0;
     this.logic.onKill(this, killer, victim, w, head, now);
+    if (killer && killer !== victim && ++killer.streak % RADAR_STREAK === 0) this.radar(killer);
     this.host.onKill?.(killer?.id ?? 0, victim.id, w.id, head);
     this.sendHp(victim, true);
     this.host.broadcast({ t: 'kill', killer: killer?.id ?? 0, victim: victim.id, weapon: w.id, head });
     this.broadcastRoster();
     this.broadcastMatch();
     this.checkEnd(now);
+  }
+
+  /** Killstreak reward: one radar sweep of the opponents' positions for the killer (and its team). */
+  private radar(by: MatchPlayer): void {
+    const pts: number[] = [];
+    for (const o of this.players.values()) {
+      if (o === by || !o.alive || (this.teams && o.team === by.team)) continue;
+      pts.push(r2(o.x), r2(o.z));
+    }
+    const msg: ServerMessage = { t: 'radar', by: by.id, pts, sec: RADAR_SECONDS };
+    for (const o of this.players.values()) if (o === by || (this.teams && o.team === by.team)) this.host.send(o.id, msg);
   }
 
   // ---------------------------------------------------------------- lag compensation
@@ -648,7 +683,7 @@ export class Match {
     this.scores.red = this.scores.blue = 0;
     for (const p of this.players.values()) { p.kills = 0; p.deaths = 0; p.pts = 0; }
     this.logic.onReset?.(this);
-    if (this.teams) this.rebalance();
+    if (this.teams && !this.logic.keepTeams) this.rebalance();
     this.respawnAll(now);
     this.broadcastMatch();
     this.broadcastRoster();
@@ -760,7 +795,7 @@ export class Match {
   }
 
   respawn(p: MatchPlayer, now: number): void {
-    if (this.teams) this.applyBalance(p);
+    if (this.teams && !this.logic.keepTeams) this.applyBalance(p);
     this.resetLife(p, now);
     this.sendSpawn(p);
     this.host.broadcast(this.holds(p), p.id);
@@ -795,20 +830,40 @@ export class Match {
     for (let i = 0; i < 3; i++) this.host.send(p.id, { t: 'ammo', slot: i as 0 | 1 | 2, mag: p.slots[i].mag, reloading: false });
   }
 
+  /** A shot was fired here (recent fights: spawns keep away from them). Fixed ring, no allocation. */
+  private noteFight(x: number, z: number, now: number): void {
+    const i = this.fightHead;
+    this.fightX[i] = x; this.fightZ[i] = z; this.fightT[i] = now;
+    this.fightHead = (i + 1) % FIGHT_MEMORY;
+  }
+
   /**
-   * The team's spawn (team modes) or any spawn (ffa) that is furthest from the living opponents, with a
-   * little randomness so the same point is not used every time.
+   * A spawn away from the fight: the team's spawns (team modes) or all (ffa), scored by
+   *  - the distance (blocks) to the nearest living opponent,
+   *  - minus 8 when an opponent within SPAWN_SIGHT_RANGE can see it (no spawning into a sight line),
+   *  - minus 3 per shot fired nearby in the last SPAWN_FIGHT_SECONDS, up to 3 (no spawning into a fight),
+   *  - plus 1 in team modes with a teammate within 25 blocks (spawn with your team),
+   * plus up to 2 of randomness so the same point is not used every time. Weights tuned with scripts/flow-metrics.ts
+   * (bot matches): stronger sight/fight penalties pick closer hidden spots and get more spawn kills.
    */
   pickSpawn(p: MatchPlayer): Spawn {
     const list: Spawn[] = this.teams && p.team ? this.map.spawns[p.team] : this.map.spawns.ffa;
+    const now = this.host.now();
     let best = list[0], bestScore = -Infinity;
     for (const s of list) {
-      let nearest = 1000;
+      let nearest = 1000, seen = false, mate = false;
       for (const o of this.players.values()) {
-        if (o === p || !o.alive || (this.teams && o.team === p.team)) continue;
-        nearest = Math.min(nearest, dist2(s.x, s.z, o.x, o.z));
+        if (o === p || !o.alive) continue;
+        const d = dist2(s.x, s.z, o.x, o.z);
+        if (this.teams && o.team === p.team) { if (d < 25) mate = true; continue; }
+        nearest = Math.min(nearest, d);
+        if (!seen && d < SPAWN_SIGHT_RANGE) seen = bodyVisible(this.host.blocks, o.x, o.y + EYE_HEIGHT, o.z, s.x, s.y, s.z);
       }
-      const score = nearest + this.host.random() * 5;
+      let fights = 0;
+      for (let i = 0; i < FIGHT_MEMORY; i++) {
+        if (now - this.fightT[i] <= SPAWN_FIGHT_SECONDS && dist2(s.x, s.z, this.fightX[i], this.fightZ[i]) < SPAWN_FIGHT_RADIUS) fights++;
+      }
+      const score = nearest - (seen ? 8 : 0) - Math.min(3, fights) * 3 + (mate ? 1 : 0) + this.host.random() * 2;
       if (score > bestScore) { bestScore = score; best = s; }
     }
     return best;
@@ -889,6 +944,7 @@ export class Match {
     return [...this.players.values()].map((p) => ({
       id: p.id, name: p.name, team: p.team, kills: p.kills, deaths: p.deaths, ping: Math.round(this.host.ping(p.id)),
       ...(withPts ? { pts: p.pts } : {}),
+      ...(p.bot ? { bot: 1 as const } : {}),
       ...(p.rank ? { rk: p.rank } : {}),
     }));
   }
