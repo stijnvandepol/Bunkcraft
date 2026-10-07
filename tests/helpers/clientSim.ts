@@ -18,7 +18,13 @@ export function rng(seed: number): () => number {
  * A position report as the client would send it: the (wall clock) time it was sent, the physics steps
  * simulated so far (the `step` field of `pos`), and the time it arrived (see `throughNetwork`).
  */
-export interface Report { sent: number; step: number; x: number; y: number; z: number; arrive: number }
+export interface Report {
+  sent: number; step: number; x: number; y: number; z: number; arrive: number;
+  /** Arcade: step of the latest slide start (the `sl` field of `pos`), NaN before the first. */
+  slide: number;
+  /** Arcade pose flags at the report: sliding, crouching. */
+  sliding: boolean; crouching: boolean;
+}
 
 export interface SimOptions {
   /** Same fields as Game: arcade scales speed and air control, Minecraft mode leaves them at 1. */
@@ -36,6 +42,13 @@ export interface SimOptions {
   hitches?: number;
   /** Run along these (x, z) points instead of wandering (e.g. a flag carrier's route); jumping as with `bunnyHop`. */
   route?: [number, number][];
+  /**
+   * Arcade movement (Player.arcadeMove) played like a skilled player: slides, slide-hops (crouch before the
+   * landing, jump out of the slide), bunny hop chains, air strafing with mouse turns, crouch walking.
+   */
+  arcade?: boolean;
+  /** Arcade: slide cooldown (perk), default the Player's. */
+  slideCooldown?: number;
 }
 
 /**
@@ -50,7 +63,11 @@ export function recordClient(getBlock: BlockGetter, getMeta: BlockGetter | undef
   p.airAccel = o.airAccel;
   p.setPosition(o.start.x, o.start.y, o.start.z);
   p.yaw = r() * Math.PI * 2;
-  const move: MoveInput = { forward: 1, strafe: 0, jump: false, jumpPressed: false, sprint: true, descend: false };
+  p.arcadeMove = o.arcade === true;
+  if (o.slideCooldown) p.slideCooldown = o.slideCooldown;
+  const move: MoveInput = { forward: 1, strafe: 0, jump: false, jumpPressed: false, sprint: true, descend: false, crouch: false, crouchPressed: false };
+  // Arcade technique: 0 plain, 1 slide-hop chain, 2 bunny hop with air strafe, 3 crouch walk / random slides.
+  let tech = 0, slideAt = NaN, slides = 0, hopIn = -1, stepNo = 0, ground = 0;
   let left = 0, turn = 0;
   const out: Report[] = [];
   let nextSend = 0;
@@ -69,7 +86,7 @@ export function recordClient(getBlock: BlockGetter, getMeta: BlockGetter | undef
     }
     const t = wall - PHYSICS.STEP;
     if (t >= nextSend) {
-      out.push({ sent: t, step: i, x: p.x, y: p.y, z: p.z, arrive: t });
+      out.push({ sent: t, step: i, x: p.x, y: p.y, z: p.z, arrive: t, slide: slideAt, sliding: p.sliding, crouching: p.crouching });
       nextSend = t + o.interval[0] + r() * (o.interval[1] - o.interval[0]);
     }
     if (route && route.length === 0) break;
@@ -84,7 +101,8 @@ export function recordClient(getBlock: BlockGetter, getMeta: BlockGetter | undef
       move.strafe = 0;
       if (left-- <= 0) { left = Math.floor(6 + r() * 114); move.jump = o.bunnyHop ? r() < 0.8 : r() < 0.15; }
       move.jumpPressed = move.jump && r() < 0.05;
-      p.step(move, getBlock, getMeta);
+      if (o.arcade) arcadeInput();
+      advance();
       return;
     }
     if (left-- <= 0) {
@@ -95,10 +113,44 @@ export function recordClient(getBlock: BlockGetter, getMeta: BlockGetter | undef
       move.jump = o.bunnyHop ? r() < 0.6 : r() < 0.15;
       turn = (r() - 0.5) * (r() < 0.2 ? 14 : 3); // rad/s; sometimes a quick turn into a wall
       if (r() < 0.1) p.yaw += (r() - 0.5) * Math.PI;
+      if (o.arcade) {
+        tech = r() < 0.4 ? 1 : Math.floor(r() * 4);
+        // Air strafing: strafe key and a steady mouse turn the same way.
+        if (tech === 2) { move.strafe = r() < 0.5 ? -1 : 1; turn = -move.strafe * (1 + r() * 3); move.forward = r() < 0.7 ? 1 : 0; }
+      }
     }
     p.yaw += turn * PHYSICS.STEP;
     move.jumpPressed = move.jump && r() < 0.05;
+    if (o.arcade) arcadeInput();
+    advance();
+  }
+
+  function advance(): void {
+    stepNo++;
     p.step(move, getBlock, getMeta);
+    move.crouchPressed = false;
+    if (p.slideStarts !== slides) { slides = p.slideStarts; slideAt = stepNo; }
+  }
+
+  /** Arcade technique inputs on top of the decision script. */
+  function arcadeInput(): void {
+    const wasCrouch = move.crouch === true;
+    let crouch = wasCrouch;
+    if (tech === 1) {
+      // Slide-hop: crouch while falling towards the ground, jump out of the slide a few steps after landing.
+      move.jump = false;
+      if (!p.onGround) { ground = 0; if (p.vy < -1) crouch = true; }
+      if (p.sliding && hopIn < 0) hopIn = 1 + Math.floor(r() * 12);
+      if (hopIn >= 0 && hopIn-- === 0) { move.jump = true; crouch = r() < 0.3; }
+      if (p.onGround && !p.sliding && ++ground > 3) { crouch = false; move.jump = true; }
+    } else if (tech === 2) {
+      move.jump = true;
+      crouch = false;
+    } else if (tech === 3) {
+      if (r() < 0.04) crouch = !crouch;
+    } else crouch = false;
+    move.crouch = crouch;
+    move.crouchPressed = crouch && !wasCrouch;
   }
 }
 

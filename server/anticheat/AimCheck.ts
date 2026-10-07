@@ -27,10 +27,10 @@ export function isUnitVector(dx: number, dy: number, dz: number): boolean {
  */
 export function originError(
   ox: number, oy: number, oz: number,
-  x: number, y: number, z: number, vx: number, vy: number, vz: number, sinceReport: number,
+  x: number, y: number, z: number, vx: number, vy: number, vz: number, sinceReport: number, eye: number = PHYSICS.EYE_HEIGHT,
 ): number {
   const ahead = Math.min(MAX_EXTRAPOLATION, Math.max(0, sinceReport));
-  const ex = x, ey = y + PHYSICS.EYE_HEIGHT, ez = z;
+  const ex = x, ey = y + eye, ez = z;
   const sx = vx * ahead, sy = vy * ahead, sz = vz * ahead;
   const len2 = sx * sx + sy * sy + sz * sz;
   let f = len2 > 1e-12 ? ((ox - ex) * sx + (oy - ey) * sy + (oz - ez) * sz) / len2 : 0;

@@ -3,6 +3,7 @@ import { ARENA_FLOOR_Y, ARENA_SPAWNS, ArenaGenerator } from '../src/modes/arena'
 import { TEAM } from '../src/modes/maps/ArenaMap';
 import { DEFAULT_MAP, MAPS, MAP_IDS, getMap, nextMap, parseMapId, parseMapSetting } from '../src/modes/maps';
 import { traceBlocks } from '../server/Combat';
+import { padLandings } from '../src/player/ArcadeMove';
 import { BLOCK, BLOCK_DEFS, SOLID, TALL } from '../src/world/BlockRegistry';
 import { CHUNK_SIZE, CHUNK_VOLUME, blockIndex } from '../src/world/constants';
 import { arenaMapOf, arenaWorldType, createGenerator, isArenaWorld } from '../src/world/WorldGenerator';
@@ -12,10 +13,13 @@ const swapTeam = (id: number) => (id === BLOCK.RED_WOOL ? BLOCK.BLUE_WOOL : id =
 
 describe('arena maps', () => {
   it('has at least three maps with unique ids and a default', () => {
-    expect(MAPS.length).toBe(11);
+    expect(MAPS.length).toBe(17);
     expect(new Set(MAP_IDS).size).toBe(MAP_IDS.length);
     expect(MAP_IDS).toContain(DEFAULT_MAP);
-    expect(MAP_IDS).toEqual(['classic', 'suburb', 'quarter', 'dockyard', 'desert', 'atomic', 'bunker', 'villa', 'yacht', 'town', 'station']);
+    expect(MAP_IDS).toEqual([
+      'classic', 'suburb', 'quarter', 'dockyard', 'desert', 'atomic', 'bunker', 'villa', 'yacht', 'town', 'station',
+      'plaza', 'site', 'carrier', 'shanty', 'mall', 'scrap',
+    ]);
   });
 
   for (const map of MAPS) {
@@ -78,8 +82,19 @@ describe('arena maps', () => {
         const sx = Math.floor(map.spawns.ffa[0].x), sz = Math.floor(map.spawns.ffa[0].z);
         const seen = new Set<number>([key(sx, sz, ARENA_FLOOR_Y)]);
         const queue: [number, number, number][] = [[sx, sz, ARENA_FLOOR_Y]];
+        const pads: [number, number, number][] = [];
         while (queue.length) {
           const [x, z, y] = queue.pop()!;
+          // A jump pad launches onto ledges up to its apex (see player/ArcadeMove.ts).
+          if (at(x, y, z) === BLOCK.JUMP_PAD) {
+            pads.length = 0;
+            padLandings(at, (id) => SOLID[id] === 1 && !TALL[id], x, y, z, pads);
+            for (const [nx, nz, ny] of pads) {
+              if (nx < b.minX || nx >= b.maxX || nz < b.minZ || nz >= b.maxZ || seen.has(key(nx, nz, ny))) continue;
+              seen.add(key(nx, nz, ny));
+              queue.push([nx, nz, ny]);
+            }
+          }
           for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
             const nx = x + dx, nz = z + dz;
             if (nx < b.minX || nx >= b.maxX || nz < b.minZ || nz >= b.maxZ) continue;

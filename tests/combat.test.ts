@@ -1,5 +1,6 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
+import { GLASS_PASSES_DEFAULT } from '../src/modes/Hitscan';
 import { blocksBullet, rayBox, rayPlayer, spreadDirection, traceBlocks } from '../server/Combat';
 import { HITBOX, PLAYER_MAX_HEALTH, PRIMARY_WEAPONS, WEAPONS, damageAt, fireInterval, weaponDef } from '../src/modes/Weapons';
 import { BLOCK } from '../src/world/BlockRegistry';
@@ -116,8 +117,8 @@ describe('traceBlocks (voxel ray march)', () => {
     expect(hit).toBeCloseTo(4.5, 6);
   });
 
-  it('full blocks stop bullets; glass, plants and water let them through', () => {
-    expect(blocksBullet(BLOCK.GLASS)).toBe(false);
+  it('full blocks stop bullets; plants and water let them through; glass only with the switch on', () => {
+    expect(blocksBullet(BLOCK.GLASS)).toBe(!GLASS_PASSES_DEFAULT);
     expect(blocksBullet(BLOCK.STONE)).toBe(true);
     expect(blocksBullet(BLOCK.AIR)).toBe(false);
     expect(blocksBullet(BLOCK.WATER)).toBe(false);

@@ -17,7 +17,7 @@ export const DOCKYARD: ArenaMapDef = {
   wallBlock: BLOCK.COBBLESTONE,
   floorBlock: BLOCK.STONE,
   variants: 1,
-  teamSpawns: [[40, 2], [39, 6], [41, 9], [37, 11]],
+  teamSpawns: [[40, 2], [39, 6], [42, 4], [37, 8]],
   ffaSpawns: [[7, 6], [28, 12], [16, 22], [38, 23], [4, 28]],
   objectives: {
     // Hardpoint order: under the crane, the two container yards, then the two ship decks.

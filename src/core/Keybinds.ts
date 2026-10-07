@@ -65,7 +65,8 @@ export const KEYBINDS: readonly KeybindDef[] = [
   { id: 'key.left', name: 'Strafe Left', category: 'Movement', defaultCode: 'KeyA' },
   { id: 'key.right', name: 'Strafe Right', category: 'Movement', defaultCode: 'KeyD' },
   { id: 'key.jump', name: 'Jump', category: 'Movement', defaultCode: 'Space' },
-  { id: 'key.sneak', name: 'Sneak', category: 'Movement', defaultCode: 'KeyC' },
+  // Arcade games use the same key to crouch, and to slide while running (see player/ArcadeMove.ts).
+  { id: 'key.sneak', name: 'Sneak / Crouch & Slide', category: 'Movement', defaultCode: 'KeyC' },
   { id: 'key.sprint', name: 'Sprint', category: 'Movement', defaultCode: 'ShiftLeft' },
   { id: 'key.attack', name: 'Attack/Destroy', category: 'Gameplay', defaultCode: 'Mouse0' },
   { id: 'key.use', name: 'Use Item/Place Block', category: 'Gameplay', defaultCode: 'Mouse2' },

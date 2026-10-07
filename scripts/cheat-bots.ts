@@ -10,7 +10,8 @@
  */
 import { WebSocket } from 'ws';
 import { ARENA_FLOOR_Y, type ArenaMap, getMap } from '../src/modes/maps';
-import { PROTOCOL_VERSION, type ClientMessage, type ServerMessage } from '../src/net/protocol';
+import { PROTOCOL_VERSION, SNAP_FLAG_SLIDE, type ClientMessage, type ServerMessage } from '../src/net/protocol';
+import { arcadeMaxSpeed } from '../src/modes/ArcadeLogic';
 import { traceBlocks } from '../server/Combat';
 import { BOT_SPEED, type RoutePoint, aimAt, arenaPath, follow } from './lib/arenaPath';
 
@@ -47,6 +48,8 @@ class Bot {
   readonly sentPos: ClientMessage[] = [];
   /** The physics clock sent with every report (60 Hz steps); a cheater can run it faster than real time. */
   clockRate = 1;
+  /** Claims a fresh slide start (the arcade slide budget) in every report, with the slide pose. */
+  slideSpam = false;
   private clock = 0;
   private clockAt = performance.now();
 
@@ -80,7 +83,10 @@ class Bot {
     const now = performance.now();
     this.clock += (now - this.clockAt) * 0.06 * this.clockRate;
     this.clockAt = now;
-    const m: ClientMessage = { t: 'pos', x, y, z, yaw: this.yaw, pitch: 0, flags: 4, held: 0, step: Math.floor(this.clock) };
+    const step = Math.floor(this.clock);
+    const m: ClientMessage = this.slideSpam
+      ? { t: 'pos', x, y, z, yaw: this.yaw, pitch: 0, flags: 4 | SNAP_FLAG_SLIDE, held: 0, step, sl: step }
+      : { t: 'pos', x, y, z, yaw: this.yaw, pitch: 0, flags: 4, held: 0, step };
     this.sentPos.push(m);
     this.send(m);
   }
@@ -239,6 +245,19 @@ async function movementCheats(): Promise<void> {
   check('a 3x speed burst with a 3x clock is rubber-banded within 1.5 s', await corrected(c, n, 1500));
   c.speed = BOT_SPEED;
   c.clockRate = 1;
+  c.route = [];
+  await sleep(2500);
+  // Slide spam: 1.6 times the run speed, claiming a new slide in every report (only one per cooldown counts).
+  await fresh('slidespammer');
+  const far3 = c.map.spawns.ffa.map((s) => [s.x, s.z] as [number, number]).sort((p, q) => Math.hypot(q[0] - c.x, q[1] - c.z) - Math.hypot(p[0] - c.x, p[1] - c.z))[0];
+  c.route = arenaPath(c.map, c.variant, [c.x, c.z, c.y], far3) ?? [];
+  n = c.of('teleport').length;
+  c.speed = arcadeMaxSpeed(1) * 1.6;
+  c.slideSpam = true;
+  c.auto = true;
+  check('a 1.6x speed hack that claims a slide in every report is rubber-banded within 3 s', await corrected(c, n, 3000));
+  c.speed = BOT_SPEED;
+  c.slideSpam = false;
   c.route = [];
   await sleep(2500);
   // Teleport: 25 blocks in one report.

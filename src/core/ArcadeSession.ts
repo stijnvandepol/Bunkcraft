@@ -9,10 +9,11 @@ import {
   type ClassSpec, DEFAULT_CLASS, LAST_CLASS_STORAGE_KEY, LOADOUT_PRESETS, loadSavedClass, saveClass, validateClass,
 } from '../modes/Loadouts';
 import {
-  AIM_CLIMB, DEFAULT_PRIMARY, DEFAULT_SECONDARY, type OpticId, PLAYER_MAX_HEALTH, RESPAWN_SECONDS, type WeaponDef, adsTimeFor, fireInterval,
-  isPerk, opticFor, opticZoom, switchDelayFor, weaponDef,
+  AIM_CLIMB, DEFAULT_PRIMARY, DEFAULT_SECONDARY, HITBOX, type OpticId, PLAYER_MAX_HEALTH, RESPAWN_SECONDS, type WeaponDef, adsTimeFor, fireInterval,
+  isPerk, opticFor, opticZoom, perkMoveSpeed, switchDelayFor, weaponDef,
 } from '../modes/Weapons';
-import { type ClientMessage, type MatchInfo, type MatchPhase, type ModeState, type RosterEntry, SNAP_FLAG_ADS, type ServerMessage } from '../net/protocol';
+import { poseHeight, slideCooldown } from '../player/ArcadeMove';
+import { type ClientMessage, type MatchInfo, type MatchPhase, type ModeState, type RosterEntry, SNAP_FLAG_ADS, SNAP_FLAG_CROUCH, SNAP_FLAG_SLIDE, type ServerMessage } from '../net/protocol';
 import type { RemotePlayers } from '../net/RemotePlayers';
 import type { Player } from '../player/Player';
 import { PHYSICS } from '../player/Physics';
@@ -22,6 +23,8 @@ import { muzzleFor } from '../rendering/WeaponModels';
 import { WeaponViewmodel } from '../rendering/WeaponViewmodel';
 import { ArcadeHud, type ScoreboardContext } from '../ui/ArcadeHud';
 import { ModeHud } from '../ui/ModeHud';
+import { RadarPings } from '../ui/RadarPings';
+import { ARENA_FLOOR_Y } from '../modes/maps/ArenaMap';
 import { MatchLobby } from '../ui/MatchLobby';
 import { ProgressPanel } from '../ui/ProgressPanel';
 import { applyReport, currentRank, onProfile } from '../net/ProfileApi';
@@ -88,6 +91,8 @@ export interface ArcadeFrame {
   lookY: number;
 }
 
+/** Health under which the screen edge pulses red. */
+const LOW_HEALTH_PULSE = 35;
 /** Spectator camera: distance behind the watched player's head and the lift above it. */
 const SPECTATE_DISTANCE = 3.2;
 
@@ -162,6 +167,8 @@ export class ArcadeSession {
   /** Objective HUD (zones, flags, rounds, ladder) and the flags/zone rings in the world. */
   readonly modeHud: ModeHud;
   readonly modeVisuals = new ModeVisuals();
+  /** Killstreak radar sweep markers. */
+  private readonly radar = new RadarPings();
   /** Realms pre-match lobby (warm-up panel) and the map vote after a match. */
   readonly lobby: MatchLobby;
   /** Realms XP report on the match-end screen. */
@@ -233,6 +240,16 @@ export class ArcadeSession {
   readonly hitreg = new HitregStats();
   /** 0..1 camera hurt strength after taking damage, decaying. */
   hurt = 0;
+  /**
+   * Red screen edge: the hurt flash, and under LOW_HEALTH_PULSE health a slow pulse that grows as health drops
+   * (you know you are one hit from death without looking at the number).
+   */
+  get hurtVignette(): number {
+    const low = !this.dead && this.health > 0 && this.health < LOW_HEALTH_PULSE
+      ? (0.16 + 0.1 * Math.sin(this.frameClock * 5.5)) * (1.4 - this.health / LOW_HEALTH_PULSE) : 0;
+    return Math.max(this.hurt * 0.8, low);
+  }
+  private frameClock = 0;
   /** Side of the last hit (−1 left, 1 right) for the camera tilt. */
   hurtSide = 1;
   private protect = 0;
@@ -268,6 +285,7 @@ export class ArcadeSession {
     this.teams = this.def.teams;
     this.modeHud = new ModeHud(this.def);
     this.hud.el.append(this.modeHud.el);
+    this.hud.el.append(this.radar.el);
     this.lobby = new MatchLobby(this.def, d.selfId);
     this.lobby.onVote = (map) => this.d.send({ t: 'vote', map });
     this.hud.el.append(this.lobby.el);
@@ -310,7 +328,12 @@ export class ArcadeSession {
   get speedMultiplier(): number {
     // The mode's factor (a flag carrier is slower, the infected faster) comes from the server's mode state and our team.
     const mode = modeSpeedMul(this.def, this.modeState, this.team, this.d.selfId);
-    return ARCADE_SPEED_MULT * this.weapon.moveSpeed * (1 - 0.2 * this.ads) * mode;
+    return ARCADE_SPEED_MULT * this.weapon.moveSpeed * perkMoveSpeed(this.cls.perk) * (1 - 0.2 * this.ads) * mode;
+  }
+
+  /** Seconds between two slides (the Lightfoot perk shortens it; the server checks the same number). */
+  get slideCooldown(): number {
+    return slideCooldown(this.cls.perk === 'lightfoot');
   }
 
   readonly airAccel = ARCADE_AIR_ACCEL;
@@ -415,6 +438,12 @@ export class ArcadeSession {
       case 'mode': this.onMode(msg.state); break;
       case 'event': this.onEvent(msg, now); break;
       case 'vote': this.lobby.setVote(msg); break;
+      case 'radar':
+        this.radar.show(msg.pts, ARENA_FLOOR_Y + 1, msg.sec, now);
+        this.hud.showMedal(msg.by === this.d.selfId ? t('arc.radar.own') : t('arc.radar.team', this.nameOf(msg.by)), '#ff5555', now);
+        this.d.audio.playModeCue('good');
+        this.d.feedback?.caption(t('arc.radar.caption'), this.d.player.x, this.d.player.z);
+        break;
       case 'progress':
         this.progress.show(msg.report);
         applyReport(msg.report);
@@ -867,6 +896,8 @@ export class ArcadeSession {
   }
 
   private shoot(now: number): void {
+    // Spawn protection ends with the first shot (the server does the same).
+    this.protect = 0;
     const w = this.weapon;
     const p = this.d.player;
     this.aim(tmpAim);
@@ -934,7 +965,10 @@ export class ArcadeSession {
     let best: { id: number; t: number; part: HitPart } | null = null;
     for (const [id, info] of this.players) {
       if (id === this.d.selfId || (this.teams && info.team === this.team) || !this.d.remote.isAlive(id) || !this.d.remote.pose(id, tmpPose)) continue;
-      const hit = rayPlayer(ox, oy, oz, dx, dy, dz, tmpPose.x, tmpPose.y, tmpPose.z, tmpPose.yaw, tmpPose.pitch);
+      // Crouching and sliding players are lower, as the server tests them (its pose from the same flags).
+      const f = this.d.remote.flagsOf(id);
+      const h = poseHeight((f & SNAP_FLAG_CROUCH) !== 0, (f & SNAP_FLAG_SLIDE) !== 0, HITBOX.height) / HITBOX.height;
+      const hit = rayPlayer(ox, oy, oz, dx, dy, dz, tmpPose.x, tmpPose.y, tmpPose.z, tmpPose.yaw, tmpPose.pitch, h);
       if (hit && hit.t < maxT && (!best || hit.t < best.t)) best = { id, t: hit.t, part: hit.part };
     }
     return best;
@@ -956,6 +990,7 @@ export class ArcadeSession {
   }
 
   private melee(now: number): void {
+    this.protect = 0;
     const p = this.d.player;
     this.aim(tmpAim);
     this.shotN++; // the server counts every shot, the knife's too
@@ -972,6 +1007,7 @@ export class ArcadeSession {
   update(f: ArcadeFrame, input: Input): void {
     const { now, dt } = f;
     this.lastNow = now;
+    this.frameClock = now;
     const canAct = f.controls && !this.dead && !this.ended && !this.loadoutOpen;
     const ammo = this.ammo[this.slot];
 
@@ -1090,6 +1126,7 @@ export class ArcadeSession {
     me.team = this.team; me.id = this.d.selfId;
     this.modeHud.frame(now, this.d.cam.camera, window.innerWidth, window.innerHeight, me, this.nameOfFn, this.carrierPos);
     this.modeVisuals.update(now, this.carrierPos);
+    this.radar.frame(now, this.d.cam.camera, window.innerWidth, window.innerHeight);
 
     // Scoreboard while the key is held.
     const showBoard = f.controls && input.actionDown(KB.SCOREBOARD) && !this.ended;

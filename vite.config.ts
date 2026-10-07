@@ -1,8 +1,9 @@
-import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { brotliCompressSync, constants, gzipSync } from 'node:zlib';
 import { type Plugin, defineConfig } from 'vite';
 import { pwa } from './scripts/vite-pwa';
+import { texturePackBundles } from './scripts/vite-texture-pack';
 
 // `npm run build:static` (BUNK_STATIC=1): relative base so the folder works on any host or sub-path (itch.io).
 const STATIC = process.env.BUNK_STATIC === '1';
@@ -33,11 +34,13 @@ function productionAssets(): Plugin {
           attrs: { rel: 'preload', as: 'font', type: 'font/otf', href: `${BASE}fonts/bunkcraft-pixel.otf`, crossorigin: '' },
           injectTo: 'head' as const,
         });
-        // The default texture pack: the title screen waits for these ~56 small images, so start them
-        // with the HTML instead of after the bundle has run (one round trip saved per connection batch).
-        for (const png of readdirSync('public/texturepacks/pixel-perfection').filter((f) => f.endsWith('.png'))) {
-          tags.push({ tag: 'link', attrs: { rel: 'preload', as: 'image', href: `${BASE}texturepacks/pixel-perfection/${png}` }, injectTo: 'head' as const });
-        }
+        // The default texture pack (one bundle of its ~56 PNGs, scripts/vite-texture-pack.ts): the title screen waits
+        // for it, so start it with the HTML instead of after the bundle has run. `crossorigin` matches fetch()'s mode.
+        tags.push({
+          tag: 'link',
+          attrs: { rel: 'preload', as: 'fetch', type: 'application/octet-stream', href: `${BASE}texturepacks/pixel-perfection.bcpk`, crossorigin: '' },
+          injectTo: 'head' as const,
+        });
         return tags;
       },
     },
@@ -62,7 +65,7 @@ function productionAssets(): Plugin {
 
 export default defineConfig({
   base: BASE,
-  plugins: [pwa(), productionAssets()],
+  plugins: [pwa(), productionAssets(), texturePackBundles()],
   worker: { format: 'es' },
   build: {
     target: 'es2022',

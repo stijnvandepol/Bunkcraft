@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MOB_TYPES } from '../src/entities/MobTypes';
-import { PLAYER_MODEL_SCALE, createBulletTrace, rayPlayer, shotSpread, spreadDirection, spreadRandom, traceBullet } from '../src/modes/Hitscan';
+import { GLASS_PASSES_DEFAULT, PLAYER_MODEL_SCALE, createBulletTrace, setGlassPasses, rayPlayer, shotSpread, spreadDirection, spreadRandom, traceBullet } from '../src/modes/Hitscan';
 import { HitregStats } from '../src/modes/HitregStats';
 import { weaponDef } from '../src/modes/Weapons';
 import { BIN_SNAP_QK, decodeBinary, encodeSnapQ } from '../src/net/binary';
@@ -43,7 +43,7 @@ describe('player model and hitboxes', () => {
   });
 
   it('a crouch-style pose (lower height) shrinks the hitbox from the feet', () => {
-    const at = (h: number, height: number) => rayPlayer(0, 64 + h, 0.5, 1, 0, 0, 10.5, 64, 0.5, Math.PI / 2, 0, { height });
+    const at = (h: number, height: number) => rayPlayer(0, 64 + h, 0.5, 1, 0, 0, 10.5, 64, 0.5, Math.PI / 2, 0, height);
     expect(at(1.7, 1)).not.toBeNull();
     expect(at(1.7, 0.8)).toBeNull();
     expect(at(1.3, 0.8)?.part).toBe('head');
@@ -123,7 +123,10 @@ describe('render tick: the client tells the server which moment it drew', () => 
   });
 });
 
-describe('bullets through windows', () => {
+describe('bullets through windows (switch on)', () => {
+  beforeAll(() => setGlassPasses(true));
+  afterAll(() => setGlassPasses(GLASS_PASSES_DEFAULT));
+
   it('passes one window (a two-cell window counts once), stops at a second one and in a wall of glass', () => {
     const glass = new Set(['3,0,0', '4,0,0']);
     const world = { getBlock: (x: number, y: number, z: number) => (glass.has(`${x},${y},${z}`) ? BLOCK.GLASS : BLOCK.AIR) };
@@ -165,5 +168,12 @@ describe('client hit registration statistics', () => {
     h.update(2);
     expect(h.counts).toMatchObject({ shots: 4, claimed: 3, agreed: 2, denied: 1, surprise: 1, headClaimed: 1, headAgreed: 1 });
     expect(h.denyRate).toBeCloseTo(1 / 3, 6);
+  });
+});
+
+describe('bullets and glass by default', () => {
+  it('glass stops bullets while the maps still use it as spawn cover (GLASS_PASSES_DEFAULT)', () => {
+    const tr = traceBullet({ getBlock: (x) => (x === 3 ? BLOCK.GLASS : BLOCK.AIR) }, 0.5, 0.5, 0.5, 1, 0, 0, 20, createBulletTrace());
+    expect(tr.blocked).toBe(!GLASS_PASSES_DEFAULT);
   });
 });

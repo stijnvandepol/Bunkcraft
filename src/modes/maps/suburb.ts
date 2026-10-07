@@ -17,7 +17,7 @@ export const SUBURB: ArenaMapDef = {
   wallBlock: BLOCK.BIRCH_PLANKS,
   floorBlock: BLOCK.GRASS,
   variants: 1,
-  teamSpawns: [[28, 3], [26, 6], [28, 8], [27, 14]],
+  teamSpawns: [[28, 3], [26, 6], [28, 8], [30, 10]],
   ffaSpawns: [[10, 5], [20, 7], [21, 16], [6, 16]],
   highGround: [[21, 4]],
   objectives: {
@@ -30,6 +30,8 @@ export const SUBURB: ArenaMapDef = {
       { name: 'East Corner', x: 8.5, z: -12.5, r: 4 },
     ],
     dominationZones: [0, 1, 2],
+    // Behind the garages, out of sight of the other house.
+    flags: [{ team: 'red', x: -14.5, z: -15.5 }, { team: 'blue', x: 14.5, z: -15.5 }],
     // Search and destroy: bomb sites in the blue half (see scripts/site-scan.ts).
     sites: [{ name: 'A', x: 12.5, z: -12.5, r: 3 }, { name: 'B', x: 12.5, z: 12.5, r: 3 }],
   },

@@ -59,13 +59,6 @@ const BOX_YAW_SIN = BOXES.map((b) => Math.sin(b.yaw));
 /** Total height of a standing player's hitbox (the drawn model). */
 export const PLAYER_HEIGHT = 32 * PX;
 
-/**
- * The pose a player's hitbox is in. `height` scales the model vertically from the feet (crouching, sliding);
- * 1 = standing.
- */
-export interface HitPose { height: number }
-export const STANDING: HitPose = { height: 1 };
-
 export interface PlayerHit { t: number; part: HitPart }
 
 /** Entry distance of a ray into a box, or −1 on a miss (a ray starting inside returns 0). */
@@ -101,18 +94,19 @@ export function rayBox(
 
 /**
  * Ray against a player standing at (x, y, z) (feet), turned by `yaw` and looking up by `pitch` (radians,
- * positive = up, the camera's convention): the nearest hitbox, or null. Allocation-free.
+ * positive = up, the camera's convention), crouched or sliding when `heightScale` < 1 (the model squashed from the
+ * feet: 1.5 / 1.8 crouching, 1.15 / 1.8 sliding): the nearest hitbox, or null. Allocation-free.
  */
 export function rayPlayer(
   ox: number, oy: number, oz: number, dx: number, dy: number, dz: number,
-  x: number, y: number, z: number, yaw: number, pitch: number, pose: HitPose = STANDING,
+  x: number, y: number, z: number, yaw: number, pitch: number, heightScale = 1,
 ): PlayerHit | null {
   // Into the player's frame: undo the yaw (the model is turned by Ry(yaw)).
   const c = Math.cos(yaw), s = Math.sin(yaw);
-  const rx = ox - x, ry = (oy - y) / pose.height, rz = oz - z;
+  const rx = ox - x, ry = (oy - y) / heightScale, rz = oz - z;
   const lox = rx * c - rz * s, loz = rx * s + rz * c;
   let ldx = dx * c - dz * s, ldz = dx * s + dz * c;
-  let ldy = dy / pose.height;
+  let ldy = dy / heightScale;
   // Distances along the scaled ray differ from world distances: keep the scale to convert back.
   const k = Math.hypot(ldx, ldy, ldz);
   ldx /= k; ldy /= k; ldz /= k;
@@ -187,22 +181,34 @@ export const MAX_THIN = 4;
  */
 export const MAX_PANES = 1;
 
-for (let id = 0; id < 256; id++) {
-  const def = getBlockDef(id);
-  if (!def || id === BLOCK.AIR) { BULLET[id] = PASS; continue; }
-  const glass = def.name.includes('glass');
-  const leaves = def.name.endsWith('leaves');
-  const thinBox = SHAPE[id] === SHAPE_BOX && def.name.includes('pane');
-  if ((glass && (SHAPE[id] === SHAPE_CUBE || SHAPE[id] === SHAPE_BOX)) || leaves || thinBox) {
-    BULLET[id] = THIN;
-    BULLET_KEEP[id] = glass ? 0.8 : 0.9;
-  } else if (!SOLID[id]) BULLET[id] = PASS;
-  // Iron bars stop bullets like a block (a lone bar's shape is a thin post the maps use as a screen).
-  else if (def.name.includes('bars')) BULLET[id] = STOP;
-  else if (PARTIAL[id] || SHAPE[id] === SHAPE_BOX) BULLET[id] = SHAPED;
-  else BULLET[id] = STOP;
+/**
+ * Whether bullets pass windows and hedges (glass, panes, leaves). OFF for now: the maps use glass and leaves as spawn
+ * cover (tests/spawnExposure.test.ts: suburb, quarter, atomic, plaza and mall get lines into the spawns through
+ * windows). Turn on once those spawns are screened with solid blocks; client and server read the same constant.
+ */
+export const GLASS_PASSES_DEFAULT = false;
+
+/** Fills BULLET / BULLET_KEEP; `glassPasses` false makes see-through blocks stop bullets like any full block. */
+export function setGlassPasses(glassPasses: boolean): void {
+  for (let id = 0; id < 256; id++) {
+    const def = getBlockDef(id);
+    BULLET_KEEP[id] = 0;
+    if (!def || id === BLOCK.AIR) { BULLET[id] = PASS; continue; }
+    const glass = def.name.includes('glass');
+    const leaves = def.name.endsWith('leaves');
+    const thinBox = SHAPE[id] === SHAPE_BOX && def.name.includes('pane');
+    if ((glass && (SHAPE[id] === SHAPE_CUBE || SHAPE[id] === SHAPE_BOX)) || leaves || thinBox) {
+      BULLET[id] = glassPasses ? THIN : STOP;
+      BULLET_KEEP[id] = glass ? 0.8 : 0.9;
+    } else if (!SOLID[id]) BULLET[id] = PASS;
+    // Iron bars stop bullets like a block (a lone bar's shape is a thin post the maps use as a screen).
+    else if (def.name.includes('bars')) BULLET[id] = STOP;
+    else if (PARTIAL[id] || SHAPE[id] === SHAPE_BOX) BULLET[id] = SHAPED;
+    else BULLET[id] = STOP;
+  }
+  BULLET[BLOCK.UNLOADED] = STOP;
 }
-BULLET[BLOCK.UNLOADED] = STOP;
+setGlassPasses(GLASS_PASSES_DEFAULT);
 
 export interface BlockQuery {
   getBlock(x: number, y: number, z: number): number;

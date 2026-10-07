@@ -13,7 +13,8 @@ interface Budget {
   /** Multiplier applied to every budget on CI (process.env.CI). */
   ciFactor: number;
   mesh: { meanMs: number; p95Ms: number };
-  arena: { tickMeanMs: number; tickP95Ms: number; handleMeanMs: number; outKiBps: number };
+  arena: { tickMeanMs: number; tickP95Ms: number; handleMeanMs: number; tickCpuMeanMs: number; outKiBps: number; shotBps: number };
+  bots: { lobbyTickCpuMeanMs: number };
   mobs: { obstacleTickMeanMs: number; obstacleTickP95Ms: number; roomTickMeanMs: number; roomTickP95Ms: number; roomMobsMeanMs: number };
   visibility: { tickMeanMs: number; tickP95Ms: number };
 }
@@ -39,8 +40,15 @@ const arena = run('bench-arena.ts', ['16', '20']);
 results.push({ name: 'arena tick mean', value: num(/tick\(\):\s+mean ([\d.]+) ms/, arena, 'tick mean'), limit: budget.arena.tickMeanMs * factor, unit: 'ms' });
 results.push({ name: 'arena tick p95', value: num(/tick\(\):\s+mean [\d.]+ ms, p95 ([\d.]+) ms/, arena, 'tick p95'), limit: budget.arena.tickP95Ms * factor, unit: 'ms' });
 results.push({ name: 'arena handling mean', value: num(/message handling\/tick: mean ([\d.]+) ms/, arena, 'handling mean'), limit: budget.arena.handleMeanMs * factor, unit: 'ms' });
-// Bandwidth does not depend on the machine: no CI factor.
+// Thread CPU time of the tick: unlike the wall-clock numbers above it does not swing with other load on the machine.
+results.push({ name: 'arena tick CPU mean', value: num(/CPU time: tick mean ([\d.]+) ms/, arena, 'tick CPU mean'), limit: budget.arena.tickCpuMeanMs * factor, unit: 'ms' });
+// Bandwidth does not depend on the machine: no CI factor. Shots are guarded on their own (binary frames, binary.ts).
 results.push({ name: 'arena outgoing/player', value: num(/outgoing per player: ([\d.]+) KiB\/s/, arena, 'outgoing'), limit: budget.arena.outKiBps, unit: 'KiB/s' });
+results.push({ name: 'arena shots/player', value: num(/shot \(bin\) (\d+)/, arena, 'binary shot bytes'), limit: budget.arena.shotBps, unit: 'B/s' });
+
+// Server bots: a quick play lobby (1 person + 11 bots) in thread CPU time per tick.
+const bots = run('bench-bots.ts', ['4', '20', 'tdm', 'atomic']);
+results.push({ name: 'bot lobby tick CPU', value: num(/per lobby tick CPU: mean ([\d.]+) ms/, bots, 'bot lobby CPU'), limit: budget.bots.lobbyTickCpuMeanMs * factor, unit: 'ms' });
 
 // Mob AI, path finding and spawning in CPU time (the unit tests count the work, this guards the milliseconds).
 const mobs = run('bench-mobs.ts', []);

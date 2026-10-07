@@ -2,7 +2,7 @@ import { type ArenaMap, DEFAULT_MAP, type Spawn, getMap, mapFor, parseMapId } fr
 import { type GameTypeDef, type MapFeature, type Team, gameTypeDef } from '../src/modes/GameTypes';
 import {
   DEFAULT_PRIMARY, DEFAULT_SECONDARY, type OpticId, PLAYER_MAX_HEALTH, type PerkId, REGEN_DELAY, REGEN_PER_SECOND,
-  type WeaponDef, damageAt, fireInterval, magazineFor, opticFor, rangeMulFor, switchDelayFor, weaponDef,
+  HITBOX, type WeaponDef, damageAt, fireInterval, magazineFor, opticFor, rangeMulFor, switchDelayFor, weaponDef,
 } from '../src/modes/Weapons';
 import { type ClassSpec, DEFAULT_CLASS, validateClass } from '../src/modes/Loadouts';
 import type {
@@ -40,6 +40,15 @@ const FIRE_SLACK = 0.04;
 const HISTORY_SIZE = 24;
 /** Server ticks whose time is remembered, so a shot's render tick (`rk`) maps back to a moment. */
 const TICK_RING = 64;
+/** Killstreak: every this many kills in one life sends a radar sweep, shown this long. */
+export const RADAR_STREAK = 5;
+export const RADAR_SECONDS = 4;
+/** Spawn choice: shots remembered, how long and how near they count, and the distance beyond which a spawn is safe. */
+const FIGHT_MEMORY = 32;
+export const SPAWN_FIGHT_SECONDS = 3;
+export const SPAWN_FIGHT_RADIUS = 14;
+/** An opponent this close that can see a spawn makes it a bad one. */
+export const SPAWN_SIGHT_RANGE = 35;
 /** The mode state (zones, flags) is re-sent at least this often. */
 const MODE_INTERVAL = 0.25;
 
@@ -116,7 +125,8 @@ interface Slot {
   burstStart: number;
 }
 
-interface Sample { t: number; x: number; y: number; z: number; yaw: number; pitch: number }
+/** A lag compensation sample: position, view and hitbox height (the pose) at time t. */
+interface Sample { t: number; x: number; y: number; z: number; yaw: number; pitch: number; h: number }
 
 export interface MatchPlayer {
   id: number;
@@ -132,6 +142,8 @@ export interface MatchPlayer {
   bot?: boolean;
   x: number; y: number; z: number;
   yaw: number; pitch: number;
+  /** Hitbox height of the current pose (standing, crouching, sliding), as the connection layer accepted it. */
+  height: number;
   alive: boolean;
   health: number;
   lastDamageAt: number;
@@ -147,6 +159,8 @@ export interface MatchPlayer {
   /** When this life began and whether a shot went out in it (early class swap). */
   spawnedAt: number;
   firedThisLife: boolean;
+  /** Kills since the last death (killstreak rewards). */
+  streak: number;
   slots: [Slot, Slot, Slot];
   slot: 0 | 1 | 2;
   /** Realms rank for the roster (prestige * 100 + level, see progression/Levels.ts); 0 or absent = none. */
@@ -188,13 +202,18 @@ export class Match {
   /** Player who changes team at their next respawn because the other team lost players (0 = nobody). */
   private moveId = 0;
   private readonly tmpDir: [number, number, number] = [0, 0, 0];
-  private readonly tmpPos: Sample = { t: 0, x: 0, y: 0, z: 0, yaw: 0, pitch: 0 };
+  private readonly tmpPos: Sample = { t: 0, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, h: HITBOX.height };
   private readonly tmpRand: [number, number] = [0, 0];
   private readonly trace = createBulletTrace();
-  private readonly targets: { o: MatchPlayer; x: number; y: number; z: number; yaw: number; pitch: number }[] = [];
+  private readonly targets: { o: MatchPlayer; x: number; y: number; z: number; yaw: number; pitch: number; h: number }[] = [];
   /** Server tick counter (snapshots carry it as `k`) and the time of the last TICK_RING ticks. */
   tickNo = 0;
   private readonly tickTimes = new Float64Array(TICK_RING);
+  /** Recent shots (where and when), for the spawn choice. */
+  private readonly fightX = new Float64Array(FIGHT_MEMORY);
+  private readonly fightZ = new Float64Array(FIGHT_MEMORY);
+  private readonly fightT = new Float64Array(FIGHT_MEMORY).fill(-1e9);
+  private fightHead = 0;
 
   /** The arena this match is played on. */
   map: ArenaMap;
@@ -248,10 +267,11 @@ export class Match {
     const p: MatchPlayer = {
       id, name, team, kills: 0, deaths: 0, pts: 0, joinSeq: ++this.joinCounter, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, alive: false, health: PLAYER_MAX_HEALTH,
       lastDamageAt: -1e9, lastHpSent: PLAYER_MAX_HEALTH, respawnAt: 0, protectedUntil: 0,
-      primary: DEFAULT_PRIMARY, secondary: DEFAULT_SECONDARY, optic: 'iron', perk: 'none', next: { ...DEFAULT_CLASS }, spawnedAt: now, firedThisLife: false,
+      primary: DEFAULT_PRIMARY, secondary: DEFAULT_SECONDARY, optic: 'iron', perk: 'none', next: { ...DEFAULT_CLASS }, spawnedAt: now, firedThisLife: false, streak: 0,
       slots: [newSlot(DEFAULT_PRIMARY, 'none'), newSlot(DEFAULT_SECONDARY, 'none'), newSlot('knife', 'none')], slot: 0,
-      switchReadyAt: 0, history: Array.from({ length: HISTORY_SIZE }, () => ({ t: 0, x: 0, y: 0, z: 0, yaw: 0, pitch: 0 })), historyHead: 0, historyCount: 0,
+      switchReadyAt: 0, history: Array.from({ length: HISTORY_SIZE }, () => ({ t: 0, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, h: HITBOX.height })), historyHead: 0, historyCount: 0,
       spreadSeed: Math.floor(this.host.random() * 0x100000000) >>> 0, shotN: 0,
+      height: HITBOX.height,
       ...(bot ? { bot: true } : {}),
     };
     this.players.set(id, p);
@@ -298,10 +318,11 @@ export class Match {
     this.logic.onReset?.(this);
   }
 
-  setPosition(id: number, x: number, y: number, z: number, yaw = 0, pitch = 0): void {
+  /** `height`: hitbox height of the pose the connection layer accepted (see GameServer.poseHeight); standing by default. */
+  setPosition(id: number, x: number, y: number, z: number, yaw = 0, pitch = 0, height: number = HITBOX.height): void {
     const p = this.players.get(id);
     if (!p) return;
-    p.x = x; p.y = y; p.z = z; p.yaw = yaw; p.pitch = pitch;
+    p.x = x; p.y = y; p.z = z; p.yaw = yaw; p.pitch = pitch; p.height = height;
   }
 
   /**
@@ -430,6 +451,9 @@ export class Match {
     // Spread: the next index of this player's seeded sequence (the client predicts the same one and is corrected by `ammo`).
     const n = p.shotN++;
     const seq = seqOf(m);
+    // Spawn protection ends with the first shot (no shooting from behind a shield).
+    if (p.protectedUntil > now) p.protectedUntil = now;
+    this.noteFight(p.x, p.z, now);
     if (s.cap > 0) {
       s.mag--;
       this.host.send(id, { t: 'ammo', slot: p.slot, mag: s.mag, reloading: false, sn: p.shotN, ...(seq >= 0 ? { seq } : {}) });
@@ -459,11 +483,11 @@ export class Match {
       if (this.teams && o.team === p.team) continue; // no friendly fire
       this.positionAt(o, at, now, pos);
       if (rewind > PEEK_LIMIT) {
-        const x = pos.x, y = pos.y, z = pos.z, yaw = pos.yaw, pitch = pos.pitch;
+        const x = pos.x, y = pos.y, z = pos.z, yaw = pos.yaw, pitch = pos.pitch, h = pos.h;
         this.positionAt(o, now - PEEK_LIMIT, now, pos);
-        if (bodyVisible(this.host.blocks, ox, oy, oz, pos.x, pos.y, pos.z)) { pos.x = x; pos.y = y; pos.z = z; pos.yaw = yaw; pos.pitch = pitch; }
+        if (bodyVisible(this.host.blocks, ox, oy, oz, pos.x, pos.y, pos.z, pos.h)) { pos.x = x; pos.y = y; pos.z = z; pos.yaw = yaw; pos.pitch = pitch; pos.h = h; }
       }
-      targets.push({ o, x: pos.x, y: pos.y, z: pos.z, yaw: pos.yaw, pitch: pos.pitch });
+      targets.push({ o, x: pos.x, y: pos.y, z: pos.z, yaw: pos.yaw, pitch: pos.pitch, h: pos.h });
     }
 
     const dealt = new Map<number, { damage: number; head: boolean }>();
@@ -480,7 +504,7 @@ export class Match {
       let victim: MatchPlayer | null = null;
       let hitHead = false;
       for (const t of targets) {
-        const hit = rayPlayer(ox, oy, oz, dir[0], dir[1], dir[2], t.x, t.y, t.z, t.yaw, t.pitch);
+        const hit = rayPlayer(ox, oy, oz, dir[0], dir[1], dir[2], t.x, t.y, t.z, t.yaw, t.pitch, t.h / HITBOX.height);
         if (hit && hit.t < tEnd) { tEnd = hit.t; victim = t.o; hitHead = hit.part === 'head'; }
       }
       if (victim) {
@@ -549,7 +573,9 @@ export class Match {
     victim.respawnAt = delay < 0 ? Infinity : now + delay;
     victim.historyCount = 0;
     if (killer) killer.kills++;
+    victim.streak = 0;
     this.logic.onKill(this, killer, victim, w, head, now);
+    if (killer && killer !== victim && ++killer.streak % RADAR_STREAK === 0) this.radar(killer);
     this.host.onKill?.(killer?.id ?? 0, victim.id, w.id, head);
     this.sendHp(victim, true);
     this.host.broadcast({ t: 'kill', killer: killer?.id ?? 0, victim: victim.id, weapon: w.id, head });
@@ -558,12 +584,26 @@ export class Match {
     this.checkEnd(now);
   }
 
+  /** Killstreak reward: one radar sweep of the opponents' positions for the killer (and its team). */
+  private radar(by: MatchPlayer): void {
+    const pts: number[] = [];
+    for (const o of this.players.values()) {
+      if (o === by || !o.alive || (this.teams && o.team === by.team)) continue;
+      pts.push(r2(o.x), r2(o.z));
+    }
+    const msg: ServerMessage = { t: 'radar', by: by.id, pts, sec: RADAR_SECONDS };
+    for (const o of this.players.values()) if (o === by || (this.teams && o.team === by.team)) this.host.send(o.id, msg);
+  }
+
   // ---------------------------------------------------------------- lag compensation
 
-  /** Where a player was at time `t` (seconds), and where they looked: interpolated between recorded ticks. */
+  /**
+   * Where a player was at time `t` (seconds), where they looked, and the hitbox height then (the taller of the two
+   * samples around `t`: a pose change is never in the shooter's disfavour): interpolated between recorded ticks.
+   */
   private positionAt(p: MatchPlayer, t: number, now: number, out: Sample): void {
     // Newest sample is the live position at `now`.
-    let nx = p.x, ny = p.y, nz = p.z, nyaw = p.yaw, npitch = p.pitch, nt = now;
+    let nx = p.x, ny = p.y, nz = p.z, nyaw = p.yaw, npitch = p.pitch, nh = p.height, nt = now;
     for (let i = 0; i < p.historyCount; i++) {
       const s = p.history[(p.historyHead - 1 - i + HISTORY_SIZE * 2) % HISTORY_SIZE];
       if (s.t <= t) {
@@ -575,17 +615,18 @@ export class Match {
         dyaw = Math.atan2(Math.sin(dyaw), Math.cos(dyaw));
         out.yaw = s.yaw + dyaw * f;
         out.pitch = s.pitch + (npitch - s.pitch) * f;
+        out.h = Math.max(s.h, nh);
         return;
       }
-      nx = s.x; ny = s.y; nz = s.z; nyaw = s.yaw; npitch = s.pitch; nt = s.t;
+      nx = s.x; ny = s.y; nz = s.z; nyaw = s.yaw; npitch = s.pitch; nh = s.h; nt = s.t;
     }
     // Older than anything recorded: the oldest known position.
-    out.x = nx; out.y = ny; out.z = nz; out.yaw = nyaw; out.pitch = npitch;
+    out.x = nx; out.y = ny; out.z = nz; out.yaw = nyaw; out.pitch = npitch; out.h = nh;
   }
 
   private record(p: MatchPlayer, now: number): void {
     const s = p.history[p.historyHead];
-    s.t = now; s.x = p.x; s.y = p.y; s.z = p.z; s.yaw = p.yaw; s.pitch = p.pitch;
+    s.t = now; s.x = p.x; s.y = p.y; s.z = p.z; s.yaw = p.yaw; s.pitch = p.pitch; s.h = p.height;
     p.historyHead = (p.historyHead + 1) % HISTORY_SIZE;
     if (p.historyCount < HISTORY_SIZE) p.historyCount++;
   }
@@ -832,6 +873,7 @@ export class Match {
     p.firedThisLife = false;
     const s = this.logic.pickSpawn?.(this, p) ?? this.pickSpawn(p);
     p.x = s.x; p.y = s.y; p.z = s.z; p.yaw = s.yaw; p.pitch = 0;
+    p.height = HITBOX.height;
     p.historyCount = 0;
     p.respawnAt = 0;
     this.logic.onSpawn?.(this, p, now);
@@ -846,20 +888,40 @@ export class Match {
     for (let i = 0; i < 3; i++) this.host.send(p.id, { t: 'ammo', slot: i as 0 | 1 | 2, mag: p.slots[i].mag, reloading: false, sn: p.shotN });
   }
 
+  /** A shot was fired here (recent fights: spawns keep away from them). Fixed ring, no allocation. */
+  private noteFight(x: number, z: number, now: number): void {
+    const i = this.fightHead;
+    this.fightX[i] = x; this.fightZ[i] = z; this.fightT[i] = now;
+    this.fightHead = (i + 1) % FIGHT_MEMORY;
+  }
+
   /**
-   * The team's spawn (team modes) or any spawn (ffa) that is furthest from the living opponents, with a
-   * little randomness so the same point is not used every time.
+   * A spawn away from the fight: the team's spawns (team modes) or all (ffa), scored by
+   *  - the distance (blocks) to the nearest living opponent,
+   *  - minus 8 when an opponent within SPAWN_SIGHT_RANGE can see it (no spawning into a sight line),
+   *  - minus 3 per shot fired nearby in the last SPAWN_FIGHT_SECONDS, up to 3 (no spawning into a fight),
+   *  - plus 1 in team modes with a teammate within 25 blocks (spawn with your team),
+   * plus up to 2 of randomness so the same point is not used every time. Weights tuned with scripts/flow-metrics.ts
+   * (bot matches): stronger sight/fight penalties pick closer hidden spots and get more spawn kills.
    */
   pickSpawn(p: MatchPlayer): Spawn {
     const list: Spawn[] = this.teams && p.team ? this.map.spawns[p.team] : this.map.spawns.ffa;
+    const now = this.host.now();
     let best = list[0], bestScore = -Infinity;
     for (const s of list) {
-      let nearest = 1000;
+      let nearest = 1000, seen = false, mate = false;
       for (const o of this.players.values()) {
-        if (o === p || !o.alive || (this.teams && o.team === p.team)) continue;
-        nearest = Math.min(nearest, dist2(s.x, s.z, o.x, o.z));
+        if (o === p || !o.alive) continue;
+        const d = dist2(s.x, s.z, o.x, o.z);
+        if (this.teams && o.team === p.team) { if (d < 25) mate = true; continue; }
+        nearest = Math.min(nearest, d);
+        if (!seen && d < SPAWN_SIGHT_RANGE) seen = bodyVisible(this.host.blocks, o.x, o.y + EYE_HEIGHT, o.z, s.x, s.y, s.z);
       }
-      const score = nearest + this.host.random() * 5;
+      let fights = 0;
+      for (let i = 0; i < FIGHT_MEMORY; i++) {
+        if (now - this.fightT[i] <= SPAWN_FIGHT_SECONDS && dist2(s.x, s.z, this.fightX[i], this.fightZ[i]) < SPAWN_FIGHT_RADIUS) fights++;
+      }
+      const score = nearest - (seen ? 8 : 0) - Math.min(3, fights) * 3 + (mate ? 1 : 0) + this.host.random() * 2;
       if (score > bestScore) { bestScore = score; best = s; }
     }
     return best;

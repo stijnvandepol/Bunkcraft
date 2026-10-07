@@ -219,8 +219,11 @@ export default mergeConfig(base, {{ server: {{ port: {self.vite_port}, strictPor
         wait_http(f'http://localhost:{self.vite_port}/')
         self.bots = None
 
-    def create_room(self, game_type, map_id):
-        body = json.dumps({'name': f'perf {map_id}', 'gameType': game_type, 'mapId': map_id, 'scoreLimit': 1000, 'timeLimitSec': 1800}).encode()
+    def create_room(self, game_type, map_id, server_bots=0):
+        room = {'name': f'perf {map_id}', 'gameType': game_type, 'mapId': map_id, 'scoreLimit': 1000, 'timeLimitSec': 1800, 'maxPlayers': 16}
+        if server_bots:
+            room.update(bots=server_bots, botDifficulty='normal')
+        body = json.dumps(room).encode()
         req = urllib.request.Request(f'http://127.0.0.1:{self.game_port}/api/rooms', data=body,
                                      headers={'content-type': 'application/json'}, method='POST')
         with urllib.request.urlopen(req) as r:
@@ -245,7 +248,7 @@ export default mergeConfig(base, {{ server: {{ port: {self.vite_port}, strictPor
 
 
 def measure(srv, pw, args, map_id):
-    code, token = srv.create_room(args.type, map_id)
+    code, token = srv.create_room(args.type, map_id, args.players - 1 if args.server_bots else 0)
     if args.browser == 'webkit':
         browser = pw.webkit.launch()
     else:
@@ -261,7 +264,8 @@ def measure(srv, pw, args, map_id):
     page.evaluate("(c) => window.game.joinServer('perfplayer', '', c)", code)
     page.wait_for_function('window.game.state !== "loading" && window.game.state !== "menu" && !!window.game.arcade', timeout=120000)
     join_s = time.time() - t_join
-    srv.start_bots(code, token, args.players - 1)
+    if not args.server_bots:
+        srv.start_bots(code, token, args.players - 1)
     page.evaluate("() => { const g = window.game; g.input.locked = true; g.state = 'playing'; document.querySelector('.click-to-play')?.remove(); }")
     # Warm-up ends once enough players are in; the bots need a few seconds to join and spawn.
     page.wait_for_function("window.game.arcade && window.game.arcade.phase === 'live'", timeout=90000)
@@ -329,7 +333,7 @@ def measure(srv, pw, args, map_id):
     row = [
         ('map', map_id),
         ('browser', args.browser + (f' cpu x{args.cpu:g}' if args.cpu != 1 else '')),
-        ('players (bots + you)', args.players),
+        ('players (bots + you)', f"{args.players} ({'server' if args.server_bots else 'protocol'} bots)"),
         ('remote players drawn', res['remotes']),
         ('join (s)', f'{join_s:.1f}'),
         ('frames', len(gaps)),
@@ -440,6 +444,7 @@ def main():
     ap.add_argument('--diag', action='store_true', help='also count scene objects, GL programs and DOM mutations per second')
     ap.add_argument('--no-latency', action='store_true')
     ap.add_argument('--json', default=None, help='write the result(s) here')
+    ap.add_argument('--server-bots', action='store_true', help="the game server's own bots (server/bots) instead of protocol bots")
     ap.add_argument('--eval', default=None, help='JavaScript to run in the page before recording (experiments)')
     args = ap.parse_args()
     maps = MAPS if args.map == 'all' else args.map.split(',')

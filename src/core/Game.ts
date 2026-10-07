@@ -22,7 +22,7 @@ import { NetClient, type WelcomeMessage } from '../net/NetClient';
 import { NetEntities } from '../net/NetEntities';
 import { useBoneMeal } from '../world/Growth';
 import { farmStateText, trample } from '../world/Farming';
-import { type ClientMessage, type ServerMessage, formatCode, normalizeCode } from '../net/protocol';
+import { type ClientMessage, SNAP_FLAG_CROUCH, SNAP_FLAG_SLIDE, type ServerMessage, formatCode, normalizeCode } from '../net/protocol';
 import { type GameType, TEAM_COLORS, gameTypeDef } from '../modes/GameTypes';
 import { ARCADE_POS_HZ, arcadeInterpDelay } from '../modes/ArcadeLogic';
 import { inviteLink, inviteText, rememberGame } from '../net/RoomApi';
@@ -39,7 +39,7 @@ import { MAX_AIR, PlayerStats } from '../player/PlayerStats';
 import { DayCycle, MOON_PHASE_NAMES } from '../rendering/DayCycle';
 import { HandRenderer } from '../rendering/HandRenderer';
 import {
-  IMPORTED_PREFIX, MINECRAFT_LAYOUT, type PackImage, builtinResolver, findBuiltinPack, importMinecraftArchive, importedResolver, loadPack,
+  IMPORTED_PREFIX, MINECRAFT_LAYOUT, type PackImage, bundledResolver, findBuiltinPack, importMinecraftArchive, importedResolver, loadPack,
 } from '../rendering/TexturePacks';
 import { type WorldMeta, SaveSystem, cheatsAllowed, newWorldId } from '../save/SaveSystem';
 import { BlockIcons } from '../ui/BlockIcons';
@@ -177,6 +177,10 @@ export class Game {
   private readonly padCtx: PadContext = { state: 'menu', playing: false, arcade: false };
   /** Was the player walking forward last frame (releases a toggled sprint when they stop). */
   private wasMovingForward = false;
+  /** Arcade: slides seen so far and the physics step of the latest start (the `sl` field of `pos`). */
+  private slidesSeen = 0;
+  private slideStep = NaN;
+  private padsSeen = 0;
   private readonly solidAt = (x: number, y: number, z: number): boolean => !!SOLID[this.getBlock(x, y, z)];
   /** Feedback channels for the arcade session: captions and controller rumble. */
   private readonly feedback = {
@@ -540,7 +544,12 @@ export class Game {
     try {
       const builtin = findBuiltinPack(id);
       if (builtin) {
-        images = await loadPack(builtin.layout, builtinResolver(builtin), 16);
+        const files = await bundledResolver(builtin);
+        try {
+          images = await loadPack(builtin.layout, files.resolve, 16);
+        } finally {
+          files.dispose();
+        }
         credit = builtin.credit;
       } else if (id.startsWith(IMPORTED_PREFIX)) {
         const pack = await this.save.getPack(id.slice(IMPORTED_PREFIX.length));
@@ -1226,7 +1235,9 @@ export class Game {
     this.root.append(session.hud.el, session.hud.loadoutEl);
     session.setHudVisible(false);
     for (const pl of welcome.players) session.addPlayer(pl.id, pl.name, pl.team ?? '');
-    this.arcadeHint = `${def.name}: ${def.description}. Tab = scoreboard,${def.loadout === 'ladder' ? '' : ' B = loadout,'} R = reload.`;
+    const slideKey = keyDisplayName(this.input.bound(KB.SNEAK)) || 'Sneak';
+    this.arcadeHint = `${def.name}: ${def.description}. Tab = scoreboard,${def.loadout === 'ladder' ? '' : ' B = loadout,'} R = reload,`
+      + ` ${slideKey} while running = slide (jump out of it to keep the speed).`;
   }
 
   private stopArcade(): void {
@@ -2087,9 +2098,14 @@ export class Game {
         if (needsAutoJump(this.solidAt, p.x, p.y, p.z, -sin * move.forward + cos * move.strafe, -cos * move.forward - sin * move.strafe)) move.jump = true;
       }
       move.descend = control && arcade === null && input.actionDown(KB.SNEAK);
+      // Arcade: the sneak key crouches, and slides while running (latched like the jump press).
+      move.crouch = control && arcade !== null && input.actionDown(KB.SNEAK);
+      move.crouchPressed = latchPress(move.crouchPressed === true, control && arcade !== null, input.actionPressed(KB.SNEAK));
+      p.arcadeMove = arcade !== null;
       if (arcade) {
         p.speedMultiplier = arcade.speedMultiplier;
         p.airAccel = arcade.airAccel;
+        p.slideCooldown = arcade.slideCooldown;
       } else {
         // Status effects: Speed/Slowness, Jump Boost, Levitation.
         const fx = this.stats.effects;
@@ -2105,6 +2121,16 @@ export class Game {
         if (this.mount && !rideStep(p, this.mount, move, ((this.stepCount % STEPS_PER_TICK) + 1) / STEPS_PER_TICK)) this.mount = null;
         if (!asleep && !this.mount) p.step(move, this.getBlock, this.getMeta);
         move.jumpPressed = false;
+        move.crouchPressed = false;
+        if (p.slideStarts !== this.slidesSeen) {
+          this.slidesSeen = p.slideStarts;
+          this.slideStep = this.stepCount + 1;
+          this.audio.playSlide();
+        }
+        if (p.padLaunches !== this.padsSeen) {
+          this.padsSeen = p.padLaunches;
+          this.audio.playJumpPad();
+        }
         this.accumulator -= PHYSICS.STEP;
         if (++this.stepCount % STEPS_PER_TICK === 0) this.gameTick();
       }
@@ -2134,7 +2160,7 @@ export class Game {
     this.audio.setListener(eye.x, eye.y, eye.z, p.yaw);
     this.audioProbe.update(dt, this.audio.env, eye.x, eye.y, eye.z, this.cycle.dayFactor, this.underwater);
     this.hud.setUnderwater(this.underwater);
-    this.hud.setHurt(limitFlash(this.arcade ? this.arcade.hurt * 0.8 : this.stats.hurtTime / 10, this.settings.values));
+    this.hud.setHurt(limitFlash(this.arcade ? this.arcade.hurtVignette : this.stats.hurtTime / 10, this.settings.values));
     if (!this.arcade) this.hud.survival.update({
       health: Math.ceil(this.stats.health), hunger: this.stats.hunger, air: this.stats.air, maxAir: MAX_AIR, armor: this.stats.armorPoints,
       hardcore: this.mode === 'hardcore', poison: this.stats.effects.level('poison') > 0, wither: this.stats.effects.level('wither') > 0,
@@ -2151,9 +2177,10 @@ export class Game {
     }
 
     if (this.net) {
-      const flags = (p.sprinting ? 1 : 0) | (p.flying ? 2 : 0) | (p.onGround ? 4 : 0) | (this.arcade ? this.arcade.aimFlags : 0);
+      const flags = (p.sprinting ? 1 : 0) | (p.flying ? 2 : 0) | (p.onGround ? 4 : 0) | (this.arcade ? this.arcade.aimFlags : 0)
+        | (p.crouching ? SNAP_FLAG_CROUCH : 0) | (p.sliding ? SNAP_FLAG_SLIDE : 0);
       // The physics clock (steps) lets the server time the movement checks without trusting arrival times.
-      this.net.update(dt, p.x, p.y, p.z, p.yaw, p.pitch, flags, this.arcade ? 0 : this.hotbar.selectedBlock, this.stepCount);
+      this.net.update(dt, p.x, p.y, p.z, p.yaw, p.pitch, flags, this.arcade ? 0 : this.hotbar.selectedBlock, this.stepCount, this.arcade ? this.slideStep : NaN);
     }
     if (this.net || this.previewServer) this.remote.update(performance.now() / 1000, this.cam.camera, window.innerWidth, window.innerHeight);
     // Arcade: after dying the camera follows another player (with fresh interpolated poses).
