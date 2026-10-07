@@ -620,6 +620,7 @@ export class GameServer {
       random: Math.random,
       ping: (id) => this.sessions.get(id)?.pingMs ?? 0,
       onShot: (r) => { this.progress?.shot(r.shooter, r.weapon, r.hits.length > 0); this.onShot(r); },
+      debugShots: process.env.ARCADE_SHOT_DEBUG === '1',
       ...this.progress?.hooks(),
       get interpDelay() { return arcadeInterpDelay(gs.tickHz); },
       nextMap: (current, requires, preferred) => {
@@ -1095,6 +1096,7 @@ export class GameServer {
     const s = this.sessions.get(r.shooter);
     const match = this.match;
     if (!s || !match) return;
+    if (r.targets.length > 0) this.send(s, { t: 'shotdbg', seq: r.seq, rewind: Math.round(r.rewind * 1000) / 1000, rk: r.rk, tick: r.tick, targets: r.targets, hits: r.hits.map((h) => h.victim), ray: [r.ox, r.oy, r.oz, r.dx, r.dy, r.dz].map((v) => Math.round(v * 10000) / 10000) });
     const me = match.players.get(r.shooter);
     // The opponent closest to the aim line is what the shot was meant for.
     let best = Infinity, dist = NaN;

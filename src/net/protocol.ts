@@ -352,6 +352,11 @@ export type ServerMessage =
   /** Your shot hit a player: hit marker, damage dealt, headshot, and whether it killed. */
   /** `seq`: the `fire` that hit (hit registration statistics). */
   | { t: 'hit'; victim: number; damage: number; head: boolean; killed: boolean; seq?: number }
+  /**
+   * QA only (server env ARCADE_SHOT_DEBUG=1): how the server resolved one of your shots: the rewind (s), the claimed
+   * render tick, and where it tested each target ([id, x, y, z, yaw, pitch]). See scripts/qa/hitreg-browser.ts.
+   */
+  | { t: 'shotdbg'; seq: number; rewind: number; rk: number; tick: number; targets: number[][]; hits: number[]; ray: number[] }
   /** You took damage from `from` at direction (dx, dz) relative to the world. */
   | { t: 'damaged'; from: number; damage: number; dx: number; dz: number }
   /** Kill feed entry (also tells everyone a player is down until the next spawn). */

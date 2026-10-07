@@ -19,8 +19,8 @@ export const MAX_REWIND = 0.4;
 export const DEFAULT_REWIND = 0.1;
 /** Rewinds longer than this need the victim to have been visible at `now - PEEK_LIMIT`. */
 export const PEEK_LIMIT = 0.15;
-/** A client's claimed render time may lie this much further back than its measured round trip explains (jitter). */
-export const REWIND_SLACK = 0.08;
+/** A client's claimed render time may lie this much further back than its measured round trip explains (jitter, a ping measured seconds ago, a frame of delay; QA saw up to 0.11). */
+export const REWIND_SLACK = 0.15;
 
 /** Seconds to rewind for a shooter with round-trip time `rttMs` (0 = unknown) and interpolation delay `interp`. */
 export function rewindWindow(rttMs: number, interp = DEFAULT_REWIND): number {

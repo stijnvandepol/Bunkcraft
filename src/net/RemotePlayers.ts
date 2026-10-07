@@ -285,7 +285,11 @@ export class RemotePlayers {
       const b = r.buffer;
       if (b.length === 0) { this.showTag(r, false); continue; }
       // Arcade culling: hide players the server no longer shows us.
-      const culled = this.occluder !== null && ((r.staleAt >= 0 && now - r.staleAt >= STALE_HIDE) || now - r.lastSeen > ABSENT_HIDE);
+      // Arcade: a player back in view after a gap starts a fresh buffer that lies in the future of renderTime: wait
+      // (about the interpolation delay) instead of drawing the newest sample, which the server's lag compensation
+      // would never rewind to (QA: shots at such a player missed by a body width).
+      const waiting = b[0].t > renderTime;
+      const culled = this.occluder !== null && (waiting || (r.staleAt >= 0 && now - r.staleAt >= STALE_HIDE) || now - r.lastSeen > ABSENT_HIDE);
       if (culled !== r.culled) { r.culled = culled; this.syncListed(r); }
       const sp = interpolate(b, renderTime, this.span);
       const a = b[sp.a], c = b[sp.c], f = sp.f;
@@ -293,11 +297,14 @@ export class RemotePlayers {
       if (r.deadAt >= 0) {
         const since = now - r.deadAt;
         if (since >= RESPAWN_SECONDS) this.revive(r);
-        else if (since >= CORPSE_SECONDS && !r.hidden) {
-          r.hidden = true;
-          this.syncListed(r);
+        else {
+          if (since >= CORPSE_SECONDS && !r.hidden) {
+            r.hidden = true;
+            this.syncListed(r);
+          }
+          // (Not after the revive: a respawned player must not keep a death pose.)
+          r.mob.deathTime = Math.min(20, since * 20);
         }
-        r.mob.deathTime = Math.min(20, since * 20);
       }
       const m = r.mob;
       const px = m.x, pz = m.z;

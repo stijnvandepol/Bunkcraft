@@ -59,6 +59,8 @@ export interface MatchHost {
   interpDelay?: number;
   /** Every resolved shot, for the anti-cheat statistics (see anticheat/Suspicion.ts). */
   onShot?(shot: ShotReport): void;
+  /** QA: report the tested target positions with every shot (ARCADE_SHOT_DEBUG=1). */
+  debugShots?: boolean;
   /**
    * A new match is about to start on `current`: returns the map to play next (the host swaps its
    * bullet world), or null to keep the map. `requires` is the map data the game type needs.
@@ -92,6 +94,11 @@ export interface ShotReport {
   hits: { victim: number; dist: number; head: boolean }[];
   /** Seconds the targets were rewound for this shot. */
   rewind: number;
+  /** The client's shot counter and claimed render tick (−1 when absent), the server tick, and where each target was tested. */
+  seq: number;
+  rk: number;
+  tick: number;
+  targets: number[][];
 }
 
 interface Slot {
@@ -494,7 +501,10 @@ export class Match {
       this.host.broadcast(shot);
     }
     for (const [vid, d] of dealt) this.applyDamage(p, this.players.get(vid)!, Math.max(1, Math.round(d.damage)), w, d.head, now, seq);
-    this.host.onShot?.({ shooter: id, weapon: w.id, ox, oy, oz, dx, dy, dz, hits: hitList, rewind });
+    this.host.onShot?.({
+      shooter: id, weapon: w.id, ox, oy, oz, dx, dy, dz, hits: hitList, rewind, seq, rk: typeof m.rk === 'number' ? m.rk : -1, tick: this.tickNo,
+      targets: this.host.debugShots ? targets.map((t) => [t.o.id, r2(t.x), r2(t.y), r2(t.z), r2(t.yaw), r2(t.pitch)]) : [],
+    });
     return true;
   }
 
