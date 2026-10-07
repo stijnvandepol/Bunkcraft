@@ -155,7 +155,11 @@ export class SndLogic extends RoundsLogic {
     r.planted = true;
     r.progress = 0;
     const planter = m.players.get(r.actor);
-    if (planter) planter.pts++;
+    if (planter) {
+      planter.pts++;
+      // Realms progression: a plant (and a defuse) counts as an objective capture.
+      m.creditObjective(planter, 'zone-captured');
+    }
     r.actor = 0;
     // The round clock becomes the fuse.
     m.setPhase('live', fuseSec);
@@ -173,7 +177,10 @@ export class SndLogic extends RoundsLogic {
     r.progress = Math.min(1, r.progress + dt / defuseSec);
     if (r.progress < 1) return;
     const hero = m.players.get(r.actor);
-    if (hero) hero.pts++;
+    if (hero) {
+      hero.pts++;
+      m.creditObjective(hero, 'zone-captured');
+    }
     r.planted = false;
     m.event('bomb-defused', defenders, hero?.id ?? 0, r.site.name);
     m.broadcastRoster();

@@ -84,6 +84,9 @@ export class KothLogic extends BaseLogic {
       m.markModeDirty();
     }
     if (!holder) return;
+    // Realms progression: time in the hill counts like hardpoint time.
+    const king = m.players.get(holder);
+    if (king) m.creditObjective(king, 'hill', dt);
     this.acc += (params.pointsPerSec ?? 1) * dt;
     const whole = Math.floor(this.acc);
     if (whole <= 0) return;
