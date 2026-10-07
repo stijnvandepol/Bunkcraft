@@ -36,6 +36,21 @@ export const DESERT: ArenaMapDef = {
   teamSpawns: [[43, 3], [41, 6], [44, 8], [40, 9]],
   ffaSpawns: [[12, 12], [24, 13], [33, 15], [11, 20]],
   highGround: [[4, 25], [23, 5], [23, 23], [42, 23]],
+  objectives: {
+    // Hardpoint order: the lane in the middle, the lanes by the houses, then the two ends of the market hall.
+    zones: [
+      { name: 'Lane', x: 0, z: 13.5, r: 5 },
+      { name: 'West Houses', x: -24.5, z: 13.5, r: 4 },
+      { name: 'East Houses', x: 24.5, z: 13.5, r: 4 },
+      { name: 'West Hall', x: -12.5, z: -24.5, r: 4 },
+      { name: 'East Hall', x: 12.5, z: -24.5, r: 4 },
+    ],
+    dominationZones: [0, 1, 2],
+    // In the corner behind each compound, away from the towers.
+    flags: [{ team: 'red', x: -43.5, z: -28.5 }, { team: 'blue', x: 43.5, z: -28.5 }],
+    // Search and destroy: bomb sites in the blue half (see scripts/site-scan.ts).
+    sites: [{ name: 'A', x: 16.5, z: -12.5, r: 3 }, { name: 'B', x: 16.5, z: 12.5, r: 3 }],
+  },
   build(_variant, b) {
     const { box, paint } = b;
     const Y = BLOCK.YELLOW_WOOL, W = BLOCK.WHITE_WOOL, G = BLOCK.GREEN_WOOL;

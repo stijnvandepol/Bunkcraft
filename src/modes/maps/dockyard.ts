@@ -30,6 +30,8 @@ export const DOCKYARD: ArenaMapDef = {
     ],
     dominationZones: [0, 1, 2],
     flags: [{ team: 'red', x: -40.5, z: 26.5 }, { team: 'blue', x: 40.5, z: 26.5 }],
+    // Search and destroy: bomb sites in the blue half (see scripts/site-scan.ts).
+    sites: [{ name: 'A', x: 15.5, z: -18.5, r: 3 }, { name: 'B', x: 15.5, z: 18.5, r: 3 }],
   },
   highGround: [[22, 17], [20, 27], [30, 27], [12, 2]],
   build(_variant, b) {

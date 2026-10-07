@@ -508,7 +508,7 @@ Een game aanmaken (`POST /api/rooms`) accepteert `{ name, gameMode, seed, gameTy
 | `gameType` | `minecraft` | een id uit `GAME_TYPES` (onbekend = `minecraft`) |
 | `scoreLimit` | van het type (30 / 20 / 4 / 250 / 100 / 3) | 5 tot 100, verruimd met de keuzes van het type (1 capture, 250 punten); gun game negeert het (de ladder) |
 | `timeLimitSec` | van het type (600; elimination 90 = rondetijd) | 120 tot 1800 seconden, verruimd met de keuzes van het type (rondetijd 60 s) |
-| `mapId` | `classic` | een id uit `MAP_IDS` (`classic`, `suburb`, `quarter`, `dockyard`, `desert`, `atomic`, `bunker`, `villa`, `yacht`, `town`, `station`) of `rotate` (onbekend = `classic`) |
+| `mapId` | `classic` | een id uit `MAP_IDS` (`classic`, `suburb`, `quarter`, `dockyard`, `desert`, `atomic`, `bunker`, `villa`, `yacht`, `town`, `station`, `plaza`, `site`, `carrier`, `shanty`, `mall`, `scrap`) of `rotate` (onbekend = `classic`) |
 
 **Realms-endpoints:**
 
@@ -542,12 +542,18 @@ rode en blauwe wol markeert de teamzones. Elke kaart heeft eigen spawns die ver 
 | `quarter` | Old Quarter | 80 × 64 | Stedelijk: binnenplaats, balkons, dakstairs en steegjes |
 | `dockyard` | Harbor Yard | 88 × 64 | Industrieel: containerstapels, centrale loods, kraandek en een schip |
 | `desert` | Dust Bazaar | 96 × 64 | Lange zichtlijnen: markt, daken en sluipschuttertorens aan beide uiteinden |
-| `atomic` | Atomic Lane | 80 × 52 | Vrije kaart: twee huizen, een bus en een rotonde |
+| `atomic` | Atomic Lane | 72 × 48 | Vrije kaart: twee huizen met interieur, een bus, een verhuiswagen en een rotonde |
 | `bunker` | Bunker Flag | 64 × 40 | Capture the flag: rivierbedding, bruggen, een duiker en een bunker per team |
 | `villa` | Skyline Villa | 88 × 64 | Vrije kaart: witte villa met atrium en dakterras, leeg zwembad, basketbalveld, garage |
 | `yacht` | Riptide | 88 × 56 | Vrije kaart: superjacht in een jachthaven met benedendek, salon, brug en helikopterdek |
 | `town` | Sundown | 80 × 68 | Vrije kaart: stoffig dorp met tankstation, cantina, markt, klokkentoren en steegjes |
 | `station` | Terminus | 84 × 68 | Vrije kaart: station met twee treinen, perrons, loopbruggen, tunnels en twee hallen |
+| `plaza` | Fountain Square | 68 × 48 | Vrije kaart: stadsplein met fontein, hotel, café, tram en winkelgalerij |
+| `site` | Rebar | 64 × 44 | Vrije kaart: bouwplaats met betonnen casco, steiger, graafmachine en kranen |
+| `carrier` | Flight Deck | 72 × 40 | Vrije kaart: vliegdek met hangars, eilanden, jets en een verhoogde lift |
+| `shanty` | Tin Roofs | 64 × 44 | Vrije kaart: sloppenwijk met dakbruggen, steegjes en een watertoren |
+| `mall` | Galleria | 64 × 44 | Vrije binnenkaart: winkelcentrum met mezzanine, foodcourt en draaimolen |
+| `scrap` | Scrapyard | 60 × 42 | Vrije kaart: autosloperij met autostapels, bandenberg en portaalkraan |
 
 De instelling `rotate` speelt elke volgende match op de volgende kaart (in de volgorde hierboven). Bij een nieuwe
 kaart vervangt de server zijn kogelwereld en stuurt hij `match` met `info.map`; de client ziet dat dit niet zijn kaart
