@@ -40,6 +40,10 @@ import { AimStats, SUSPICION } from './anticheat/Suspicion';
 import { Send, type Viewer, Visibility } from './anticheat/Visibility';
 import type { ShotReport } from './Match';
 import type { ChunkGenPool } from './chunkgen/ChunkGenPool';
+import { BotManager, type BotSettings, parseBotSettings } from './bots/BotManager';
+import { arenaGraph } from './bots/BotWorld';
+import { MatchProgress } from './progression/MatchProgress';
+import type { ProfileService } from './progression/ProfileService';
 import { type RateLimiter, hashIp, newToken, safeEqual, tokenMatches, verifyPassword, hashToken } from './Security';
 
 const TICK_MS = 50; // 20 ticks per second, like Minecraft
@@ -120,6 +124,8 @@ interface WorldData extends SurvivalData {
   ipSalt?: string;
   /** Chests and furnaces: "x,y,z" → saved block entity (see src/world/BlockEntities). Absent in older files. */
   blockEntities?: Record<string, SavedEntity>;
+  /** Arcade: server-side bots (quick play fills the lobby, a private lobby's host picks a number). */
+  bots?: BotSettings;
 }
 
 /** Block change message; the meta field is left out for the default state to keep the common case small. */
@@ -200,7 +206,12 @@ interface Session {
   lastFireAt: number;
   /** Recent position reports on the receive timeline: snapshots sample them at one fixed moment (see PoseTrail). */
   trail: PoseTrail;
+  /** Server-side bot (server/bots): messages go to this handler as objects instead of a socket. */
+  sink?: (msg: ServerMessage) => void;
 }
+
+/** The "socket" of a bot session: never open, so nothing is ever serialised or written for it. */
+const BOT_SOCKET = { OPEN: 1, readyState: 3, bufferedAmount: 0, send() {}, close() {}, terminate() {}, ping() {} } as unknown as WebSocket;
 
 export interface ServerOptions {
   dataDir: string;
@@ -250,6 +261,10 @@ export interface ServerOptions {
   startMap?: MapId;
   /** For a new game: its own player limit (a Realms lobby size), at most `maxPlayers`. */
   lobbySize?: number;
+  /** For a new arcade game: bots (see server/bots/BotManager). */
+  bots?: BotSettings;
+  /** Realms progression (profiles, XP) shared by every game on the server; absent = no XP. */
+  profiles?: ProfileService | null;
 }
 
 /**
@@ -270,6 +285,11 @@ export class GameServer {
   private readonly tickHz: number = 20;
   /** Weather of this world (minecraft game types only; arcade rooms are always clear). */
   private readonly weather = new Weather();
+  /** The world as the weather rules read it (rain on farmland). */
+  private readonly weatherQuery = {
+    getBlock: (x: number, y: number, z: number): number => this.entities!.world.getBlock(x, y, z),
+    biomeAt: (x: number, z: number): number => this.entities!.world.biomeName(x, z),
+  };
   private weatherVersion = -1;
   private readonly strikeRoll = { dx: 0, dz: 0 };
   private timers: NodeJS.Timeout[] = [];
@@ -280,11 +300,15 @@ export class GameServer {
   private entitiesActive = false;
   /** Arcade games: the match and the arena as bullets see it. */
   private readonly match: Match | null = null;
+  /** Arcade games with profiles: XP, ranks and unlocks (see progression/MatchProgress.ts). */
+  private readonly progress: MatchProgress | null = null;
   private arena: ServerWorld | null = null;
   /** Arcade: movement validation against the arena (see anticheat/). */
   private readonly guard: ArcadeGuard | null = null;
   /** Arcade: per-recipient snapshot culling (anti-wallhack); null when switched off. */
   private readonly visibility: Visibility | null = null;
+  /** Arcade: server-side bots of this lobby. */
+  private readonly bots: BotManager | null = null;
   private readonly viewers: Viewer[] = [];
   /** Steady snapshot clock (ms): the moment each Minecraft snapshot shows, one tick apart (see tick()). */
   private snapClock = 0;
@@ -322,6 +346,12 @@ export class GameServer {
         (x, z) => this.match!.inBounds(x, z),
       );
       if (opts.culling ?? process.env.ARCADE_CULLING !== 'off') this.visibility = new Visibility({ getBlock: (x, y, z) => this.arena!.getBlock(x, y, z) });
+      if (opts.profiles) {
+        this.progress = new MatchProgress(opts.profiles, {
+          match: () => this.match!, now: () => Date.now() / 1000,
+          send: (id, msg) => { const s = this.sessions.get(id); if (s) this.send(s, msg); },
+        });
+      }
       this.match = new Match(this.matchHost(), {
         type: def.id, scoreLimit: this.world.scoreLimit ?? def.scoreLimit, timeLimitSec: this.world.timeLimitSec ?? def.timeLimitSec,
         map: first,
@@ -337,6 +367,7 @@ export class GameServer {
       },
       recordEdit: (x, y, z, id, meta) => { this.world.edits[`${x},${y},${z}`] = packState(id, meta); this.dirty = true; },
       skyDarkness: () => this.weather.skyDarkness,
+      rainingAt: (x, y, z) => !!this.entities && this.weather.isRainingAt(this.weatherQuery, x, y, z),
     }, () => this.world.time, this.world.genVersion, opts.genPool ?? null);
     if (this.entities) {
       const ents = this.entities;
@@ -385,6 +416,7 @@ export class GameServer {
     if (this.match) {
       const hz = this.opts.arcadeTickHz ?? (Number(process.env.ARCADE_TICK_HZ) || ARCADE_TICK_HZ);
       this.tickHz = Math.max(ARCADE_TICK_MIN, Math.min(ARCADE_TICK_MAX, Math.round(hz)));
+      this.bots = new BotManager(this.botHost(), parseBotSettings(this.world.bots, this.maxPlayers));
     }
     this.timers.push(setInterval(() => this.tick(), this.match ? 1000 / this.tickHz : TICK_MS));
     this.timers.push(setInterval(() => {
@@ -430,6 +462,7 @@ export class GameServer {
       data.scoreLimit = this.opts.scoreLimit ?? def.scoreLimit;
       data.timeLimitSec = this.opts.timeLimitSec ?? def.timeLimitSec;
       data.mapId = mapSetting;
+      if (this.opts.bots) data.bots = this.opts.bots;
     }
     this.log(`[world] created "${data.name}" (seed ${seed}, ${def.arcade ? def.id : data.gameMode}) spawn ${spawn.x} ${spawn.y} ${spawn.z}`);
     this.dirty = true;
@@ -514,8 +547,28 @@ export class GameServer {
     this.sessions.clear();
   }
 
+  /** People in the game (bots are not counted: matchmaking, listings and unloading look at people). */
   get playerCount(): number {
-    return this.sessions.size;
+    return this.sessions.size - (this.bots?.count ?? 0);
+  }
+
+  /** Bots in the game right now. */
+  get botCount(): number {
+    return this.bots?.count ?? 0;
+  }
+
+  /**
+   * Players a restart would interrupt (auto-update waits for 0): everyone in a Minecraft world, and in an
+   * arcade game only while a match runs (not in warmup, between matches or after the end).
+   */
+  get playersInPlay(): number {
+    const phase = this.match?.phase;
+    return !phase || phase === 'countdown' || phase === 'live' || phase === 'roundend' ? this.sessions.size : 0;
+  }
+
+  /** A server message in every player's chat (admin announcements such as an upcoming restart). */
+  announce(text: string): void {
+    this.broadcast({ t: 'chat', from: '', text, system: true });
   }
 
   get listed(): boolean {
@@ -565,7 +618,7 @@ export class GameServer {
     map?: MapSetting;
   } {
     return {
-      name: this.world.name, gameMode: this.world.gameMode, players: this.sessions.size, maxPlayers: this.maxPlayers, locked: this.locked,
+      name: this.world.name, gameMode: this.world.gameMode, players: this.playerCount, maxPlayers: this.maxPlayers, locked: this.locked,
       gameType: this.match?.info.type ?? 'minecraft', scoreLimit: this.match?.info.scoreLimit ?? 0, timeLimitSec: this.match?.info.timeLimitSec ?? 0,
       ...(this.match ? { map: this.mapSetting } : {}),
     };
@@ -609,7 +662,8 @@ export class GameServer {
       },
       random: Math.random,
       ping: (id) => this.sessions.get(id)?.pingMs ?? 0,
-      onShot: (r) => this.onShot(r),
+      onShot: (r) => { this.progress?.shot(r.shooter, r.weapon, r.hits.length > 0); this.onShot(r); },
+      ...this.progress?.hooks(),
       get interpDelay() { return arcadeInterpDelay(gs.tickHz); },
       nextMap: (current, requires, preferred) => {
         if (this.mapSetting !== 'rotate') return null;
@@ -771,6 +825,8 @@ export class GameServer {
         this.logout(s);
       }
     }
+    // Bots never keep a person out: one leaves to make room.
+    if (this.sessions.size >= this.maxPlayers && this.playerCount < this.maxPlayers) this.bots?.makeRoom();
     if (this.sessions.size >= this.maxPlayers) {
       metrics.loginsFailed++;
       ws.send(JSON.stringify({ t: 'kick', reason: 'The server is full', code: 'full' } satisfies ServerMessage));
@@ -793,22 +849,17 @@ export class GameServer {
     // A newcomer appears somewhere within the spawn radius (Minecraft's spawnRadius), not inside the last one.
     const start = record ?? this.newcomerSpawn(name);
     const initial = parseInventory(record?.inventory);
-    const session: Session = {
-      id: this.nextId++, name, ws, ip, op, owner: who.owner, verified: who.verified, keyHash,
+    const session = this.newSession(name, ws, ip, start, {
+      op, owner: who.owner, verified: who.verified, keyHash,
       bin: hello.bin === true && this.opts.binary !== false,
       binq: hello.bin === true && this.opts.binary !== false && !!this.match && Number(hello.binv) >= BINARY_VERSION_SNAP_Q,
       binShot: hello.bin === true && this.opts.binary !== false && !!this.match && Number(hello.binv) >= BINARY_VERSION_SHOT,
       binVersion: hello.bin === true && this.opts.binary !== false ? Math.max(1, Math.min(BINARY_VERSION, Math.floor(Number(hello.binv)) || 1)) : 0,
       guard: new InventoryGuard(initial.error ? [] : initial.slots),
-      x: start.x, y: start.y, z: start.z, yaw: 0, pitch: 0, flags: 0, held: 0,
-      hasPos: false, lastPosTime: Date.now(),
-      edits: new Bucket(20, 40, 'edits'), attacks: new Bucket(8, 12, 'attacks'), shots: new Bucket(3, 5, 'shots'),
-      drops: new Bucket(30, 60, 'drops'), takes: new Bucket(20, 30, 'takes'),
-      chat: new Bucket(1, 5, 'chat'), moves: new Bucket(40, 80, 'moves'), states: new Bucket(0.5, 10, 'states'), containers: new Bucket(20, 40, 'containers'),
-      fires: new Bucket(25, 30, 'fires'), actions: new Bucket(15, 30, 'actions'), violations: 0,
-      pingMs: 0, pingSentAt: 0, awaiting: null, velX: 0, velY: 0, velZ: 0, aim: new AimStats(), lastFireAt: 0, trail: new PoseTrail(),
-    };
+    });
     const joined = this.match?.join(session.id, name) ?? null;
+    // Realms profile (before `ready` sends the roster, so the rank icon is there from the start).
+    if (joined) this.progress?.bind(session.id, hello.profile, name);
     if (joined) {
       session.x = joined.x; session.y = joined.y; session.z = joined.z; session.hasPos = true;
       this.guard?.join(session.id, name);
@@ -846,6 +897,87 @@ export class GameServer {
     return session;
   }
 
+  /** A session with every rate limit and check a player has (people and bots alike). */
+  private newSession(
+    name: string, ws: WebSocket, ip: string, start: { x: number; y: number; z: number },
+    extra: Pick<Session, 'op' | 'owner' | 'verified' | 'keyHash' | 'bin' | 'binq' | 'binShot' | 'binVersion' | 'guard'>,
+  ): Session {
+    return {
+      id: this.nextId++, name, ws, ip, ...extra,
+      x: start.x, y: start.y, z: start.z, yaw: 0, pitch: 0, flags: 0, held: 0,
+      hasPos: false, lastPosTime: Date.now(),
+      edits: new Bucket(20, 40, 'edits'), attacks: new Bucket(8, 12, 'attacks'), shots: new Bucket(3, 5, 'shots'),
+      drops: new Bucket(30, 60, 'drops'), takes: new Bucket(20, 30, 'takes'),
+      chat: new Bucket(1, 5, 'chat'), moves: new Bucket(40, 80, 'moves'), states: new Bucket(0.5, 10, 'states'), containers: new Bucket(20, 40, 'containers'),
+      fires: new Bucket(25, 30, 'fires'), actions: new Bucket(15, 30, 'actions'), violations: 0,
+      pingMs: 0, pingSentAt: 0, awaiting: null, velX: 0, velY: 0, velZ: 0, aim: new AimStats(), lastFireAt: 0, trail: new PoseTrail(),
+    };
+  }
+
+  // ---------------------------------------------------------------- bots
+
+  /**
+   * A bot joins like a player who logged in: a session with the same rate limits, a match player, the movement
+   * guard, and the join announcement. Its messages come in through `handle` (see `botHost().deliver`).
+   */
+  private addBot(name: string, sink: (id: number) => (msg: ServerMessage) => void): number | null {
+    const match = this.match;
+    if (!match || this.closed || this.sessions.size >= this.maxPlayers) return null;
+    const session = this.newSession(name, BOT_SOCKET, 'bot', this.world.spawn, {
+      op: false, owner: false, verified: false, bin: false, binq: false, binShot: false, binVersion: 0, guard: new InventoryGuard([]),
+    });
+    session.sink = sink(session.id);
+    const joined = match.join(session.id, name, true);
+    session.x = joined.x; session.y = joined.y; session.z = joined.z; session.hasPos = true;
+    this.guard?.join(session.id, name);
+    this.guard?.reset(session.id, joined.x, joined.y, joined.z, Date.now() / 1000);
+    this.sessions.set(session.id, session);
+    this.broadcast({ t: 'join', id: session.id, name }, session.id);
+    session.awaiting = { x: joined.x, y: joined.y, z: joined.z, until: Date.now() + 1500 };
+    match.ready(session.id);
+    return session.id;
+  }
+
+  /** The bot manager's view of this server. */
+  private botHost() {
+    const gs = this;
+    return {
+      get match() { return gs.match!; },
+      get tickHz() { return gs.tickHz; },
+      now: () => Date.now() / 1000,
+      graph: () => {
+        const map = gs.match!.map;
+        const arena = gs.arena!;
+        return arenaGraph(map, map.variantFor(gs.world.seed), (x, y, z) => arena.getBlock(x, y, z), (x, y, z) => arena.getMeta(x, y, z));
+      },
+      getBlock: (x: number, y: number, z: number) => gs.arena!.getBlock(x, y, z),
+      getMeta: (x: number, y: number, z: number) => gs.arena!.getMeta(x, y, z),
+      humans: () => gs.playerCount,
+      capacity: () => gs.maxPlayers,
+      names: () => new Set([...gs.sessions.values()].map((s) => s.name.toLowerCase())),
+      addBot: (name: string, sink: (id: number) => (msg: ServerMessage) => void) => gs.addBot(name, sink),
+      removeBot: (id: number) => { const s = gs.sessions.get(id); if (s?.sink) gs.logout(s); },
+      deliver: (id: number, msg: ClientMessage) => {
+        const s = gs.sessions.get(id);
+        if (s?.sink && gs.match) gs.handleArcade(s, msg, gs.match);
+      },
+      random: Math.random,
+    };
+  }
+
+  /** Bot settings of this lobby (null = none); the host of a private lobby changes them from the create screen. */
+  get botSettings(): BotSettings | null {
+    return this.bots?.settings ?? null;
+  }
+
+  /** Bot counters for /metrics, the admin page and the perf test. */
+  botPerf(): { bots: number; ticks: number; avgMs: number; maxMs: number; thinks: number; skippedThinks: number } | null {
+    const b = this.bots;
+    if (!b) return null;
+    const p = b.perf;
+    return { bots: b.count, ticks: p.ticks, avgMs: p.ticks ? p.totalMs / p.ticks : 0, maxMs: p.maxMs, thinks: p.thinks, skippedThinks: p.skippedThinks };
+  }
+
   private logout(s: Session): void {
     if (!this.sessions.has(s.id)) return;
     this.storePlayer(s);
@@ -853,10 +985,13 @@ export class GameServer {
     this.entities?.forget(s.id);
     this.survival?.forget(s.id);
     this.containers?.onLeave(s.id);
+    this.progress?.leave(s.id);
     this.match?.leave(s.id);
+    if (this.match && this.match.players.size === 0) this.progress?.recorder.stop();
     this.guard?.leave(s.id);
     this.visibility?.forget(s.id);
     this.broadcast({ t: 'leave', id: s.id, name: s.name });
+    if (s.sink) return; // bots come and go quietly (filling and emptying the lobby)
     this.broadcast({ t: 'chat', from: '', text: `${s.name} left the game`, system: true });
     this.log(`[leave] ${s.name} (${this.sessions.size} online)`);
   }
@@ -978,9 +1113,13 @@ export class GameServer {
       case 'reload': return void (s.actions.take() && match.reload(s.id, Number(msg.slot)));
       case 'weapon': return void (s.actions.take() && match.switchWeapon(s.id, Number(msg.slot)));
       case 'vote': return void (s.actions.take() && match.castVote(s.id, Number(msg.map)));
-      case 'loadout': return void (s.actions.take() && match.setLoadout(
-        s.id, optStr(msg.primary) ?? '', optStr(msg.secondary), optStr(msg.optic), optStr(msg.perk),
-      ));
+      case 'loadout': {
+        if (!s.actions.take()) return;
+        const req = { primary: optStr(msg.primary) ?? '', secondary: optStr(msg.secondary), optic: optStr(msg.optic), perk: optStr(msg.perk) };
+        // Realms unlocks: a locked weapon, optic or perk falls back to the default (the client shows them locked).
+        const c = this.progress ? this.progress.lockClass(s.id, req) : req;
+        return match.setLoadout(s.id, c.primary, c.secondary, c.optic, c.perk);
+      }
       case 'block':
         // Nobody builds in an arcade game: roll the client's guess back.
         return this.send(s, { t: 'reject', seq: msg.seq, x: msg.x, y: msg.y, z: msg.z, id: this.arena!.getBlock(msg.x | 0, msg.y | 0, msg.z | 0) });
@@ -1016,10 +1155,9 @@ export class GameServer {
       const outside = !this.match.inBounds(m.x, m.z) || m.y < ARENA_FLOOR_Y - 2 || m.y > ARENA_FLOOR_Y + 40;
       const p = this.match.players.get(s.id);
       if (p) {
-        // The weapon in the hands sets the pace; a flag carrier (capture the flag) is params.carrySlow slower.
-        const logic = this.match.logic as { isCarrier?(p: unknown): boolean };
-        const carry = logic.isCarrier?.(p) ? 1 - (gameTypeDef(this.match.info.type).params?.carrySlow ?? 0.1) : 1;
-        this.guard!.setMoveSpeed(s.id, p.slots[p.slot].def.moveSpeed * carry, now / 1000);
+        // The weapon in the hands sets the pace; the mode may change it (a flag carrier is slower, the infected faster).
+        const mul = this.match.logic.speedMul?.(this.match, p) ?? 1;
+        this.guard!.setMoveSpeed(s.id, p.slots[p.slot].def.moveSpeed * mul, now / 1000);
       }
       const r = outside ? this.guard!.flag(s.id, 'bounds', 2, now / 1000) : this.guard!.move(s.id, m.x, m.y, m.z, now / 1000, typeof m.step === 'number' ? m.step : undefined);
       if (!r.ok) {
@@ -1332,7 +1470,7 @@ export class GameServer {
     const t0 = performance.now();
     const c0 = threadCpuMs();
     this.tickInner();
-    if (this.sessions.size === 0) return;
+    if (this.playerCount === 0) return;
     const ms = performance.now() - t0;
     const cpuMs = threadCpuMs() - c0;
     const phases = this.entities?.phaseMs;
@@ -1374,7 +1512,9 @@ export class GameServer {
       }
       this.rollLightning();
     }
-    if (this.sessions.size === 0) {
+    // Bots alone are nobody: they leave with the last person (BotManager.tick) and the room idles.
+    if (this.bots && this.playerCount === 0 && this.bots.count > 0) this.bots.tick();
+    if (this.playerCount === 0) {
       // Nobody around: free the chunks and mobs (passive mobs respawn from the seed).
       if (this.entitiesActive) {
         this.entities?.clear();
@@ -1387,6 +1527,8 @@ export class GameServer {
     this.survival?.tick([...this.sessions.values()]);
     this.containers?.tick();
     if (this.match) {
+      // Bots move, aim and shoot first (through the normal message handler), then the match resolves the tick.
+      this.bots?.tick();
       this.match.tick();
       if (this.tickCount % Math.round(PING_INTERVAL_SECONDS * this.tickHz) === 0) {
         for (const s of this.sessions.values()) {
@@ -1479,6 +1621,7 @@ export class GameServer {
   }
 
   private send(s: Session, msg: ServerMessage): void {
+    if (s.sink) { s.sink(msg); return; }
     if (s.ws.readyState !== s.ws.OPEN || this.overloaded(s)) return;
     // A pickup the server approved is what lets the next inventory update contain the item.
     if (msg.t === 'taken' && msg.id >= 0) s.guard.creditPickup(msg.itemId, msg.count, msg.damage);
@@ -1505,6 +1648,7 @@ export class GameServer {
     let frameQ: ArrayBuffer | undefined;
     let frameShot: ArrayBuffer | null | undefined;
     for (const s of this.sessions.values()) {
+      if (s.sink) { if (s.id !== except) s.sink(msg); continue; }
       if (s.id === except || s.ws.readyState !== s.ws.OPEN || this.overloaded(s)) continue;
       if (s.binShot && msg.t === 'shot') {
         if (frameShot === undefined) frameShot = encodeShot(msg);

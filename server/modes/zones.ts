@@ -5,8 +5,8 @@ import type { Match } from '../Match';
 import { BaseLogic, type MatchResult, teamWinner } from './ModeLogic';
 
 /** How far above/below a zone's standing level a player still counts as inside (stairs, small jumps). */
-const ZONE_BELOW = 1.2;
-const ZONE_ABOVE = 3.5;
+export const ZONE_BELOW = 1.2;
+export const ZONE_ABOVE = 3.5;
 
 interface ZoneRun {
   zone: Zone;
@@ -87,7 +87,10 @@ export class ZonesLogic extends BaseLogic {
       const live = this.hardpoint ? i === this.hill : true;
       this.count(m, r, live);
       if (!live) continue;
-      if (this.hardpoint) this.scoreHill(m, r, dt, params.pointsPerSec ?? 1);
+      if (this.hardpoint) {
+        this.scoreHill(m, r, dt, params.pointsPerSec ?? 1);
+        if (r.owner) this.credit(m, r, r.owner, 'hill', dt);
+      }
       else this.capture(m, r, dt, params.captureSec ?? 6);
     }
     if (!this.hardpoint) this.scoreOwned(dt, params.pointEverySec ?? 2);
@@ -107,6 +110,16 @@ export class ZonesLogic extends BaseLogic {
       m.markModeDirty();
     }
     if (this.hill >= 0) this.lastHill = this.hill;
+  }
+
+  /** Progression credit for the living players of `team` inside a zone (capturers, time on the hill). */
+  private credit(m: Match, r: ZoneRun, team: Team, kind: 'zone-captured' | 'hill', amount: number): void {
+    const z = r.zone;
+    for (const p of m.players.values()) {
+      if (!p.alive || p.team !== team) continue;
+      if (Math.hypot(p.x - z.x, p.z - z.z) > z.r || p.y < z.y - ZONE_BELOW || p.y > z.y + ZONE_ABOVE) continue;
+      m.creditObjective(p, kind, amount);
+    }
   }
 
   /** Living players of each team inside a zone. */
@@ -144,6 +157,7 @@ export class ZonesLogic extends BaseLogic {
       if (r.progress >= 1) {
         r.owner = team;
         m.event('zone-captured', team, 0, r.zone.name);
+        this.credit(m, r, team, 'zone-captured', 1);
         m.markModeDirty();
       }
     } else {

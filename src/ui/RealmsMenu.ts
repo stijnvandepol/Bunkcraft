@@ -1,11 +1,13 @@
 import { type GameType, type GameTypeDef, gameTypeDef } from '../modes/GameTypes';
 import { MAP_SETTINGS, type MapSetting, getMap } from '../modes/maps';
-import { type ModeStats, REALMS_MODES, isArcade, lobbySizes } from '../modes/Realms';
+import { BOT_LEVELS, type BotLevel, type ModeStats, REALMS_MODES, isArcade, lobbySizes } from '../modes/Realms';
 import { NAME_PATTERN, formatCode, normalizeCode } from '../net/protocol';
 import { type ListedRoom, type RoomInfo, browseRooms, createRoom, inviteLink, inviteText, lookupRoom, quickPlay, realmsStats, serverInfo } from '../net/RoomApi';
 import { button, h, menuScreen } from './dom';
 import { type I18nKey, t } from './i18n';
 import { savePlayerName, savedPlayerName, validSavedName } from './playerName';
+import { loadProfile } from '../net/ProfileApi';
+import { ProfileScreens } from './ProfileScreens';
 import { realmsIcon } from './RealmsIcons';
 import type { ScreenStack } from './Screens';
 import './realms.css';
@@ -67,13 +69,19 @@ function seconds(v: number): string {
 export class RealmsMenu {
   /** Lobby sizes this server allows (from /api/server, ROOM_MAX_PLAYERS). */
   private sizes: number[] = lobbySizes();
+  /** Level bar, stats, challenges and armory (Realms progression). */
+  readonly profiles: ProfileScreens;
+  private profilesOn = false;
 
-  constructor(private readonly stack: ScreenStack, private readonly actions: RealmsActions) {}
+  constructor(private readonly stack: ScreenStack, private readonly actions: RealmsActions) {
+    this.profiles = new ProfileScreens(stack);
+  }
 
   /** The playlist. Asks for a player name first when none is saved. */
   async show(): Promise<void> {
     const info = await serverInfo();
     this.sizes = lobbySizes(info?.roomMaxPlayers);
+    this.profilesOn = !!info?.features?.profiles;
     if (!info || !info.rooms) {
       this.stack.push(menuScreen(t('title.realms'), [h('div', { class: 'hint', text: t('realms.offline') })], [
         button(t('common.back'), () => this.stack.pop(), { cls: 'w150' }),
@@ -93,7 +101,7 @@ export class RealmsMenu {
       const name = validSavedName();
       if (!name) return;
       this.showHub(info ? t('realms.invite', realmsModeName(info.gameType ?? 'tdm')) : '');
-      void this.actions.joinCode(name, code, (m) => this.say(m, true));
+      void this.join(name, code, (m) => this.say(m, true));
     };
     if (validSavedName()) go();
     else this.showName(go);
@@ -167,6 +175,12 @@ export class RealmsMenu {
     const header = el.querySelector<HTMLElement>('.screen-header')!;
     header.classList.add('realms-header');
     header.append(nameLine);
+    if (this.profilesOn) {
+      // Realms progression: the level bar and its screens (the profile is created on first visit).
+      header.classList.add('with-profile');
+      header.append(this.profiles.banner(), this.profiles.buttons());
+      this.profileReady = loadProfile(name).then(() => undefined);
+    }
     this.stack.push(el);
 
     // Live player counts while the playlist is open.
@@ -180,6 +194,14 @@ export class RealmsMenu {
   }
 
   private busy = false;
+  /** The profile request of this visit: joining waits for it so the first match already counts. */
+  private profileReady: Promise<void> = Promise.resolve();
+
+  /** Joins a game once the profile is known (at most a few seconds), so the hello carries the profile token. */
+  private async join(name: string, code: string, onError: (msg: string) => void): Promise<void> {
+    await Promise.race([this.profileReady, new Promise<void>((r) => window.setTimeout(r, 3000))]);
+    return this.actions.joinCode(name, code, onError);
+  }
 
   /** Server-side matchmaking: the fullest public lobby of the mode that is not about to end, or a new one. */
   private async quickPlay(mode: GameType): Promise<void> {
@@ -190,7 +212,7 @@ export class RealmsMenu {
     this.say(t('realms.searching', realmsModeName(mode)));
     try {
       const { code } = await quickPlay(mode);
-      await this.actions.joinCode(name, code, (m) => this.say(m, true));
+      await this.join(name, code, (m) => this.say(m, true));
     } catch (e) {
       this.say(e instanceof Error ? e.message : String(e), true);
     } finally {
@@ -236,7 +258,7 @@ export class RealmsMenu {
     let selected: string | null = null;
     const list = h('div', { class: 'world-list realms-list' });
     const error = h('div', { class: 'error' });
-    const join = button(t('realms.browse.join'), () => { if (selected) void this.actions.joinCode(name, selected, (m) => { error.textContent = m; }); }, { cls: 'w150' });
+    const join = button(t('realms.browse.join'), () => { if (selected) void this.join(name, selected, (m) => { error.textContent = m; }); }, { cls: 'w150' });
     const filterBtn = button('', () => {
       const all: (GameType | 'all')[] = ['all', ...REALMS_MODES];
       filter = all[(all.indexOf(filter) + 1) % all.length];
@@ -258,11 +280,11 @@ export class RealmsMenu {
             h('div', { class: 'world-meta', text: `${realmsModeName(mode)} - ${mapLabel(r.map, r.currentMap)}` }),
             h('div', { class: `world-meta realms-stats${r.players > 0 ? ' busy' : ''}`, text: `${phaseText(r)}${r.locked ? ` - ${t('realms.locked')}` : ''}` }),
           ),
-          h('div', { class: `realms-count${full ? ' full' : ''}`, text: `${r.players}/${r.maxPlayers}` }),
+          h('div', { class: `realms-count${full ? ' full' : ''}`, text: `${r.players}/${r.maxPlayers}${r.bots ? ` +${r.bots} ${t('realms.bots')}` : ''}` }),
         );
         item.addEventListener('click', () => { selected = r.code; render(); });
-        item.addEventListener('dblclick', () => void this.actions.joinCode(name, r.code, (m) => { error.textContent = m; }));
-        item.addEventListener('keydown', (e) => { if (e.key === 'Enter') void this.actions.joinCode(name, r.code, (m) => { error.textContent = m; }); });
+        item.addEventListener('dblclick', () => void this.join(name, r.code, (m) => { error.textContent = m; }));
+        item.addEventListener('keydown', (e) => { if (e.key === 'Enter') void this.join(name, r.code, (m) => { error.textContent = m; }); });
         list.append(item);
       }
       join.disabled = !selected;
@@ -301,6 +323,8 @@ export class RealmsMenu {
     const sizes = this.sizes;
     let size = sizes.includes(8) ? 8 : sizes[sizes.length - 1];
     let listed = false;
+    let bots = 0;
+    let botLevel: BotLevel = 'normal';
     const error = h('div', { class: 'error' });
     const modeHint = h('div', { class: 'hint' });
     const mapHint = h('div', { class: 'hint' });
@@ -319,6 +343,10 @@ export class RealmsMenu {
     const timeBtn = button('', () => { time = next(def.options?.time ?? [], time); render(); });
     const sizeBtn = button('', () => { size = next(sizes, size); render(); });
     const listedBtn = button('', () => { listed = !listed; render(); });
+    const botChoices = () => Array.from({ length: size }, (_, i) => i);
+    const botsBtn = button('', () => { bots = next(botChoices(), bots); render(); });
+    const botLevelBtn = button('', () => { botLevel = next(BOT_LEVELS, botLevel); render(); });
+    const botsHint = h('div', { class: 'hint' });
     const render = () => {
       modeBtn.textContent = t('realms.create.mode', realmsModeName(mode));
       modeHint.textContent = modeDesc(mode);
@@ -332,6 +360,11 @@ export class RealmsMenu {
       sizeBtn.textContent = t('realms.create.players', size);
       listedBtn.textContent = t('realms.create.listed', listed ? t('common.on') : t('common.off'));
       listedHint.textContent = listed ? t('realms.create.listedHint') : t('realms.create.privateHint');
+      if (bots > size - 1) bots = size - 1;
+      botsBtn.textContent = t('realms.create.bots', bots === 0 ? t('common.off') : bots);
+      botLevelBtn.textContent = t('realms.create.botLevel', t(`realms.bot.${botLevel}`));
+      botLevelBtn.classList.toggle('hidden', bots === 0);
+      botsHint.textContent = bots === 0 ? '' : t('realms.create.botsHint');
     };
     render();
     let busy = false;
@@ -342,6 +375,7 @@ export class RealmsMenu {
       try {
         const code = await createRoom(t('realms.create.name', name), 'survival', '', {
           gameType: mode, scoreLimit: score, timeLimitSec: time, mapId: map, maxPlayers: size, listed,
+          ...(bots > 0 ? { bots, botDifficulty: botLevel } : {}),
         });
         this.stack.pop();
         this.showCreated(name, code);
@@ -356,6 +390,7 @@ export class RealmsMenu {
         modeBtn, modeHint,
         mapBtn, mapHint,
         scoreBtn, timeBtn, sizeBtn,
+        botsBtn, botLevelBtn, botsHint,
         listedBtn, listedHint,
         error,
       ),
@@ -385,7 +420,7 @@ export class RealmsMenu {
         error,
       ),
     ], [
-      button(t('realms.created.play'), () => void this.actions.joinCode(name, code, (m) => { error.textContent = m; }), { cls: 'w150' }),
+      button(t('realms.created.play'), () => void this.join(name, code, (m) => { error.textContent = m; }), { cls: 'w150' }),
       button(t('common.back'), () => this.stack.pop(), { cls: 'w150' }),
     ]));
   }
@@ -416,7 +451,7 @@ export class RealmsMenu {
       const c = normalizeCode(input.value);
       if (!c) { error.textContent = t('realms.join.bad'); return; }
       error.textContent = '';
-      void this.actions.joinCode(name, c, (m) => { error.textContent = m; });
+      void this.join(name, c, (m) => { error.textContent = m; });
     };
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') join(); });
     this.stack.push(menuScreen(t('realms.joinCode'), [

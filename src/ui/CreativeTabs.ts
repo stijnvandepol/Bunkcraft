@@ -82,6 +82,8 @@ export function buildCreativeTabs(): CreativeTab[] {
     blk('oxeye_daisy'), blk('cornflower'), blk('lily_of_the_valley'),
     B.TALL_GRASS, blk('fern'), B.DEAD_BUSH, B.CACTUS, blk('sugar_cane'), blk('brown_mushroom'), blk('red_mushroom'),
     blk('pumpkin'), blk('melon'), blk('hay_block'), blk('cobweb'), blk('sponge'),
+    // Seeds sit with the natural blocks in Minecraft 1.21 (and with the ingredients).
+    itm('wheat_seeds'), itm('pumpkin_seeds'), itm('melon_seeds'), itm('beetroot_seeds'),
   ]);
 
   const functional = ids([
@@ -114,7 +116,7 @@ export function buildCreativeTabs(): CreativeTab[] {
 
   const ingredientNames = ['coal', 'charcoal', 'raw_iron', 'raw_copper', 'raw_gold', 'iron_ingot', 'copper_ingot', 'gold_ingot', 'iron_nugget',
     'gold_nugget', 'diamond', 'emerald', 'lapis_lazuli', 'redstone', 'flint', 'stick', 'string', 'feather', 'bone', 'bone_meal', 'gunpowder',
-    'egg', 'slime_ball', 'leather', 'paper', 'book', 'clay_ball', 'brick', 'snowball', 'glowstone_dust', 'sugar', 'wheat', 'wheat_seeds', 'pumpkin_seeds', 'melon_seeds',
+    'egg', 'slime_ball', 'leather', 'paper', 'book', 'clay_ball', 'brick', 'snowball', 'glowstone_dust', 'sugar', 'wheat', 'wheat_seeds', 'pumpkin_seeds', 'melon_seeds', 'beetroot_seeds',
     'ink_sac', ...DYES.map((d) => `${d.name}_dye`)];
   const ingredients = ids(ingredientNames.map((n) => ITEM_ID[n]));
 

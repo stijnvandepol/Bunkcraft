@@ -1,5 +1,5 @@
 import { type ArenaMap, DEFAULT_MAP, type Spawn, getMap, mapFor, parseMapId } from '../src/modes/maps';
-import { type GameTypeDef, type Team, gameTypeDef } from '../src/modes/GameTypes';
+import { type GameTypeDef, type MapFeature, type Team, gameTypeDef } from '../src/modes/GameTypes';
 import {
   DEFAULT_PRIMARY, DEFAULT_SECONDARY, type OpticId, PLAYER_MAX_HEALTH, type PerkId, REGEN_DELAY, REGEN_PER_SECOND,
   type WeaponDef, damageAt, fireInterval, magazineFor, opticFor, rangeMulFor, switchDelayFor, weaponDef,
@@ -61,12 +61,23 @@ export interface MatchHost {
    * A new match is about to start on `current`: returns the map to play next (the host swaps its
    * bullet world), or null to keep the map. `requires` is the map data the game type needs.
    */
-  nextMap?(current: string, requires?: readonly ('zones' | 'flags')[], preferred?: string): string | null;
+  nextMap?(current: string, requires?: readonly MapFeature[], preferred?: string): string | null;
   /**
    * The match ended: the maps the players may vote on for the next one (the first is the rotation's own pick,
    * which wins a tie), or null when this game does not vote (a fixed map).
    */
-  voteMaps?(current: string, requires?: readonly ('zones' | 'flags')[]): string[] | null;
+  voteMaps?(current: string, requires?: readonly MapFeature[]): string[] | null;
+  /** Progression hooks (server/progression/MatchRecorder.ts): all optional, called only while it matters. */
+  /** Warm-up is over and the match goes live. */
+  onMatchStart?(): void;
+  /** `attacker` hurt `victim` (live phase only). */
+  onDamage?(attacker: number, victim: number, amount: number, weapon: string, head: boolean): void;
+  /** `victim` died; `killer` is 0 for deaths without one. */
+  onKill?(killer: number, victim: number, weapon: string, head: boolean): void;
+  /** A player did an objective (flag captured or returned, zone captured, `amount` seconds in a hill). */
+  onObjective?(id: number, kind: 'flag-captured' | 'flag-returned' | 'zone-captured' | 'hill', amount: number): void;
+  /** The match ended with this result (after the `matchend` message went out). */
+  onMatchEnd?(result: MatchResult): void;
 }
 
 export interface ShotReport {
@@ -106,6 +117,8 @@ export interface MatchPlayer {
   pts: number;
   /** Order of joining (higher = joined later); decides who moves when the teams get uneven. */
   joinSeq: number;
+  /** A server-side bot (server/bots): marked in the roster, otherwise a player like any other. */
+  bot?: boolean;
   x: number; y: number; z: number;
   yaw: number; pitch: number;
   alive: boolean;
@@ -125,6 +138,8 @@ export interface MatchPlayer {
   firedThisLife: boolean;
   slots: [Slot, Slot, Slot];
   slot: 0 | 1 | 2;
+  /** Realms rank for the roster (prestige * 100 + level, see progression/Levels.ts); 0 or absent = none. */
+  rank?: number;
   switchReadyAt: number;
   history: Sample[];
   historyHead: number;
@@ -202,10 +217,10 @@ export class Match {
    * Adds a player: picks the team and a spawn and returns them so the welcome message can carry
    * them. Nothing is sent yet; call `ready` once the player is in the game.
    */
-  join(id: number, name: string): MatchPlayer {
+  join(id: number, name: string, bot = false): MatchPlayer {
     const now = this.host.now();
-    let team: Team | '' = '';
-    if (this.teams) {
+    let team: Team | '' = this.teams ? this.logic.teamFor?.(this) ?? '' : '';
+    if (this.teams && !team) {
       let red = 0, blue = 0;
       for (const p of this.players.values()) if (p.team === 'red') red++; else if (p.team === 'blue') blue++;
       // The smaller team; when they are the same size, the one that is behind on points.
@@ -217,6 +232,7 @@ export class Match {
       primary: DEFAULT_PRIMARY, secondary: DEFAULT_SECONDARY, optic: 'iron', perk: 'none', next: { ...DEFAULT_CLASS }, spawnedAt: now, firedThisLife: false,
       slots: [newSlot(DEFAULT_PRIMARY, 'none'), newSlot(DEFAULT_SECONDARY, 'none'), newSlot('knife', 'none')], slot: 0,
       switchReadyAt: 0, history: Array.from({ length: HISTORY_SIZE }, () => ({ t: 0, x: 0, y: 0, z: 0 })), historyHead: 0, historyCount: 0,
+      ...(bot ? { bot: true } : {}),
     };
     this.players.set(id, p);
     this.resetLife(p, now);
@@ -246,7 +262,7 @@ export class Match {
     this.players.delete(id);
     if (this.vote?.votes.delete(id)) this.broadcastVote();
     this.logic.onLeave?.(this, p, this.host.now());
-    if (this.teams) this.planBalance();
+    if (this.teams && !this.logic.keepTeams) this.planBalance();
     this.broadcastRoster();
     if (this.players.size === 0) this.reset();
   }
@@ -285,7 +301,7 @@ export class Match {
     // change applies at once. In a live round only right after spawning and before the first shot.
     const calm = this.phase === 'warmup' || this.phase === 'countdown' || this.phase === 'roundend' || this.phase === 'intermission';
     const fresh = !p.firedThisLife && now - p.spawnedAt <= CLASS_SWAP_WINDOW;
-    if (p.alive && (calm || fresh) && this.phase !== 'ended' && !this.logic.loadoutFor) {
+    if (p.alive && (calm || fresh) && this.phase !== 'ended' && !this.logic.loadoutFor?.(this, p)) {
       this.equip(p, p.next.primary, p.next.secondary, 'knife', p.next.optic, p.next.perk);
       p.switchReadyAt = now + SWITCH_DELAY;
       this.sendGear(p);
@@ -444,7 +460,7 @@ export class Match {
       }
       if (!tracer) tracer = [ox + dir[0] * tEnd, oy + dir[1] * tEnd, oz + dir[2] * tEnd];
       if (victim && damaging && now >= victim.protectedUntil) {
-        const dmg = damageAt(w, tEnd, s.rangeMul) * (hitHead ? w.headshot : 1);
+        const dmg = damageAt(w, tEnd, s.rangeMul) * (hitHead ? w.headshot : 1) * (this.logic.damageMul?.(this, p, victim, w) ?? 1);
         const prev = dealt.get(victim.id);
         if (prev) { prev.damage += dmg; prev.head ||= hitHead; } else dealt.set(victim.id, { damage: dmg, head: hitHead });
       }
@@ -465,6 +481,7 @@ export class Match {
     victim.lastDamageAt = now;
     const killed = victim.health <= 0;
     this.host.send(killer.id, { t: 'hit', victim: victim.id, damage: amount, head, killed });
+    this.host.onDamage?.(killer.id, victim.id, amount, w.id, head);
     const hx = killer.x - victim.x, hz = killer.z - victim.z, hl = Math.hypot(hx, hz) || 1;
     this.host.send(victim.id, { t: 'damaged', from: killer.id, damage: amount, dx: r2(hx / hl), dz: r2(hz / hl) });
     if (!killed) {
@@ -483,6 +500,7 @@ export class Match {
     victim.historyCount = 0;
     if (killer) killer.kills++;
     this.logic.onKill(this, killer, victim, w, head, now);
+    this.host.onKill?.(killer?.id ?? 0, victim.id, w.id, head);
     this.sendHp(victim, true);
     this.host.broadcast({ t: 'kill', killer: killer?.id ?? 0, victim: victim.id, weapon: w.id, head });
     this.broadcastRoster();
@@ -568,6 +586,7 @@ export class Match {
   private beginMatch(now: number): void {
     this.scores.red = this.scores.blue = 0;
     for (const p of this.players.values()) { p.kills = 0; p.deaths = 0; p.pts = 0; }
+    this.host.onMatchStart?.();
     this.logic.onStart(this, now);
     this.broadcastMatch();
     this.broadcastRoster();
@@ -608,6 +627,7 @@ export class Match {
     this.broadcastMatch();
     this.broadcastRoster();
     this.broadcastMode();
+    this.host.onMatchEnd?.(r);
   }
 
   /** Next match: scores reset, teams rebalanced, everyone respawns into a new warm-up. */
@@ -622,7 +642,7 @@ export class Match {
     this.scores.red = this.scores.blue = 0;
     for (const p of this.players.values()) { p.kills = 0; p.deaths = 0; p.pts = 0; }
     this.logic.onReset?.(this);
-    if (this.teams) this.rebalance();
+    if (this.teams && !this.logic.keepTeams) this.rebalance();
     this.respawnAll(now);
     this.broadcastMatch();
     this.broadcastRoster();
@@ -734,7 +754,7 @@ export class Match {
   }
 
   respawn(p: MatchPlayer, now: number): void {
-    if (this.teams) this.applyBalance(p);
+    if (this.teams && !this.logic.keepTeams) this.applyBalance(p);
     this.resetLife(p, now);
     this.sendSpawn(p);
     this.host.broadcast(this.holds(p), p.id);
@@ -844,6 +864,12 @@ export class Match {
   /** A one-off happening for the clients (banner and sound). */
   event(kind: ModeEventKind, team: Team | '' = '', id = 0, text = ''): void {
     this.host.broadcast({ t: 'event', kind, ...(team ? { team } : {}), ...(id ? { id } : {}), ...(text ? { text } : {}) });
+    if (id && (kind === 'flag-captured' || kind === 'flag-returned') && this.phase === 'live') this.host.onObjective?.(id, kind, 1);
+  }
+
+  /** Objective credit for a player the event does not name (zone capturers, time in a hill); live phase only. */
+  creditObjective(p: MatchPlayer, kind: 'zone-captured' | 'hill', amount = 1): void {
+    if (this.phase === 'live') this.host.onObjective?.(p.id, kind, amount);
   }
 
   /** A system line in the chat. */
@@ -856,6 +882,8 @@ export class Match {
     return [...this.players.values()].map((p) => ({
       id: p.id, name: p.name, team: p.team, kills: p.kills, deaths: p.deaths, ping: Math.round(this.host.ping(p.id)),
       ...(withPts ? { pts: p.pts } : {}),
+      ...(p.bot ? { bot: 1 as const } : {}),
+      ...(p.rank ? { rk: p.rank } : {}),
     }));
   }
 

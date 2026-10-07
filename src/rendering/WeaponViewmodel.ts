@@ -87,6 +87,9 @@ export class WeaponViewmodel {
   private weaponId = '';
   private optic: OpticId = 'iron';
   private sup = false;
+  /** Realms camo per weapon id (your own weapons only; see setCamos). */
+  private camos: Readonly<Record<string, string>> = {};
+  private camo = 'none';
   private sightY = 0;
   private sleeve = '#4f5a3a';
   private def: WeaponDef | null = null;
@@ -164,6 +167,12 @@ export class WeaponViewmodel {
     if (this.weaponId) this.apply(this.weaponId);
   }
 
+  /** Camos chosen in the Realms armoury, per weapon id; repaints the weapon in hand when its camo changed. */
+  setCamos(camos: Readonly<Record<string, string>>): void {
+    this.camos = camos;
+    if (this.weaponId && (camos[this.weaponId] ?? 'none') !== this.camo) this.apply(this.weaponId);
+  }
+
   /** The weapon in hand with its optic and suppressor (the optic only counts for primaries). */
   setWeapon(def: WeaponDef, optic: OpticId = 'iron', sup = false): void {
     this.def = def;
@@ -179,11 +188,12 @@ export class WeaponViewmodel {
   }
 
   private apply(id: string): void {
-    const geo = weaponGeometry(id, this.optic, this.sup);
+    this.camo = this.camos[id] ?? 'none';
+    const geo = weaponGeometry(id, this.optic, this.sup, this.camo);
     if (!geo) return;
     this.weaponMesh.geometry = geo;
     this.hipGeometry = geo;
-    this.frontGeometry = weaponFrontGeometry(id, this.optic, this.sup) ?? geo;
+    this.frontGeometry = weaponFrontGeometry(id, this.optic, this.sup, this.camo) ?? geo;
     let arms = this.armGeometries.get(id);
     if (!arms) {
       const left = LEFT_HAND_Z[id];

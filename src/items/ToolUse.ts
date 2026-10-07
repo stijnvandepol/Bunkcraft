@@ -7,7 +7,8 @@ import type { ToolKind } from './ItemRegistry';
  *  - shovel: grass, dirt, podzol, mycelium and coarse dirt become a dirt path;
  *  - axe: logs become stripped logs;
  *  - shears: a pumpkin becomes a carved pumpkin (and gives seeds).
- * Hoe and shovel only work when the block above is free (air or a plant).
+ * The shovel only works when the block above is free (air or a plant), the hoe only with air above (Minecraft 1.21's
+ * HoeItem: tilled farmland starts dry, moisture 0, and hydrates on its next random tick near water).
  */
 
 const STRIP: Record<number, number> = {
@@ -62,6 +63,7 @@ export function toolUse(tool: ToolKind, block: number, above: number): ToolUse |
   }
   if (!free(above) || above === BLOCK.UNLOADED) return null;
   if (tool === 'hoe') {
+    if (above !== BLOCK.AIR) return null;
     const to = TILL[block];
     return to ? { to, sound: 'gravel' } : null;
   }
