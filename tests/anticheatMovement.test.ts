@@ -1,15 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ARCADE_AIR_ACCEL, ARCADE_SPEED_MULT, arcadeMaxSpeed } from '../src/modes/ArcadeLogic';
 import { ARENA_FLOOR_Y, MAP_IDS, getMap } from '../src/modes/maps';
-import { weaponDef } from '../src/modes/Weapons';
-
-/**
- * The weapons whose move speeds the seeded runs below sample, by index. Pinned (the arsenal of October 2026) so that adding
- * a weapon does not reshuffle which seed runs with which speed: a new weapon list once moved station seed 1333 onto the
- * revolver and showed a `wall` correction for an honest flag carrier (reported to the movement work, QA round 3).
- */
-const WEAPONS = ['rifle', 'smg', 'shotgun', 'lmg', 'burst', 'dmr', 'semisniper', 'sniper', 'pistol', 'mpistol', 'revolver', 'knife']
-  .map((id) => weaponDef(id)!);
+import { WEAPONS } from '../src/modes/Weapons';
 import { PHYSICS } from '../src/player/Physics';
 import { EAST, NORTH, SLAB_BOTTOM, stairMeta } from '../src/world/BlockStates';
 import { BLOCK } from '../src/world/BlockRegistry';
@@ -310,6 +302,39 @@ describe('movement validator: rules', () => {
     expect(v.check(8.6, 64, 8.5, 1.05).ok).toBe(true);
   });
 
+  it('pressed against a wall in mid-air is no ground: climbing a wall is flying', () => {
+    // A wall of 8 blocks; the cheat hugs it (0.3 from its face, the player's half width) and climbs at 4 blocks/s.
+    const { v } = flat((w) => w.fill(2, 64, -10, 2, 71, 10, BLOCK.STONE));
+    v.reset(1.7, 64, 0.5, 0);
+    let t = 0, bad = '';
+    for (let i = 1; i <= 60 && !bad; i++) { t += 0.05; const r = v.check(1.7, 64 + i * 0.2, 0.5, t); if (!r.ok) bad = r.rule; }
+    expect(bad).toBe('fly');
+    expect(t).toBeLessThan(1);
+  });
+
+  it('a long gap (frame hitch) is no way through: a wall, a floor or a three block wall stay shut, a one block wall is a jump', () => {
+    // With the client clock: 24 steps = 0.4 s between the two reports, then 3 steps = 0.05 s.
+    const run = (extra: (w: TestWorld) => void, x: number, y: number, steps: number) => {
+      const { v } = flat(extra);
+      v.check(0.5, 64, 0.5, 0, 0);
+      v.reset(0.5, 64, 0.5, 0.05);
+      v.check(0.5, 64, 0.5, 0.1, 0);
+      return rule(v.check(x, y, 0.5, 0.1 + steps / 60, steps));
+    };
+    // A wall a block thick, 6 high and long enough to give no way round it: shut however long the gap.
+    const wall = (w: TestWorld) => w.fill(1, 64, -30, 1, 69, 30, BLOCK.STONE);
+    expect(run(wall, 2.4, 64, 24)).toBe('wall');
+    expect(run(wall, 2.4, 64, 3)).toBe('wall');
+    // The floor under the feet is shut too, with a few steps sideways.
+    expect(run(() => undefined, 0.7, 62, 24)).not.toBe('ok');
+    // A wall of three blocks: higher than a jump.
+    expect(run((w) => w.fill(1, 64, -30, 1, 66, 30, BLOCK.STONE), 2.4, 64, 24)).toBe('wall');
+    // One block high: a jump over it takes 0.3 s, not 0.05 s.
+    const low = (w: TestWorld) => w.fill(1, 64, -30, 1, 64, 30, BLOCK.STONE);
+    expect(run(low, 2.4, 64, 24)).toBe('ok');
+    expect(run(low, 2.4, 64, 3)).toBe('wall');
+  });
+
   it('canFly skips the vertical rules but keeps the walls', () => {
     const w = new TestWorld().fill(-30, 63, -30, 30, 63, 30, BLOCK.STONE).fill(3, 64, -3, 3, 90, 3, BLOCK.STONE);
     const v = new MovementValidator({ getBlock: w.get }, { maxSpeed: PHYSICS.FLY_SPRINT_SPEED, canFly: true });
@@ -373,7 +398,7 @@ const YACHT_ROUTE: [number, number][] = [
 ];
 
 describe('movement validator: the real client physics never trips it', () => {
-  const seeds = Array.from({ length: Number(process.env.MOVE_SEEDS ?? 24) }, (_, i) => 1000 + i * 37);
+  const seeds = Array.from({ length: Number(process.env.MOVE_SEEDS ?? 64) }, (_, i) => 1000 + i * 37);
 
   for (const id of MAP_IDS) {
     it(`arcade physics on map ${id}: ${seeds.length} runs × 40 s, bunny hops, wall sliding, jitter and bursts`, () => {
@@ -429,17 +454,22 @@ describe('movement validator: the real client physics never trips it', () => {
     [...tot.violations.slice(0, 2).map((v) => `${label}: ${(v as { rule: string }).rule} (${tot.violations.length})`),
       ...(tot.lagForgiven ? [`${label}: ${tot.lagForgiven} forgiven lag corrections`] : [])];
 
+  /** Run number `i` of the flag carrier test: which flag it starts at and whether it runs for home or wanders. */
+  const flagRun = (id: (typeof MAP_IDS)[number], i: number, seed: number) => {
+    const map = getMap(id);
+    const [own, enemy] = i % 2 ? [map.flags[0], map.flags[1]] : [map.flags[1], map.flags[0]];
+    const start = { x: enemy.x, y: enemy.y, z: enemy.z };
+    // Straight for home (bumping into whatever is in the way) or wandering around the flag.
+    const route: [number, number][] | undefined = i % 3 === 2 ? undefined : [[enemy.x, enemy.z], [0.5, 0.5], [own.x, own.z]];
+    return carrierRun(id, seed, route, start);
+  };
+
   for (const id of MAP_IDS.filter((m) => getMap(m).flags.length === 2)) {
     it(`flag carrier under load on map ${id}: runs from both flags, with the client clock, never corrected`, () => {
-      const map = getMap(id);
       const bad: string[] = [];
       let total = 0;
       for (const [i, seed] of seeds.slice(0, 12).entries()) {
-        const [own, enemy] = i % 2 ? [map.flags[0], map.flags[1]] : [map.flags[1], map.flags[0]];
-        const start = { x: enemy.x, y: enemy.y, z: enemy.z };
-        // Straight for home (bumping into whatever is in the way) or wandering around the flag.
-        const route: [number, number][] | undefined = i % 3 === 2 ? undefined : [[enemy.x, enemy.z], [0.5, 0.5], [own.x, own.z]];
-        const { tot, label } = carrierRun(id, seed, route, start);
+        const { tot, label } = flagRun(id, i, seed);
         total += tot.reports;
         bad.push(...failures(tot, label));
       }
@@ -447,6 +477,13 @@ describe('movement validator: the real client physics never trips it', () => {
       expect(total).toBeGreaterThan(2000);
     });
   }
+
+  // Runs that once got an honest player corrected (QA round 3, found by the replay with the full weapon list and 64 seeds);
+  // the weapon (the seed picks it) is part of the case, so adding a weapon must not reshuffle them: the seeds stay here.
+  it('flag carrier on station, seed 1333 (a revolver carrier jumping along a ledge under a low ceiling in a hitch): not corrected', () => {
+    const { tot, label } = flagRun('station', 9, 1333);
+    expect(failures(tot, label)).toEqual([]);
+  });
 
   it('flag carrier on the yacht deck route of the QA report (dock, bow, hot tub, deck, stern), both ways, under load', () => {
     const bad: string[] = [];
@@ -539,11 +576,13 @@ describe('movement validator: the real client physics never trips it', () => {
 // ------------------------------------------------------------ arcade movement: slides, slide-hops, bunny hops, pads
 
 describe('movement validator: arcade slides, slide-hops, bunny hop chains and air strafe', () => {
-  const seeds = Array.from({ length: Number(process.env.MOVE_SEEDS ?? 24) }, (_, i) => 2000 + i * 53);
-  const arcadeRun = (id: (typeof MAP_IDS)[number], seed: number, nets: typeof NETS | typeof LOAD, cooldown?: number) => {
+  const seeds = Array.from({ length: Number(process.env.MOVE_SEEDS ?? 64) }, (_, i) => 2000 + i * 53);
+  const arcadeRun = (id: (typeof MAP_IDS)[number], seed: number, nets: typeof NETS | typeof LOAD, cooldown?: number, pads?: [number, number][]) => {
     const map = getMap(id);
     const variant = map.variantFor(7);
-    const getBlock = (x: number, y: number, z: number) => map.blockAt(variant, x, y, z);
+    // `pads`: jump pads laid into the floor (the block at ARENA_FLOOR_Y) on top of the map.
+    const getBlock = (x: number, y: number, z: number) =>
+      pads && y === ARENA_FLOOR_Y && pads.some(([px, pz]) => px === x && pz === z) ? BLOCK.JUMP_PAD : map.blockAt(variant, x, y, z);
     const getMeta = () => 0;
     const r = rng(seed);
     const w = WEAPONS[Math.floor(r() * WEAPONS.length)];
@@ -559,12 +598,49 @@ describe('movement validator: arcade slides, slide-hops, bunny hop chains and ai
     return { tot, slides, label: `${id} ${w.id} seed ${seed} ${net.name}` };
   };
 
+  /** Run number `i` of the arcade test of a map: the network (load or not) and the slide cooldown (perk) follow from it. */
+  const runOf = (id: (typeof MAP_IDS)[number], i: number, seed: number, pads?: [number, number][]) =>
+    arcadeRun(id, seed, i % 2 ? NETS : LOAD, i % 5 === 4 ? 0.65 : undefined, pads);
+
+  // Runs that once got an honest player corrected: [map, seed, run number]. A player pressed against a wall or a pillar
+  // was taken for standing on it, a hitch hid a slab or a pad that the take-off came from, a curved route in a hitch
+  // (jump along a wall, over a ledge, under a ceiling) matched none of the straight or L shaped paths.
+  const REGRESSIONS: [(typeof MAP_IDS)[number], number, number][] = [
+    ['atomic', 4120, 40], ['atomic', 4332, 44], ['town', 3272, 24], ['town', 3908, 36], ['town', 4544, 48], ['station', 2742, 14],
+    ['plaza', 4756, 52], ['mall', 2636, 12], ['mall', 3696, 32], ['mall', 5180, 60], ['scrap', 4756, 52],
+    // Found with more seeds while fixing the above.
+    ['atomic', 6558, 86], ['mall', 4173, 41], ['mall', 4067, 39],
+  ];
+  it('arcade movement: the runs that were wrongly corrected before are not (walls hugged in a jump, slab and pad take-offs, curved routes)', () => {
+    const bad: string[] = [];
+    for (const [id, seed, i] of REGRESSIONS) {
+      const { tot, label } = runOf(id, i, seed);
+      for (const v of tot.violations.slice(0, 2)) bad.push(`${label}: ${(v as { rule: string }).rule} (${tot.violations.length})`);
+      if (tot.lagForgiven) bad.push(`${label}: ${tot.lagForgiven} forgiven lag corrections`);
+    }
+    expect(bad).toEqual([]);
+  });
+
+  // The Flight Deck's elevator pad ("next to a raised edge") was removed because it got honest players a `fly` correction
+  // under a network backlog. Back in place, on the carrier, none of 300 runs may be corrected.
+  it('arcade movement on the carrier with its old elevator jump pads (next to a raised edge): never corrected', () => {
+    const bad: string[] = [];
+    const pads: [number, number][] = [[-8, 11], [7, -12]];
+    for (let i = 0; i < 300; i++) {
+      const seed = 2000 + i * 53;
+      const { tot, label } = runOf('carrier', i, seed, pads);
+      for (const v of tot.violations.slice(0, 2)) bad.push(`${label}: ${(v as { rule: string }).rule} (${tot.violations.length})`);
+      if (tot.lagForgiven) bad.push(`${label}: ${tot.lagForgiven} forgiven lag corrections`);
+    }
+    expect(bad).toEqual([]);
+  });
+
   for (const id of MAP_IDS) {
     it(`arcade movement on map ${id}: ${seeds.length} runs × 40 s with the client clock, never corrected`, () => {
       const bad: string[] = [];
       let total = 0, slides = 0, worst = 0;
       for (const [i, seed] of seeds.entries()) {
-        const { tot, slides: n, label } = arcadeRun(id, seed, i % 2 ? NETS : LOAD, i % 5 === 4 ? 0.65 : undefined);
+        const { tot, slides: n, label } = runOf(id, i, seed);
         total += tot.reports; slides += n; worst = Math.max(worst, tot.maxSpeedRatio);
         for (const v of tot.violations.slice(0, 2)) bad.push(`${label}: ${(v as { rule: string }).rule} (${tot.violations.length})`);
         if (tot.lagForgiven) bad.push(`${label}: ${tot.lagForgiven} forgiven lag corrections`);

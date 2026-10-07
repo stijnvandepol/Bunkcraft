@@ -102,8 +102,15 @@ Logregel `cheat` (`kind: movement`, `rule`, `strikes`, `action`), `/metrics`: `b
 
 *Vals-positiefvrij*: `tests/anticheatMovement.test.ts` speelt willekeurige invoer (lopen, strafen, draaien, bunny hops,
 tegen muren aan) door de echte `Player.step` op alle arcade-kaarten en een Minecraft-wereld met trappen, slabs,
-ladders, water en vliegen, met 20-30 Hz `pos`, jitter tot 60 ms en bursts van 4 pakketten. Standaard 24 seeds per
-kaart; met `MOVE_SEEDS=300` (60 000 s spel) nul overtredingen. Daarnaast vlagdragers onder last (framehaperingen tot
+ladders, water en vliegen, met 20-30 Hz `pos`, jitter tot 60 ms en bursts van 4 pakketten. Standaard 64 seeds per
+kaart (volledige wapenlijst, alle kaarten); met `MOVE_SEEDS=600` nul overtredingen. De validator kent de route tussen
+twee `pos` niet (een framehapering stuurt tot 0,4 s beweging in één keer): hij vraagt of er een route *bestaat*
+(rechte lijn, L-vormen, daarna een 3D-zoekopdracht door een gang rond beide posities) en welke afzet de hoogte
+verklaart (vloer, slabrand, pad; alle passende sprongcurves blijven bijgehouden, pas als geen enkele past volgt een
+tweede zoekronde over de hele rechthoek tussen de posities). "Grond" is wat de client grond noemt: een vloer onder de
+voetafdruk, nooit een muur die de zijkant van het lichaam raakt (een speler die in de lucht tegen een muur drukt
+werd daardoor als staand gezien). Vaste gevallen die ooit onterecht gecorrigeerd werden staan als regressietest in
+het bestand, ook de lift-pad van Flight Deck (`carrier`) die daarom ooit weg moest. Daarnaast vlagdragers onder last (framehaperingen tot
 0,4 s, serverstalls en achterstanden tot 1 s) op elke kaart met vlaggen en over de dekroute van het jacht: met de
 fysicaklok nul correcties, ook geen vergeven lag-correcties. `scripts/cheat-bots.ts`: twee eerlijke bots lopen en
 vechten 120 s, 0 correcties, 0 strafpunten.

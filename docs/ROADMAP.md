@@ -326,8 +326,7 @@ regenereert, respawns en een scoreboard. Beschrijving, besturing en wapentabel: 
 
 0. **Beweging vervolg:** crouch-jump en wall-jump (vergen een variabele botsingsbox in client én validator), richting-jump pads
    met horizontale impuls (validator moet die impuls modelleren), touch-knop voor crouch/slide, slide in de dev-preview-bots,
-   bots die sliden in `flow-metrics.ts`/`cheat-bots.ts` (nu lopen ze), een kleine kans op een valse correctie onder extreme
-   frame-hitches (≥ 0,35 s) met een sprong over een rand (≈ 5 per 700k meldingen in de replaytest met 80 seeds), en
+   bots die sliden in `flow-metrics.ts`/`cheat-bots.ts` (nu lopen ze), en
    spawnkills in FFA na de snellere respawn verder omlaag (6,4% in botmatches, 2,7% vóór; passief ~0%).
 
 1. **Integratie met de serverbranch** verifiëren: zie de checklist in de overdracht (arena-wereld via `worldType`,
