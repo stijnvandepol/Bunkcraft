@@ -4,6 +4,23 @@ import { zoneColor } from '../modes/ModeView';
 import type { ModeState } from '../net/protocol';
 
 const MAX_ZONES = 6;
+/** Kill confirmed: the server keeps at most 40 tags on the ground (server/modes/confirm.ts MAX_TAGS). */
+const MAX_TAGS = 40;
+const SITE_COLOR = 0xffaa00;
+
+/** Search and destroy: the planted bomb, a dark crate with a red light on top. */
+function bombModel(): THREE.Group {
+  const g = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.35, 0.45), new THREE.MeshBasicMaterial({ color: 0x2a2a2a }));
+  body.position.y = 0.18;
+  const panel = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.04, 0.25), new THREE.MeshBasicMaterial({ color: 0x4f6a3a }));
+  panel.position.y = 0.37;
+  const light = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.1), new THREE.MeshBasicMaterial({ color: 0xff2a1a }));
+  light.position.set(0.22, 0.42, 0);
+  light.name = 'light';
+  g.add(body, panel, light);
+  return g;
+}
 
 /** A team flag as a box model: base plate, pole, a banner with a white stripe and a small finial. */
 function flagModel(team: Team): THREE.Group {
@@ -35,8 +52,8 @@ function flagModel(team: Team): THREE.Group {
 }
 
 /**
- * World objects of the objective modes: the two flags (capture the flag) and a glowing ring on
- * the ground per capture zone, coloured by its owner. Positions come from the server's mode state;
+ * World objects of the objective modes: the two flags (capture the flag), a glowing ring on the
+ * ground per capture zone (coloured by its owner) or bomb site, the planted bomb and the dog tags of kill confirmed. Positions come from the server's mode state;
  * a carried flag rides on its carrier's back between updates. One group, added to the scene by the game.
  */
 export class ModeVisuals {
@@ -45,6 +62,13 @@ export class ModeVisuals {
   private readonly rings: THREE.Mesh[] = [];
   private state: ModeState | null = null;
   private readonly tmp = new THREE.Vector3();
+  /** Kill confirmed tags: one instanced plate each, spinning above the floor. */
+  private readonly tags: THREE.InstancedMesh;
+  private readonly tagObj = new THREE.Object3D();
+  private readonly tagColor = new THREE.Color();
+  private readonly bomb = bombModel();
+  private readonly bombLight = this.bomb.getObjectByName('light')!;
+  private selfId = 0;
 
   constructor() {
     for (const team of ['red', 'blue'] as const) {
@@ -62,14 +86,42 @@ export class ModeVisuals {
       this.rings.push(ring);
       this.group.add(ring);
     }
+    this.tags = new THREE.InstancedMesh(new THREE.BoxGeometry(0.32, 0.46, 0.05), new THREE.MeshBasicMaterial({ color: 0xffffff }), MAX_TAGS);
+    this.tags.count = 0;
+    this.tags.frustumCulled = false;
+    this.group.add(this.tags);
+    this.bomb.visible = false;
+    this.group.add(this.bomb);
   }
 
-  setState(state: ModeState | null): void {
+  setState(state: ModeState | null, selfId = this.selfId): void {
     this.state = state;
+    this.selfId = selfId;
     for (const r of this.rings) r.visible = false;
     for (const f of this.flags.values()) f.visible = false;
+    this.tags.count = 0;
+    this.bomb.visible = false;
     if (!state) return;
-    if (state.kind === 'zones') {
+    if (state.kind === 'tags') {
+      const n = Math.min(MAX_TAGS, state.tags.length);
+      for (let i = 0; i < n; i++) this.tags.setColorAt(i, this.tagColor.set(TEAM_COLORS[state.tags[i].team]));
+      if (this.tags.instanceColor) this.tags.instanceColor.needsUpdate = true;
+      this.tags.count = n;
+    } else if (state.kind === 'bomb') {
+      const planted = state.sites.find((x) => x.planted);
+      state.sites.forEach((x, i) => {
+        const ring = this.rings[i];
+        if (!ring || (planted && !x.planted)) return;
+        ring.visible = true;
+        ring.position.set(x.x, x.y + 0.04, x.z);
+        ring.scale.setScalar(x.r);
+        (ring.material as THREE.MeshBasicMaterial).color.set(x.planted ? TEAM_COLORS.red : SITE_COLOR);
+      });
+      if (planted) {
+        this.bomb.visible = true;
+        this.bomb.position.set(planted.x, planted.y, planted.z);
+      }
+    } else if (state.kind === 'zones') {
       state.zones.forEach((z, i) => {
         const ring = this.rings[i];
         if (!ring) return;
@@ -77,7 +129,7 @@ export class ModeVisuals {
         ring.visible = show;
         ring.position.set(z.x, z.y + 0.04, z.z);
         ring.scale.setScalar(z.r);
-        (ring.material as THREE.MeshBasicMaterial).color.set(zoneColor(z));
+        (ring.material as THREE.MeshBasicMaterial).color.set(zoneColor(z, selfId));
       });
     } else if (state.kind === 'ctf') {
       for (const f of state.flags) {
@@ -93,6 +145,27 @@ export class ModeVisuals {
   /** Per frame: carried flags follow their carriers, banners wave. Allocation-free. */
   update(now: number, carrierPos: (id: number, out: THREE.Vector3) => boolean): void {
     const st = this.state;
+    if (st?.kind === 'tags') {
+      // Tags hover and turn so they catch the eye from any side.
+      const o = this.tagObj;
+      for (let i = 0; i < this.tags.count; i++) {
+        const tag = st.tags[i];
+        o.position.set(tag.x, tag.y + 0.55 + Math.sin(now * 3 + i) * 0.08, tag.z);
+        o.rotation.set(0, now * 2.4 + i, 0);
+        o.updateMatrix();
+        this.tags.setMatrixAt(i, o.matrix);
+      }
+      this.tags.instanceMatrix.needsUpdate = true;
+      return;
+    }
+    if (st?.kind === 'bomb') {
+      // The bomb's light blinks faster as the fuse runs down.
+      if (this.bomb.visible) {
+        const rate = st.fuseIn > 10 ? 1 : st.fuseIn > 5 ? 2 : 4;
+        this.bombLight.visible = Math.floor(now * rate * 2) % 2 === 0;
+      }
+      return;
+    }
     if (!st || st.kind !== 'ctf') return;
     for (const f of st.flags) {
       const g = this.flags.get(f.team)!;
