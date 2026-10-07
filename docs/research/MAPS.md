@@ -92,9 +92,10 @@ is: oude arena-saves gebruiken hem).
 
 **Jump pads** liggen waar een route anders traag of onmogelijk is: oprit naar garagedak (Atomic Lane), plein naar
 galerijdak en hotelbalkon (Fountain Square), atrium naar de eerste verdieping (Rebar), steeg naar krotdak (Tin Roofs),
-gang naar de mezzanine (Galleria), bandenberg naar autostapel (Scrapyard). Niet naast een verhoogde rand met een
-lage plafondrand erboven: een pad naast de liftrand op Flight Deck gaf onder netwerkachterstand een `fly`-correctie en is
-weer weggehaald.
+gang naar de mezzanine (Galleria), bandenberg naar autostapel (Scrapyard). Een pad naast de liftrand op Flight Deck gaf
+onder netwerkachterstand een `fly`-correctie en is toen weggehaald. De oorzaak zat in de bewegingsvalidator (afzet van
+een pad die de rechte lijn tussen twee `pos` net mist, een muur die als grond gold) en is verholpen; de pads van de
+lift zijn als regressietest teruggelegd (`tests/anticheatMovement.test.ts`), de kaart zelf is niet veranderd.
 
 ## Wat nog beter kan
 

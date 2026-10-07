@@ -1,7 +1,8 @@
 import { type AABB, type BlockGetter, boxIntersectsSolid } from '../../src/player/Collision';
-import { JUMP_PAD_VELOCITY, SLIDE, slideExtra } from '../../src/player/ArcadeMove';
+import { JUMP_PAD_VELOCITY, SLIDE, padBelow, slideExtra } from '../../src/player/ArcadeMove';
 import { PHYSICS } from '../../src/player/Physics';
-import { BLOCK, SOLID } from '../../src/world/BlockRegistry';
+import { BLOCK, PARTIAL, SOLID, TALL } from '../../src/world/BlockRegistry';
+import { collisionBoxes } from '../../src/world/BlockShapes';
 
 /**
  * Server-side movement validation (DOM-free). The client simulates its own movement with `Player.step`
@@ -35,6 +36,16 @@ import { BLOCK, SOLID } from '../../src/world/BlockRegistry';
  * least the slide cooldown after the previous one raises the speed budget by exactly the envelope
  * maxSpeed · BOOST · e^(−AIR_DRAG·t). Jump pads (BLOCK.JUMP_PAD) launch with JUMP_PAD_VELOCITY: the jump
  * curve uses that speed only when a pad lay under the player's path at the take-off height.
+ *
+ * Hidden routes. Reports are 3-5 physics steps apart, but a frame hitch on the client sends up to a third of a second
+ * at once, and what happened in between is unknown: the route can be any curve. So the validator never assumes one
+ * route, it asks whether one exists. `wall`: is there a collision-free route for the box at all (straight, an L, or a
+ * flood fill through a corridor round both positions, `detourFree`)? `fly`: which take-offs fit the reports? Every
+ * flight can have started at a floor, a slab edge or a pad that the straight line between the reports misses, so the
+ * validator keeps the jump curves of all the take-offs that fit (`airPhase`), and a report is corrected only when none
+ * does, after a second search over the whole rectangle the reports span. Ground is what the client calls ground:
+ * a floor under the player's footprint (`supported`, `floorBelow`) and the pad test it shares (`padBelow`), never a
+ * wall that touches the side of the box.
  */
 
 export type Rule = 'noclip' | 'wall' | 'speed' | 'teleport' | 'rise' | 'fall' | 'fly' | 'clock';
@@ -72,6 +83,9 @@ export const MOVE = {
   DETOUR_MARGIN: 0.5,
   /** ...when it covers at most this many blocks (a frame hitch: a quarter second at full speed plus slack). */
   DETOUR_MAX: 3,
+  /** Grid of the detour search (blocks) and the most cells it may test: a cheater's report costs a few milliseconds at most. */
+  DETOUR_GRID: 0.125,
+  DETOUR_CELLS: 12000,
   /** Packet timing uncertainty used for the jump curve. */
   JITTER: 0.2,
   /** Extra height tolerated above the jump curve. */
@@ -88,6 +102,10 @@ export const MOVE = {
    * REPORT_GAP: bursts squeeze arrival times together) plus this.
    */
   BOUNCE_SLACK: 0.05,
+  /** How far outside the three last positions the route of a hitch may bulge (the dense search of `airPhase`). */
+  RECT_MARGIN: 0.25,
+  /** Jump curves kept at once (see `airPhase`). */
+  HYPOTHESES: 6,
   /** Longest regular gap between two position reports (20 Hz on a 60 fps frame clock). */
   REPORT_GAP: 0.075,
   /** Client clock (`step`): how far it may run ahead of real time (a lag spike's backlog released at once). */
@@ -179,12 +197,23 @@ export class MovementValidator {
   grounded = true;
   private groundY = 0;
   private groundT = 0;
-  /** Air phase: anchor of the jump curve and the lowest point so far. */
-  private anchorY = 0;
-  private anchorT = 0;
-  /** Launch speed of the current air phase (a jump, or a jump pad). */
-  private anchorV: number = JV;
-  private lowY = 0;
+  /**
+   * Air phase: the jump curves the player may be on. Each has its take-off height and (physics) time, its launch speed
+   * (a jump, or a jump pad) and the lowest point so far. Reports can hide where a flight started, so several
+   * takeoffs can fit the same reports (a pad launch passing the top of a wall is not a jump from the wall, and the
+   * wall may be the real ledge of the next hop); every report keeps those that still explain the height.
+   */
+  private hN = 1;
+  private readonly hAY = new Float64Array(MOVE.HYPOTHESES);
+  private readonly hAT = new Float64Array(MOVE.HYPOTHESES);
+  private readonly hAV = new Float64Array(MOVE.HYPOTHESES);
+  private readonly hLow = new Float64Array(MOVE.HYPOTHESES);
+  /** Scratch of `airPhase`: hypotheses plus the new ones of this report. */
+  private readonly cAY = new Float64Array(MOVE.HYPOTHESES + 4);
+  private readonly cAT = new Float64Array(MOVE.HYPOTHESES + 4);
+  private readonly cAV = new Float64Array(MOVE.HYPOTHESES + 4);
+  private readonly cLow = new Float64Array(MOVE.HYPOTHESES + 4);
+  private cN = 0;
   /** Vertical budget of a jump pad launch (filled at the pad's speed; only spent when a pad is under the path). */
   private bucketVPad = 0;
   /** Slide envelope: physics time and client step of the last accepted slide start, the speed limit then. */
@@ -222,11 +251,11 @@ export class MovementValidator {
     this.bucketH = this.capH();
     this.bucketV = this.capV();
     this.bucketVPad = this.capV(JUMP_PAD_VELOCITY);
-    this.anchorV = JV;
     this.stallUntil = -1e9;
     this.grounded = true;
-    this.groundY = this.anchorY = this.lowY = y;
-    this.groundT = this.anchorT = t;
+    this.groundY = y;
+    this.groundT = t;
+    this.setGround(y, t, false);
     this.started = true;
   }
 
@@ -307,21 +336,92 @@ export class MovementValidator {
 
   /** Is there something to stand on right below the feet? */
   private supported(x: number, y: number, z: number): boolean {
-    // Slightly wider than the player: standing on the very edge of a block counts.
-    const b = this.setBox(x, y, z, MOVE.MARGIN, -MOVE.MARGIN);
+    // The player's own footprint, like the client's downward clip (`Player.step`): a block that merely touches the side
+    // of the box is a wall, not ground. A probe wider than the player counted a wall at arm's length as a floor, and an
+    // airborne player hugging a pillar or a wall then reset the jump curve at every report ("grounded" at mid-jump height).
+    const b = this.setBox(x, y, z, MOVE.MARGIN, 0);
     b.minY = y - MOVE.SUPPORT_DEPTH;
     b.maxY = y + 0.1;
     return boxIntersectsSolid(b, this.world.getBlock, this.getMeta);
   }
 
-  /** Height of the ground below (x, y, z) when it is within BOUNCE_GROUND, rounded up to 0.05; NaN when there is none. */
-  private floorBelow(x: number, y: number, z: number): number {
-    for (let d = 0.05; d <= MOVE.BOUNCE_GROUND + 1e-9; d += 0.05) {
-      const b = this.setBox(x, y - d, z, MOVE.MARGIN, -MOVE.MARGIN);
-      if (boxIntersectsSolid(b, this.world.getBlock, this.getMeta)) return y - d + 0.05;
+  /** Sample points (x, z pairs) of the places the player may have been between the last reports and this one. */
+  private readonly sampleBuf = new Float64Array(2 * 9);
+  /** The rectangle the last three positions span, plus RECT_MARGIN (`dense` searches): x0, x1, z0, z1. */
+  private readonly rectBuf = new Float64Array(4);
+
+  /** The path two reports back → last → this one, at eighths of its two legs. */
+  private fillSamples(x: number, z: number): number {
+    const sb = this.sampleBuf;
+    for (let k = 0; k <= 8; k++) {
+      const f = k / 4;
+      sb[2 * k] = f <= 1 ? this.px + (this.x - this.px) * f : this.x + (x - this.x) * (f - 1);
+      sb[2 * k + 1] = f <= 1 ? this.pz + (this.z - this.pz) * f : this.z + (z - this.z) * (f - 1);
     }
-    return NaN;
+    return 9;
   }
+
+  /**
+   * The rectangle the last three positions span: a hitch lets the player take any route in it, not just the straight
+   * lines between the reports. False when it is too large to be one hitch's route (`DETOUR_MAX`).
+   */
+  private fillRect(x: number, z: number): boolean {
+    const r = this.rectBuf, q = MOVE.RECT_MARGIN;
+    r[0] = Math.min(this.px, this.x, x) - q; r[1] = Math.max(this.px, this.x, x) + q;
+    r[2] = Math.min(this.pz, this.z, z) - q; r[3] = Math.max(this.pz, this.z, z) + q;
+    return r[1] - r[0] <= MOVE.DETOUR_MAX + 1 && r[3] - r[2] <= MOVE.DETOUR_MAX + 1;
+  }
+
+  /**
+   * Height of the highest standing surface under a player at (x, z) with its feet at `y` and at most BOUNCE_GROUND
+   * lower, NaN when there is none. Surfaces up to `top` count (default `y`): a player who took off from a ledge and
+   * has dropped below it since, e.g. under a low ceiling, took off from a surface above its feet. The footprint is the
+   * player's box plus the safety margin (a sample that lies a hair beside the real position still finds the ledge or
+   * the slab the player stood on). It looks at the surface of each block column and not at the whole body, as
+   * `boxIntersectsSolid` would: a wall that touches the side of the box, bars or a low ceiling are no floor (a wall
+   * hugged during a jump used to read as ground at the feet).
+   */
+  private floorBelow(x: number, y: number, z: number, top = y): number {
+    const m = hw + MOVE.MARGIN;
+    return this.floorIn(x - m, x + m, z - m, z + m, y, top);
+  }
+
+  /** The highest standing surface (see `floorBelow`) under a footprint that covers [x0, x1] × [z0, z1] (all of it, as a region). */
+  private floorIn(x0: number, x1: number, z0: number, z1: number, y: number, top: number): number {
+    const E = 1e-4;
+    const limit = top + 0.05, bottom = y - MOVE.BOUNCE_GROUND;
+    const g = this.world.getBlock, buf = this.shapeBuf;
+    let best = NaN;
+    for (let bz = Math.floor(z0 + E); bz <= Math.floor(z1 - E); bz++) {
+      for (let bx = Math.floor(x0 + E); bx <= Math.floor(x1 - E); bx++) {
+        for (let by = Math.floor(limit); by >= Math.floor(bottom) - 1; by--) {
+          const id = g(bx, by, bz);
+          if (!SOLID[id]) continue;
+          let t: number;
+          if (PARTIAL[id]) {
+            // Slabs, stairs, bars: the highest box that reaches into the footprint and does not rise above the limit
+            // (the lower tread of a stair is a floor, its riser is a wall; bars beside the feet cover nothing below).
+            t = -Infinity;
+            const n = collisionBoxes(id, this.getMeta(bx, by, bz), g, this.getMeta, bx, by, bz, buf);
+            for (let k = 0; k < n; k++) {
+              const o = k * 6;
+              if (bx + buf[o] < x1 - E && bx + buf[o + 3] > x0 + E && bz + buf[o + 2] < z1 - E && bz + buf[o + 5] > z0 + E) {
+                const h = by + buf[o + 4];
+                if (h <= limit + 1e-9) t = Math.max(t, h);
+              }
+            }
+            if (t === -Infinity) continue;
+          } else t = by + (TALL[id] ? 1.5 : 1);
+          // The first solid block below the limit decides the column: above the limit it is a wall or a ceiling,
+          // and whatever lies below it is covered.
+          if (t <= limit + 1e-9 && t >= bottom - 1e-9) best = best === best ? Math.max(best, t) : t;
+          break;
+        }
+      }
+    }
+    return best;
+  }
+  private readonly shapeBuf = new Float64Array(64);
 
   /**
    * Highest floor within `r` of (x, z) that is at most STEP_HEIGHT above y (a step a player walks up without
@@ -337,18 +437,20 @@ export class MovementValidator {
     return best;
   }
 
-  /** Is a jump pad the floor right below (x, z) at feet height y (the client's own test)? */
+  /** Is a jump pad the floor right below (x, z) at feet height y? The client's own test (`padBelow`, shared with `Player`). */
   private padAt(x: number, y: number, z: number): boolean {
-    return this.world.getBlock(Math.floor(x), Math.floor(y - 0.05), Math.floor(z)) === BLOCK.JUMP_PAD;
+    return padBelow(this.world.getBlock, x, y, z);
   }
 
   /** Does the path (two reports back → last → this one) cross a jump pad at feet height y? */
-  private padOnPath(x: number, z: number, y: number): boolean {
-    for (let k = 0; k <= 8; k++) {
-      const f = k / 4;
-      const gx = f <= 1 ? this.px + (this.x - this.px) * f : this.x + (x - this.x) * (f - 1);
-      const gz = f <= 1 ? this.pz + (this.z - this.pz) * f : this.z + (z - this.z) * (f - 1);
-      if (this.padAt(gx, y, gz)) return true;
+  private padOnPath(x: number, z: number, y: number, dense: boolean): boolean {
+    const n = this.fillSamples(x, z), sb = this.sampleBuf;
+    for (let k = 0; k < n; k++) if (this.padAt(sb[2 * k], y, sb[2 * k + 1])) return true;
+    if (!dense || !this.fillRect(x, z)) return false;
+    // The client's test is the block under the centre: any block the rectangle touches.
+    const r = this.rectBuf;
+    for (let bx = Math.floor(r[0]); bx <= Math.floor(r[1]); bx++) {
+      for (let bz = Math.floor(r[2]); bz <= Math.floor(r[3]); bz++) if (this.padAt(bx + 0.5, y, bz + 0.5)) return true;
     }
     return false;
   }
@@ -357,21 +459,34 @@ export class MovementValidator {
    * Top of the highest jump pad that is the first solid block under the path within a pad launch's height
    * below y, or NaN (a launch from a pad, seen somewhere up its flight).
    */
-  private padBelowPath(x: number, y: number, z: number): number {
-    const g = this.world.getBlock;
+  private padBelowPath(x: number, y: number, z: number, dense: boolean): number {
+    const n = this.fillSamples(x, z), sb = this.sampleBuf;
     let best = NaN;
-    const lowest = Math.floor(y - apexOf(JUMP_PAD_VELOCITY) - 1);
-    for (let k = 0; k <= 8; k++) {
-      const f = k / 4;
-      const bx = Math.floor(f <= 1 ? this.px + (this.x - this.px) * f : this.x + (x - this.x) * (f - 1));
-      const bz = Math.floor(f <= 1 ? this.pz + (this.z - this.pz) * f : this.z + (z - this.z) * (f - 1));
-      for (let by = Math.floor(y - 0.05); by >= lowest; by--) {
-        const id = g(bx, by, bz);
-        if (id === BLOCK.JUMP_PAD) { if (!(by + 1 <= best)) best = by + 1; break; }
-        if (SOLID[id]) break;
+    for (let k = 0; k < n; k++) {
+      const top = this.padUnder(Math.floor(sb[2 * k]), Math.floor(sb[2 * k + 1]), y);
+      if (top === top && !(top <= best)) best = top;
+    }
+    if (!dense || !this.fillRect(x, z)) return best;
+    const r = this.rectBuf;
+    for (let bx = Math.floor(r[0]); bx <= Math.floor(r[1]); bx++) {
+      for (let bz = Math.floor(r[2]); bz <= Math.floor(r[3]); bz++) {
+        const top = this.padUnder(bx, bz, y);
+        if (top === top && !(top <= best)) best = top;
       }
     }
     return best;
+  }
+
+  /** Top of the jump pad that is the first solid block under column (bx, bz) within a pad launch's height below y, or NaN. */
+  private padUnder(bx: number, bz: number, y: number): number {
+    const g = this.world.getBlock;
+    const lowest = Math.floor(y - apexOf(JUMP_PAD_VELOCITY) - 1);
+    for (let by = Math.floor(y - 0.05); by >= lowest; by--) {
+      const id = g(bx, by, bz);
+      if (id === BLOCK.JUMP_PAD) return by + 1;
+      if (SOLID[id]) break;
+    }
+    return NaN;
   }
 
   /** In water or lava, or on a ladder: movement rules that replace the jump curve. */
@@ -394,7 +509,7 @@ export class MovementValidator {
   }
 
   /** Is there any collision-free route (straight, vertical/horizontal in either order, or around a corner)? */
-  private pathFree(x1: number, y1: number, z1: number): boolean {
+  private pathFree(x1: number, y1: number, z1: number, dt: number): boolean {
     const x0 = this.x, y0 = this.y, z0 = this.z;
     const horizontal = Math.abs(x1 - x0) + Math.abs(z1 - z0) > 1e-6;
     // The straight line itself (a jump arcing off a crate seen across a frame hitch: neither L shape is free).
@@ -423,55 +538,203 @@ export class MovementValidator {
         if (this.segmentFree(x0, y0, z0, mx, my, mz) && this.segmentFree(mx, my, mz, x1, y1, z1)) return true;
       }
     }
-    return horizontal && this.detourFree(x0, y0, z0, x1, y1, z1);
+    return horizontal && this.detourFree(x0, y0, z0, x1, y1, z1, dt);
   }
 
-  /** Flood fill grid of `detourFree` (0 unknown, 1 free, 2 solid, 3 queued), reused between reports. */
+  /** Flood fill grid of `detourFree` (0 unknown, 1 free and queued, 2 solid), reused between reports. */
   private grid = new Uint8Array(0);
-  private queue = new Int32Array(0);
+  private stack = new Int32Array(0);
 
   /**
-   * Fallback of `pathFree` for a report that covers a curved route: a frame hitch on the client sends a
-   * quarter second of movement at once, e.g. round the corner of a shed and past a lamp post. A flood
-   * fill over a 1/8 block grid in the box spanned by both positions plus DETOUR_MARGIN, at the lower or
-   * the upper height (the vertical move first or last). The margin is far too small to get round a wall.
+   * Last resort of `pathFree` for a report that covers a curved route. A frame hitch on the client sends up to a
+   * third of a second of movement at once, and in that time the player jumps along a wall, lands on a ledge and
+   * hops off it, bumps its head and slides on: the route is a curve in all three dimensions, and neither a
+   * straight line nor an L of axis-aligned pieces follows it. This asks the question itself: is there any
+   * collision-free route for the box from the last valid position to this one, through a corridor around them?
+   * A depth first flood fill over a 1/8 block grid that is aligned to the start (a player pressed against a wall
+   * has only 0.03 to spare, so the grid must hit the wall's distance exactly).
+   *
+   * The corridor is DETOUR_MARGIN wider than both positions in x and z, far too little to get round a wall, and
+   * as high as a jump fits in the time the report covers (`dt`, seconds) above and below them: a floor or a
+   * ceiling cannot be got round at all, a wall as high as a jump only when there was time for the jump.
    */
-  private detourFree(x0: number, y0: number, z0: number, x1: number, y1: number, z1: number): boolean {
+  private detourFree(x0: number, y0: number, z0: number, x1: number, y1: number, z1: number, dt: number): boolean {
     if (Math.hypot(x1 - x0, z1 - z0) > MOVE.DETOUR_MAX) return false;
-    const G = 0.125, M = MOVE.DETOUR_MARGIN;
-    // Grid aligned to the start position, covering both ends plus the margin.
-    const ox = x0 - Math.ceil((x0 - Math.min(x0, x1) + M) / G) * G;
-    const oz = z0 - Math.ceil((z0 - Math.min(z0, z1) + M) / G) * G;
-    const nx = Math.ceil((Math.max(x0, x1) + M - ox) / G) + 1, nz = Math.ceil((Math.max(z0, z1) + M - oz) / G) + 1;
-    const n = nx * nz;
-    if (this.grid.length < n) { this.grid = new Uint8Array(n * 2); this.queue = new Int32Array(n * 2); }
-    const si = Math.round((x0 - ox) / G), sk = Math.round((z0 - oz) / G);
-    const ti = Math.round((x1 - ox) / G), tk = Math.round((z1 - oz) / G);
-    for (let order = 0; order < 2; order++) {
-      const level = order === 0 ? y1 : y0;
-      // Vertical move at the start (then sideways at y1) or at the end (sideways at y0 first).
-      if (order === 0 ? !this.segmentFree(x0, y0, z0, x0, y1, z0) : !this.segmentFree(x1, y0, z1, x1, y1, z1)) continue;
-      if (this.inSolid(x1, level, z1)) continue;
-      const grid = this.grid, queue = this.queue;
-      grid.fill(0, 0, n);
-      let head = 0, tail = 0;
-      queue[tail++] = si * nz + sk;
-      grid[si * nz + sk] = 3;
-      while (head < tail) {
-        const c = queue[head++], i = (c / nz) | 0, k = c - i * nz;
-        if (i === ti && k === tk) return true;
-        for (let d = 0; d < 4; d++) {
-          const ni = i + (d === 0 ? 1 : d === 1 ? -1 : 0), nk = k + (d === 2 ? 1 : d === 3 ? -1 : 0);
-          if (ni < 0 || nk < 0 || ni >= nx || nk >= nz) continue;
-          const nc = ni * nz + nk;
-          if (grid[nc] === 0) grid[nc] = this.inSolid(ox + ni * G, level, oz + nk * G) ? 2 : 1;
-          if (grid[nc] !== 1) continue;
-          grid[nc] = 3;
-          queue[tail++] = nc;
-        }
+    const G = MOVE.DETOUR_GRID, M = MOVE.DETOUR_MARGIN;
+    const vm = Math.min(JUMP_APEX + 0.25, 0.3 + (JV * dt) / 2);
+    // Grid aligned to the start position, covering both ends plus the margins.
+    const loX = Math.min(x0, x1) - M, hiX = Math.max(x0, x1) + M;
+    const loY = Math.min(y0, y1) - vm, hiY = Math.max(y0, y1) + vm;
+    const loZ = Math.min(z0, z1) - M, hiZ = Math.max(z0, z1) + M;
+    const ox = x0 - Math.ceil((x0 - loX) / G) * G, oy = y0 - Math.ceil((y0 - loY) / G) * G, oz = z0 - Math.ceil((z0 - loZ) / G) * G;
+    const nx = Math.ceil((hiX - ox) / G) + 1, ny = Math.ceil((hiY - oy) / G) + 1, nz = Math.ceil((hiZ - oz) / G) + 1;
+    const n = nx * ny * nz;
+    if (n > MOVE.DETOUR_CELLS * 4) return false;
+    if (this.grid.length < n) { this.grid = new Uint8Array(n * 2); this.stack = new Int32Array(n * 2); }
+    const grid = this.grid, stack = this.stack;
+    grid.fill(0, 0, n);
+    // Cell index = (i * ny + j) * nz + k.
+    const si = Math.round((x0 - ox) / G), sj = Math.round((y0 - oy) / G), sk = Math.round((z0 - oz) / G);
+    const ti = (x1 - ox) / G, tj = (y1 - oy) / G, tk = (z1 - oz) / G;
+    let top = 0, tested = 0;
+    const start = (si * ny + sj) * nz + sk;
+    stack[top++] = start;
+    grid[start] = 1;
+    // Neighbours; the one towards the target on the axis with the most to go is popped first.
+    const score = this.scoreBuf, order = this.orderBuf;
+    while (top > 0) {
+      const c = stack[--top];
+      const k = c % nz, j = ((c - k) / nz) % ny, i = ((c - k) / nz - j) / ny;
+      // Close enough to the target to step onto it exactly?
+      if (Math.abs(i - ti) <= 1 && Math.abs(j - tj) <= 1 && Math.abs(k - tk) <= 1
+        && this.segmentFree(ox + i * G, oy + j * G, oz + k * G, x1, y1, z1)) return true;
+      score[0] = ti - i; score[1] = i - ti; score[2] = tj - j; score[3] = j - tj; score[4] = tk - k; score[5] = k - tk;
+      // Insertion sort by score, best last (so it is popped first).
+      for (let a = 0; a < 6; a++) {
+        let b = a - 1;
+        while (b >= 0 && score[order[b]] > score[a]) { order[b + 1] = order[b]; b--; }
+        order[b + 1] = a;
+      }
+      for (let o = 0; o < 6; o++) {
+        const d = order[o], axis = d >> 1, sign = d & 1 ? -1 : 1;
+        const ni = i + (axis === 0 ? sign : 0), nj = j + (axis === 1 ? sign : 0), nk = k + (axis === 2 ? sign : 0);
+        if (ni < 0 || nj < 0 || nk < 0 || ni >= nx || nj >= ny || nk >= nz) continue;
+        const nc = (ni * ny + nj) * nz + nk;
+        if (grid[nc] !== 0) continue;
+        if (++tested > MOVE.DETOUR_CELLS) return false;
+        if (this.inSolid(ox + ni * G, oy + nj * G, oz + nk * G)) { grid[nc] = 2; continue; }
+        grid[nc] = 1;
+        stack[top++] = nc;
       }
     }
     return false;
+  }
+  private readonly scoreBuf = [0, 0, 0, 0, 0, 0];
+  private readonly orderBuf = [0, 1, 2, 3, 4, 5];
+
+  /**
+   * Standing at height y at time t: a jump from here. The curves of the flight so far that still fit this height stay
+   * (`keep`): "standing" is a floor under the feet at this instant, and a pad launch that passes the top of a wall,
+   * within a hair, only brushes it.
+   */
+  private setGround(y: number, t: number, keep: boolean, jitter = 0): void {
+    let m = 0;
+    for (let i = 0; keep && i < this.hN && m < MOVE.HYPOTHESES - 1; i++) {
+      if (y > this.hAY[i] + jumpCeiling(t - this.hAT[i], jitter, this.hAV[i]) + MOVE.HEIGHT_SLACK) continue;
+      this.hAY[m] = this.hAY[i]; this.hAT[m] = this.hAT[i]; this.hAV[m] = this.hAV[i]; this.hLow[m] = Math.min(this.hLow[i], y);
+      m++;
+    }
+    this.hAY[m] = this.hLow[m] = y;
+    this.hAT[m] = t;
+    this.hAV[m] = JV;
+    this.hN = m + 1;
+  }
+
+  /** Adds a curve to the scratch set; a curve from the same height with the same launch speed keeps the later take-off. */
+  private addCurve(aY: number, aT: number, aV: number, low: number): void {
+    for (let i = 0; i < this.cN; i++) {
+      if (this.cAV[i] === aV && Math.abs(this.cAY[i] - aY) < 0.02) {
+        // The later take-off is a fresh flight, with a fresh lowest point.
+        if (aT >= this.cAT[i]) { this.cAT[i] = aT; this.cLow[i] = low; }
+        return;
+      }
+    }
+    const k = this.cN++;
+    this.cAY[k] = aY; this.cAT[k] = aT; this.cAV[k] = aV; this.cLow[k] = low;
+  }
+
+  /**
+   * The jump curves for a report in the air: finds the take-off the curve starts at (the ground left in the gap
+   * since the last standing report, a bunny hop whose landing and take-off fell between two reports, a pad) and
+   * checks that the height fits one of them. On success the air phase state is updated.
+   *
+   * `dense` is the second attempt, made only for a report that would otherwise be corrected. The first attempt looks
+   * for the ground at a few points on the path through the reports. A hitch hides the real route, though: a take-off
+   * from the corner of a slab or a jump pad that the path misses by a hair. The second attempt therefore looks at
+   * every spot of the rectangle the reports span.
+   */
+  private airPhase(x: number, y: number, z: number, t: number, tp: number, jitter: number, resync: boolean, dense: boolean): boolean {
+    const dy = y - this.y;
+    this.cN = 0;
+    let explained = false;
+    for (let i = 0; i < this.hN; i++) {
+      this.addCurve(this.hAY[i], this.hAT[i], this.hAV[i], Math.min(this.hLow[i], y));
+      explained = explained || y <= this.hAY[i] + jumpCeiling(tp - this.hAT[i], jitter, this.hAV[i]) + MOVE.HEIGHT_SLACK;
+    }
+    if (this.grounded) {
+      let anchorY = this.groundY, anchorT = this.groundT;
+      // A long gap (frame hitch) may hide a step up (slab, stair) before the take-off, off the straight line.
+      const gap = tp - this.groundT;
+      const hitch = dense || gap > 2 * MOVE.REPORT_GAP;
+      if (gap > 2 * MOVE.REPORT_GAP) {
+        const reach = (this.limit(t) + this.slideSpeed(this.groundT)) * gap / 2, half = Math.hypot(x - this.x, z - this.z) / 2;
+        const r = Math.min(1.5, Math.sqrt(Math.max(0, reach * reach - half * half)));
+        anchorY = Math.max(anchorY, this.stepFloorNear((this.x + x) / 2, this.groundY, (this.z + z) / 2, r + half));
+      }
+      if (dense && this.fillRect(x, z)) {
+        // Second attempt: any step up (slab, stair) within reach of the rectangle the reports span.
+        const m = hw + MOVE.MARGIN, r = this.rectBuf, ref = this.groundY + STEP_HEIGHT;
+        const g = this.floorIn(r[0] - m, r[1] + m, r[2] - m, r[3] + m, ref + 0.05, ref);
+        if (g === g && g > anchorY && g <= ref + 1e-6) anchorY = g;
+      }
+      // Left the ground: from a jump pad when one lay under the path at ground height.
+      const anchorV = this.padOnPath(x, z, this.groundY, dense) ? JUMP_PAD_VELOCITY : JV;
+      // The take-off lies somewhere in the gap. A rising player took off as late as the height allows (the ascent
+      // branch); the first possible moment would put the curve past its top and refuse the reports that follow.
+      if (hitch && dy > 0.001 && y > anchorY) anchorT = Math.max(anchorT, tp - riseTime(y - anchorY, anchorV));
+      this.addCurve(anchorY, anchorT, anchorV, Math.min(this.groundY, y));
+    } else {
+      // Rising with ground just below: a new jump (bunny hop) whose take-off fell between two reports.
+      // Falling but above the old curves: the same, with the new jump already past its top (or cut short
+      // by a ceiling: a head bump under a lamp or a deck).
+      // Falling past a surface the player may have stood on between the two reports: a landing and a walk off
+      // a ledge, which starts a new fall that the old curve (from a lower take-off) underestimates.
+      const rising = dy > 0.001;
+      // Take-off happened somewhere between the two reports: ground below either end counts.
+      // The take-off may lie up to two reports back (a report can catch the rise before it is above the last one).
+      let gy = NaN;
+      const n = this.fillSamples(x, z), sb = this.sampleBuf, top = Math.max(y, this.y);
+      for (let k = 0; k < n; k++) {
+        const g = this.floorBelow(sb[2 * k], y, sb[2 * k + 1], top);
+        if (g === g && !(g <= gy)) gy = g;
+      }
+      if (dense && this.fillRect(x, z)) {
+        const m = hw + MOVE.MARGIN, r = this.rectBuf, g = this.floorIn(r[0] - m, r[1] + m, r[2] - m, r[3] + m, y, top);
+        if (g === g && !(g <= gy)) gy = g;
+      }
+      const crossed = gy > y + 1e-6 && gy <= this.y + 0.05;
+      if (rising || !explained || crossed) {
+        // With the client clock the window is exact; arrival times can squeeze a burst together.
+        const window = this.stepMode ? tp - this.pt : rising ? Math.max(t - this.pt, 2 * MOVE.REPORT_GAP) : t - this.pt;
+        // Rising from the ground: the jump started as late as the height allows. Below the ground it started from
+        // (a walk off a ledge): the fall since then.
+        const since = gy > y ? Math.sqrt((2 * (gy - y)) / PHYSICS.GRAVITY) : riseTime(y - gy);
+        if (gy === gy && since <= window + MOVE.BOUNCE_SLACK) this.addCurve(gy, tp - since, JV, Math.min(gy, y));
+        // A jump pad further down: a new launch from it (landed on it between two reports).
+        const pad = this.padBelowPath(x, y, z, dense);
+        if (pad === pad && riseTime(y - pad, JUMP_PAD_VELOCITY) <= window + MOVE.BOUNCE_SLACK) {
+          this.addCurve(pad, tp - riseTime(y - pad, JUMP_PAD_VELOCITY), JUMP_PAD_VELOCITY, pad);
+        }
+      }
+    }
+    // Keep the curves that fit the height (the newest HYPOTHESES of them).
+    let m = 0;
+    for (let i = 0; i < this.cN; i++) {
+      const aY = this.cAY[i], aV = this.cAV[i], low = this.cLow[i];
+      let aT = this.cAT[i];
+      if (y > aY + jumpCeiling(tp - aT, jitter, aV) + MOVE.HEIGHT_SLACK || y > low + apexOf(aV) + STEP_HEIGHT + MOVE.HEIGHT_SLACK) continue;
+      // After a resync the take-off time is unknown: the latest one that fits keeps the next reports honest.
+      if (resync) aT = Math.max(aT, tp - riseTime(y - aY, aV));
+      this.cAY[m] = aY; this.cAT[m] = aT; this.cAV[m] = aV; this.cLow[m] = low;
+      m++;
+    }
+    if (m === 0) return false;
+    const from = Math.max(0, m - MOVE.HYPOTHESES);
+    this.hN = m - from;
+    for (let i = 0; i < this.hN; i++) {
+      this.hAY[i] = this.cAY[from + i]; this.hAT[i] = this.cAT[from + i]; this.hAV[i] = this.cAV[from + i]; this.hLow[i] = this.cLow[from + i];
+    }
+    return true;
   }
 
   // ------------------------------------------------------------ the check
@@ -544,7 +807,8 @@ export class MovementValidator {
     let padRise = false;
     if (!this.opts.canFly) {
       if (dy > 0 && dy > this.bucketV + 1e-6) {
-        const pad = this.padBelowPath(x, y, z);
+        let pad = this.padBelowPath(x, y, z, false);
+        if (pad !== pad) pad = this.padBelowPath(x, y, z, true);
         padRise = dy <= this.bucketVPad + 1e-6 && pad === pad;
         if (!padRise) return fail('rise', 2, vLag);
       }
@@ -555,7 +819,7 @@ export class MovementValidator {
     }
     // Geometry: inside a block, or through one.
     if (this.inSolid(x, y, z)) return fail('noclip', 3);
-    if ((dist > 1e-6 || Math.abs(dy) > 1e-6) && !this.pathFree(x, y, z)) return fail('wall', 3);
+    if ((dist > 1e-6 || Math.abs(dy) > 1e-6) && !this.pathFree(x, y, z, Math.max(0, tp - this.tp) + (stepMode ? MOVE.CLOCK_JITTER : MOVE.JITTER))) return fail('wall', 3);
 
     // Standing, swimming or climbing resets the air phase; otherwise follow the jump curve.
     // Liquids and ladders count when touched anywhere between the two reports (a ladder can be climbed in between).
@@ -563,67 +827,15 @@ export class MovementValidator {
       || this.inLiquidOrLadder((x + this.x) / 2, (y + this.y) / 2, (z + this.z) / 2)
       || this.inLiquidOrLadder(this.x * 0.75 + x * 0.25, this.y * 0.75 + y * 0.25, this.z * 0.75 + z * 0.25)
       || this.inLiquidOrLadder(this.x * 0.25 + x * 0.75, this.y * 0.25 + y * 0.75, this.z * 0.25 + z * 0.75);
-    let anchorV = this.anchorV;
     if (grounded) {
-      this.groundY = this.anchorY = this.lowY = y;
-      this.groundT = this.anchorT = tp;
-      anchorV = JV;
-    } else {
-      let anchorY = this.anchorY, anchorT = this.anchorT, lowY = this.lowY;
-      if (this.grounded) {
-        anchorY = lowY = this.groundY;
-        anchorT = this.groundT;
-        // A long gap (frame hitch) may hide a step up (slab, stair) before the take-off, off the straight line.
-        const gap = tp - this.groundT;
-        if (gap > 2 * MOVE.REPORT_GAP) {
-          const reach = (this.limit(t) + this.slideSpeed(this.groundT)) * gap / 2, half = Math.hypot(x - this.x, z - this.z) / 2;
-          const r = Math.min(1.5, Math.sqrt(Math.max(0, reach * reach - half * half)));
-          anchorY = Math.max(anchorY, this.stepFloorNear((this.x + x) / 2, this.groundY, (this.z + z) / 2, r + half));
-        }
-        // Left the ground: from a jump pad when one lay under the path at ground height.
-        anchorV = this.padOnPath(x, z, this.groundY) ? JUMP_PAD_VELOCITY : JV;
-        if (y < lowY) lowY = y;
-      } else {
-        if (y < lowY) lowY = y;
-        // Rising with ground just below: a new jump (bunny hop) whose take-off fell between two reports.
-        // Falling but above the old curve: the same, with the new jump already past its top (or cut short
-        // by a ceiling: a head bump under a lamp or a deck).
-        const rising = dy > 0.001;
-        if (rising || y > anchorY + jumpCeiling(tp - anchorT, jitter, anchorV) + MOVE.HEIGHT_SLACK) {
-          // Take-off happened somewhere between the two reports: ground below either end counts.
-          // The take-off may lie up to two reports back (a report can catch the rise before it is above the last one).
-          let gy = NaN;
-          for (let k = 0; k <= 8; k++) {
-            const f = k / 4;
-            const gx = f <= 1 ? this.px + (this.x - this.px) * f : this.x + (x - this.x) * (f - 1);
-            const gz = f <= 1 ? this.pz + (this.z - this.pz) * f : this.z + (z - this.z) * (f - 1);
-            const g = this.floorBelow(gx, y, gz);
-            if (g === g && !(g <= gy)) gy = g;
-          }
-          // With the client clock the window is exact; arrival times can squeeze a burst together.
-          const window = stepMode ? tp - this.pt : rising ? Math.max(t - this.pt, 2 * MOVE.REPORT_GAP) : t - this.pt;
-          if (gy === gy && riseTime(y - gy) <= window + MOVE.BOUNCE_SLACK) {
-            anchorY = lowY = gy;
-            anchorT = tp - riseTime(y - gy);
-            anchorV = JV;
-          }
-          // A jump pad further down: a new launch from it (landed on it between two reports).
-          const pad = this.padBelowPath(x, y, z);
-          if (pad === pad && riseTime(y - pad, JUMP_PAD_VELOCITY) <= window + MOVE.BOUNCE_SLACK) {
-            anchorY = lowY = pad;
-            anchorT = tp - riseTime(y - pad, JUMP_PAD_VELOCITY);
-            anchorV = JUMP_PAD_VELOCITY;
-          }
-        }
-      }
-      const ceiling = anchorY + jumpCeiling(tp - anchorT, jitter, anchorV) + MOVE.HEIGHT_SLACK;
-      if (y > ceiling || y > lowY + apexOf(anchorV) + STEP_HEIGHT + MOVE.HEIGHT_SLACK) return fail('fly', 2, vLag);
-      // After a resync the take-off time is unknown: the latest one that fits keeps the next reports honest.
-      if (resync) anchorT = Math.max(anchorT, tp - riseTime(y - anchorY, anchorV));
-      this.anchorY = anchorY; this.anchorT = anchorT; this.lowY = lowY;
+      this.groundY = y;
+      this.groundT = tp;
+      this.setGround(y, tp, true, jitter);
+    } else if (!this.airPhase(x, y, z, t, tp, jitter, resync, false) && !this.airPhase(x, y, z, t, tp, jitter, resync, true)) {
+      // Neither the take-off the reports point at, nor any other the corridor between them offers, explains this height.
+      return fail('fly', 2, vLag);
     }
     this.grounded = grounded;
-    this.anchorV = anchorV;
 
     this.bucketH -= dist;
     if (dy > 0) {
