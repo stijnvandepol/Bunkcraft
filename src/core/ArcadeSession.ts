@@ -761,6 +761,7 @@ export class ArcadeSession {
     if (miss > 2.2) return;
     gunAt.x = ox + dx * along; gunAt.y = oy + dy * along; gunAt.z = oz + dz * along;
     this.d.audio.playBulletWhizz(1 - miss / 2.2, gunAt, weapon);
+    this.d.feedback?.caption(t('arc.cap.whizz'), gunAt.x, gunAt.z);
   }
 
   /** Puff of block fragments where a bullet ended on a block. */
@@ -951,6 +952,7 @@ export class ArcadeSession {
       if (listener < 40) {
         gunAt.x = ox + dx * tr.thinT[j]; gunAt.y = oy + dy * tr.thinT[j]; gunAt.z = oz + dz * tr.thinT[j];
         this.d.audio.playBulletImpact(Math.max(0.2, 1 - listener / 40), gunAt, id);
+        if (listener < 24 && j === 0) this.d.feedback?.caption(t('arc.cap.glass'), gunAt.x, gunAt.z);
       }
     }
   }
@@ -1032,6 +1034,7 @@ export class ArcadeSession {
     // Low health: a heartbeat that cuts through (and quickens below 20).
     if (!this.dead && !this.ended && this.health > 0 && this.health < LOW_HEALTH && now >= this.nextBeat) {
       this.d.audio.playHeartbeat(0.45 + 0.55 * (1 - this.health / LOW_HEALTH));
+      this.d.feedback?.caption(t('arc.cap.heartbeat'), this.d.player.x, this.d.player.z);
       this.nextBeat = now + (this.health < 20 ? 0.72 : 0.95);
     }
     this.protect = Math.max(0, this.protect - dt);
