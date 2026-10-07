@@ -13,12 +13,15 @@
  *  - first contact: walking time between the nearest red and blue spawn (7.3 b/s)
  *  - long sight lines: share of sampled eye-to-eye pairs ≥ 40 / ≥ 60 blocks apart that see each other
  *
+ * Jump pads launch onto every landing `padLandings` (src/player/ArcadeMove) allows.
+ *
  *   npx tsx scripts/qa/map-audit.ts [mapId] [--json out.json]
  */
 import { writeFileSync } from 'node:fs';
 import { traceBlocks } from '../../server/Combat';
 import { ARENA_FLOOR_Y, MAPS, getMap } from '../../src/modes/maps';
 import type { ArenaMap, Spawn } from '../../src/modes/maps/ArenaMap';
+import { padLandings } from '../../src/player/ArcadeMove';
 import { BLOCK, SOLID, TALL } from '../../src/world/BlockRegistry';
 
 const args = process.argv.slice(2);
@@ -66,8 +69,16 @@ function audit(map: ArenaMap, variant: number) {
   };
   const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
   /** Moves from a standing spot (forward graph). */
+  const at = (x: number, y: number, z: number) => map.blockAt(variant, x, y, z);
+  const landable = (id: number) => id !== BLOCK.AIR && SOLID[id] === 1 && !TALL[id];
+  const pads: [number, number, number][] = [];
   const moves = (n: Node, out: Node[]): Node[] => {
     out.length = 0;
+    if (at(n.x, n.y - 1, n.z) === BLOCK.JUMP_PAD) {
+      pads.length = 0;
+      padLandings(at, landable, n.x, n.y - 1, n.z, pads);
+      for (const [x, z, y] of pads) if (isStand(x, y + 1, z)) out.push({ x, y: y + 1, z });
+    }
     const headroomJump = !solid(n.x, n.y + 2, n.z);
     for (const [dx, dz] of DIRS) {
       const x = n.x + dx, z = n.z + dz;
