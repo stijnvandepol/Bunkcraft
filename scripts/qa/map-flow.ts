@@ -19,7 +19,8 @@
  */
 import { writeFileSync } from 'node:fs';
 import { traceBlocks } from '../../server/Combat';
-import { MAPS, getMap } from '../../src/modes/maps';
+import { ARENA_FLOOR_Y, MAPS, getMap } from '../../src/modes/maps';
+import { SOLID, TALL } from '../../src/world/BlockRegistry';
 import type { ArenaMap, Spawn } from '../../src/modes/maps/ArenaMap';
 import { arenaPath, follow } from '../lib/arenaPath';
 
@@ -74,10 +75,14 @@ function simulate(map: ArenaMap, seed: number): Result {
   // Goals: standing cells of the map, drawn from the routes between the spawns and objectives, so bots
   // spread over all lanes (and roofs) instead of walking one straight line.
   const b = map.bounds;
-  const goals: [number, number][] = [];
-  for (let i = 0; i < 4000 && goals.length < 400; i++) {
+  // Standing spots (floor, upper floors, roofs up to 8 high), feet height included.
+  const goals: [number, number, number][] = [];
+  const at = (x: number, y: number, z: number) => map.blockAt(variant, x, y, z);
+  for (let i = 0; i < 6000 && goals.length < 400; i++) {
     const x = Math.floor(b.minX + 2 + r() * (b.maxX - b.minX - 4)), z = Math.floor(b.minZ + 2 + r() * (b.maxZ - b.minZ - 4));
-    if (map.heightAt(variant, x + 0.5, z + 0.5) - 64 <= 8) goals.push([x + 0.5, z + 0.5]);
+    const levels: number[] = [];
+    for (let y = ARENA_FLOOR_Y; y <= ARENA_FLOOR_Y + 8; y++) if (SOLID[at(x, y, z)] && !TALL[at(x, y, z)] && at(x, y + 1, z) === 0 && at(x, y + 2, z) === 0) levels.push(y + 1);
+    if (levels.length) goals.push([x + 0.5, z + 0.5, levels[Math.floor(r() * levels.length)]]);
   }
   const spawns = [map.spawns.red, map.spawns.blue];
   const bots: Bot[] = [];
