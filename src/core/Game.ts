@@ -2142,7 +2142,7 @@ export class Game {
     this.audio.setListener(eye.x, eye.y, eye.z, p.yaw);
     this.audioProbe.update(dt, this.audio.env, eye.x, eye.y, eye.z, this.cycle.dayFactor, this.underwater);
     this.hud.setUnderwater(this.underwater);
-    this.hud.setHurt(limitFlash(this.arcade ? this.arcade.hurt * 0.8 : this.stats.hurtTime / 10, this.settings.values));
+    this.hud.setHurt(limitFlash(this.arcade ? this.arcade.hurtVignette : this.stats.hurtTime / 10, this.settings.values));
     if (!this.arcade) this.hud.survival.update({
       health: Math.ceil(this.stats.health), hunger: this.stats.hunger, air: this.stats.air, maxAir: MAX_AIR, armor: this.stats.armorPoints,
       hardcore: this.mode === 'hardcore', poison: this.stats.effects.level('poison') > 0, wither: this.stats.effects.level('wither') > 0,

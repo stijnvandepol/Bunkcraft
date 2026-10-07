@@ -38,6 +38,12 @@ export { DEFAULT_REWIND, MAX_REWIND } from './anticheat/LagComp';
 /** Fire messages may arrive this much (s) earlier than the weapon's cadence allows (network jitter). */
 const FIRE_SLACK = 0.04;
 const HISTORY_SIZE = 24;
+/** Spawn choice: shots remembered, how long and how near they count, and the distance beyond which a spawn is safe. */
+const FIGHT_MEMORY = 32;
+export const SPAWN_FIGHT_SECONDS = 3;
+export const SPAWN_FIGHT_RADIUS = 14;
+/** An opponent this close that can see a spawn makes it a bad one. */
+export const SPAWN_SIGHT_RANGE = 35;
 /** The mode state (zones, flags) is re-sent at least this often. */
 const MODE_INTERVAL = 0.25;
 
@@ -163,6 +169,11 @@ export class Match {
   private moveId = 0;
   private readonly tmpDir: [number, number, number] = [0, 0, 0];
   private readonly tmpPos: [number, number, number, number] = [0, 0, 0, 0];
+  /** Recent shots (where and when), for the spawn choice. */
+  private readonly fightX = new Float64Array(FIGHT_MEMORY);
+  private readonly fightZ = new Float64Array(FIGHT_MEMORY);
+  private readonly fightT = new Float64Array(FIGHT_MEMORY).fill(-1e9);
+  private fightHead = 0;
   private readonly targets: { o: MatchPlayer; x: number; y: number; z: number; h: number }[] = [];
 
   /** The arena this match is played on. */
@@ -396,6 +407,9 @@ export class Match {
       } else s.nextFireAt = shotAt + fireInterval(w);
     } else s.nextFireAt = shotAt + fireInterval(w);
     p.firedThisLife = true;
+    // Spawn protection ends with the first shot (no shooting from behind a shield).
+    if (p.protectedUntil > now) p.protectedUntil = now;
+    this.noteFight(p.x, p.z, now);
     if (s.cap > 0) {
       s.mag--;
       this.host.send(id, { t: 'ammo', slot: p.slot, mag: s.mag, reloading: false });
@@ -778,20 +792,40 @@ export class Match {
     for (let i = 0; i < 3; i++) this.host.send(p.id, { t: 'ammo', slot: i as 0 | 1 | 2, mag: p.slots[i].mag, reloading: false });
   }
 
+  /** A shot was fired here (recent fights: spawns keep away from them). Fixed ring, no allocation. */
+  private noteFight(x: number, z: number, now: number): void {
+    const i = this.fightHead;
+    this.fightX[i] = x; this.fightZ[i] = z; this.fightT[i] = now;
+    this.fightHead = (i + 1) % FIGHT_MEMORY;
+  }
+
   /**
-   * The team's spawn (team modes) or any spawn (ffa) that is furthest from the living opponents, with a
-   * little randomness so the same point is not used every time.
+   * A spawn away from the fight: the team's spawns (team modes) or all (ffa), scored by
+   *  - the distance (blocks) to the nearest living opponent,
+   *  - minus 8 when an opponent within SPAWN_SIGHT_RANGE can see it (no spawning into a sight line),
+   *  - minus 3 per shot fired nearby in the last SPAWN_FIGHT_SECONDS, up to 3 (no spawning into a fight),
+   *  - plus 1 in team modes with a teammate within 25 blocks (spawn with your team),
+   * plus up to 2 of randomness so the same point is not used every time. Weights tuned with scripts/flow-metrics.ts
+   * (bot matches): stronger sight/fight penalties pick closer hidden spots and get more spawn kills.
    */
   pickSpawn(p: MatchPlayer): Spawn {
     const list: Spawn[] = this.teams && p.team ? this.map.spawns[p.team] : this.map.spawns.ffa;
+    const now = this.host.now();
     let best = list[0], bestScore = -Infinity;
     for (const s of list) {
-      let nearest = 1000;
+      let nearest = 1000, seen = false, mate = false;
       for (const o of this.players.values()) {
-        if (o === p || !o.alive || (this.teams && o.team === p.team)) continue;
-        nearest = Math.min(nearest, dist2(s.x, s.z, o.x, o.z));
+        if (o === p || !o.alive) continue;
+        const d = dist2(s.x, s.z, o.x, o.z);
+        if (this.teams && o.team === p.team) { if (d < 25) mate = true; continue; }
+        nearest = Math.min(nearest, d);
+        if (!seen && d < SPAWN_SIGHT_RANGE) seen = bodyVisible(this.host.blocks, o.x, o.y + EYE_HEIGHT, o.z, s.x, s.y, s.z);
       }
-      const score = nearest + this.host.random() * 5;
+      let fights = 0;
+      for (let i = 0; i < FIGHT_MEMORY; i++) {
+        if (now - this.fightT[i] <= SPAWN_FIGHT_SECONDS && dist2(s.x, s.z, this.fightX[i], this.fightZ[i]) < SPAWN_FIGHT_RADIUS) fights++;
+      }
+      const score = nearest - (seen ? 8 : 0) - Math.min(3, fights) * 3 + (mate ? 1 : 0) + this.host.random() * 2;
       if (score > bestScore) { bestScore = score; best = s; }
     }
     return best;

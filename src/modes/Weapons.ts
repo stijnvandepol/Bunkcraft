@@ -262,6 +262,6 @@ export const PLAYER_MAX_HEALTH = 100;
 /** Health regenerates after this many seconds without damage, at this rate per second. */
 export const REGEN_DELAY = 5;
 export const REGEN_PER_SECOND = 25;
-export const RESPAWN_SECONDS = 3;
+export const RESPAWN_SECONDS = 2.5;
 /** Player hitbox (blocks): width, total height; the head is the top 0.4. */
 export const HITBOX = { width: 0.6, height: 1.8, head: 0.4 };

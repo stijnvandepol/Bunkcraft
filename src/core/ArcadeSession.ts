@@ -82,6 +82,8 @@ export interface ArcadeFrame {
   lookY: number;
 }
 
+/** Health under which the screen edge pulses red. */
+const LOW_HEALTH_PULSE = 35;
 /** Spectator camera: distance behind the watched player's head and the lift above it. */
 const SPECTATE_DISTANCE = 3.2;
 
@@ -202,6 +204,16 @@ export class ArcadeSession {
   private frameNow = 0;
   /** 0..1 camera hurt strength after taking damage, decaying. */
   hurt = 0;
+  /**
+   * Red screen edge: the hurt flash, and under LOW_HEALTH_PULSE health a slow pulse that grows as health drops
+   * (you know you are one hit from death without looking at the number).
+   */
+  get hurtVignette(): number {
+    const low = !this.dead && this.health > 0 && this.health < LOW_HEALTH_PULSE
+      ? (0.16 + 0.1 * Math.sin(this.frameClock * 5.5)) * (1.4 - this.health / LOW_HEALTH_PULSE) : 0;
+    return Math.max(this.hurt * 0.8, low);
+  }
+  private frameClock = 0;
   /** Side of the last hit (−1 left, 1 right) for the camera tilt. */
   hurtSide = 1;
   private protect = 0;
@@ -797,6 +809,8 @@ export class ArcadeSession {
   }
 
   private shoot(now: number): void {
+    // Spawn protection ends with the first shot (the server does the same).
+    this.protect = 0;
     const w = this.weapon;
     const p = this.d.player;
     this.aim(tmpAim);
@@ -848,6 +862,7 @@ export class ArcadeSession {
   }
 
   private melee(): void {
+    this.protect = 0;
     const p = this.d.player;
     this.aim(tmpAim);
     this.d.send({ t: 'fire', slot: this.slot, ox: p.x, oy: p.eyeY, oz: p.z, dx: tmpAim.x, dy: tmpAim.y, dz: tmpAim.z, ads: false });
@@ -861,6 +876,7 @@ export class ArcadeSession {
   update(f: ArcadeFrame, input: Input): void {
     const { now, dt } = f;
     this.lastNow = now;
+    this.frameClock = now;
     const canAct = f.controls && !this.dead && !this.ended && !this.loadoutOpen;
     const ammo = this.ammo[this.slot];
 
