@@ -86,7 +86,7 @@ export class ModeVisuals {
       this.rings.push(ring);
       this.group.add(ring);
     }
-    this.tags = new THREE.InstancedMesh(new THREE.BoxGeometry(0.32, 0.46, 0.05), new THREE.MeshBasicMaterial({ color: 0xffffff }), MAX_TAGS);
+    this.tags = new THREE.InstancedMesh(new THREE.BoxGeometry(0.45, 0.65, 0.06), new THREE.MeshBasicMaterial({ color: 0xffffff }), MAX_TAGS);
     this.tags.count = 0;
     this.tags.frustumCulled = false;
     this.group.add(this.tags);
@@ -150,7 +150,7 @@ export class ModeVisuals {
       const o = this.tagObj;
       for (let i = 0; i < this.tags.count; i++) {
         const tag = st.tags[i];
-        o.position.set(tag.x, tag.y + 0.55 + Math.sin(now * 3 + i) * 0.08, tag.z);
+        o.position.set(tag.x, tag.y + 0.8 + Math.sin(now * 3 + i) * 0.1, tag.z);
         o.rotation.set(0, now * 2.4 + i, 0);
         o.updateMatrix();
         this.tags.setMatrixAt(i, o.matrix);

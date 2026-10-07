@@ -81,7 +81,8 @@ export class ModeHud {
     this.panel = h('div', { class: 'mode-panel' });
     this.toastEl = h('div', { class: 'mode-toast hidden' });
     this.el = h('div', { class: 'mode-hud' }, this.markerLayer, this.bar, this.panel, this.toastEl);
-    this.bar.classList.toggle('hidden', !(def.hud ?? []).some((w) => w === 'zones' || w === 'flags'));
+    // The red/blue progress bar only means something with teams (king of the hill uses zones without them).
+    this.bar.classList.toggle('hidden', !def.teams || !(def.hud ?? []).some((w) => w === 'zones' || w === 'flags'));
   }
 
   setState(state: ModeState | null): void {
