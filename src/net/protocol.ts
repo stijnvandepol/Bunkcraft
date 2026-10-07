@@ -1,6 +1,7 @@
 import type { Difficulty } from '../world/Difficulty';
 import type { GameType, Team } from '../modes/GameTypes';
 import type { GameMode } from '../player/GameMode';
+import type { ProgressReport } from '../modes/progression/Profile';
 
 /**
  * Multiplayer protocol (JSON over one WebSocket at /ws). Shared by the browser client
@@ -55,6 +56,8 @@ export interface RosterEntry {
   pts?: number;
   /** A server-side bot (its name also starts with "[BOT] "). */
   bot?: 1;
+  /** Realms rank: prestige * 100 + level (progression/Levels.ts rankCode); absent for guests and bots. */
+  rk?: number;
 }
 
 /**
@@ -102,6 +105,8 @@ export type ModeState =
   | { kind: 'rounds'; round: number; need: number; wins: { red: number; blue: number }; alive: { red: number; blue: number } };
 
 /** One-off happenings the client turns into a banner and a sound. */
+export type { ProgressReport };
+
 export type ModeEventKind =
   | 'flag-taken' | 'flag-dropped' | 'flag-returned' | 'flag-captured'
   | 'zone-captured' | 'zone-lost' | 'zone-moved'
@@ -186,7 +191,8 @@ export type ClientMessage =
    * `password` the room password, `bin` asks for binary snap/ent frames (see binary.ts).
    */
   /** `binv`: highest binary format understood (2 = quantised arcade snapshots, see binary.ts); absent = 1. */
-  | { t: 'hello'; v: number; name: string; key?: string; owner?: string; password?: string; bin?: boolean; binv?: number }
+  /** `profile`: the Realms profile token (POST /api/profile) for server-side XP and the rank icon; optional. */
+  | { t: 'hello'; v: number; name: string; key?: string; owner?: string; password?: string; bin?: boolean; binv?: number; profile?: string }
   /**
    * `step` (optional, older clients leave it out): the client's physics clock, 60 Hz steps simulated so far. The
    * arcade movement validator times the jump curve and the speed budget with it (arrival times bunch up under load).
@@ -344,6 +350,8 @@ export type ServerMessage =
   | { t: 'kill'; killer: number; victim: number; weapon: string; head: boolean }
   /** The match ended; a new one starts after `restartIn` seconds. winner: team, a player id or 0 for a draw. */
   | { t: 'matchend'; winnerTeam: Team | ''; winnerId: number; restartIn: number }
+  /** Realms progression after a match (or after leaving one): XP breakdown, level before/after, unlocks. Only to players with a profile. */
+  | { t: 'progress'; report: ProgressReport }
   /**
    * Map vote between two matches (rotating lobbies): the offered map ids, the votes per map, your own vote and
    * the seconds until the next match. Empty `options` = no vote. Optional: older clients ignore it.

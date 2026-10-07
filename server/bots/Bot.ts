@@ -1,5 +1,6 @@
 import type { Team } from '../../src/modes/GameTypes';
 import { LOADOUT_PRESETS, type LoadoutPreset } from '../../src/modes/Loadouts';
+import { lockClass } from '../../src/modes/progression/Unlocks';
 import { HITBOX, PLAYER_MAX_HEALTH, type WeaponDef } from '../../src/modes/Weapons';
 import type { BlockGetter } from '../../src/player/Collision';
 import { PHYSICS } from '../../src/player/Physics';
@@ -195,7 +196,8 @@ export class Bot {
     this.classPicked = true;
     if (this.env.match.def.loadout === 'ladder') return;
     const b = this.env.match.map.bounds;
-    const c = pickClass(Math.max(b.maxX, b.maxZ), this.env.rng, this.skill);
+    // Bots have no Realms profile: like a guest they get the level 1 unlocks (the server would enforce that anyway).
+    const c = lockClass(pickClass(Math.max(b.maxX, b.maxZ), this.env.rng, this.skill), { level: 1, prestige: 0 });
     this.env.send(this.id, { t: 'loadout', primary: c.primary, secondary: c.secondary, optic: c.optic, perk: c.perk });
   }
 

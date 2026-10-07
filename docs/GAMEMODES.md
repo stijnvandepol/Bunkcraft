@@ -342,6 +342,37 @@ Een klasse is **primair wapen + optiek + secundair wapen + één perk** (`ClassS
 Screenshots: `docs/screenshots/arcade/` (`scripts/qa/weapon-shots.py`): `rifle-reddot-ads.png`, `rifle-holo-ads.png`,
 `lmg-holo-ads.png`, `sniper-scope.png`, `dmr-scope-breath.png`, `class-menu.png`, `model-*.png`.
 
+## Voortgang (XP, levels, ontgrendelingen)
+
+Realms heeft CoD/Krunker-achtige voortgang zonder accounts: de server geeft je browser een ondertekend profieltoken en
+houdt het profiel bij in `DATA_DIR/profiles/` (zie [`SERVER.md`](SERVER.md#realms-profielen-xp-en-levels-zonder-accounts)).
+Je voortgang blijft na herladen bewaard en telt in elke lobby op dezelfde server. Regels: `src/modes/progression/*`
+(gedeeld door client en server, Vitest in `tests/progression.test.ts`).
+
+- **Levels:** 1-55, daarna **prestige** (tot 10) via *Profiel* in de Realms-hub: terug naar level 1 met een nieuw
+  rangicoon, ontgrendelingen, statistieken en camo's blijven. Level L→L+1 kost `800 + 120·(L−1)` XP: level 2 is ongeveer
+  één match, level 55 rond de 180 matches van tien minuten.
+- **XP per match** (`XpRules.ts`, alleen de server telt): kill 100 (na 6 kills op hetzelfde slachtoffer 25), headshot +25,
+  meskill +25, assist 40 (schade binnen 10 s voor de kill), vlag veroveren 300, vlag terugbrengen 75, zone veroveren 150
+  (iedereen van het team in de zone), hardpoint 5 per seconde in de heuvel, match uitgespeeld 250, winst +400, gelijkspel
+  +150. Maximaal 6000 per match; uitdagingen komen erbovenop. Wie halverwege vertrekt houdt de XP tot dan, zonder bonus.
+- **Ontgrendelingen** (`Unlocks.ts`): level 1 heeft al assault rifle, SMG, shotgun, pistool, red dot, Extended Mags,
+  Quickdraw en Ninja (de presets Assault en Breacher). Daarna: 2 holo, 3 machine pistol, 4 DMR, 5 LMG, 6 scope,
+  7 suppressor, 8 burst rifle, 9 revolver, 10 semi-auto sniper, 12 bolt-action sniper. Create-a-Class toont wat op slot
+  zit grijs met het level (`Lv 7`); de server zet een vergrendeld onderdeel terug naar de standaard.
+- **Wapen-XP en camo's** (`Camos.ts`): elk wapen krijgt XP voor kills (100), headshots (25) en assists (30), tot
+  wapenlevel 25. Camo's (procedurele kleurpatronen op het voxelmodel, `src/rendering/WeaponCamo.ts`): Woodland (2),
+  Desert (4), Arctic (6), Urban (8), Tiger (10), Crimson (13), Cobalt (16), Gold (20), Diamond (25). Kiezen in de
+  *Armory*; alleen jij ziet je camo (first person).
+- **Uitdagingen** (`Challenges.ts`): elke dag (UTC) 3 dagelijkse (750 XP) en elke maandag 3 wekelijkse (2500 XP), voor
+  iedereen dezelfde, gekozen uit een vaste pool ("10 kills met een SMG", "verover 3 zones", "win 2 potjes").
+- **Cosmetica:** titels (Recruit, Soldier ... Legend, Grinder na 10 uitdagingen, Prestige Master) en visitekaartjes
+  (procedurele achtergronden van de profielbalk), ontgrendeld per level, prestige of aantal uitdagingen.
+- **Rangicoon** naast namen in het scoreboard, de killfeed en het lobbypaneel (`roster.rk` = prestige·100 + level).
+- **UI:** profielbalk met level en XP-balk bovenaan de Realms-hub, knoppen *Stats* (K/D, winst, trefzekerheid,
+  favoriete wapen, per modus, laatste 10 matches), *Challenges* en *Armory*; klik op de balk voor titel, kaartje en
+  prestige. Na een match staat de XP-opbouw met level-up, ontgrendelingen en nieuwe camo's op het eindscherm.
+
 ## Geluid
 
 Alles procedureel (geen samples), data in `src/core/audio/weaponSounds.ts`, recepten in `AudioEngine`:

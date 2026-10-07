@@ -14,6 +14,7 @@ import { RateLimiter } from './Security';
 import type { ChunkGenPool } from './chunkgen/ChunkGenPool';
 import { parseBotSettings } from './bots/BotManager';
 import type { BotDifficulty } from './bots/BotSkill';
+import type { ProfileService } from './progression/ProfileService';
 
 export { RateLimiter };
 
@@ -41,6 +42,8 @@ export interface RoomOptions {
   /** Quick play lobbies fill up with bots to this many players (0 = no bots; env QUICKPLAY_BOTS). */
   quickPlayBots?: number;
   quickPlayBotDifficulty?: BotDifficulty;
+  /** Realms progression shared by every game (absent = no XP). */
+  profiles?: ProfileService | null;
 }
 
 /** Hashes and flags for a new game, computed by the caller (hashing is async). */
@@ -241,6 +244,7 @@ export class Rooms {
       inventoryGuard: this.opts.inventoryGuard,
       binary: this.opts.binary,
       genPool: this.opts.genPool,
+      profiles: this.opts.profiles,
       onMetaChange: () => { const r = this.loaded.get(code); if (r) this.writeMeta(code, r.server); },
     };
   }

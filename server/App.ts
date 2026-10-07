@@ -18,6 +18,7 @@ import { parseListingKind } from '../src/modes/Realms';
 import { RateLimiter, bearer, hashPassword, hashToken, newToken, safeEqual } from './Security';
 import { ChunkGenPool } from './chunkgen/ChunkGenPool';
 import { prewarmNavGraphs } from './bots/BotWorld';
+import { ProfileService } from './progression/ProfileService';
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -67,6 +68,8 @@ export interface RunningServer {
   port: number;
   main: GameServer | null;
   rooms: Rooms | null;
+  /** Realms profiles (null when switched off or without games). */
+  profiles: ProfileService | null;
   /** Saves everything, tells clients to reconnect after `reconnectMs` (when given), and stops listening. */
   close(reconnectMs?: number): Promise<void>;
 }
@@ -100,6 +103,11 @@ export async function startServer(config: Config): Promise<RunningServer> {
     })
     : null;
 
+  // Realms progression: one profile service for every game, so XP follows players from lobby to lobby.
+  const profiles = config.roomsEnabled && config.profiles
+    ? new ProfileService({ dataDir: config.dataDir, maxProfiles: config.maxProfiles, secret: config.profileSecret })
+    : null;
+
   const rooms = config.roomsEnabled
     ? new Rooms({
       dataDir: join(config.dataDir, 'rooms'),
@@ -114,6 +122,7 @@ export async function startServer(config: Config): Promise<RunningServer> {
       listMax: config.listMax,
       quickPlayBots: config.quickPlayBots,
       quickPlayBotDifficulty: config.quickPlayBotDifficulty,
+      profiles,
       ...guard,
     })
     : null;
@@ -124,11 +133,14 @@ export async function startServer(config: Config): Promise<RunningServer> {
   const listLimit = new RateLimiter(30, 60_000);
   // Realms quick play: asking is cheap (it mostly joins an existing lobby); opening a new lobby also takes from createLimit.
   const quickLimit = new RateLimiter(20, 60_000);
+  // Profiles: reading and changing one is cheap; creating one writes a file, so it has its own hourly limit.
+  const profileLimit = new RateLimiter(60, 60_000);
+  const profileCreateLimit = new RateLimiter(config.profileCreateLimit, 3_600_000);
   const ipBans = new IpBans(config.dataDir);
   const adminFailures = newAuthLimiter();
   const timers: NodeJS.Timeout[] = [];
   const every = (ms: number, fn: () => void) => { const t = setInterval(fn, ms); t.unref(); timers.push(t); };
-  every(600_000, () => { createLimit.prune(); lookupLimit.prune(); listLimit.prune(); quickLimit.prune(); failLimiter.prune(); adminFailures.prune(); });
+  every(600_000, () => { createLimit.prune(); lookupLimit.prune(); listLimit.prune(); quickLimit.prune(); profileLimit.prune(); profileCreateLimit.prune(); failLimiter.prune(); adminFailures.prune(); });
   every(5000, () => metrics.rollWindow());
   // Bot navigation for every arena, built in the background before the first lobby needs it.
   if (rooms && config.botPrewarm) prewarmNavGraphs((ms, n) => log.info('bot nav graphs ready', { graphs: n, ms: Math.round(ms) }));
@@ -160,7 +172,7 @@ export async function startServer(config: Config): Promise<RunningServer> {
     if (!origin || config.allowedOrigins.length === 0 || !originAllowed(origin, req.headers.host, config.allowedOrigins)) return;
     res.setHeader('access-control-allow-origin', origin);
     res.setHeader('vary', 'Origin');
-    res.setHeader('access-control-allow-headers', 'content-type');
+    res.setHeader('access-control-allow-headers', 'content-type, authorization');
     res.setHeader('access-control-allow-methods', 'GET, POST, OPTIONS');
   }
 
@@ -194,9 +206,10 @@ export async function startServer(config: Config): Promise<RunningServer> {
         // Largest lobby a game may have (ROOM_MAX_PLAYERS): Realms only offers sizes up to it.
         ...(rooms ? { roomMaxPlayers: config.roomMaxPlayers } : {}),
         // What this server can do beyond the basics; clients hide features an older server lacks.
-        features: { passwords: true, browse: !!rooms, binary: config.binary, realms: !!rooms },
+        features: { passwords: true, browse: !!rooms, binary: config.binary, realms: !!rooms, profiles: !!profiles },
       });
     }
+    if (path === '/api/profile' || path.startsWith('/api/profile/')) return profileApi(req, res, path, ip);
     if (!rooms) return json(res, 404, { error: 'Games are disabled on this server' });
     if (path === '/api/rooms' && req.method === 'POST') {
       if (!createLimit.take(ip)) {
@@ -271,6 +284,57 @@ export async function startServer(config: Config): Promise<RunningServer> {
       }
       const info = rooms.info(m[1]);
       return info ? json(res, 200, info) : json(res, 404, { error: 'Game not found. Check the code.' });
+    }
+    return json(res, 404, { error: 'Not found' });
+  }
+
+  /**
+   * Realms profiles. The token travels in the Authorization header (never in a URL):
+   *   POST /api/profile          the profile of the token, or a new profile and its token (201) without a valid one
+   *   GET  /api/profile          the profile of the token (401 without a valid one)
+   *   POST /api/profile/equip    { title?, card?, camos?: { weapon: camo } } within the unlocks
+   *   POST /api/profile/prestige next prestige at the level cap
+   * XP is never accepted from a client: only finished matches grant it (MatchProgress).
+   */
+  async function profileApi(req: IncomingMessage, res: ServerResponse, path: string, ip: string): Promise<void> {
+    if (!profiles) return json(res, 404, { error: 'Profiles are disabled on this server' });
+    if (!profileLimit.take(ip)) {
+      metrics.rateLimited('profile');
+      return json(res, 429, { error: 'Too many requests' });
+    }
+    const token = bearer(req.headers.authorization);
+    const id = profiles.verify(token);
+    const own = id ? profiles.get(id) : null;
+    if (path === '/api/profile' && req.method === 'GET') {
+      return own ? json(res, 200, { profile: own }) : json(res, 401, { error: 'Unknown profile' });
+    }
+    if (req.method !== 'POST') return json(res, 404, { error: 'Not found' });
+    let body: Record<string, unknown>;
+    try {
+      const raw = await readBody(req);
+      body = raw ? JSON.parse(raw) as Record<string, unknown> : {};
+      if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('bad');
+    } catch {
+      return json(res, 400, { error: 'Bad request' });
+    }
+    if (path === '/api/profile') {
+      if (own) return json(res, 200, { profile: own });
+      if (!profileCreateLimit.take(ip)) {
+        metrics.rateLimited('profile_create');
+        return json(res, 429, { error: 'Too many profiles created, try again later' });
+      }
+      const made = profiles.create(body.name);
+      // The token is shown exactly once; the browser keeps it.
+      return made ? json(res, 201, made) : json(res, 503, { error: 'This server keeps no more profiles' });
+    }
+    if (!own) return json(res, 401, { error: 'Unknown profile' });
+    if (path === '/api/profile/equip') {
+      const r = profiles.equip(own.id, { title: body.title, card: body.card, camos: body.camos });
+      return r!.ok ? json(res, 200, { profile: r!.profile }) : json(res, 409, { error: 'Not unlocked yet', profile: r!.profile });
+    }
+    if (path === '/api/profile/prestige') {
+      const p = profiles.prestige(own.id);
+      return p ? json(res, 200, { profile: p }) : json(res, 409, { error: 'Reach the maximum level first' });
     }
     return json(res, 404, { error: 'Not found' });
   }
@@ -477,7 +541,7 @@ export async function startServer(config: Config): Promise<RunningServer> {
 
   let closing: Promise<void> | null = null;
   return {
-    port, main, rooms,
+    port, main, rooms, profiles,
     close(reconnectMs) {
       closing ??= (async () => {
         draining = true;
@@ -485,6 +549,8 @@ export async function startServer(config: Config): Promise<RunningServer> {
         // Saves every world and sends clients a kick with the reconnect hint.
         main?.shutdown(reconnectMs);
         rooms?.shutdown(reconnectMs);
+        // After the games: a match that ended during shutdown has granted its XP.
+        profiles?.close();
         await new Promise((r) => setTimeout(r, reconnectMs ? 300 : 20)); // let the close frames flush
         for (const ws of wss.clients) ws.terminate();
         wss.close();
