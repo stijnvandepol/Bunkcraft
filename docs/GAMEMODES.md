@@ -183,7 +183,14 @@ en kaartnamen blijven zoals ze zijn.
 - **Richtkruis** dat meegroeit met de spreiding (heup groter, richten kleiner, bewegen en in de lucht groter)
   en verdwijnt bij richten (de vizieren, de rode stip of de holo-ring nemen het over) en achter de scope.
 - **Medailles** onder het richtkruis (double/triple/multi kill, killstreak 3/5/10) en de ademmeter in de scope.
-- **Hit markers:** wit tikje bij een treffer, goud bij een headshot, rood met een geluid bij een kill.
+- **Hit markers:** alleen bij treffers die de server bevestigt (`hit`), zonder vertraging bovenop de ping: een scherpe X van
+  vier balkjes vanuit het richtpunt (schaalt met de GUI-schaal, hele pixels), die opploft (×1,45) en in 0,3 s vervaagt. Wit
+  bij een treffer, goud en groter bij een headshot, rood, groter en langer (0,55 s) bij een kill; ook zichtbaar in de scope.
+  **Schadegetallen** (Opties → Video → Schadegetallen, standaard uit) zweven rechtsboven het richtpunt (wit/goud/rood).
+- **Richtpunt = kogelrichting:** de terugslagkick van de camera tilt het beeld even op terwijl de kogels niet meegaan; het
+  richtkruis, de hit marker en de schadegetallen zakken daarom mee naar waar de kogels echt gaan. Bij richten (ADS) zit de kick
+  in het wapenmodel en niet in de camera, dus de vizieren en de scope wijzen altijd waar je schiet.
+- **F3** toont "Hit reg: N on-screen hits, x% denied": schoten die op je scherm raak leken en hoeveel de server afkeurde.
 - **Schade-indicatoren:** rode streepjes rond het richtkruis wijzen naar de schutter en draaien met je blik mee.
 - **Killfeed** rechtsboven (schutter, wapen, `HS` bij een headshot, slachtoffer; teamkleuren, jouw regels omlijnd).
 - **Timer** bovenin met de teamscores (tdm) of jouw kills tegen de limiet en de koploper (ffa).
@@ -336,12 +343,21 @@ Alles procedureel (geen samples), data in `src/core/audio/weaponSounds.ts`, rece
   uitrusting-rammel; bij Subtitles een caption "Footsteps" met richting. Stappen binnen 12 m hebben de prioriteit van een
   schot (`remoteStepPriority`): in een vuurgevecht met 16 spelers zit de stemmenlimiet vol en verdwenen ze anders.
   In de arcade staan de captions boven de wapenslots en de munitie.
-- **Feedback:** hitmarker-tik, metalen headshot-*ding*, kill confirm (thunk + twee tonen), medailles voor double/triple/multi
+- **Feedback:** hitmarker als droge, korte "thwack" (tik op een lage klop), headshot een heldere metalen *tink* die naklinkt,
+  kill confirm (thunk + twee tonen), medailles voor double/triple/multi
   kill (binnen 3,5 s) en killstreaks 3/5/10 (koperachtige arpeggio's + tekst onder het richtkruis), stingers bij matchstart en
   -einde (winst, verlies, gelijkspel). Adem inhouden/uitblazen bij de scope.
+- **Ducking:** treffer, headshot, kill, schade en de hartslag laten de wereldgeluiden (en de muziek iets minder) heel even
+  zakken (`AudioEngine.duck`, mixer-knoop `duck`), zodat ze in een vuurgevecht doorkomen.
+- **Kogels om je heen:** inslagen per materiaal (steen: crack + splinters, soms een ricochet; hout: tok; metaal: ping;
+  glas: rinkelende scherven; aarde/zand: doffe plof; wol; bladeren), en een kogel die binnen 2,2 blok langs je hoofd gaat
+  geeft een supersonische crack met een dalend gefluit van waar hij langskwam.
+- **Schoten:** per schot ±1 dB en een paar procent toonhoogte variatie, en een korte breedbandige klik (een paar ms) voor de
+  punch; herlaadstappen hebben een lage klop als het magazijn of de grendel vastklikt.
+- **Lage health:** onder 35 een hartslag (onder 20 sneller).
 - **Volume en toegankelijkheid:** alles via de sfx/ui-bussen (volume-instellingen gelden); elk geluid meldt zich bij de
   Subtitles-luisteraar, en de arcade-sessie geeft captions voor schoten ("Gunshot", "Suppressed shot", "Distant gunfire"),
-  voetstappen, medailles en match start/einde.
+  voetstappen, medailles, match start/einde, langsfluitende kogels, de hartslag en brekend glas.
 - **Budget:** schoten van anderen gebruiken drie stemmen (crack, body die in de ruimtestaart overgaat, thump), ver weg één, en er
   worden er hooguit drie per frame gebouwd; de stemmenlimiet (64, prioriteiten) doet de rest. `python3 scripts/audio-report.py`:
   alle geluiden binnen de grenzen, worst case (16 spelers SMG + explosie) 0,26 ms/frame (budget 0,3).
@@ -357,8 +373,36 @@ Alles procedureel (geen samples), data in `src/core/audio/weaponSounds.ts`, rece
 - Je respawnt `RESPAWN_SECONDS` (3 s) na een kill op de server (`spawn`), met volledige health, je geladen
   loadout en spawn-bescherming.
 - Health regenereert na `REGEN_DELAY` (5 s) zonder schade met `REGEN_PER_SECOND` (25) per seconde.
-- Hitbox: 0,6 breed, 1,8 hoog, de bovenste 0,4 is het hoofd (headshot).
+- Hitboxen volgen het getekende model (zie *Treffers en lag compensation*): hoofd 1,35-1,8, romp, de opgeheven armen, benen.
 - Een klasse geldt vanaf je **volgende leven**, behalve als je hem binnen 3 s na je spawn en vóór je eerste schot kiest: dan meteen.
+
+## Treffers en lag compensation
+
+De server beslist (`server/Match.ts`), met dezelfde code als de client (`src/modes/Hitscan.ts`), zodat wat je ziet is wat telt:
+
+- **Terugspoelen naar wat jij zag.** Snapshots dragen het servertick-nummer (`snap.k`, binair formaat 3); de client stuurt bij
+  elk schot de (fractionele) tick die hij op dat moment tekende (`fire.rk`, uit de snapshotklok in `SnapshotClock.ts`) en de
+  server spoelt de doelen precies daarheen terug (positie, yaw en pitch uit de geschiedenis). De claim mag niet verder terug
+  dan ping + interpolatie + 0,15 s (`rewindLimit`), nooit meer dan 0,4 s. Oude clients: de volle ping (niet de halve) +
+  interpolatie. De peek-grens (een doel dat al 0,15 s achter dekking stond wordt niet terug de open ruimte in gespoeld) blijft.
+- **Hitboxen = het model.** De speler wordt op schaal 0,9 getekend (32 px = 1,8 blok, gelijk aan de botsingsdoos; het oog op
+  1,62 zit in het hoofd). De hitboxen zijn de modeldelen: hoofd (8 px kubus op de nek, kantelt met de pitch), romp, beide armen
+  zoals ze het wapen vasthouden (draaien met yaw en pitch), benen (diep genoeg voor de meeste pas). Overal 0,04 marge; waar
+  marges van hoofd en arm overlappen beslist het echte model wie ervoor zit. Hoofd telt als headshot, de rest als lichaam.
+  Hurken/sliden: `rayPlayer` neemt een `HitPose` (hoogte), klaar voor de slide-pose.
+- **Spreiding met een zaadje.** De server deelt per speler een zaadje uit (`spawn.ss`); schot n en hagelkorrel k krijgen
+  dezelfde willekeur op client en server (`spreadRandom`), met dezelfde regel (`shotSpread`: heup/ADS, bewegen, in de lucht;
+  `fire.mv`/`fire.air`, de server zet `mv` zelf als hij je ziet rennen). `ammo.sn` en `ammo.seq` houden de teller gelijk.
+  Je tracers (ook alle hagelkorrels) zijn dus de kogels die de server test, en eindigen op de speler die ze raken.
+- **Kogels door glas.** Glas, glazen panelen en gebrandschilderd glas en bladeren laten een kogel door: één raam of haag per
+  kogel (twee glazen blokken achter elkaar tellen als één ruit), 20% schade minder (bladeren 10%). Een tweede raam of een
+  muur van vijf glasblokken stopt hem. Slabs, trappen, hekken en muren stoppen kogels alleen waar hun vorm zit; ijzeren
+  tralies als een blok. De client tekent glasscherven en speelt een glasgeluid waar een kogel door een ruit gaat (ook bij
+  schoten van anderen). Ramen breken niet: dan worden ramen doorgangen (bewegingscheck, spawnzichtlijnen), dat is een
+  kaartkeuze. De anti-wallhack-culling liet spelers achter glas al zien (alleen ondoorzichtige blokken blokkeren zicht).
+- **Meten:** `npx tsx scripts/hitreg-sim.ts` (gesimuleerd netwerk, echte servercode, missers per ping en beweging) en
+  `npx tsx scripts/qa/hitreg-browser.ts --rtt=100 --jitter=20` (echte browsers en bots, zie `docs/qa/ARCADE.md`).
+  `ARCADE_SHOT_DEBUG=1` op de server stuurt per schot `shotdbg` (terugspoeltijd en geteste posities) naar de schutter.
 
 ## Netwerk (client)
 

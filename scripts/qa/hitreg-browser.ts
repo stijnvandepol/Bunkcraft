@@ -273,7 +273,7 @@ const SHOOTER = `(() => {
   a.update = (f, input) => { try { aim(f.now); } catch (e) { R.err = String(e.stack || e); } return origUpdate(f, input); };
   const origSend = a.d.send;
   a.d.send = (msg) => {
-    if (msg.t === 'fire') R.shots.push({ t: performance.now(), claim, drawn: claim ? claimDrawn : null, ray: [msg.ox, msg.oy, msg.oz, msg.dx, msg.dy, msg.dz], rk: msg.rk ?? -1, seq: msg.seq ?? -1, acked: false, hit: false, head: false, slot: msg.slot, dbg: null });
+    if (msg.t === 'fire') R.shots.push({ t: performance.now(), weapon: a.weapon.id, claim, drawn: claim ? claimDrawn : null, ray: [msg.ox, msg.oy, msg.oz, msg.dx, msg.dy, msg.dz], rk: msg.rk ?? -1, seq: msg.seq ?? -1, acked: false, hit: false, head: false, slot: msg.slot, dbg: null });
     return origSend(msg);
   };
   const origHandle = a.handle.bind(a);
@@ -365,7 +365,7 @@ function summarize(all: Shot[], kills: { victim: number; t: number }[]) {
   errs.sort((p, q) => p - q);
   const denied = claimed.filter((x) => !x.hit).length;
   return {
-    shots: all.length, counted: s.length, claimed: claimed.length, denied, denyRate: claimed.length ? denied / claimed.length : null,
+    weapons: [...new Set(all.map((x) => (x as unknown as { weapon: string }).weapon))], shots: all.length, counted: s.length, claimed: claimed.length, denied, denyRate: claimed.length ? denied / claimed.length : null,
     surprise: s.filter((x) => !x.claim && x.hit).length, afterKill: all.length - all.filter((x) => !afterKill(x)).length, byPart,
     meanErr: errs.length ? errs.reduce((p, q) => p + q, 0) / errs.length : null, p90Err: errs.length ? errs[Math.floor(errs.length * 0.9)] : null,
     deniedDetail,
@@ -400,15 +400,15 @@ async function main(): Promise<void> {
     const g = (window as unknown as { game: { input: { locked: boolean }; state: string } }).game;
     g.input.locked = true; if (g.state === 'paused') g.state = 'playing';
   });
-  // Live after the warm-up.
-  for (let i = 0; i < 80 && bots[0].phase !== 'live'; i++) { await shooter.bringToFront(); await lock(shooter); await lock(strafer); await sleep(250); }
-  await sleep(2500); // spawn protection
-  // The DMR (0.1° spread aimed): the line through the crosshair is the bullet's, old and new client alike.
+  // The DMR (0.1° spread aimed): the line through the crosshair is the bullet's, old and new client alike. Chosen in
+  // the warm-up, where a class applies at once.
   await shooter.evaluate(() => {
     const g = (window as unknown as { game: { arcade: { chooseClass(c: object, custom: boolean): void } } }).game;
     g.arcade.chooseClass({ primary: 'dmr', secondary: 'pistol', optic: 'iron', perk: 'none' }, false);
   });
-  await sleep(500);
+  // Live after the warm-up.
+  for (let i = 0; i < 80 && bots[0].phase !== 'live'; i++) { await shooter.bringToFront(); await lock(shooter); await lock(strafer); await sleep(250); }
+  await sleep(2500); // spawn protection
   await shooter.evaluate(SHOOTER);
   await strafer.evaluate(STRAFER);
   const t0 = Date.now();
@@ -435,7 +435,7 @@ async function main(): Promise<void> {
     return { shots: R.shots, kills: R.kills, err: R.err, frames: R.frames, aimed: R.aimed };
   }) as { shots: Shot[]; kills: { victim: number; t: number }[]; err: string | null; frames: number; aimed: number };
   const dump = arg('dump', '');
-  if (dump) writeFileSync(dump, JSON.stringify(raw.shots));
+  if (dump) writeFileSync(dump, JSON.stringify({ shots: raw.shots, kills: raw.kills }));
   const out = summarize(raw.shots, raw.kills);
   const fps = await shooter.evaluate(() => (window as unknown as { game: { fps?: number } }).game.fps ?? null);
   console.log(JSON.stringify({ root: ROOT, rtt: RTT, jitter: JITTER, seconds: SECONDS, fps, aimedFrames: raw.aimed, frames: raw.frames, pageErr: raw.err, ...out, pageErrors: errors.slice(0, 3) }));
