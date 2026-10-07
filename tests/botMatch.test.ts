@@ -143,6 +143,21 @@ describe('bots play full matches', () => {
   });
 });
 
+describe('the anti-cheat watch is live', () => {
+  it('a bot that teleports is caught like a player (control for the zero-flag assertions above)', () => {
+    const l = lobby('ffa', 'classic', { fill: 3 });
+    const w = watch(l);
+    l.join('Tester');
+    l.run(3);
+    const id = [...l.bots.bots.keys()][0];
+    const p = l.match.players.get(id)!;
+    const host = (l.bots as unknown as { host: { deliver(id: number, msg: unknown): void } }).host;
+    host.deliver(id, { t: 'pos', x: p.x + 15, y: p.y, z: p.z, yaw: 0, pitch: 0, flags: 4, held: 0, step: 1e9 });
+    expect(w.cheats.length).toBeGreaterThan(0);
+    expect(violations(l)).toBeGreaterThan(0);
+  });
+});
+
 describe('bot fill rules', () => {
   it('bots leave as people join, keep the teams even, and leave with the last person', () => {
     const l = lobby('tdm', 'atomic', { scoreLimit: 100, fill: 8 });
