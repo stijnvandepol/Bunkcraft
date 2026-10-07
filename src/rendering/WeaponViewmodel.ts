@@ -128,6 +128,7 @@ export class WeaponViewmodel {
     this.reticles = { reddot: reticle('reddot', 0.014), holo: reticle('holo', 0.05) };
     this.root.add(this.weaponMesh, this.armsMesh, this.flash);
     this.scene.add(this.root);
+    this.scene.matrixAutoUpdate = false; // see Renderer: only the moving root updates its subtree
   }
 
   /** Seconds the weapon takes to come up after a switch (Quickdraw halves it). */

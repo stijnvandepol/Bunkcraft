@@ -266,6 +266,8 @@ def measure(srv, pw, args, map_id):
           const t = performance.now() / 1500 | 0; g.input.down.delete('KeyA'); g.input.down.delete('KeyD');
           g.input.down.add(t % 2 ? 'KeyA' : 'KeyD'); g.input.down.add('Mouse0'); }, 16); }""")
     page.wait_for_timeout(int(args.warmup * 1000))
+    if args.eval:
+        page.evaluate(args.eval)
     cdp = page.context.new_cdp_session(page) if args.browser != 'webkit' else None
     events, done = [], []
     if cdp:
@@ -431,6 +433,7 @@ def main():
     ap.add_argument('--diag', action='store_true', help='also count scene objects, GL programs and DOM mutations per second')
     ap.add_argument('--no-latency', action='store_true')
     ap.add_argument('--json', default=None, help='write the result(s) here')
+    ap.add_argument('--eval', default=None, help='JavaScript to run in the page before recording (experiments)')
     args = ap.parse_args()
     maps = MAPS if args.map == 'all' else args.map.split(',')
     srv = Servers()
