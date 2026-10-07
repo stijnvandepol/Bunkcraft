@@ -1,4 +1,5 @@
 import { type Browser, type Page } from '@playwright/test';
+import { REALMS_MODES } from '../../src/modes/Realms';
 import { clickButton, expect, forcePlaying, hidePanorama, openTitle, play, test, waitForWorld } from './fixtures';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -65,7 +66,7 @@ test('realms: the playlist matches its baseline and Multiplayer only creates Min
   await openTitle(page);
   await page.evaluate(() => localStorage.setItem('bunkcraft.name', 'baseline_p'));
   await clickButton(page, 'BunkCraft Realms');
-  await expect(page.locator('.realms-item')).toHaveCount(7);
+  await expect(page.locator('.realms-item')).toHaveCount(REALMS_MODES.length);
   await page.mouse.move(0, 0);
   await hidePanorama(page);
   await play(page, 300);
