@@ -61,15 +61,18 @@ export interface BodyHit {
   head: boolean;
 }
 
-/** Ray against a player standing at (x, y, z) (feet): the hitbox, with the top part as head. */
+/**
+ * Ray against a player at (x, y, z) (feet): the hitbox, with the top part as head. `height` is the hitbox
+ * height of the pose (standing HITBOX.height; crouching and sliding are lower, see player/ArcadeMove.ts).
+ */
 export function rayPlayer(
-  ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, x: number, y: number, z: number,
+  ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, x: number, y: number, z: number, height: number = HITBOX.height,
 ): BodyHit | null {
   const hw = HITBOX.width / 2;
-  const t = rayBox(ox, oy, oz, dx, dy, dz, x - hw, y, z - hw, x + hw, y + HITBOX.height, z + hw);
+  const t = rayBox(ox, oy, oz, dx, dy, dz, x - hw, y, z - hw, x + hw, y + height, z + hw);
   if (t < 0) return null;
   const hy = oy + dy * t;
-  return { t, head: hy >= y + HITBOX.height - HITBOX.head };
+  return { t, head: hy >= y + height - HITBOX.head };
 }
 
 /**

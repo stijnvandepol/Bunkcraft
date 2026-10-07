@@ -123,6 +123,9 @@ export type SnapshotEntry = [number, number, number, number, number, number, num
 export const SNAP_FLAG_STALE = 8;
 /** Arcade: the player is aiming down the sights (scope glint for enemies). Set by the client in `pos`, passed on as is. */
 export const SNAP_FLAG_ADS = 16;
+/** Arcade: crouching (lower hitbox) and sliding (lower still). Set by the client in `pos`; the server checks them (see Match.poseFlags). */
+export const SNAP_FLAG_CROUCH = 32;
+export const SNAP_FLAG_SLIDE = 64;
 
 /**
  * Mob snapshot: [id, kind, x, y, z, yaw, headYaw, headPitch, flags, hurtTime, fuse, deathTime]. flags: MOB_FLAG bits.
@@ -189,7 +192,7 @@ export type ClientMessage =
    * `step` (optional, older clients leave it out): the client's physics clock, 60 Hz steps simulated so far. The
    * arcade movement validator times the jump curve and the speed budget with it (arrival times bunch up under load).
    */
-  | { t: 'pos'; x: number; y: number; z: number; yaw: number; pitch: number; flags: number; held: number; step?: number }
+  | { t: 'pos'; x: number; y: number; z: number; yaw: number; pitch: number; flags: number; held: number; step?: number; sl?: number }
   /** `meta` is the block state byte (see BlockStates); absent = 0. */
   /**
    * `prev` (optional, older clients leave it out) is the block id this client saw there before its edit. When the

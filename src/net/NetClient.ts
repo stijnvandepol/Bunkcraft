@@ -138,11 +138,14 @@ export class NetClient {
   }
 
   /** Sends the player position at most 20 times per second. */
-  update(dt: number, x: number, y: number, z: number, yaw: number, pitch: number, flags: number, held: number, step?: number): void {
+  /** `slide`: arcade, the physics step of the latest slide start (the server's slide budget), NaN = none yet. */
+  update(dt: number, x: number, y: number, z: number, yaw: number, pitch: number, flags: number, held: number, step?: number, slide = NaN): void {
     this.sendTimer -= dt;
     if (this.sendTimer > 0) return;
     this.sendTimer = this.posInterval;
-    this.send(step === undefined ? { t: 'pos', x, y, z, yaw, pitch, flags, held } : { t: 'pos', x, y, z, yaw, pitch, flags, held, step });
+    if (step === undefined) this.send({ t: 'pos', x, y, z, yaw, pitch, flags, held });
+    else if (slide === slide) this.send({ t: 'pos', x, y, z, yaw, pitch, flags, held, step, sl: slide });
+    else this.send({ t: 'pos', x, y, z, yaw, pitch, flags, held, step });
   }
 
   sendAttack(id: number, e?: number[]): void {

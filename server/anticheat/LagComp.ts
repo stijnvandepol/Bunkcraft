@@ -24,9 +24,13 @@ export function rewindWindow(rttMs: number, interp = DEFAULT_REWIND): number {
 /** Heights (above the feet) of the three body points used for line of sight. */
 export const BODY_POINTS = [0.2, HITBOX.height / 2, HITBOX.height - HITBOX.head / 2] as const;
 
-/** Can a bullet from (ox, oy, oz) reach any of the three body points of a player standing at (x, y, z)? */
-export function bodyVisible(blocks: BlockQuery, ox: number, oy: number, oz: number, x: number, y: number, z: number): boolean {
-  for (const h of BODY_POINTS) {
+/** Can a bullet from (ox, oy, oz) reach any of the three body points of a player at (x, y, z) with a hitbox `height` tall? */
+export function bodyVisible(
+  blocks: BlockQuery, ox: number, oy: number, oz: number, x: number, y: number, z: number, height: number = HITBOX.height,
+): boolean {
+  const scale = height / HITBOX.height;
+  for (const p of BODY_POINTS) {
+    const h = p * scale;
     const dx = x - ox, dy = y + h - oy, dz = z - oz;
     const d = Math.hypot(dx, dy, dz);
     if (d < 1e-6) return true;

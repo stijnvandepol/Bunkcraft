@@ -2,7 +2,7 @@ import { type ArenaMap, DEFAULT_MAP, type Spawn, getMap, mapFor, parseMapId } fr
 import { type GameTypeDef, type Team, gameTypeDef } from '../src/modes/GameTypes';
 import {
   DEFAULT_PRIMARY, DEFAULT_SECONDARY, type OpticId, PLAYER_MAX_HEALTH, type PerkId, REGEN_DELAY, REGEN_PER_SECOND,
-  type WeaponDef, damageAt, fireInterval, magazineFor, opticFor, rangeMulFor, switchDelayFor, weaponDef,
+  HITBOX, type WeaponDef, damageAt, fireInterval, magazineFor, opticFor, rangeMulFor, switchDelayFor, weaponDef,
 } from '../src/modes/Weapons';
 import { type ClassSpec, DEFAULT_CLASS, validateClass } from '../src/modes/Loadouts';
 import type {
@@ -94,7 +94,8 @@ interface Slot {
   burstStart: number;
 }
 
-interface Sample { t: number; x: number; y: number; z: number }
+/** A lag compensation sample: position and hitbox height (the pose) at time t. */
+interface Sample { t: number; x: number; y: number; z: number; h: number }
 
 export interface MatchPlayer {
   id: number;
@@ -108,6 +109,8 @@ export interface MatchPlayer {
   joinSeq: number;
   x: number; y: number; z: number;
   yaw: number; pitch: number;
+  /** Hitbox height of the current pose (standing, crouching, sliding), as the connection layer accepted it. */
+  height: number;
   alive: boolean;
   health: number;
   lastDamageAt: number;
@@ -159,8 +162,8 @@ export class Match {
   /** Player who changes team at their next respawn because the other team lost players (0 = nobody). */
   private moveId = 0;
   private readonly tmpDir: [number, number, number] = [0, 0, 0];
-  private readonly tmpPos: [number, number, number] = [0, 0, 0];
-  private readonly targets: { o: MatchPlayer; x: number; y: number; z: number }[] = [];
+  private readonly tmpPos: [number, number, number, number] = [0, 0, 0, 0];
+  private readonly targets: { o: MatchPlayer; x: number; y: number; z: number; h: number }[] = [];
 
   /** The arena this match is played on. */
   map: ArenaMap;
@@ -216,7 +219,8 @@ export class Match {
       lastDamageAt: -1e9, lastHpSent: PLAYER_MAX_HEALTH, respawnAt: 0, protectedUntil: 0,
       primary: DEFAULT_PRIMARY, secondary: DEFAULT_SECONDARY, optic: 'iron', perk: 'none', next: { ...DEFAULT_CLASS }, spawnedAt: now, firedThisLife: false,
       slots: [newSlot(DEFAULT_PRIMARY, 'none'), newSlot(DEFAULT_SECONDARY, 'none'), newSlot('knife', 'none')], slot: 0,
-      switchReadyAt: 0, history: Array.from({ length: HISTORY_SIZE }, () => ({ t: 0, x: 0, y: 0, z: 0 })), historyHead: 0, historyCount: 0,
+      switchReadyAt: 0, history: Array.from({ length: HISTORY_SIZE }, () => ({ t: 0, x: 0, y: 0, z: 0, h: HITBOX.height })), historyHead: 0, historyCount: 0,
+      height: HITBOX.height,
     };
     this.players.set(id, p);
     this.resetLife(p, now);
@@ -262,10 +266,11 @@ export class Match {
     this.logic.onReset?.(this);
   }
 
-  setPosition(id: number, x: number, y: number, z: number, yaw = 0, pitch = 0): void {
+  /** `height`: hitbox height of the pose the connection layer accepted (see GameServer.poseHeight); standing by default. */
+  setPosition(id: number, x: number, y: number, z: number, yaw = 0, pitch = 0, height: number = HITBOX.height): void {
     const p = this.players.get(id);
     if (!p) return;
-    p.x = x; p.y = y; p.z = z; p.yaw = yaw; p.pitch = pitch;
+    p.x = x; p.y = y; p.z = z; p.yaw = yaw; p.pitch = pitch; p.height = height;
   }
 
   /**
@@ -413,13 +418,13 @@ export class Match {
     for (const o of this.players.values()) {
       if (o === p || !o.alive) continue;
       if (this.teams && o.team === p.team) continue; // no friendly fire
-      const t = { o, x: 0, y: 0, z: 0 };
+      const t = { o, x: 0, y: 0, z: 0, h: HITBOX.height };
       this.positionAt(o, at, now, this.tmpPos);
-      t.x = this.tmpPos[0]; t.y = this.tmpPos[1]; t.z = this.tmpPos[2];
+      t.x = this.tmpPos[0]; t.y = this.tmpPos[1]; t.z = this.tmpPos[2]; t.h = this.tmpPos[3];
       if (rewind > PEEK_LIMIT) {
         this.positionAt(o, now - PEEK_LIMIT, now, this.tmpPos);
-        if (!bodyVisible(this.host.blocks, ox, oy, oz, this.tmpPos[0], this.tmpPos[1], this.tmpPos[2])) {
-          t.x = this.tmpPos[0]; t.y = this.tmpPos[1]; t.z = this.tmpPos[2];
+        if (!bodyVisible(this.host.blocks, ox, oy, oz, this.tmpPos[0], this.tmpPos[1], this.tmpPos[2], this.tmpPos[3])) {
+          t.x = this.tmpPos[0]; t.y = this.tmpPos[1]; t.z = this.tmpPos[2]; t.h = this.tmpPos[3];
         }
       }
       targets.push(t);
@@ -435,7 +440,7 @@ export class Match {
       let victim: MatchPlayer | null = null;
       let hitHead = false;
       for (const t of targets) {
-        const hit = rayPlayer(ox, oy, oz, dir[0], dir[1], dir[2], t.x, t.y, t.z);
+        const hit = rayPlayer(ox, oy, oz, dir[0], dir[1], dir[2], t.x, t.y, t.z, t.h);
         if (hit && hit.t < tEnd) { tEnd = hit.t; victim = t.o; hitHead = hit.head; }
       }
       if (victim) {
@@ -492,27 +497,31 @@ export class Match {
 
   // ---------------------------------------------------------------- lag compensation
 
-  /** Where a player was at time `t` (seconds): interpolated between recorded ticks. */
-  private positionAt(p: MatchPlayer, t: number, now: number, out: [number, number, number]): void {
+  /**
+   * Where a player was at time `t` (seconds): interpolated between recorded ticks; out[3] is the hitbox height
+   * then (the taller of the two samples around `t`: a pose change is never in the shooter's disfavour).
+   */
+  private positionAt(p: MatchPlayer, t: number, now: number, out: [number, number, number, number]): void {
     // Newest sample is the live position at `now`.
-    let nx = p.x, ny = p.y, nz = p.z, nt = now;
+    let nx = p.x, ny = p.y, nz = p.z, nh = p.height, nt = now;
     for (let i = 0; i < p.historyCount; i++) {
       const s = p.history[(p.historyHead - 1 - i + HISTORY_SIZE * 2) % HISTORY_SIZE];
       if (s.t <= t) {
         const span = nt - s.t;
         const f = span > 1e-6 ? (t - s.t) / span : 0;
         out[0] = s.x + (nx - s.x) * f; out[1] = s.y + (ny - s.y) * f; out[2] = s.z + (nz - s.z) * f;
+        out[3] = Math.max(s.h, nh);
         return;
       }
-      nx = s.x; ny = s.y; nz = s.z; nt = s.t;
+      nx = s.x; ny = s.y; nz = s.z; nh = s.h; nt = s.t;
     }
     // Older than anything recorded: the oldest known position.
-    out[0] = nx; out[1] = ny; out[2] = nz;
+    out[0] = nx; out[1] = ny; out[2] = nz; out[3] = nh;
   }
 
   private record(p: MatchPlayer, now: number): void {
     const s = p.history[p.historyHead];
-    s.t = now; s.x = p.x; s.y = p.y; s.z = p.z;
+    s.t = now; s.x = p.x; s.y = p.y; s.z = p.z; s.h = p.height;
     p.historyHead = (p.historyHead + 1) % HISTORY_SIZE;
     if (p.historyCount < HISTORY_SIZE) p.historyCount++;
   }
@@ -755,6 +764,7 @@ export class Match {
     p.firedThisLife = false;
     const s = this.logic.pickSpawn?.(this, p) ?? this.pickSpawn(p);
     p.x = s.x; p.y = s.y; p.z = s.z; p.yaw = s.yaw; p.pitch = 0;
+    p.height = HITBOX.height;
     p.historyCount = 0;
     p.respawnAt = 0;
     this.logic.onSpawn?.(this, p, now);

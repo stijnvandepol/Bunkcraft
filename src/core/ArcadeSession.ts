@@ -10,8 +10,9 @@ import {
 } from '../modes/Loadouts';
 import {
   AIM_CLIMB, DEFAULT_PRIMARY, DEFAULT_SECONDARY, type OpticId, PLAYER_MAX_HEALTH, RESPAWN_SECONDS, type WeaponDef, adsTimeFor, fireInterval,
-  isPerk, opticFor, opticZoom, switchDelayFor, weaponDef,
+  isPerk, opticFor, opticZoom, perkMoveSpeed, switchDelayFor, weaponDef,
 } from '../modes/Weapons';
+import { slideCooldown } from '../player/ArcadeMove';
 import { type ClientMessage, type MatchInfo, type MatchPhase, type ModeState, type RosterEntry, SNAP_FLAG_ADS, type ServerMessage } from '../net/protocol';
 import type { RemotePlayers } from '../net/RemotePlayers';
 import type { Player } from '../player/Player';
@@ -273,7 +274,12 @@ export class ArcadeSession {
   get speedMultiplier(): number {
     // A flag carrier is slower (capture the flag); the server announces who carries in the mode state.
     const carry = this.carrying ? 1 - (this.def.params?.carrySlow ?? 0.1) : 1;
-    return ARCADE_SPEED_MULT * this.weapon.moveSpeed * (1 - 0.2 * this.ads) * carry;
+    return ARCADE_SPEED_MULT * this.weapon.moveSpeed * perkMoveSpeed(this.cls.perk) * (1 - 0.2 * this.ads) * carry;
+  }
+
+  /** Seconds between two slides (the Lightfoot perk shortens it; the server checks the same number). */
+  get slideCooldown(): number {
+    return slideCooldown(this.cls.perk === 'lightfoot');
   }
 
   readonly airAccel = ARCADE_AIR_ACCEL;
