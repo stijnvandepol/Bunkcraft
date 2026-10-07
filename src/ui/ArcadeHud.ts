@@ -7,7 +7,7 @@ import {
 } from '../modes/Weapons';
 import type { MatchPhase, RosterEntry } from '../net/protocol';
 import { h } from './dom';
-import { t } from './i18n';
+import { type I18nKey, t } from './i18n';
 
 const MAX_DAMAGE_MARKERS = 6;
 const DAMAGE_LIFETIME = 1.6;
@@ -49,7 +49,10 @@ function perkName(p: PerkId): string {
 
 /** Scoreboard header of the mode's objective column (the data value stays English). */
 function scoreColumnLabel(col: string): string {
-  return col === 'Level' ? t('arc.board.level') : col === 'Caps' ? t('arc.board.caps') : col;
+  const keys: Record<string, I18nKey> = {
+    Level: 'arc.board.level', Caps: 'arc.board.caps', Tags: 'arc.board.tags', Points: 'arc.board.points', Bomb: 'arc.board.bomb',
+  };
+  return keys[col] ? t(keys[col]) : col;
 }
 
 /**

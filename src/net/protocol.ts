@@ -78,6 +78,20 @@ export interface ZoneState {
   /** Living players inside, per team. */
   red: number;
   blue: number;
+  /** King of the hill (no teams): id of the player who holds the hill alone, 0 = nobody. */
+  holder?: number;
+}
+
+/** A dog tag (kill confirmed) lying where a player died; `team` is the team of the player who dropped it. */
+export interface TagState { id: number; x: number; y: number; z: number; team: Team }
+
+/** A bomb site (search and destroy). */
+export interface SiteState {
+  name: string;
+  x: number; y: number; z: number; r: number;
+  /** Plant progress 0..1 (before the plant) or defuse progress 0..1 (after it). */
+  progress: number;
+  planted: boolean;
 }
 
 /** A flag (capture the flag): at its base, carried by a player or lying where the carrier died. */
@@ -93,17 +107,45 @@ export interface FlagState {
   hx: number; hy: number; hz: number;
 }
 
+/** Hardpoint and king of the hill have one live hill that moves; domination has every point live at once. */
+export type ZoneVariant = 'hardpoint' | 'domination' | 'koth';
+
 /** Mode-specific HUD state (`mode` message), replaced as a whole on every update. */
 export type ModeState =
-  | { kind: 'zones'; variant: 'hardpoint' | 'domination'; zones: ZoneState[]; rotateIn: number; gap: boolean }
+  | { kind: 'zones'; variant: ZoneVariant; zones: ZoneState[]; rotateIn: number; gap: boolean }
   | { kind: 'ctf'; flags: FlagState[] }
-  | { kind: 'rounds'; round: number; need: number; wins: { red: number; blue: number }; alive: { red: number; blue: number } };
+  | { kind: 'rounds'; round: number; need: number; wins: { red: number; blue: number }; alive: { red: number; blue: number } }
+  | { kind: 'tags'; tags: TagState[] }
+  | {
+    kind: 'bomb'; round: number; need: number; wins: { red: number; blue: number }; alive: { red: number; blue: number };
+    /** The team that attacks (plants) this round. */
+    attackers: Team;
+    sites: SiteState[];
+    /** Seconds until the planted bomb goes off (0 = not planted). */
+    fuseIn: number;
+    /** Rounds until the sides swap (0 = never again). */
+    swapIn: number;
+  }
+  | {
+    kind: 'infected';
+    /** Living survivors and infected players (team blue = survivors, red = infected). */
+    survivors: number; infected: number;
+    /** Seconds until the first player turns (0 once the outbreak happened). */
+    outbreakIn: number;
+    /** The last survivor (0 while there are more). */
+    last: number;
+  }
+  | { kind: 'roulette'; weapon: string; switchIn: number };
 
 /** One-off happenings the client turns into a banner and a sound. */
 export type ModeEventKind =
   | 'flag-taken' | 'flag-dropped' | 'flag-returned' | 'flag-captured'
   | 'zone-captured' | 'zone-lost' | 'zone-moved'
-  | 'round-start' | 'round-win' | 'level-up' | 'level-down';
+  | 'round-start' | 'round-win' | 'level-up' | 'level-down'
+  | 'tag-confirmed' | 'tag-denied'
+  | 'bomb-planted' | 'bomb-defused' | 'bomb-exploded' | 'side-swap'
+  | 'outbreak' | 'infected' | 'last-survivor'
+  | 'weapon-rotate';
 
 /** Settings the server announces for an arcade game. */
 export interface MatchInfo {

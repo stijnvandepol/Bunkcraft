@@ -1,5 +1,5 @@
 import { expect } from 'vitest';
-import type { GameType } from '../../src/modes/GameTypes';
+import type { GameType, MapFeature } from '../../src/modes/GameTypes';
 import { type ArenaMapDef, ArenaMap } from '../../src/modes/maps/ArenaMap';
 import { CLASSIC } from '../../src/modes/maps/classic';
 import type { ClientMessage, MatchInfo, ServerMessage } from '../../src/net/protocol';
@@ -16,7 +16,7 @@ export class StubHost implements MatchHost {
   blockMap = new Map<string, number>();
   blocks = { getBlock: (x: number, y: number, z: number) => this.blockMap.get(`${x},${y},${z}`) ?? BLOCK.AIR };
   moved: number[] = [];
-  nextMap?: (current: string, requires?: readonly ('zones' | 'flags')[]) => string | null;
+  nextMap?: (current: string, requires?: readonly MapFeature[]) => string | null;
   rng = () => 0;
 
   now() { return this.t; }

@@ -1,5 +1,5 @@
 import { type ArenaMap, DEFAULT_MAP, type Spawn, getMap, mapFor, parseMapId } from '../src/modes/maps';
-import { type GameTypeDef, type Team, gameTypeDef } from '../src/modes/GameTypes';
+import { type GameTypeDef, type MapFeature, type Team, gameTypeDef } from '../src/modes/GameTypes';
 import {
   DEFAULT_PRIMARY, DEFAULT_SECONDARY, type OpticId, PLAYER_MAX_HEALTH, type PerkId, REGEN_DELAY, REGEN_PER_SECOND,
   type WeaponDef, damageAt, fireInterval, magazineFor, opticFor, rangeMulFor, switchDelayFor, weaponDef,
@@ -61,12 +61,12 @@ export interface MatchHost {
    * A new match is about to start on `current`: returns the map to play next (the host swaps its
    * bullet world), or null to keep the map. `requires` is the map data the game type needs.
    */
-  nextMap?(current: string, requires?: readonly ('zones' | 'flags')[], preferred?: string): string | null;
+  nextMap?(current: string, requires?: readonly MapFeature[], preferred?: string): string | null;
   /**
    * The match ended: the maps the players may vote on for the next one (the first is the rotation's own pick,
    * which wins a tie), or null when this game does not vote (a fixed map).
    */
-  voteMaps?(current: string, requires?: readonly ('zones' | 'flags')[]): string[] | null;
+  voteMaps?(current: string, requires?: readonly MapFeature[]): string[] | null;
 }
 
 export interface ShotReport {
@@ -204,8 +204,8 @@ export class Match {
    */
   join(id: number, name: string): MatchPlayer {
     const now = this.host.now();
-    let team: Team | '' = '';
-    if (this.teams) {
+    let team: Team | '' = this.teams ? this.logic.teamFor?.(this) ?? '' : '';
+    if (this.teams && !team) {
       let red = 0, blue = 0;
       for (const p of this.players.values()) if (p.team === 'red') red++; else if (p.team === 'blue') blue++;
       // The smaller team; when they are the same size, the one that is behind on points.
@@ -246,7 +246,7 @@ export class Match {
     this.players.delete(id);
     if (this.vote?.votes.delete(id)) this.broadcastVote();
     this.logic.onLeave?.(this, p, this.host.now());
-    if (this.teams) this.planBalance();
+    if (this.teams && !this.logic.keepTeams) this.planBalance();
     this.broadcastRoster();
     if (this.players.size === 0) this.reset();
   }
@@ -285,7 +285,7 @@ export class Match {
     // change applies at once. In a live round only right after spawning and before the first shot.
     const calm = this.phase === 'warmup' || this.phase === 'countdown' || this.phase === 'roundend' || this.phase === 'intermission';
     const fresh = !p.firedThisLife && now - p.spawnedAt <= CLASS_SWAP_WINDOW;
-    if (p.alive && (calm || fresh) && this.phase !== 'ended' && !this.logic.loadoutFor) {
+    if (p.alive && (calm || fresh) && this.phase !== 'ended' && !this.logic.loadoutFor?.(this, p)) {
       this.equip(p, p.next.primary, p.next.secondary, 'knife', p.next.optic, p.next.perk);
       p.switchReadyAt = now + SWITCH_DELAY;
       this.sendGear(p);
@@ -444,7 +444,7 @@ export class Match {
       }
       if (!tracer) tracer = [ox + dir[0] * tEnd, oy + dir[1] * tEnd, oz + dir[2] * tEnd];
       if (victim && damaging && now >= victim.protectedUntil) {
-        const dmg = damageAt(w, tEnd, s.rangeMul) * (hitHead ? w.headshot : 1);
+        const dmg = damageAt(w, tEnd, s.rangeMul) * (hitHead ? w.headshot : 1) * (this.logic.damageMul?.(this, p, victim, w) ?? 1);
         const prev = dealt.get(victim.id);
         if (prev) { prev.damage += dmg; prev.head ||= hitHead; } else dealt.set(victim.id, { damage: dmg, head: hitHead });
       }
@@ -622,7 +622,7 @@ export class Match {
     this.scores.red = this.scores.blue = 0;
     for (const p of this.players.values()) { p.kills = 0; p.deaths = 0; p.pts = 0; }
     this.logic.onReset?.(this);
-    if (this.teams) this.rebalance();
+    if (this.teams && !this.logic.keepTeams) this.rebalance();
     this.respawnAll(now);
     this.broadcastMatch();
     this.broadcastRoster();
@@ -734,7 +734,7 @@ export class Match {
   }
 
   respawn(p: MatchPlayer, now: number): void {
-    if (this.teams) this.applyBalance(p);
+    if (this.teams && !this.logic.keepTeams) this.applyBalance(p);
     this.resetLife(p, now);
     this.sendSpawn(p);
     this.host.broadcast(this.holds(p), p.id);

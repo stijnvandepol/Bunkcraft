@@ -5,8 +5,8 @@ import type { Match } from '../Match';
 import { BaseLogic, type MatchResult, teamWinner } from './ModeLogic';
 
 /** How far above/below a zone's standing level a player still counts as inside (stairs, small jumps). */
-const ZONE_BELOW = 1.2;
-const ZONE_ABOVE = 3.5;
+export const ZONE_BELOW = 1.2;
+export const ZONE_ABOVE = 3.5;
 
 interface ZoneRun {
   zone: Zone;

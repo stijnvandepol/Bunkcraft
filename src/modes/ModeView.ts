@@ -1,5 +1,5 @@
-import type { Team } from './GameTypes';
-import type { FlagState, MatchPhase, ModeEventKind, ZoneState } from '../net/protocol';
+import type { GameTypeDef, Team } from './GameTypes';
+import type { FlagState, MatchPhase, ModeEventKind, ModeState, SiteState, TagState, ZoneState, ZoneVariant } from '../net/protocol';
 import { weaponDef } from './Weapons';
 import { t } from '../ui/i18n';
 
@@ -21,15 +21,24 @@ export function zoneLetter(i: number): string {
   return String.fromCharCode(65 + (i % 26));
 }
 
-/** Marker colour of a zone: contested orange, owner's colour, otherwise neutral. */
-export function zoneColor(z: ZoneState): string {
+/** King of the hill: the hill is yours (gold) or somebody else's (red). */
+export const KING_SELF_COLOR = '#ffd23f';
+export const KING_OTHER_COLOR = '#e0463c';
+
+/** Marker colour of a zone: contested orange, owner's colour (king of the hill: gold when you hold it), otherwise neutral. */
+export function zoneColor(z: ZoneState, selfId = 0): string {
   if (z.contested) return CONTESTED_COLOR;
+  if (z.holder) return z.holder === selfId ? KING_SELF_COLOR : KING_OTHER_COLOR;
   return z.owner ? TEAM_HEX[z.owner] : NEUTRAL_COLOR;
 }
 
 /** Short status under a zone marker from the viewer's side. */
-export function zoneStatus(z: ZoneState, self: Team | '', variant: 'hardpoint' | 'domination'): string {
+export function zoneStatus(z: ZoneState, self: Team | '', variant: ZoneVariant, selfId = 0): string {
   if (z.contested) return t('mode.zone.contested');
+  if (variant === 'koth') {
+    if (!z.holder) return t('mode.zone.capture');
+    return z.holder === selfId ? t('mode.koth.holding') : t('mode.koth.taken');
+  }
   if (variant === 'hardpoint') {
     if (!z.owner) return t('mode.zone.capture');
     return z.owner === self ? t('mode.zone.defend') : t('mode.zone.attack');
@@ -40,7 +49,8 @@ export function zoneStatus(z: ZoneState, self: Team | '', variant: 'hardpoint' |
 }
 
 /** Capture ring fill 0..1 and its colour (domination progress; a held hill is full). */
-export function zoneRing(z: ZoneState, variant: 'hardpoint' | 'domination'): { fill: number; color: string } {
+export function zoneRing(z: ZoneState, variant: ZoneVariant, selfId = 0): { fill: number; color: string } {
+  if (variant === 'koth') return { fill: z.holder ? 1 : 0, color: zoneColor(z, selfId) };
   if (variant === 'hardpoint') return { fill: z.owner ? 1 : 0, color: z.owner ? TEAM_HEX[z.owner] : NEUTRAL_COLOR };
   if (z.owner && (!z.progressTeam || z.progressTeam === z.owner)) return { fill: 1, color: TEAM_HEX[z.owner] };
   return { fill: z.progress, color: z.progressTeam ? TEAM_HEX[z.progressTeam] : NEUTRAL_COLOR };
@@ -68,6 +78,73 @@ export function carriesFlag(flags: readonly FlagState[], selfId: number): boolea
   return false;
 }
 
+/** Movement factor the mode puts on the viewer (flag carrier slower, infected and the last survivor faster); matches the server's `speedMul`. */
+export function modeSpeedMul(def: GameTypeDef, state: ModeState | null, selfTeam: Team | '', selfId: number): number {
+  if (!state) return 1;
+  if (state.kind === 'ctf') return carriesFlag(state.flags, selfId) ? 1 - (def.params?.carrySlow ?? 0.1) : 1;
+  if (state.kind === 'infected') {
+    const fast = (state.outbreakIn <= 0 && selfTeam === 'red') || (state.last !== 0 && state.last === selfId);
+    return fast ? def.params?.infectedSpeed ?? 1.12 : 1;
+  }
+  return 1;
+}
+
+/** Name of a team: its role where the mode has roles (infected: "Infected", "Survivors"), else its colour. */
+export function teamLabel(def: GameTypeDef, team: Team): string {
+  if (def.teamRoles) return team === 'red' ? t('mode.inf.infected') : t('mode.inf.survivors');
+  return teamName(team);
+}
+
+/** End screen title of a team win. */
+export function teamWinTitle(def: GameTypeDef, team: Team): string {
+  if (def.teamRoles) return team === 'red' ? t('mode.inf.infectedWin') : t('mode.inf.survivorsWin');
+  return team === 'red' ? t('arc.end.redWins') : t('arc.end.blueWins');
+}
+
+/** Kill confirmed: what picking up a tag does for the viewer. */
+export function tagAction(tag: TagState, self: Team | ''): string {
+  if (!self) return '';
+  return tag.team === self ? t('mode.tag.deny') : t('mode.tag.confirm');
+}
+
+/** Kill confirmed: the `n` tags nearest to (x, z), nearest first (written into `out`, which is returned). */
+export function nearestTags(tags: readonly TagState[], x: number, z: number, n: number, out: TagState[]): TagState[] {
+  out.length = 0;
+  for (const tag of tags) {
+    const d = Math.hypot(tag.x - x, tag.z - z);
+    let i = out.length;
+    while (i > 0 && Math.hypot(out[i - 1].x - x, out[i - 1].z - z) > d) i--;
+    if (i < n) {
+      out.splice(i, 0, tag);
+      if (out.length > n) out.length = n;
+    }
+  }
+  return out;
+}
+
+/** Search and destroy: the caption on a bomb site marker. */
+export function siteAction(site: SiteState, attackers: Team, self: Team | '', planted: boolean): string {
+  if (!self) return '';
+  const attack = self === attackers;
+  if (site.planted) return attack ? t('mode.bomb.guard') : t('mode.bomb.defuse');
+  if (planted) return '';
+  if (site.progress > 0) return attack ? t('mode.bomb.planting') : t('mode.bomb.stop');
+  return attack ? t('mode.bomb.plant') : t('mode.bomb.defend');
+}
+
+/** Search and destroy: the role line ("Attack: plant the bomb at A or B" / "Defend A and B"). */
+export function bombRoleLine(attackers: Team, self: Team | ''): string {
+  if (!self) return '';
+  return self === attackers ? t('mode.bomb.roleAttack') : t('mode.bomb.roleDefend');
+}
+
+/** Infected: the panel line for the viewer. */
+export function infectedLine(state: Extract<ModeState, { kind: 'infected' }>, self: Team | '', selfId: number): string {
+  if (state.outbreakIn > 0) return t('mode.inf.outbreakIn', Math.ceil(state.outbreakIn));
+  if (state.last && state.last === selfId) return t('mode.inf.youLast');
+  return self === 'red' ? t('mode.inf.youInfected') : t('mode.inf.youSurvive');
+}
+
 export type Cue = 'good' | 'bad' | 'alarm' | 'neutral';
 
 /**
@@ -93,6 +170,20 @@ export function eventView(
     // The server sends the weapon id ("smg"): show its name.
     case 'level-up': return { text: selfIsActor ? t('mode.ev.levelUp', weaponDef(text)?.name ?? text) : '', cue: selfIsActor ? 'good' : 'neutral' };
     case 'level-down': return { text: selfIsActor ? t('mode.ev.levelDown') : localizeServerText(text), cue: selfIsActor ? 'bad' : 'neutral' };
+    // Kill confirmed: only your own pick-ups get a banner (every tag of the match would flood the screen).
+    case 'tag-confirmed': return { text: selfIsActor ? t('mode.ev.tagConfirmed') : '', cue: selfIsActor ? 'good' : 'neutral' };
+    case 'tag-denied': return { text: selfIsActor ? t('mode.ev.tagDenied') : '', cue: selfIsActor ? 'good' : 'neutral' };
+    // Search and destroy: `team` is the attackers for plant/explosion, the defenders for a defuse; `text` the site.
+    case 'bomb-planted': return { text: t('mode.ev.bombPlanted', text), cue: 'alarm' };
+    case 'bomb-defused': return { text: t('mode.ev.bombDefused'), cue: ours ? 'good' : 'bad' };
+    case 'bomb-exploded': return { text: t('mode.ev.bombExploded'), cue: ours ? 'good' : 'bad' };
+    case 'side-swap': return { text: team === self ? t('mode.ev.swapAttack') : t('mode.ev.swapDefend'), cue: 'neutral' };
+    // Infected: `who` is the player who turned or is the last one standing.
+    case 'outbreak': return { text: selfIsActor ? t('mode.ev.outbreakYou') : t('mode.ev.outbreak', who), cue: 'alarm' };
+    case 'infected': return { text: selfIsActor ? t('mode.ev.infectedYou') : t('mode.ev.infected', who), cue: selfIsActor ? 'bad' : 'neutral' };
+    case 'last-survivor': return { text: selfIsActor ? t('mode.ev.lastYou') : t('mode.ev.last', who), cue: selfIsActor ? 'alarm' : 'good' };
+    // Sharpshooter: the server sends the weapon id.
+    case 'weapon-rotate': return { text: t('mode.ev.weaponRotate', weaponDef(text)?.name ?? text), cue: 'neutral' };
     default: return { text: localizeServerText(text), cue: 'neutral' };
   }
 }
@@ -123,6 +214,9 @@ const SERVER_TEXTS: readonly [RegExp, (m: RegExpMatchArray) => string][] = [
   [/^Round (\d+)$/, (m) => t('mode.srv.round', m[1])],
   [/^(\d+) weapons, the knife is last$/, (m) => t('mode.srv.ladder', m[1])],
   [/^(\S+) knifed (\S+)$/, (m) => t('mode.srv.knifed', m[1], m[2])],
+  [/^First to (\d+) confirms$/, (m) => t('mode.srv.confirms', m[1])],
+  [/^(\d+) survivors? left$/, (m) => t('mode.srv.survivors', m[1])],
+  [/^Survive until the end$/, () => t('mode.srv.survive')],
 ];
 
 export function localizeServerText(text: string): string {

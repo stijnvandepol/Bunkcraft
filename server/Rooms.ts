@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomInt } from 'node:crypto';
-import { type GameType, gameTypeDef, parseGameType } from '../src/modes/GameTypes';
+import { type GameType, type MapFeature, gameTypeDef, parseGameType } from '../src/modes/GameTypes';
 import { DEFAULT_MAP, MAP_IDS, type MapSetting, getMap, mapFor, parseMapId, parseMapSetting } from '../src/modes/maps';
 import { CODE_ALPHABET, CODE_LENGTH, type MatchPhase, normalizeCode } from '../src/net/protocol';
 import {
@@ -103,7 +103,7 @@ export const SCORE_LIMIT_RANGE = { min: 5, max: 100 };
 export const TIME_LIMIT_RANGE = { min: 120, max: 1800 };
 
 /** A map the game type can be played on: the chosen one when it has the data, "rotate" stays (the match skips maps without it). */
-function mapSettingFor(setting: MapSetting, requires: readonly ('zones' | 'flags')[] | undefined): MapSetting {
+function mapSettingFor(setting: MapSetting, requires: readonly MapFeature[] | undefined): MapSetting {
   const id = parseMapId(setting);
   return id ? mapFor(id, requires) : setting;
 }
