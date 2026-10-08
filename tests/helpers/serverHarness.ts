@@ -115,7 +115,7 @@ export const KEY_B = 'b'.repeat(32);
 
 /** Connects, says hello and resolves with the welcome (or the kick as an error with `.kick`). */
 export async function joinGame(
-  t: TestServer, code: string | null, name: string, extra: { key?: string; owner?: string; password?: string; bin?: boolean; profile?: string; headers?: Record<string, string> } = {},
+  t: TestServer, code: string | null, name: string, extra: { key?: string; owner?: string; password?: string; bin?: boolean; rejoin?: string; profile?: string; party?: string; headers?: Record<string, string> } = {},
 ): Promise<{ client: TestClient; welcome: Extract<ServerMessage, { t: 'welcome' }> }> {
   const { headers, ...hello } = extra;
   const client = new TestClient(`${t.wsBase}${code ? `/ws/${code}` : '/ws'}`, headers);

@@ -1055,37 +1055,49 @@ html, body {
 /* Bottom centre, between health and the weapon slots: at the top it piled up with the banner, the round toast and the lobby panel between rounds, in the middle the chat ran through it. */
 .arc-protect { position: absolute; bottom: calc(var(--s) * 12); left: 50%; transform: translateX(-50%); color: #7ec8ff; background: rgba(20, 60, 120, 0.5); padding: calc(var(--s) * 2) calc(var(--s) * 6); border: var(--s) solid #7ec8ff; white-space: nowrap; }
 
-/* Scope: black surround with a soft lens edge and vignette, duplex reticle with mil-dots, breath meter. */
-.arc-scope {
-  position: absolute; inset: 0; --r: 40vh;
-  background: radial-gradient(circle at center, rgba(0, 0, 0, 0) 0, rgba(0, 0, 0, 0) calc(var(--r) * 0.72), rgba(0, 0, 0, 0.55) calc(var(--r) * 0.97), #000 var(--r));
+/*
+ * Scope overlay. The surround (black outside the lens, soft vignette into it, the lit edge of the tube) is a layer larger than
+ * the screen so the parallax shift never shows its border; the glass adds the coating tint, an edge shadow and a glare; the
+ * reticle (SVG, src/ui/ScopeReticles.ts) sits on the exact centre, the aim point, and never moves.
+ */
+.arc-scope { position: absolute; inset: 0; --r: 42vh; overflow: hidden; }
+.arc-scope-surround {
+  position: absolute; left: -20vw; top: -20vh; right: -20vw; bottom: -20vh; will-change: transform;
+  background:
+    radial-gradient(circle at center, rgba(0, 0, 0, 0) 0, rgba(0, 0, 0, 0) calc(var(--r) * 0.8), rgba(0, 0, 0, 0.5) calc(var(--r) * 0.95),
+      rgba(10, 14, 18, 0.95) calc(var(--r) * 0.995), rgba(70, 78, 84, 0.9) calc(var(--r) * 1.002), #050505 calc(var(--r) * 1.02), #000 calc(var(--r) * 1.4));
 }
-.arc-scope-lens { position: absolute; left: 50%; top: 50%; width: 0; height: 0; }
-.arc-scope-lens::before {
-  content: ''; position: absolute; left: calc(var(--r) * -1); top: calc(var(--r) * -1); width: calc(var(--r) * 2); height: calc(var(--r) * 2);
-  border-radius: 50%; box-shadow: inset 0 0 calc(var(--r) * 0.08) rgba(20, 40, 60, 0.6); background: radial-gradient(circle at 38% 34%, rgba(150, 190, 255, 0.07), rgba(0, 0, 0, 0) 45%);
+.arc-scope-glass {
+  position: absolute; left: 50%; top: 50%; width: calc(var(--r) * 2); height: calc(var(--r) * 2); margin: calc(var(--r) * -1) 0 0 calc(var(--r) * -1);
+  border-radius: 50%; pointer-events: none;
+  box-shadow: inset 0 0 calc(var(--r) * 0.1) rgba(10, 30, 50, 0.55);
+  background:
+    radial-gradient(ellipse at 34% 28%, rgba(200, 225, 255, 0.1), rgba(0, 0, 0, 0) 32%),
+    radial-gradient(circle at center, rgba(150, 200, 170, 0.035), rgba(60, 110, 150, 0.08));
 }
-.arc-scope-lens i { position: absolute; background: #050505; }
-.arc-scope-lens .h { left: calc(var(--r) * -0.62); width: calc(var(--r) * 1.24); top: -0.5px; height: 1px; }
-.arc-scope-lens .v { top: calc(var(--r) * -0.62); height: calc(var(--r) * 1.24); left: -0.5px; width: 1px; }
-.arc-scope-lens .hl { left: calc(var(--r) * -1); width: calc(var(--r) * 0.38); top: -3px; height: 6px; }
-.arc-scope-lens .hr { left: calc(var(--r) * 0.62); width: calc(var(--r) * 0.38); top: -3px; height: 6px; }
-.arc-scope-lens .vb { top: calc(var(--r) * 0.62); height: calc(var(--r) * 0.38); left: -3px; width: 6px; }
-.arc-scope-dots b { position: absolute; width: 4px; height: 4px; margin: -2px 0 0 -2px; border-radius: 50%; background: #050505; left: calc(var(--i) * var(--r) * 0.13); top: 0; }
-.arc-scope-dots b.dv { left: 0; top: calc(var(--i) * var(--r) * 0.13); }
+.arc-scope-reticle {
+  position: absolute; left: 50%; top: 50%; width: calc(var(--r) * 2); height: calc(var(--r) * 2); margin: calc(var(--r) * -1) 0 0 calc(var(--r) * -1);
+}
+.arc-scope-reticle svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.arc-scope-reticle text { font-family: var(--font); font-size: 34px; fill: rgba(8, 8, 8, 0.85); }
+/* Range finder (sniper scope) and zoom level: lit read-outs low in the lens. */
+.arc-scope-range, .arc-scope-zoom {
+  position: absolute; top: calc(50% + var(--r) * 0.66); color: #ff5a3c; font-size: calc(var(--fs) * 0.9); white-space: pre;
+  text-shadow: 0 0 calc(var(--s) * 2) rgba(255, 70, 40, 0.65);
+}
+.arc-scope-range { left: calc(50% + var(--r) * 0.2); }
+.arc-scope-zoom { right: calc(50% + var(--r) * 0.2); }
+.arc-scope.combat .arc-scope-range { display: none; }
 .arc-breath { position: absolute; left: 50%; top: calc(50% + var(--r) * 0.45); transform: translateX(-50%); width: calc(var(--s) * 60); height: calc(var(--s) * 2); background: rgba(255, 255, 255, 0.18); }
 .arc-breath-fill { height: 100%; width: 100%; background: #e8f4ff; }
 .arc-breath.spent .arc-breath-fill { background: #ff6a5a; }
-/* Combat scope (2.5x): a wider lens with a thin vignette, a lit chevron and a short stadia line; no duplex or mil-dots. */
-.arc-scope-chev, .arc-scope-stadia { display: none; position: absolute; }
-.arc-scope.combat { --r: 47vh; background: radial-gradient(circle at center, rgba(0, 0, 0, 0) 0, rgba(0, 0, 0, 0) calc(var(--r) * 0.86), rgba(0, 0, 0, 0.6) calc(var(--r) * 0.98), #000 var(--r)); }
-.arc-scope.combat .arc-scope-lens i, .arc-scope.combat .arc-scope-dots { display: none; }
-.arc-scope.combat .arc-scope-chev {
-  --cw: max(9px, 1.3vh);
-  display: block; left: calc(var(--cw) * -1); top: 0; width: 0; height: 0;
-  border-left: var(--cw) solid transparent; border-right: var(--cw) solid transparent; border-bottom: calc(var(--cw) * 1.35) solid #ff5a3c; filter: drop-shadow(0 0 3px rgba(255, 90, 60, 0.8));
+/* Combat scope (2.5x): a wider lens with a thin vignette. */
+.arc-scope.combat { --r: 47vh; }
+.arc-scope.combat .arc-scope-surround {
+  background:
+    radial-gradient(circle at center, rgba(0, 0, 0, 0) 0, rgba(0, 0, 0, 0) calc(var(--r) * 0.88), rgba(0, 0, 0, 0.55) calc(var(--r) * 0.975),
+      rgba(60, 66, 70, 0.9) calc(var(--r) * 1.002), #050505 calc(var(--r) * 1.02), #000 calc(var(--r) * 1.4));
 }
-.arc-scope.combat .arc-scope-stadia { display: block; left: -1px; top: calc(max(9px, 1.3vh) * 1.35 + 2px); width: 2px; height: calc(var(--r) * 0.3); background: rgba(10, 10, 10, 0.85); }
 .arc-scope-hint { position: absolute; left: 50%; top: calc(50% + var(--r) * 0.49); transform: translateX(-50%); color: rgba(255, 255, 255, 0.7); white-space: nowrap; text-shadow: var(--shadow); }
 
 /* Medals: multi-kill and killstreak banners under the crosshair. */

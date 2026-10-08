@@ -57,6 +57,10 @@ export const SPAWN_FIGHT_RADIUS = 14;
 export const SPAWN_SIGHT_RANGE = 35;
 /** The mode state (zones, flags) is re-sent at least this often. */
 const MODE_INTERVAL = 0.25;
+/** A player who rejoins stays out of the fight this long before they respawn: reconnecting is no free heal or reload. */
+export const REJOIN_RESPAWN_SECONDS = 3;
+/** Dropping this soon after being hurt counts as a death when the player comes back (no escaping a fight by reconnecting). */
+export const COMBAT_LOG_SECONDS = 5;
 
 export interface MatchHost {
   /** Monotonic clock in seconds. */
@@ -97,6 +101,8 @@ export interface MatchHost {
   onObjective?(id: number, kind: 'flag-captured' | 'flag-returned' | 'zone-captured' | 'hill' | 'tag-confirmed' | 'tag-denied', amount: number): void;
   /** The match ended with this result (after the `matchend` message went out). */
   onMatchEnd?(result: MatchResult): void;
+  /** A dropped player's kept seat ran out (or was given up for room): whoever tracks their match XP settles it. */
+  onParkedExpired?(id: number): void;
 }
 
 export interface ShotReport {
@@ -146,6 +152,8 @@ export interface MatchPlayer {
   joinSeq: number;
   /** A server-side bot (server/bots): marked in the roster, otherwise a player like any other. */
   bot?: boolean;
+  /** Id of the party this player queued with (server/Parties.ts): the team balance never splits party members. */
+  party?: string;
   x: number; y: number; z: number;
   yaw: number; pitch: number;
   /** Hitbox height of the current pose (standing, crouching, sliding), as the connection layer accepted it. */
@@ -180,6 +188,46 @@ export interface MatchPlayer {
   /** Spread seed (dealt at the join, sent with every spawn) and the index of the next shot: the client derives the same spread. */
   spreadSeed: number;
   shotN: number;
+}
+
+/**
+ * What a match keeps of a player whose connection dropped (network, reload, crash, a lag kick): the seat stays
+ * reserved for a grace period, and a login that proves it is the same player gets team, score and class back.
+ * Not kept: the life itself (health, ammo, position): a returning player spawns fresh.
+ */
+export interface ParkedPlayer {
+  /** The session id the player had: a rejoin reuses it, so everything keyed by it (XP tally, assists) stays attached. */
+  id: number;
+  name: string;
+  /** What a returning login must show: the hash of the rejoin token, the identity key hash and/or the profile id. */
+  proof: { token: string; keyHash?: string; profile?: string };
+  team: Team | '';
+  kills: number;
+  deaths: number;
+  pts: number;
+  streak: number;
+  next: ClassSpec;
+  rank?: number;
+  /** The party the player queued with: it follows them back, so a rejoin never splits it. */
+  party?: string;
+  joinSeq: number;
+  /** Seconds left of the respawn timer the player was waiting for (0 = they were alive). */
+  respawnIn: number;
+  wasAlive: boolean;
+  /** Hurt a moment before dropping. */
+  inCombat: boolean;
+  parkedAt: number;
+  /** When the seat is given up (the match clock, seconds). */
+  until: number;
+}
+
+/** What the connection layer says about a player it is parking. */
+export interface ParkRequest {
+  proof: ParkedPlayer['proof'];
+  /** Seconds the seat is kept. */
+  graceSec: number;
+  /** Most seats a lobby keeps at once: the oldest one is given up for a new one beyond this. */
+  limit: number;
 }
 
 const dist2 = (ax: number, az: number, bx: number, bz: number) => Math.hypot(ax - bx, az - bz);
@@ -227,6 +275,8 @@ export class Match {
   map: ArenaMap;
   /** Map vote between two matches: the offered maps and each voter's choice (index); null when there is none. */
   vote: { options: string[]; votes: Map<number, number> } | null = null;
+  /** Seats kept for players whose connection dropped (by their session id); see ParkedPlayer. */
+  readonly parked = new Map<number, ParkedPlayer>();
 
   constructor(private readonly host: MatchHost, readonly info: MatchInfo) {
     this.lastTick = host.now();
@@ -263,29 +313,56 @@ export class Match {
    * Adds a player: picks the team and a spawn and returns them so the welcome message can carry
    * them. Nothing is sent yet; call `ready` once the player is in the game.
    */
-  join(id: number, name: string, bot = false): MatchPlayer {
+  join(id: number, name: string, bot = false, seat: { party?: string; team?: Team; restore?: ParkedPlayer } = {}): MatchPlayer {
     const now = this.host.now();
-    let team: Team | '' = this.teams ? this.logic.teamFor?.(this) ?? '' : '';
+    const restore = seat.restore;
+    // A returning player keeps the team they had (party members included); everybody else goes to the smaller one.
+    if (restore) this.parked.delete(restore.id);
+    const kept = restore && this.teams ? restore.team : '';
+    let team: Team | '' = kept || (this.teams ? this.logic.teamFor?.(this) ?? '' : '');
+    // A party that reserved its seats keeps together: the team was picked when the seats were reserved.
+    if (this.teams && !team && seat.team) team = seat.team;
     if (this.teams && !team) {
-      let red = 0, blue = 0;
-      for (const p of this.players.values()) if (p.team === 'red') red++; else if (p.team === 'blue') blue++;
-      // The smaller team; when they are the same size, the one that is behind on points.
+      const red = this.seatedTeamSize('red'), blue = this.seatedTeamSize('blue');
+      // The smaller team (kept seats count); when they are the same size, the one that is behind on points.
       team = red !== blue ? (red < blue ? 'red' : 'blue') : this.scores.red <= this.scores.blue ? 'red' : 'blue';
     }
     const p: MatchPlayer = {
-      id, name, team, kills: 0, deaths: 0, pts: 0, joinSeq: ++this.joinCounter, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, alive: false, health: PLAYER_MAX_HEALTH,
+      id, name, team, kills: restore?.kills ?? 0, deaths: restore?.deaths ?? 0, pts: restore?.pts ?? 0, joinSeq: restore?.joinSeq ?? ++this.joinCounter,
+      x: 0, y: 0, z: 0, yaw: 0, pitch: 0, alive: false, health: PLAYER_MAX_HEALTH,
       lastDamageAt: -1e9, lastHpSent: PLAYER_MAX_HEALTH, respawnAt: 0, protectedUntil: 0,
-      primary: DEFAULT_PRIMARY, secondary: DEFAULT_SECONDARY, optic: 'iron', perk: 'none', next: { ...DEFAULT_CLASS }, spawnedAt: now, firedThisLife: false, streak: 0,
+      primary: DEFAULT_PRIMARY, secondary: DEFAULT_SECONDARY, optic: 'iron', perk: 'none', next: restore ? { ...restore.next } : { ...DEFAULT_CLASS },
+      spawnedAt: now, firedThisLife: false, streak: restore?.streak ?? 0,
       slots: [newSlot(DEFAULT_PRIMARY, 'none'), newSlot(DEFAULT_SECONDARY, 'none'), newSlot('knife', 'none')], slot: 0,
       switchReadyAt: 0, history: Array.from({ length: HISTORY_SIZE }, () => ({ t: 0, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, h: HITBOX.height })), historyHead: 0, historyCount: 0,
       spreadSeed: Math.floor(this.host.random() * 0x100000000) >>> 0, shotN: 0,
       height: HITBOX.height,
       ...(bot ? { bot: true } : {}),
+      ...((seat.party ?? restore?.party) ? { party: (seat.party ?? restore?.party)! } : {}),
     };
+    if (restore?.rank) p.rank = restore.rank;
     this.players.set(id, p);
     this.resetLife(p, now);
     this.logic.onJoin?.(this, p, now);
+    if (restore) this.settleRejoin(p, restore, now);
     return p;
+  }
+
+  /**
+   * A returning player starts a fresh life, but not for free: they wait out the respawn they were waiting for (at
+   * least REJOIN_RESPAWN_SECONDS), and a drop right after being hurt costs the death it was dodging.
+   */
+  private settleRejoin(p: MatchPlayer, from: ParkedPlayer, now: number): void {
+    if (from.inCombat && from.wasAlive) {
+      p.deaths++;
+      p.streak = 0;
+      this.host.onKill?.(0, p.id, '', false);
+    }
+    if (!p.alive) return; // the mode already benched them (a round in progress): they come back with the next one
+    p.alive = false;
+    p.health = 0;
+    p.historyCount = 0;
+    p.respawnAt = now + Math.max(REJOIN_RESPAWN_SECONDS, from.respawnIn);
   }
 
   /** The player's connection is up: tell them and everyone else. */
@@ -304,15 +381,72 @@ export class Match {
     this.broadcastRoster();
   }
 
-  leave(id: number): void {
+  /**
+   * A player is gone. With `keep` (a dropped connection) their seat, team, score and class are kept for a while
+   * (see ParkedPlayer) and the parked record is returned; without it the seat is free at once. Bots never keep one.
+   */
+  leave(id: number, keep?: ParkRequest): ParkedPlayer | null {
     const p = this.players.get(id);
-    if (!p) return;
+    if (!p) return null;
+    const now = this.host.now();
+    const kept = keep && !p.bot && keep.graceSec > 0 && keep.limit > 0 ? this.parkRecord(p, keep, now) : null;
     this.players.delete(id);
+    if (kept) this.keepSeat(kept, keep!.limit);
     if (this.vote?.votes.delete(id)) this.broadcastVote();
-    this.logic.onLeave?.(this, p, this.host.now());
+    this.logic.onLeave?.(this, p, now);
     if (this.teams && !this.logic.keepTeams) this.planBalance();
     this.broadcastRoster();
-    if (this.players.size === 0) this.reset();
+    if (this.players.size === 0 && this.parked.size === 0) this.reset();
+    return kept;
+  }
+
+  private parkRecord(p: MatchPlayer, keep: ParkRequest, now: number): ParkedPlayer {
+    return {
+      id: p.id, name: p.name, proof: keep.proof, team: p.team, kills: p.kills, deaths: p.deaths, pts: p.pts, streak: p.streak, next: { ...p.next },
+      rank: p.rank, ...(p.party ? { party: p.party } : {}), joinSeq: p.joinSeq, wasAlive: p.alive, respawnIn: p.alive ? 0 : Math.max(0, p.respawnAt - now),
+      inCombat: p.alive && now - p.lastDamageAt < COMBAT_LOG_SECONDS, parkedAt: now, until: now + keep.graceSec,
+    };
+  }
+
+  private keepSeat(rec: ParkedPlayer, limit: number): void {
+    this.parked.set(rec.id, rec);
+    while (this.parked.size > limit) {
+      // Oldest first (a Map keeps insertion order); the new one is never the victim.
+      const oldest = this.parked.values().next().value as ParkedPlayer;
+      if (oldest.id === rec.id) break;
+      this.giveUpSeat(oldest.id);
+    }
+  }
+
+  /** A kept seat is given up (time ran out, or room was needed): the seat is free and the XP tally is settled. */
+  giveUpSeat(id: number): void {
+    if (!this.parked.delete(id)) return;
+    this.host.onParkedExpired?.(id);
+    if (this.teams && !this.logic.keepTeams && this.players.size > 0) this.planBalance();
+  }
+
+  /** The first kept seat that `test` accepts. */
+  findParked(test: (p: ParkedPlayer) => boolean): ParkedPlayer | undefined {
+    for (const p of this.parked.values()) if (test(p)) return p;
+    return undefined;
+  }
+
+  /** Seconds a kept seat has left (0 when it is not kept). */
+  seatSecondsLeft(id: number): number {
+    const p = this.parked.get(id);
+    return p ? Math.max(0, Math.ceil(p.until - this.host.now())) : 0;
+  }
+
+  private expireParked(now: number): void {
+    for (const p of [...this.parked.values()]) if (now >= p.until) this.giveUpSeat(p.id);
+    if (this.players.size === 0 && this.parked.size === 0) this.reset();
+  }
+
+  /** Players of a team including kept seats: what team choice and balancing look at. */
+  seatedTeamSize(team: Team): number {
+    let n = this.teamSize(team);
+    for (const p of this.parked.values()) if (p.team === team) n++;
+    return n;
   }
 
   /** Fresh match with nobody in it (the room emptied). */
@@ -321,9 +455,21 @@ export class Match {
     this.warmupEnd = 0;
     this.phaseEnd = Infinity;
     this.vote = null;
+    this.resetScores(true);
+    this.logic.onReset?.(this);
+  }
+
+  /**
+   * Scores back to zero for everybody, kept seats included (a new match starts from nothing for them too).
+   * `forgetTeams`: kept seats also lose their team, so they are placed again when their player comes back.
+   */
+  private resetScores(forgetTeams: boolean): void {
     this.scores.red = this.scores.blue = 0;
     for (const p of this.players.values()) { p.kills = 0; p.deaths = 0; p.pts = 0; }
-    this.logic.onReset?.(this);
+    for (const p of this.parked.values()) {
+      p.kills = 0; p.deaths = 0; p.pts = 0; p.streak = 0; p.inCombat = false;
+      if (forgetTeams) p.team = '';
+    }
   }
 
   /** `height`: hitbox height of the pose the connection layer accepted (see GameServer.poseHeight); standing by default. */
@@ -656,7 +802,15 @@ export class Match {
     this.lastTick = now;
     this.tickNo++;
     this.tickTimes[this.tickNo % TICK_RING] = now;
-    if (this.players.size === 0) return;
+    if (this.parked.size > 0) this.expireParked(now);
+    if (this.players.size === 0) {
+      // Only kept seats are left: the match stands still, so it is where the player left it when they come back.
+      if (this.parked.size > 0) {
+        if (Number.isFinite(this.phaseEnd)) this.phaseEnd += dt;
+        if (this.warmupEnd > 0) this.warmupEnd += dt;
+      }
+      return;
+    }
     for (const p of this.players.values()) if (p.alive) this.record(p, now);
 
     if (this.phase === 'warmup') {
@@ -695,8 +849,7 @@ export class Match {
 
   /** Warm-up is over: zero everything and hand over to the mode. */
   private beginMatch(now: number): void {
-    this.scores.red = this.scores.blue = 0;
-    for (const p of this.players.values()) { p.kills = 0; p.deaths = 0; p.pts = 0; }
+    this.resetScores(false);
     this.host.onMatchStart?.();
     this.logic.onStart(this, now);
     this.broadcastMatch();
@@ -750,8 +903,7 @@ export class Match {
     this.phase = 'warmup';
     this.warmupEnd = 0;
     this.phaseEnd = Infinity;
-    this.scores.red = this.scores.blue = 0;
-    for (const p of this.players.values()) { p.kills = 0; p.deaths = 0; p.pts = 0; }
+    this.resetScores(true);
     this.logic.onReset?.(this);
     if (this.teams && !this.logic.keepTeams) this.rebalance();
     this.respawnAll(now);
@@ -765,8 +917,7 @@ export class Match {
     this.phase = 'warmup';
     this.warmupEnd = 0;
     this.phaseEnd = Infinity;
-    this.scores.red = this.scores.blue = 0;
-    for (const p of this.players.values()) { p.kills = 0; p.deaths = 0; p.pts = 0; }
+    this.resetScores(false);
     this.logic.onReset?.(this);
     this.respawnAll(this.host.now());
     this.broadcastMatch();
@@ -828,12 +979,25 @@ export class Match {
    */
   private planBalance(): void {
     this.moveId = 0;
-    const red = this.teamSize('red'), blue = this.teamSize('blue');
+    const red = this.seatedTeamSize('red'), blue = this.seatedTeamSize('blue');
     if (Math.abs(red - blue) < 2) return;
     const larger: Team = red > blue ? 'red' : 'blue';
-    let latest: MatchPlayer | null = null;
-    for (const p of this.players.values()) if (p.team === larger && (!latest || p.joinSeq > latest.joinSeq)) latest = p;
+    const latest = this.latestMovable(larger);
     if (latest) this.moveId = latest.id;
+  }
+
+  /** People who queued together stay together: only a player without party mates in this match may be moved. */
+  private latestMovable(team: Team): MatchPlayer | null {
+    const mates = new Map<string, number>();
+    for (const p of this.players.values()) if (p.party) mates.set(p.party, (mates.get(p.party) ?? 0) + 1);
+    // A party member whose seat is kept (a dropped connection) is still a mate: the party stays together.
+    for (const p of this.parked.values()) if (p.party) mates.set(p.party, (mates.get(p.party) ?? 0) + 1);
+    let latest: MatchPlayer | null = null;
+    for (const p of this.players.values()) {
+      if (p.team !== team || (p.party && (mates.get(p.party) ?? 0) > 1)) continue;
+      if (!latest || p.joinSeq > latest.joinSeq) latest = p;
+    }
+    return latest;
   }
 
   /** At a respawn: carries out a planned team switch if the teams are still uneven. */
@@ -850,11 +1014,13 @@ export class Match {
 
   private rebalance(): void {
     for (;;) {
-      const red = [...this.players.values()].filter((p) => p.team === 'red');
-      const blue = [...this.players.values()].filter((p) => p.team === 'blue');
-      if (Math.abs(red.length - blue.length) <= 1) return;
-      const [from, to]: [MatchPlayer[], Team] = red.length > blue.length ? [red, 'blue'] : [blue, 'red'];
-      from[from.length - 1].team = to; // the latest joiner moves
+      const red = this.teamSize('red'), blue = this.teamSize('blue');
+      if (Math.abs(red - blue) <= 1) return;
+      const [from, to]: [Team, Team] = red > blue ? ['red', 'blue'] : ['blue', 'red'];
+      // The latest joiner moves, but never somebody away from their party (a party bigger than the gap stays as it is).
+      const mover = this.latestMovable(from);
+      if (!mover) return;
+      mover.team = to;
     }
   }
 

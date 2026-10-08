@@ -40,10 +40,14 @@ export interface BotHost {
   graph(): NavGraph;
   getBlock: BlockGetter;
   getMeta?: BlockGetter;
-  /** Connected people (bots excluded). */
+  /** People who have a seat: connected ones plus those whose seat is kept for a rejoin (bots excluded). */
   humans(): number;
+  /** People who are connected right now (default: `humans`). Bots only play while somebody is there. */
+  connected?(): number;
   /** Seats in the lobby (people and bots). */
   capacity(): number;
+  /** Seats held for parties that are on their way in (bots keep clear of them). */
+  reserved?(): number;
   /** Lower-case names in use. */
   names(): Set<string>;
   /** Adds a bot player; `sink(id)` returns its message handler. Null when there is no seat. */
@@ -105,10 +109,16 @@ export class BotManager {
   desired(): number {
     const s = this.settings;
     const humans = this.host.humans();
-    if (!s || humans === 0) return 0;
-    const seats = Math.max(0, this.host.capacity() - humans);
+    if (!s || (this.host.connected?.() ?? humans) === 0) return 0;
+    // Kept seats (in `humans`) and seats held for parties both stay free of bots.
+    const seats = Math.max(0, this.host.capacity() - humans - (this.host.reserved?.() ?? 0));
     const want = s.fill ? s.fill - humans : s.count ?? 0;
     return Math.max(0, Math.min(seats, want));
+  }
+
+  /** The number of wanted bots changed (a party reserved seats): applied at the next adjustment. */
+  refresh(): void {
+    this.nextAdjust = 0;
   }
 
   /** Settings changed (host): applied at the next adjustment. */
@@ -117,9 +127,9 @@ export class BotManager {
     this.nextAdjust = 0;
   }
 
-  /** A person is about to join a full lobby: a bot leaves. Returns whether a seat was freed. */
-  makeRoom(): boolean {
-    const victim = this.pickLeaver();
+  /** A person is about to join a full lobby: a bot leaves (from `team` when given). Returns whether a seat was freed. */
+  makeRoom(team?: Team): boolean {
+    const victim = this.pickLeaver(team);
     if (victim === null) return false;
     this.remove(victim);
     return true;
@@ -141,7 +151,7 @@ export class BotManager {
     const m = this.host.match;
     let from: Team | '' = team ?? '';
     if (!from && m.teams) {
-      const red = m.teamSize('red'), blue = m.teamSize('blue');
+      const red = m.seatedTeamSize('red'), blue = m.seatedTeamSize('blue');
       from = red > blue ? 'red' : blue > red ? 'blue' : '';
     }
     let best: number | null = null, bestScore = -Infinity;
@@ -179,7 +189,7 @@ export class BotManager {
     const m = this.host.match;
     if (m.teams && added === 0) {
       // Uneven by two or more and the bigger team has a bot: it leaves, and the next step adds one to the smaller team.
-      const red = m.teamSize('red'), blue = m.teamSize('blue');
+      const red = m.seatedTeamSize('red'), blue = m.seatedTeamSize('blue');
       if (Math.abs(red - blue) >= 2) {
         const big: Team = red > blue ? 'red' : 'blue';
         for (const id of this.bots.keys()) {

@@ -69,7 +69,15 @@ export class SimLobby {
     return ws;
   }
 
+  /** A person leaves on purpose (quit to title): their seat is free at once. */
   leave(ws: FakeSocket): void {
+    ws.say({ t: 'bye' });
+    ws.close();
+    this.humans.splice(this.humans.indexOf(ws), 1);
+  }
+
+  /** A person's connection drops (network, reload): their seat is kept for a rejoin. */
+  drop(ws: FakeSocket): void {
     ws.close();
     this.humans.splice(this.humans.indexOf(ws), 1);
   }

@@ -12,9 +12,12 @@ import type { OpticId, WeaponDef } from './Weapons';
 /** How a weapon comes up: pistols and SMGs (light), rifles (medium), LMGs, snipers and the like (heavy). */
 export type AdsClass = 'light' | 'medium' | 'heavy';
 
-/** Aim classes by the weapon's aim time: up to 0.2 s light, up to 0.32 s medium, slower heavy. */
+/**
+ * Aim classes by the weapon's aim time: up to 0.16 s light, up to 0.26 s medium, slower heavy (the aim-feel pass made every
+ * weapon ~20% quicker to aim and moved the limits with it, so every weapon kept its class).
+ */
 export function adsClassOf(w: Pick<WeaponDef, 'adsTime'>): AdsClass {
-  return w.adsTime <= 0.2 ? 'light' : w.adsTime <= 0.32 ? 'medium' : 'heavy';
+  return w.adsTime <= 0.16 ? 'light' : w.adsTime <= 0.26 ? 'medium' : 'heavy';
 }
 
 /** Per class: power of the rising curve (higher = more front-loaded), power of the falling curve, and how much faster letting go is. */
@@ -181,15 +184,28 @@ export const CROSSHAIR_COLORS: Record<CrosshairColor, string> = {
   white: '#ffffff', green: '#4dff6a', cyan: '#43e8ff', yellow: '#ffe94a', red: '#ff4a4a', pink: '#ff6ad5',
 };
 
-// ---------------------------------------------------------------- breathing sway of open sights
+// ---------------------------------------------------------------- sway
 
 /**
- * Amplitude (degrees) of the slow drift of the aim when aiming through iron sights, a red dot or a holographic sight:
- * the weapon's weight shows. Scopes sway on their own (ScopeBreath) and the combat scope is steady.
+ * Whether aiming through an optic sways the aim. Only the sniper scope does (ScopeBreath: small, steadied with Shift, calm
+ * right after scoping in). Iron sights, red dot, holographic sight and the combat scope are rock steady: the aim-feel pass
+ * removed their 0.07-0.17 degree drift, which moved the reticle off a target the player was holding still on.
  */
-export function adsSwayAmplitude(w: Pick<WeaponDef, 'adsTime'>, optic: OpticId, moving: boolean): number {
-  if (optic === 'scope' || optic === 'combat') return 0;
-  const cls = adsClassOf(w);
-  const base = cls === 'light' ? 0.07 : cls === 'medium' ? 0.11 : 0.17;
-  return base * (moving ? 1.6 : 1);
+export function opticSways(optic: OpticId): boolean {
+  return optic === 'scope';
+}
+
+// ---------------------------------------------------------------- settle
+
+/**
+ * The weapon model's settle when the sights arrive (visual only, the reticle stays on the aim point): a short damped dip
+ * of `SETTLE_SEC`, peak `SETTLE_DEG` degrees of rotation about the sight. Returns the rotation (degrees) `t` seconds after
+ * the sights came fully up; 0 outside the window.
+ */
+export const SETTLE_SEC = 0.14;
+export const SETTLE_DEG = 0.9;
+export function adsSettle(t: number): number {
+  if (!(t >= 0) || t >= SETTLE_SEC) return 0;
+  const x = t / SETTLE_SEC;
+  return SETTLE_DEG * Math.sin(x * Math.PI) * (1 - x);
 }

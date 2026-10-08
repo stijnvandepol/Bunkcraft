@@ -150,7 +150,7 @@ describe('Realms progression on the server', () => {
     connect('bobby');
     goLive(match);
     kill(match, 1, 2);
-    a.emit('close');
+    a.say({ t: 'bye' }); // leaving on purpose pays at once; a dropped connection waits for its rejoin (tests/rejoin.test.ts)
     const p = profiles.get(profiles.verify(alice.token)!)!;
     expect(p.xp).toBe(100);
     expect(p.stats.matches).toBe(0);

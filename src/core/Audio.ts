@@ -848,6 +848,10 @@ export class AudioEngine {
       case 'dry': click(1900, 0.22); break;
       case 'adsin': this.noiseBurst(900 * p, 0.8, 0.14, 0.09 * v, 'bandpass', 0, { attack: 0.03 }); click(2600, 0.04, 0.08); break;
       case 'adsout': this.noiseBurst(1100 * p, 0.8, 0.1, 0.06 * v, 'bandpass', 0, { attack: 0.02 }); break;
+      // The eye meets the scope: a soft rubber eyecup thud and a faint ring of the glass.
+      case 'scopein': knock(0.12); this.noiseBurst(600 * p, 0.9, 0.06, 0.05 * v, 'lowpass', 0.005); this.voice('sine', 3150 * p, 3150 * p, 0.16, 0.025 * v, 0.01); break;
+      // A turret click of the zoom ring.
+      case 'zoom': click(2200, 0.1); click(1700, 0.08, 0.045); break;
       case 'switch': slide(1200, 0.08, 0.1); click(1500, 0.1, 0.07); break;
     }
   }

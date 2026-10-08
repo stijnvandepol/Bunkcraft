@@ -34,10 +34,14 @@ export class CameraController {
    * `appliedKick` so it stays on the aim point).
    */
   kick = 0;
-  /** Arcade: field-of-view multiplier while aiming down the sights (1 = none). */
+  /**
+   * Arcade: field-of-view multiplier while aiming down the sights (1 = none). Applied as is, never smoothed: the aim blend
+   * already eases it, and smoothing it again made the zoom trail the sights by ~50 ms (aim-feel QA).
+   */
   zoom = 1;
-  /** How fast the field of view follows its target (per second): the arcade raises it so a snappy aim is not smoothed away. */
+  /** How fast the environmental field of view (sprint, water, slide, bow) follows its target, per second. */
   fovRate = 8;
+  private roll = 0;
   /** Sprinting widens the field of view; arcade games sprint all the time and turn this off. */
   sprintFov = true;
 
@@ -78,6 +82,7 @@ export class CameraController {
     this.bobStrength = amt;
 
     const cam = this.camera;
+    this.roll = roll;
     cam.rotation.set(p.pitch + this.appliedKick, p.yaw, roll, 'YXZ');
     const cos = Math.cos(p.yaw), sin = Math.sin(p.yaw);
     const eye = p.prevEye + (p.eye - p.prevEye) * alpha;
@@ -96,10 +101,25 @@ export class CameraController {
     }
     // Drawing a bow zooms in (Minecraft: up to 15% at full draw).
     if (this.bowPull > 0) fovTarget *= 1 - this.bowPull * this.bowPull * 0.15 * fe;
-    fovTarget *= this.zoom;
     this.fov = approach(this.fov, fovTarget, this.fovRate, dt);
-    if (Math.abs(cam.fov - this.fov) > 0.01) {
-      cam.fov = this.fov;
+    this.applyFov();
+  }
+
+  /**
+   * Re-applies the view angles, the recoil kick and the zoom after something changed them later in the frame (the arcade
+   * session moves the aim for sway and recoil and sets the zoom after `update`): the frame shows them at once instead of one
+   * frame late. Position, bob and roll stay as `update` computed them.
+   */
+  syncAim(p: Player): void {
+    this.camera.rotation.set(p.pitch + this.appliedKick, p.yaw, this.roll, 'YXZ');
+    this.applyFov();
+  }
+
+  private applyFov(): void {
+    const cam = this.camera;
+    const fov = this.fov * this.zoom;
+    if (Math.abs(cam.fov - fov) > 1e-4) {
+      cam.fov = fov;
       cam.updateProjectionMatrix();
     }
   }

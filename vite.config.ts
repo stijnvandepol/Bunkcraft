@@ -63,8 +63,18 @@ function productionAssets(): Plugin {
   };
 }
 
+/**
+ * Shown version: MAJOR.MINOR from package.json plus the CI build number (VITE_BUILD_NUMBER, GitHub's run
+ * number), so every published build counts up by itself: 1.1.42. Local builds show 1.1-dev.
+ */
+const PKG_VERSION = (JSON.parse(readFileSync('package.json', 'utf8')) as { version: string }).version;
+const MAJOR_MINOR = PKG_VERSION.split('.').slice(0, 2).join('.');
+const BUILD_NUMBER = (process.env.VITE_BUILD_NUMBER ?? '').replace(/[^0-9]/g, '');
+const APP_VERSION = BUILD_NUMBER ? `${MAJOR_MINOR}.${BUILD_NUMBER}` : `${MAJOR_MINOR}-dev`;
+
 export default defineConfig({
   base: BASE,
+  define: { __APP_VERSION__: JSON.stringify(APP_VERSION) },
   plugins: [pwa(), productionAssets(), texturePackBundles()],
   worker: { format: 'es' },
   build: {

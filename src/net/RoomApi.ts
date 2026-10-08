@@ -57,7 +57,7 @@ export interface ServerInfo {
   /** Largest lobby size this server allows (ROOM_MAX_PLAYERS); absent on older servers. */
   roomMaxPlayers?: number;
   /** Features of newer servers; absent on older ones. */
-  features?: { passwords?: boolean; browse?: boolean; binary?: boolean; realms?: boolean; profiles?: boolean; skins?: boolean };
+  features?: { passwords?: boolean; browse?: boolean; binary?: boolean; realms?: boolean; profiles?: boolean; skins?: boolean; party?: boolean };
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {

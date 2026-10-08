@@ -252,8 +252,8 @@ describe('Rooms quick play', () => {
     const b = hello('alice', 'b'.repeat(32));
     expect(b.sent.find((m) => m.t === 'kick')).toMatchObject({ code: 'identity' });
     expect(a.sent.some((m) => m.t === 'kick')).toBe(false);
-    // ... but once alice left, the name is free for another browser (nothing was claimed for good).
-    a.emit('close');
+    // ... but once alice left (on purpose), the name is free for another browser (nothing was claimed for good).
+    a.say({ t: 'bye' });
     const c = hello('alice', 'c'.repeat(32));
     expect(c.sent.some((m) => m.t === 'welcome')).toBe(true);
   });

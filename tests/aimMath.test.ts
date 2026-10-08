@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   AdsBlend, AdsInput, CROSSHAIR_FADE_END, CROSSHAIR_MAX_GAP, CROSSHAIR_MIN_GAP, CrosshairBloom, adsClassOf, adsEaseIn, adsEaseOut, adsOutSpeed,
-  adsSensitivity, adsSwayAmplitude, crosshairAlpha, crosshairGap,
+  adsSensitivity, crosshairAlpha, crosshairGap, opticSways,
 } from '../src/modes/AimMath';
 import { SPREAD_AIR, SPREAD_MOVING, currentSpread, spreadPixels } from '../src/modes/ArcadeLogic';
 import { WEAPONS, adsTimeFor, opticZoom, weaponDef } from '../src/modes/Weapons';
@@ -82,8 +82,9 @@ describe('AdsBlend', () => {
       const sec = adsTimeFor(def, def.optics[0], 'none');
       const b = new AdsBlend();
       step(b, true, sec, adsClassOf(def), sec * 0.5);
-      expect(b.t).toBeGreaterThan(0.4);
-      expect(b.t).toBeLessThan(0.6);
+      // Half the aim time in, give or take one 60 Hz frame (the quickest weapons aim in 0.11 s: a frame is 15% of that).
+      expect(b.t).toBeGreaterThan(0.5 - 1 / 60 / sec - 1e-9);
+      expect(b.t).toBeLessThan(0.5 + 1 / 60 / sec + 1e-9);
       step(b, true, sec, adsClassOf(def), sec);
       expect(b.t).toBe(1);
     }
@@ -290,17 +291,9 @@ describe('hip fire against aimed accuracy', () => {
   });
 });
 
-describe('breathing sway of open sights', () => {
-  it('only for iron sights, red dot and holographic sight; heavier weapons sway more; moving sways more', () => {
-    for (const optic of ['iron', 'reddot', 'holo'] as const) expect(adsSwayAmplitude(w('rifle'), optic, false)).toBeGreaterThan(0);
-    expect(adsSwayAmplitude(w('rifle'), 'combat', false)).toBe(0);
-    expect(adsSwayAmplitude(w('dmr'), 'scope', false)).toBe(0);
-    expect(adsSwayAmplitude(w('lmg'), 'iron', false)).toBeGreaterThan(adsSwayAmplitude(w('rifle'), 'iron', false));
-    expect(adsSwayAmplitude(w('rifle'), 'iron', false)).toBeGreaterThan(adsSwayAmplitude(w('pistol'), 'iron', false));
-    expect(adsSwayAmplitude(w('rifle'), 'iron', true)).toBeGreaterThan(adsSwayAmplitude(w('rifle'), 'iron', false));
-  });
-
-  it('is subtle: under a third of a degree for every weapon', () => {
-    for (const def of WEAPONS) for (const optic of def.optics) expect(adsSwayAmplitude(def, optic, true)).toBeLessThan(0.33);
+describe('sway', () => {
+  it('only the sniper scope sways (iron sights, red dot, holo and the combat scope are steady: aim-feel pass)', () => {
+    for (const optic of ['iron', 'reddot', 'holo', 'combat'] as const) expect(opticSways(optic), optic).toBe(false);
+    expect(opticSways('scope')).toBe(true);
   });
 });

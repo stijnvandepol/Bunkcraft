@@ -289,6 +289,9 @@ limieten per bezoeker werken in plaats van per proxy.
 | `PROFILES` | `on` | Realms-voortgang: profielen, XP, levels en ontgrendelingen (`off` = geen XP, alles vrij) |
 | `MAX_PROFILES` | `50000` | Maximum aantal profielen in `DATA_DIR/profiles/`; daarna maakt de server geen nieuwe meer aan |
 | `PROFILE_CREATE_LIMIT` | `10` | Nieuwe profielen per bezoeker per uur |
+| `PARTIES` | `on` | Party's: vrienden spelen samen in één lobby op één team (`off` = geen party's; `features.party` in `/api/server`) |
+| `MAX_PARTIES` | `2000` | Party's tegelijk in het geheugen |
+| `PARTY_CREATE_LIMIT` | `20` | Nieuwe party's per bezoeker per uur |
 | `PROFILE_SECRET` | niet gezet | HMAC-geheim voor profieltokens (minstens 16 tekens). Leeg = een willekeurig geheim in `DATA_DIR/profiles/secret.key` (mode 0600). Zet het als meerdere servers dezelfde profielen delen. |
 | `SKINS` | `on` | Eigen spelersskins (zie [Spelersskins](#spelersskins-uploaden-en-moderatie)). `off` = geen uploads, `/skins/…` geeft 404 en `features.skins` is `false`. Vereist profielen. |
 | `SKIN_STORAGE_MB` | `128` | Totale grootte van `DATA_DIR/skins/`; daarna weigert de server nieuwe (niet eerder opgeslagen) skins met `507` |
@@ -309,6 +312,7 @@ limieten per bezoeker werken in plaats van per proxy.
 | `ARCADE_CULLING` | `on` | Anti-wallhack: arcade-snapshots per speler zonder onzichtbare vijanden (`off` = iedereen naar iedereen) |
 | `ARCADE_AUTOKICK_SCORE` | `0` | Kick bij deze aim-verdenkingsscore (0-100; `0` = nooit, alleen loggen) |
 | `QUICKPLAY_BOTS` | `8` | Nieuwe Snel spelen-lobby's vullen met server-bots tot zoveel spelers; bots maken plaats voor wie erbij komt (`0` = geen bots). Zie GAMEMODES.md §Bots. |
+| `REJOIN_GRACE_SEC` | `120` | Seconden dat een arcade-lobby de plek, score, class en match-XP van een speler bewaart nadat de verbinding wegviel (netwerk, herladen, crash, kick voor lag). Binnen die tijd komt de speler met zijn rejoin-token terug in dezelfde match; erna is de plek vrij en wordt de XP uitbetaald. `0` = uit. Zie GAMEMODES.md §Terugkeren na een verbroken verbinding. |
 | `QUICKPLAY_BOT_DIFFICULTY` | `normal` | Niveau van die bots: `easy`, `normal`, `hard` of `veteran` |
 | `BOT_PREWARM` | `on` | Bouwt bij het opstarten op de achtergrond de navigatiegrafen van alle kaarten (~1 s CPU, ~20 MB), zodat een lobby nooit midden in een potje hapert |
 | `BACKUP_KEEP` | `12` | Aantal back-ups per wereld (`0` = geen back-ups) |
@@ -719,6 +723,26 @@ Een game aanmaken (`POST /api/rooms`) accepteert `{ name, gameMode, seed, gameTy
   `201 { code, created: true }` voor een nieuwe (openbaar, `rotate`, standaardlimieten, naam "Team Deathmatch #K7Q").
   Eigen limiet van 20 verzoeken per minuut per adres; alleen het **openen** van een lobby telt mee voor
   `ROOM_CREATE_LIMIT` (anders `429`). Keuzeregels: `src/modes/Realms.ts`.
+- `POST /api/rejoin { code, token }` (profieltoken optioneel in `Authorization: Bearer`): bewaart die lobby nog de plek van
+  deze browser? `200 { state: 'kept' | 'live' | 'none', secondsLeft, name?, gameType?, map? }`. De geheimen staan in de body
+  en header, nooit in de URL; een bewijs zegt alleen iets over de plek waar het bij hoort. Laadt nooit een game van schijf
+  (een plek bestaat alleen in een draaiende lobby). Valt onder de opzoeklimiet.
+- **Party's** (`server/Parties.ts`, `server/App.ts`; tokens in de `Authorization: Bearer`-header, nooit in een URL; alle
+  antwoorden bij een fout: `{ error, code }` met `code` uit `no_party | full | name | forbidden | no_room | locked | not_found | bad_request | unavailable`):
+  - `POST /api/party { name, gameType? }` maakt een party (`201 { token, party }`); met een profieltoken in de header krijgt het
+    lid het rang-icoon en kan het de party terugvinden. `POST /api/party/join { code, name }` doet mee (`200 { token, party }`).
+    `POST /api/party/resume` (profieltoken) geeft een nieuw lidtoken voor de party van dat profiel; het oude vervalt.
+  - `GET /api/party?status=menu|game` (lidtoken): de party zoals dit lid hem ziet (`{ party }`: `code`, `seq`, `leader`, `me`,
+    `mode`, `members[]` met `id`, `name`, `rank`, `leader`, `ready`, `online`, `status`, en `ticket` als de leider net gestart is).
+    Elke poll telt als "aanwezig". `403` = verwijderd door de leider, `404` = de party bestaat niet meer.
+  - `POST /api/party/ready { ready }`, `/mode { gameType }` (leider), `/kick { member }` (leider), `/promote { member }` (leider), `/leave`.
+  - `POST /api/party/play { gameType }` of `{ code }` (leider): zoekt of opent één lobby met plek voor **alle** leden die er zijn
+    (`Rooms.quickPlay`/`Rooms.joinLobby`), houdt hun plekken 45 s vast en geeft `{ party, ticket: { id, code, gameType, key, ttlMs } }`.
+    De leden krijgen hetzelfde ticket bij hun volgende poll. `key` gaat in `hello.party` van de WebSocket-verbinding; alleen
+    met de sleutel van het ticket krijgt een speler een vastgehouden plek en het team van de party. `409 no_room` = geen lobby met
+    plek voor iedereen (of een lobby met wachtwoord: `locked`), `429` = te veel nieuwe games.
+  - Limieten: zie [`GAMEMODES.md`](GAMEMODES.md#partys-samen-in-dezelfde-lobby-en-hetzelfde-team). De party-API gebruikt `ROOM_CREATE_LIMIT` en de limiet
+    van Snel spelen mee zodra er een nieuwe lobby geopend moet worden.
 - `GET /api/realms`: `{ modes: [{ gameType, players, lobbies }] }` per arcade-mode (spelers in alle geladen games van die
   mode, openbare lobby's zonder wachtwoord met spelers). Valt onder de lijstlimiet.
 - `GET /api/rooms?public=1&kind=minecraft|arcade`: de serverlijst voor Multiplayer of Realms; zonder `kind` beide (oudere
