@@ -41,7 +41,11 @@ const round2 = (v: number): number => Math.round(v * 100) / 100;
 export function serverVersion(): string {
   try {
     const pkg = JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8')) as { version?: string };
-    return `${pkg.version ?? '0.0.0'}${process.env.GIT_SHA ? `+${process.env.GIT_SHA.slice(0, 7)}` : ''}`;
+    // MAJOR.MINOR from package.json plus the CI build number (BUILD_NUMBER), like the title screen: 1.1.42+abc1234.
+    const [major = '0', minor = '0'] = (pkg.version ?? '0.0.0').split('.');
+    const build = (process.env.BUILD_NUMBER ?? '').replace(/[^0-9]/g, '');
+    const base = build ? `${major}.${minor}.${build}` : (pkg.version ?? '0.0.0');
+    return `${base}${process.env.GIT_SHA ? `+${process.env.GIT_SHA.slice(0, 7)}` : ''}`;
   } catch {
     return '0.0.0';
   }
