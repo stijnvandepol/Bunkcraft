@@ -18,10 +18,12 @@ import { type UseResult, canUseOnMob, useOnMob } from '../entities/MobInteractio
 import { mount as mountHorse, rideStep } from '../entities/Riding';
 import { type MobEffect, arrowEffect, meleeEffect, witchPotion } from '../entities/MobEffects';
 import { EFFECT_DEFS, isEffectId } from '../player/Effects';
-import { NetClient, type WelcomeMessage } from '../net/NetClient';
+import { ConnectError, NetClient, type WelcomeMessage } from '../net/NetClient';
+import { backoffMs, clearTicket, ticketToken } from '../net/Rejoin';
 import { NetEntities } from '../net/NetEntities';
 import { useBoneMeal } from '../world/Growth';
 import { farmStateText, trample } from '../world/Farming';
+import { normalizePartyCode } from '../modes/Party';
 import { type ClientMessage, SNAP_FLAG_CROUCH, SNAP_FLAG_SLIDE, type ServerMessage, formatCode, normalizeCode } from '../net/protocol';
 import { type GameType, TEAM_COLORS, gameTypeDef } from '../modes/GameTypes';
 import { ARCADE_POS_HZ, arcadeInterpDelay } from '../modes/ArcadeLogic';
@@ -268,7 +270,7 @@ export class Game {
   /** Arcade: the map of the arena world being built (a MapId; the welcome message announces it). */
   private arenaMap: string = DEFAULT_MAP;
   /** How this multiplayer session was joined, to reconnect when the server rotates to another map. */
-  private lastJoin: { name: string; address: string; room?: string } | null = null;
+  private lastJoin: { name: string; address: string; room?: string; arena: boolean; windowMs: number } | null = null;
   /** Mirror of the server's mobs, items, arrows and TNT while in multiplayer. */
   private netEntities: NetEntities | null = null;
   private contextLost: HTMLDivElement | null = null;
@@ -495,7 +497,9 @@ export class Game {
     this.precompileShaders();
     // An invite link (?join=CODE) goes straight to the join screen with the code filled in.
     const invited = normalizeCode(new URLSearchParams(location.search).get('join') ?? '');
+    const partyInvite = normalizePartyCode(new URLSearchParams(location.search).get('party') ?? '');
     if (invited) void this.menu.openInvite(invited);
+    else if (partyInvite) this.menu.openPartyInvite(partyInvite);
     // A share link (?seed=…&mode=…) opens Create World prefilled.
     else {
       const share = parseShareParams(location.search);
@@ -1091,40 +1095,74 @@ export class Game {
 
   // ---------------------------------------------------------------- multiplayer
 
-  /** Pending automatic reconnect after a server restart. */
+  /** Pending automatic reconnect (after a server restart, a lost connection or a lag kick). */
   private reconnectTimer = 0;
+  /** Why the last quiet join attempt failed, and whether trying again is pointless (the server answered and refused). */
+  private joinFailure: { reason: string; fatal: boolean } | null = null;
 
-  /** The server said it is restarting: try to rejoin a few times with growing pauses. */
-  private scheduleReconnect(join: { name: string; address: string; room?: string }, delayMs: number, attempt = 1): void {
+  /**
+   * The connection dropped (or the server asked us to come back): shows "Reconnecting" and tries again with growing
+   * pauses until `windowMs` has passed. An arcade lobby keeps the player's seat meanwhile, so the retry lands in the
+   * same match with score and class (the rejoin secret goes along in the hello, see net/Rejoin.ts).
+   */
+  private startReconnect(join: { name: string; address: string; room?: string; arena: boolean; windowMs: number }, reason: string, firstDelayMs: number): void {
     window.clearTimeout(this.reconnectTimer);
-    this.reconnectTimer = window.setTimeout(() => {
-      void this.joinServer(join.name, join.address, join.room).then((ok) => {
-        if (!ok && attempt < 5) this.scheduleReconnect(join, delayMs * 1.5, attempt + 1);
-      });
-    }, delayMs);
+    const started = performance.now();
+    let attempt = 0;
+    const screen = this.menu.showReconnecting(reason, () => {
+      window.clearTimeout(this.reconnectTimer);
+      this.menu.showTitle();
+    });
+    const wait = (delay: number) => {
+      this.reconnectTimer = window.setTimeout(() => {
+        attempt++;
+        screen.update(t('reconnect.attempt', attempt, Math.max(0, Math.round((join.windowMs - (performance.now() - started)) / 1000))));
+        void this.joinServer(join.name, join.address, join.room, join.arena, true).then((ok) => {
+          if (ok) return;
+          const failure = this.joinFailure;
+          if (failure?.fatal || performance.now() - started > join.windowMs) {
+            if (join.room) clearTicket(join.room);
+            this.menu.showDisconnected(failure?.reason ?? reason);
+            return;
+          }
+          wait(backoffMs(attempt + 1));
+        });
+      }, delay);
+    };
+    wait(firstDelayMs);
   }
 
-  private async joinServer(name: string, address: string, room?: string, arena = false): Promise<boolean> {
+  /** `quiet`: a reconnect attempt: no loading screen until the server answers, and a failure is reported through `joinFailure`. */
+  private async joinServer(name: string, address: string, room?: string, arena = false, quiet = false): Promise<boolean> {
     window.clearTimeout(this.reconnectTimer);
     this.audio.unlock();
-    const progress = this.menu.showLoading(arena ? t('home.connecting') : 'Connecting to the server...', arena);
-    progress('Logging in...', 0);
+    this.joinFailure = null;
+    const fail = (e: unknown): false => {
+      const reason = e instanceof Error ? e.message : String(e);
+      this.joinFailure = { reason, fatal: e instanceof ConnectError && e.fatal };
+      if (!quiet) this.menu.showDisconnected(reason);
+      return false;
+    };
+    const loading = () => this.menu.showLoading(arena ? t('home.connecting') : 'Connecting to the server...', arena);
+    let progress = quiet ? null : loading();
+    progress?.('Logging in...', 0);
     // Load the arcade client first: the welcome may start a match, and messages arriving while a
     // module still loads would have no handler yet.
     try {
       await this.loadArcade();
     } catch (e) {
-      this.menu.showDisconnected(e instanceof Error ? e.message : String(e));
-      return false;
+      return fail(e);
     }
     const net = new NetClient();
     let welcome;
+    // Did the last visit to this lobby leave a rejoin secret? Then this login is a return, and the welcome says how it went.
+    const returning = !!room && !!ticketToken(address.trim() || location.host, room);
     try {
       welcome = await net.connect(address, name, room);
     } catch (e) {
-      this.menu.showDisconnected(e instanceof Error ? e.message : String(e));
-      return false;
+      return fail(e);
     }
+    progress ??= loading();
     this.net = net;
     // Terrain comes from the seed; only the server's edit list is transferred.
     const edits = new Map<number, Map<number, number>>();
@@ -1147,7 +1185,7 @@ export class Game {
     this.stats.playerName = name;
     this.loadingProgress = progress;
     this.arenaMap = welcome.match?.map ?? DEFAULT_MAP;
-    this.lastJoin = { name, address, room };
+    this.lastJoin = { name, address, room, arena: welcome.gameType !== 'minecraft', windowMs: ((welcome.rejoinSec ?? 60) + 20) * 1000 };
     this.containers.serverSupport = welcome.containers === true;
     this.startSession(meta, edits);
     const world = this.world!;
@@ -1172,17 +1210,19 @@ export class Game {
     world.onEdit = (x, y, z, id, meta, prev, prevMeta) => net.sendBlock(x, y, z, id, meta, prev, prevMeta);
     net.onRevert = (x, y, z, id, meta) => world.applyRemoteEdit(x, y, z, id, meta);
     net.onMessage = (msg) => this.onServerMessage(msg);
-    net.onClose = (reason, reconnectMs) => {
+    net.onClose = (reason, reconnectMs, lost) => {
       if (this.net !== net) return;
-      this.disconnect();
+      const again = this.lastJoin;
+      // Not a goodbye: the server keeps an arcade seat for a while, so the rejoin ticket stays.
+      this.disconnect(false);
       this.input.exitLock();
       this.enterMenu();
-      if (reconnectMs) {
-        // The server is restarting (update or maintenance): come back by ourselves.
-        this.menu.showDisconnected(`${reason}. Reconnecting automatically...`);
-        this.scheduleReconnect({ name, address, room }, Math.max(1500, reconnectMs));
+      if (again && (reconnectMs || lost)) {
+        // The connection broke, or the server said it is coming back (restart, lag kick): get back in by ourselves.
+        this.startReconnect(again, reconnectMs ? reason : t('reconnect.lost'), reconnectMs ? Math.max(1500, reconnectMs) : backoffMs(1));
         return;
       }
+      if (room) clearTicket(room);
       this.menu.showDisconnected(reason);
     };
     this.roomCode = room ?? null;
@@ -1206,6 +1246,8 @@ export class Game {
     if (welcome.motd) this.chat.add(welcome.motd, true);
     if (this.arcade) this.chat.add(this.arcadeHint, true);
     if (room) this.chat.add(t('chat.gameCode', formatCode(room)), true);
+    if (welcome.rejoined) this.chat.add(t('rejoin.back'), true);
+    else if (returning && welcome.rejoin) this.chat.add(t('rejoin.new'), true);
     return true;
   }
 
@@ -1374,7 +1416,8 @@ export class Game {
     }
   }
 
-  private disconnect(): void {
+  /** `leave`: the player goes on purpose (the server frees the seat and no rejoin ticket is kept); false when the connection already broke. */
+  private disconnect(leave = true): void {
     this.stopArcade();
     this.roomCode = null;
     this.netEntities?.clear();
@@ -1385,7 +1428,7 @@ export class Game {
     const net = this.net;
     this.net = null;
     this.containers.reset();
-    net.close();
+    if (leave) net.leave(); else net.close();
     this.remote.clear();
     this.chat.close();
     this.chat.setVisible(false);
@@ -2218,7 +2261,7 @@ export class Game {
     }
     if (this.net || this.previewServer) this.remote.update(performance.now() / 1000, this.cam.camera, window.innerWidth, window.innerHeight);
     // Arcade: after dying the camera follows another player (with fresh interpolated poses).
-    this.arcade?.applySpectateCamera(this.cam.camera);
+    const spectating = this.arcade?.applySpectateCamera(this.cam.camera) ?? false;
     this.previewServer?.update(dt, p);
     this.interaction!.update(dt, active, input, this.mode);
     const light = world.getLight(Math.floor(p.x), Math.floor(p.eyeY), Math.floor(p.z));
@@ -2236,6 +2279,8 @@ export class Game {
       f.lookX = input.mouseDX * sway;
       f.lookY = input.mouseDY * sway;
       this.arcade.update(f, input);
+      // Sway, recoil and the aim zoom the session applied this frame show in this frame (not one frame late).
+      if (!spectating) this.cam.syncAim(p);
     } else {
       this.hand.update(dt, this.hotbar.selectedBlock, this.cam.bobPhase, this.cam.bobStrength, light,
         this.interaction!.eating, window.innerWidth / Math.max(1, window.innerHeight), hasEnchants(this.hotbar.selectedStack.data), this.time);

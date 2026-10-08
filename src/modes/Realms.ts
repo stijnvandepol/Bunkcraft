@@ -1,4 +1,5 @@
 import { GAME_TYPES, type GameType, gameTypeDef } from './GameTypes';
+import { partyTeamed } from './Party';
 import type { MatchPhase } from '../net/protocol';
 
 /**
@@ -36,8 +37,11 @@ export const NEAR_END_PROGRESS = 0.8;
 export interface LobbyCandidate {
   code: string;
   gameType: GameType;
+  /** People in the lobby plus the seats held for parties on their way in (bots do not count: they step aside). */
   players: number;
   maxPlayers: number;
+  /** Team modes with people in the lobby: people per team, held party seats included. Absent = nobody there yet. */
+  teams?: { red: number; blue: number };
   /** Listed in the public list and without a password. */
   open: boolean;
   /** Absent for a lobby that is not loaded (nobody in it): it waits in warm-up. */
@@ -48,9 +52,25 @@ export interface LobbyCandidate {
   progress?: number;
 }
 
-/** Whether a quick-play player may be put into this lobby of `mode`. */
-export function joinable(c: LobbyCandidate, mode: GameType): boolean {
-  if (c.gameType !== mode || !c.open || c.players >= c.maxPlayers) return false;
+/** Most people one team of a lobby holds when a party joins it: half the seats, rounded up. */
+export function teamCapacity(maxPlayers: number): number {
+  return Math.ceil(maxPlayers / 2);
+}
+
+/**
+ * Whether a party of `size` fits this lobby on one team: the seats are there, and (team modes, people already
+ * inside) the smaller team can take all of them without the lobby going lopsided. An empty lobby always fits
+ * (the party is its first team; later joiners and bots even it out).
+ */
+export function partyFits(c: LobbyCandidate, mode: GameType, size: number): boolean {
+  if (c.players + size > c.maxPlayers) return false;
+  if (size <= 1 || !partyTeamed(gameTypeDef(mode).teams, mode) || !c.teams || c.teams.red + c.teams.blue === 0) return true;
+  return Math.min(c.teams.red, c.teams.blue) + size <= teamCapacity(c.maxPlayers);
+}
+
+/** Whether a quick-play player (or a party of `partySize`) may be put into this lobby of `mode`. */
+export function joinable(c: LobbyCandidate, mode: GameType, partySize = 1): boolean {
+  if (c.gameType !== mode || !c.open || !partyFits(c, mode, partySize)) return false;
   if (c.phase === 'live' || c.phase === 'roundend') {
     // Round-based modes count rounds, not the clock of one round: only the progress decides there.
     const rounds = !!gameTypeDef(mode).rounds;
@@ -63,12 +83,13 @@ export function joinable(c: LobbyCandidate, mode: GameType): boolean {
 /**
  * Quick play: the fullest joinable public lobby of the mode (more players = a better game right away);
  * between equally full ones, a lobby still in warm-up or between matches (you play from the start), then the
- * code for a stable choice. Null = there is none, create a new lobby.
+ * code for a stable choice. Null = there is none, create a new lobby. A party only gets a lobby with room for all
+ * of its members on one team (`partyFits`).
  */
-export function pickLobby(candidates: readonly LobbyCandidate[], mode: GameType): LobbyCandidate | null {
+export function pickLobby(candidates: readonly LobbyCandidate[], mode: GameType, partySize = 1): LobbyCandidate | null {
   let best: LobbyCandidate | null = null;
   for (const c of candidates) {
-    if (!joinable(c, mode)) continue;
+    if (!joinable(c, mode, partySize)) continue;
     if (!best || better(c, best)) best = c;
   }
   return best;

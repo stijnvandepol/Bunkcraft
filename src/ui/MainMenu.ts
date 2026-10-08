@@ -44,7 +44,9 @@ export interface MenuActions {
   backgroundMap?(): string;
 }
 
-export const VERSION = 'BunkCraft 1.0';
+declare const __APP_VERSION__: string;
+/** "BunkCraft 1.1.42": MAJOR.MINOR from package.json plus the CI build number (vite.config.ts). */
+export const VERSION = `BunkCraft ${typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : 'dev'}`;
 /** The commit this build came from (the Docker image sets VITE_GIT_SHA), so the title screen shows what is live. */
 const BUILD_SHA = String(import.meta.env.VITE_GIT_SHA ?? '').slice(0, 7);
 
@@ -119,6 +121,11 @@ export class MainMenu {
   showRealms(): Promise<void> {
     this.showTitle();
     return Promise.resolve();
+  }
+
+  /** A party invite link (?party=CODE): join that party from the home screen. */
+  openPartyInvite(code: string): void {
+    this.realms.openPartyInvite(code);
   }
 
   /** An invite link (?join=CODE): a Realms lobby opens in Realms, anything else in Multiplayer with the code filled in. */
@@ -400,6 +407,19 @@ export class MainMenu {
     this.stack.push(menuScreen(t('disconnected.title'), [
       h('div', { class: 'hint', text: reason }),
     ], [button(t('disconnected.back'), () => this.showTitle())]));
+  }
+
+  /** "Reconnecting..." while the game tries to get the player back in; `update` shows the attempt, `cancel` goes to the title screen. */
+  showReconnecting(reason: string, cancel: () => void): { update(text: string): void } {
+    this.stack.clear();
+    announce(`${t('reconnect.title')} ${reason}`);
+    const status = h('div', { class: 'hint', role: 'status', 'aria-live': 'polite', text: '' });
+    this.stack.push(menuScreen(t('reconnect.title'), [
+      h('div', { class: 'hint', text: reason }),
+      h('div', { class: 'hint', text: t('reconnect.hint') }),
+      status,
+    ], [button(t('reconnect.cancel'), cancel)]));
+    return { update: (text) => { status.textContent = text; } };
   }
 
   async showWorlds(): Promise<void> {

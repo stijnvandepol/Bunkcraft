@@ -12,6 +12,7 @@ import { type I18nKey, t } from './i18n';
 import type { Rank } from '../modes/progression/Levels';
 import { classUnlocked, isUnlocked, unlockLevel } from '../modes/progression/Unlocks';
 import { rankBadge } from './RankBadge';
+import { type ScopeKind, scopeReticleSvg } from './ScopeReticles';
 
 const MAX_DAMAGE_MARKERS = 6;
 /** Damage numbers on screen at once and how long each floats (s; the CSS animation matches). */
@@ -134,6 +135,16 @@ export class ArcadeHud {
   private readonly scopeBreath: HTMLDivElement;
   private readonly scopeBreathFill: HTMLDivElement;
   private readonly scopeHint: HTMLDivElement;
+  private readonly scopeSurround: HTMLDivElement;
+  private readonly scopeReticle: HTMLDivElement;
+  private readonly scopeRange: HTMLDivElement;
+  private readonly scopeZoom: HTMLDivElement;
+  /** What the reticle and read-outs show now (rebuilt or rewritten only when these change). */
+  private reticleKey = '';
+  private lastRange = -2;
+  private lastZoomText = '';
+  private parX = 0;
+  private parY = 0;
   private lastBreath = -1;
   private readonly medal: HTMLDivElement;
   private medalUntil = 0;
@@ -222,14 +233,15 @@ export class ArcadeHud {
     this.scopeBreathFill = h('div', { class: 'arc-breath-fill' });
     this.scopeBreath = h('div', { class: 'arc-breath' }, this.scopeBreathFill);
     this.scopeHint = h('div', { class: 'arc-scope-hint', text: t('arc.scope.steady') });
-    // Scope: black surround, the lens edge, a duplex reticle with mil-dots and a centre gap, the breath meter.
-    const dots = h('div', { class: 'arc-scope-dots' });
-    for (let i = -4; i <= 4; i++) if (i !== 0) dots.append(h('b', { style: `--i:${i}` }), h('b', { class: 'dv', style: `--i:${i}` }));
-    // The combat scope (2.5x) shares the overlay: a wider lens, a thin vignette and a lit chevron instead of the duplex.
+    // Scope: the black surround with the lens edge (it shifts a little against the look direction: parallax), the glass
+    // (coating tint, edge shadow, glare), the reticle per optic (SVG, always on the exact centre), the range finder and zoom
+    // read-outs, the breath meter. The combat scope (2.5x) shares the overlay with a wider lens and its own reticle.
+    this.scopeSurround = h('div', { class: 'arc-scope-surround' });
+    this.scopeReticle = h('div', { class: 'arc-scope-reticle' });
+    this.scopeRange = h('div', { class: 'arc-scope-range' });
+    this.scopeZoom = h('div', { class: 'arc-scope-zoom' });
     this.scope = h('div', { class: 'arc-scope hidden' },
-      h('div', { class: 'arc-scope-lens' }, h('i', { class: 'h' }), h('i', { class: 'v' }), h('i', { class: 'hl' }), h('i', { class: 'hr' }), h('i', { class: 'vb' }), dots,
-        h('div', { class: 'arc-scope-chev' }), h('div', { class: 'arc-scope-stadia' })),
-      this.scopeBreath, this.scopeHint);
+      this.scopeSurround, h('div', { class: 'arc-scope-glass' }), this.scopeReticle, this.scopeRange, this.scopeZoom, this.scopeBreath, this.scopeHint);
     this.medal = h('div', { class: 'arc-medal hidden' });
     this.board = h('div', { class: 'arc-board hidden' });
 
@@ -497,6 +509,44 @@ export class ArcadeHud {
     this.scopeHint.textContent = spent ? t('arc.scope.breath') : t('arc.scope.steady');
     this.scopeBreath.classList.toggle('spent', spent);
     if (q >= 0) this.scopeBreathFill.style.width = `${q * 2}%`;
+  }
+
+  /**
+   * The scope's reticle and zoom read-out (call while the scope is up): `fovDeg` is the aimed field of view (the combat scope's
+   * range stadia are sized for it), `magnification` the zoom against the hip view, `levels` how many zoom levels the scope has
+   * (the read-out and the scroll hint show only on a variable scope).
+   */
+  setScopeView(kind: ScopeKind, fovDeg: number, magnification: number, levels: number): void {
+    // The stadia only depend on the field of view to a tenth of a degree.
+    const key = kind === 'combat' ? `c${Math.round(fovDeg * 10)}` : 's';
+    if (key !== this.reticleKey) {
+      this.reticleKey = key;
+      this.scopeReticle.innerHTML = scopeReticleSvg(kind, fovDeg);
+    }
+    const zoom = levels > 1 ? `${magnification.toFixed(1)}x` : '';
+    if (zoom !== this.lastZoomText) {
+      this.lastZoomText = zoom;
+      this.scopeZoom.textContent = zoom;
+      this.scopeZoom.title = zoom ? t('arc.scope.zoom') : '';
+      this.scopeZoom.classList.toggle('hidden', zoom === '');
+    }
+  }
+
+  /** Range finder read-out of the sniper scope: blocks to what the centre is on, or -1 for nothing in range. */
+  setScopeRange(dist: number): void {
+    const q = dist < 0 ? -1 : Math.round(dist);
+    if (q === this.lastRange) return;
+    this.lastRange = q;
+    this.scopeRange.textContent = q < 0 ? '---- m' : `${String(q).padStart(4, ' ')} m`;
+  }
+
+  /** Lens parallax: the surround and the lens edge shift (pixels) while the reticle stays on the aim point. */
+  setScopeParallax(x: number, y: number): void {
+    const qx = Math.round(x * 2) / 2, qy = Math.round(y * 2) / 2;
+    if (qx === this.parX && qy === this.parY) return;
+    this.parX = qx;
+    this.parY = qy;
+    this.scopeSurround.style.transform = `translate3d(${qx}px, ${qy}px, 0)`;
   }
 
   /** Big medal text under the crosshair (multi-kill, killstreak) for a moment. */

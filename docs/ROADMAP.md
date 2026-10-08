@@ -18,7 +18,7 @@ BunkCraft is geen Minecraft-kloon meer, maar een online arenashooter. De shooter
 - **Volgende stappen, op volgorde:**
   1. Een eigen display-font (OFL, lokaal gebundeld) voor titels en de PLAY-knop, als Stijn er een kiest (S).
   2. Create-a-Class ook vanaf de home: de editor loskoppelen van de match-HUD (M).
-  3. Party's: samen met een vriend via PLAY in dezelfde lobby (hoort bij §7b punt 9) (M).
+  3. Party's: **Gedaan** (oktober 2026, zie [`GAMEMODES.md`](GAMEMODES.md#partys-samen-in-dezelfde-lobby-en-hetzelfde-team)): tot 6 vrienden met een code of link, de leider drukt op PLAY en de hele party gaat in één lobby op hetzelfde team. Vervolg: zie §7b punt 9b.
   4. De in-game HUD (scorebalk, killfeed, doodscherm) naar de shell-typografie; nu nog het pixelfont (M).
   5. Survival een eigen twist geven en daarna de survival-menu's (wereldlijst, wereld maken, pauze) in de shell-look (L).
   6. De Multiplayer-sandboxmenu's (Create Game, Direct Connect, Browse Games) vertalen; nu alleen Engels (S).
@@ -241,6 +241,10 @@ Volgende stappen:
    (`pos`) en de overige berichten zijn nog JSON; delta-compressie van `snap` (alleen wat bewoog) is de volgende stap.
 6. **Observability en beheer: Gedaan.** JSON-logs, `/metrics`, `/health`, back-ups, verbindingslimieten, `ALLOWED_ORIGINS`,
    gracieus afsluiten met reconnect-hint. Open: Grafana-dashboard als voorbeeld, rate limits per game in `/admin`, alerting.
+6b. **Terugkeren na een verbroken verbinding: Gedaan** (arcade). De server bewaart plek, score, class en match-XP van een weggevallen
+   speler `REJOIN_GRACE_SEC` (120 s); de client verbindt zelf opnieuw ("Opnieuw verbinden...") en na een herlading staat "Ga terug naar je
+   match" op het startscherm. Zie `docs/GAMEMODES.md` §Terugkeren. Open: bewaarde plekken overleven geen serverherstart (alleen de XP wordt
+   dan uitbetaald), en een speler die een FFA-match leidde terwijl hij weg was telt niet mee voor de winnaar.
 7. **Weer in multiplayer: Gedaan** (regen, onweer en bliksem op de server; `/weather` werkt). Kisten en ovens zijn klaar, zie `docs/MULTIPLAYER.md`.
 8. **Uit de QA-ronde (`docs/qa/MULTIPLAYER.md`): Gedaan.** Plaatsen kost nu het item (`InventoryGuard.authorizeEdit`,
    ook net gecraft), andere spelers lopen vloeiend (server bemonstert posities op een vaste klok, client stempelt
@@ -290,6 +294,13 @@ regenereert, respawns en een scoreboard. Beschrijving, besturing en wapentabel: 
   meer zichtbaar vanaf de vijandelijke helft (ook Classic, sinds de compacte versie). Analyse en metingen: [`research/MAPS.md`](research/MAPS.md),
   meetscripts `scripts/qa/map-flow.ts` en `scripts/map-metrics.ts`. **Volgende stap:** Classic uit de rotatie of compacter,
   Villa/Terminus/Harbor Yard inkorten of jump pads op de lange routes, playtest per kaart.
+- **Richtgevoel en scopes: Gedaan (oktober 2026).** Gemeten met `scripts/qa/aim-feel.py` (M1 Pro, 120 fps): muis → beeld was
+  al hetzelfde frame (~6 ms), maar de ADS-zoom liep ~50 ms achter, open vizieren dreven 0,13° en terugslag zakte pas na
+  ~0,75 s terug. Nu: zoom en sway in hetzelfde frame, ADS ~20% sneller (rifle 99% zoom 285 → 167 ms), geen sway buiten de
+  sniper-scope, ADS-spreiding ~40% kleiner (gedeeld met de server), lichtere terugslag die in ~0,2 s terugzakt, sniper-scopes
+  met twee zoomstanden (scrolwiel), afstandsmeter en SVG-richtkruizen per optiek. Geen aim assist. **Volgende stap:**
+  playtest; eventueel standaardgevoeligheid voor arcade lager (100% = 0,126°/count is snel met raw input en een 1600-DPI-muis)
+  en de ADS-vlag server-side valideren (de server vertrouwt `ads` nu, dus een cheat kan altijd de ADS-spreiding claimen).
 - **BunkCraft Realms: Gedaan.** Multiplayer is alleen Minecraft; de arcade-modes zitten onder *BunkCraft Realms*: playlist
   met live spelersaantallen, **Snel spelen** (server-side matchmaking `POST /api/quickplay`: volste open lobby die niet bijna
   klaar is, anders een nieuwe), *Lobby's bekijken* (fase, tijd, kaart), *Privélobby* (mode, kaart, limieten, max. spelers,
@@ -357,7 +368,13 @@ regenereert, respawns en een scoreboard. Beschrijving, besturing en wapentabel: 
    springen), en een host-commando om bots tijdens het potje bij te stellen. (Een nieuwe kaart met een onbereikbare spawn,
    zone of vlag laat `tests/botNav.test.ts` al falen.)
 8. **Mobiel:** touchbediening voor schieten en richten (hoort bij de touch-taak in 6).
-9. **Realms vervolg:** party's (samen met vrienden in één lobby via Snel spelen), skill-based matchmaking (K/D per naam),
+9b. **Party's: gedaan** (server-autoritair in het geheugen met verloop, polling, plekken 45 s vastgehouden, zelfde team, bots
+   geven plek op, balans splitst een party nooit; `server/Parties.ts`, `src/net/PartyApi.ts`, `src/ui/PartyPanel.ts`).
+   **Vervolg:** party-chat of een pushkanaal (nu pollen elke 1,5 s; een WebSocket per party kan als het aantal party's groeit),
+   een uitnodiging die een vriend in de game ziet (nu delen via code of link), party's over lobbygrootte heen (twee teams van
+   party's tegen elkaar), vooraf kiezen van loadout/klaar-controle voor de start en party-statistieken (samen gespeelde
+   potjes), en de party na een serverherstart bewaren (nu bewust niet: een herstart ruimt het geheugen op).
+9. **Realms vervolg:** skill-based matchmaking (K/D per naam, ook voor party's: het gemiddelde van de leden),
    een playlist-rotatie met tijdelijke modes (bijv. "Gun Game weekend"), lege open lobby's na een dag opruimen (nu na
    `ROOM_EXPIRE_DAYS`), en de lobbylijst pagineren als er meer dan `LIST_MAX` zijn. (De match-HUD is sinds QA-ronde 2 NL/EN.)
 10. **Realms-voortgang: gedaan** (oktober 2026, zie [`GAMEMODES.md`](GAMEMODES.md#voortgang-xp-levels-ontgrendelingen)):

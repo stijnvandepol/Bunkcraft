@@ -7,7 +7,8 @@ import {
   type ClientMessage, type MatchPhase, NAME_PATTERN, PROTOCOL_VERSION, type PlayerRecord, SNAP_FLAG_CROUCH, SNAP_FLAG_SLIDE, SNAP_FLAG_STALE, type ServerMessage, type SnapshotEntry, sanitizeChat,
 } from '../src/net/protocol';
 import { ARENA_FLOOR_Y, DEFAULT_MAP, type MapId, type MapSetting, getMap, mapFor, nextMap, parseMapId, parseMapSetting, voteChoices } from '../src/modes/maps';
-import { type GameType, gameTypeDef } from '../src/modes/GameTypes';
+import { type GameType, type Team, gameTypeDef } from '../src/modes/GameTypes';
+import { partyTeamed } from '../src/modes/Party';
 import { GAME_MODES, type GameMode, hasSurvivalRules } from '../src/player/GameMode';
 import { BINARY_VERSION, BINARY_VERSION_SHOT, BINARY_VERSION_SNAP_Q, BINARY_VERSION_SNAP_TICK, encodeBinary, encodeShot, encodeSnap, encodeSnapQ } from '../src/net/binary';
 import { ARCADE_TICK_HZ, ARCADE_TICK_MAX, ARCADE_TICK_MIN, arcadeInterpDelay, arcadeMaxSpeed } from '../src/modes/ArcadeLogic';
@@ -23,7 +24,7 @@ import { Weather, type WeatherState, parseWeatherCommand } from '../src/world/We
 import { arenaWorldType } from '../src/world/WorldGenerator';
 import { TerrainGenerator } from '../src/world/TerrainGenerator';
 import { GEN_VERSION_CURRENT, GEN_VERSION_LEGACY } from '../src/world/GenVersion';
-import { Match, type MatchHost } from './Match';
+import { Match, type MatchHost, type ParkedPlayer } from './Match';
 import { ServerEntities, dayFactorAt } from './ServerEntities';
 import { TICK_PHASES } from './TickPhases';
 import { ServerSurvival, type SurvivalData } from './SurvivalRules';
@@ -214,7 +215,12 @@ interface Session {
   trail: PoseTrail;
   /** Server-side bot (server/bots): messages go to this handler as objects instead of a socket. */
   sink?: (msg: ServerMessage) => void;
+  /** Arcade: hash of the rejoin token this session was given in its welcome (see ParkedPlayer.proof). */
+  rejoinHash?: string;
 }
+
+/** Seconds a dropped arcade player's seat is kept by default. */
+export const DEFAULT_REJOIN_GRACE_SEC = 120;
 
 /** The "socket" of a bot session: never open, so nothing is ever serialised or written for it. */
 const BOT_SOCKET = { OPEN: 1, readyState: 3, bufferedAmount: 0, send() {}, close() {}, terminate() {}, ping() {} } as unknown as WebSocket;
@@ -271,6 +277,20 @@ export interface ServerOptions {
   bots?: BotSettings;
   /** Realms progression (profiles, XP) shared by every game on the server; absent = no XP. */
   profiles?: ProfileService | null;
+  /** Arcade: seconds a dropped player's seat, score and match XP are kept for a rejoin (env REJOIN_GRACE_SEC, default 120; 0 = off). */
+  rejoinGraceSec?: number;
+}
+
+/** Seats a party reserved in this lobby: its members connect with the ticket key and land on one team. */
+interface SeatHold {
+  /** Id of the party (kept on the match players so the team balance never splits it). */
+  party: string;
+  size: number;
+  /** The team all members join ('' = a mode without teams). */
+  team: Team | '';
+  /** Lower-case names that took a seat already. */
+  joined: Set<string>;
+  expires: number;
 }
 
 /**
@@ -315,6 +335,8 @@ export class GameServer {
   private readonly visibility: Visibility | null = null;
   /** Arcade: server-side bots of this lobby. */
   private readonly bots: BotManager | null = null;
+  /** Seats held for parties on their way in, by ticket key (see reserve). */
+  private readonly holds = new Map<string, SeatHold>();
   private readonly viewers: Viewer[] = [];
   /** Steady snapshot clock (ms): the moment each Minecraft snapshot shows, one tick apart (see tick()). */
   private snapClock = 0;
@@ -327,6 +349,9 @@ export class GameServer {
   private mapSetting: MapSetting = DEFAULT_MAP;
   private readonly logger: ChildLogger;
   private closed = false;
+  /** Arcade: seconds a dropped player's seat is kept (0 = not at all). */
+  private readonly rejoinGraceSec: number;
+  private saveSoonTimer: NodeJS.Timeout | null = null;
   private readonly guardMode: 'enforce' | 'warn' | 'off';
 
   constructor(private readonly opts: ServerOptions) {
@@ -334,6 +359,8 @@ export class GameServer {
     this.file = join(opts.dataDir, 'world.json');
     this.logger = log.child({ room: opts.label ?? 'main' });
     this.guardMode = opts.inventoryGuard ?? 'enforce';
+    const grace = opts.rejoinGraceSec ?? (process.env.REJOIN_GRACE_SEC !== undefined && process.env.REJOIN_GRACE_SEC !== '' ? Number(process.env.REJOIN_GRACE_SEC) : DEFAULT_REJOIN_GRACE_SEC);
+    this.rejoinGraceSec = Number.isFinite(grace) ? Math.max(0, Math.min(3600, grace)) : DEFAULT_REJOIN_GRACE_SEC;
     this.world = this.load();
     this.world.ops ??= [];
     this.world.bans ??= [];
@@ -541,7 +568,11 @@ export class GameServer {
   shutdown(reconnectMs?: number, reason = 'Server closed'): void {
     this.timers.forEach(clearInterval);
     this.timers = [];
+    if (this.saveSoonTimer) clearTimeout(this.saveSoonTimer);
+    this.saveSoonTimer = null;
     this.closed = true;
+    // Whatever XP is still open (connected players and kept seats) is paid before the game goes away.
+    this.progress?.settleAll();
     this.dirty = true;
     this.save();
     // Chunks still being generated for this game are no longer needed.
@@ -558,9 +589,98 @@ export class GameServer {
     return this.sessions.size - (this.bots?.count ?? 0);
   }
 
+  /** Seats kept for players whose connection dropped (arcade): not playing, but not free either. */
+  get keptSeats(): number {
+    return this.match?.parked.size ?? 0;
+  }
+
+  /** Every seat that is taken without a connection: kept for a rejoin plus held for a party. Matchmaking counts these as taken. */
+  get reservedSeats(): number {
+    return this.keptSeats + this.heldSeats;
+  }
+
+  /**
+   * Whether a login with this proof (rejoin token and/or profile token) would take back a kept seat, and how long
+   * the seat has left. A live session counts too: a reload can arrive before the server noticed the old socket close.
+   */
+  rejoinStatus(proof: { token?: unknown; profile?: unknown }): { state: 'kept' | 'live' | 'none'; secondsLeft: number; name?: string } {
+    const match = this.match;
+    if (!match) return { state: 'none', secondsLeft: 0 };
+    const token = typeof proof.token === 'string' && proof.token.length >= 16 && proof.token.length <= 128 ? hashToken(proof.token) : undefined;
+    const profile = this.progress?.verify(proof.profile) ?? undefined;
+    const kept = match.findParked((p) => this.proves(p.proof, { token, profile }));
+    if (kept) return { state: 'kept', secondsLeft: match.seatSecondsLeft(kept.id), name: kept.name };
+    if (token) for (const s of this.sessions.values()) if (s.rejoinHash === token) return { state: 'live', secondsLeft: this.rejoinGraceSec, name: s.name };
+    return { state: 'none', secondsLeft: 0 };
+  }
+
+  private proves(have: ParkedPlayer['proof'], proof: { token?: string; keyHash?: string; profile?: string }): boolean {
+    return (!!proof.token && have.token === proof.token) || (!!proof.keyHash && have.keyHash === proof.keyHash) || (!!proof.profile && have.profile === proof.profile);
+  }
+
   /** Bots in the game right now. */
   get botCount(): number {
     return this.bots?.count ?? 0;
+  }
+
+  /** Seats held for parties that have not arrived yet (matchmaking and the bots keep clear of them). */
+  get heldSeats(): number {
+    this.pruneHolds();
+    let n = 0;
+    for (const h of this.holds.values()) n += Math.max(0, h.size - h.joined.size);
+    return n;
+  }
+
+  private pruneHolds(): void {
+    if (this.holds.size === 0) return;
+    const now = Date.now();
+    for (const [k, h] of this.holds) if (h.expires <= now) this.holds.delete(k);
+  }
+
+  /**
+   * People per team, seats held for parties included (bots yield and are not counted); null without teams.
+   * Quick play uses it to see whether a party fits one team, and `reserve` to pick that team.
+   */
+  teamLoad(): { red: number; blue: number } | null {
+    const m = this.match;
+    if (!m || !m.teams) return null;
+    const load = { red: 0, blue: 0 };
+    for (const p of m.players.values()) if (!p.bot && p.team) load[p.team]++;
+    // Kept seats (a dropped connection) will be taken back by the same player on the same team.
+    for (const p of m.parked.values()) if (p.team) load[p.team]++;
+    this.pruneHolds();
+    for (const h of this.holds.values()) if (h.team) load[h.team] += Math.max(0, h.size - h.joined.size);
+    return load;
+  }
+
+  /**
+   * Holds `size` seats for a party until `ttlMs` from now. Its members connect with `key` in `hello.party` and all
+   * join the team picked here (the smaller one, held seats counted). Bots step aside. Null when the seats are not there.
+   */
+  reserve(key: string, party: string, size: number, ttlMs: number): { team: Team | '' } | null {
+    const m = this.match;
+    if (!m || this.closed || size < 1) return null;
+    if (this.playerCount + this.reservedSeats + size > this.maxPlayers) return null;
+    let team: Team | '' = '';
+    if (partyTeamed(m.teams, m.info.type)) {
+      const load = this.teamLoad()!;
+      team = load.red !== load.blue ? (load.red < load.blue ? 'red' : 'blue') : m.scores.red <= m.scores.blue ? 'red' : 'blue';
+    }
+    this.holds.set(key, { party, size, team, joined: new Set(), expires: Date.now() + ttlMs });
+    this.bots?.refresh();
+    return { team };
+  }
+
+  /** Gives a reservation up (the party chose another lobby). */
+  release(key: string): void {
+    if (this.holds.delete(key)) this.bots?.refresh();
+  }
+
+  /** The unexpired reservation for a ticket key, if the key is one. */
+  private holdFor(key: unknown): SeatHold | undefined {
+    if (typeof key !== 'string' || key.length < 16 || key.length > 128) return undefined;
+    const h = this.holds.get(key);
+    return h && h.expires > Date.now() ? h : undefined;
   }
 
   /**
@@ -717,7 +837,7 @@ export class GameServer {
             pending = true;
             void result.then((s) => {
               pending = false;
-              if (s && ws.readyState !== ws.OPEN) this.logout(s);
+              if (s && ws.readyState !== ws.OPEN) this.logout(s, true);
               else session = s;
             }, () => {
               pending = false;
@@ -742,7 +862,8 @@ export class GameServer {
     });
     ws.on('close', () => {
       clearTimeout(timeout);
-      if (session) this.logout(session);
+      // The connection dropped (the player did not say goodbye): an arcade seat is kept for a rejoin.
+      if (session) this.logout(session, true);
     });
     ws.on('error', () => ws.close());
   }
@@ -816,25 +937,56 @@ export class GameServer {
     who: { owner: boolean; verified: boolean; key: string | null },
   ): Session | null {
     const keyHash = who.key ? hashToken(who.key) : undefined;
+    const match = this.match;
+    // Arcade rejoin: a login that proves it is a player whose connection dropped takes that seat back.
+    const proof = match ? this.rejoinProof(hello, keyHash) : null;
+    if (proof) {
+      // The same player may still be connected (a reload that beat the server noticing the old socket closed):
+      // that session ends here and its seat is kept for this login.
+      for (const old of [...this.sessions.values()]) {
+        if (old.sink || lc(old.name) !== lc(name)) continue;
+        if (!((proof.token && old.rejoinHash === proof.token) || (proof.keyHash && old.keyHash === proof.keyHash))) continue;
+        this.send(old, { t: 'kick', reason: 'You logged in from another location' });
+        this.logout(old, true);
+        try { old.ws.close(); } catch { /* already closed */ }
+      }
+    }
+    const seat = proof && match ? match.findParked((p) => lc(p.name) === lc(name) && this.proves(p.proof, proof)) : undefined;
     if (this.openLobby) {
-      for (const s of this.sessions.values()) {
-        if (s.name.toLowerCase() !== name.toLowerCase() || (keyHash && s.keyHash === keyHash)) continue;
+      const taken = [...this.sessions.values()].some((s) => lc(s.name) === lc(name) && !(keyHash && s.keyHash === keyHash))
+        // A kept seat holds its name for its player.
+        || (!seat && !!match && !!match.findParked((p) => lc(p.name) === lc(name)));
+      if (taken) {
         ws.send(JSON.stringify({ t: 'kick', reason: 'Somebody with this name is already playing in this lobby. Pick another name.', code: 'identity' } satisfies ServerMessage));
         ws.close(1008, 'Name in use');
         return null;
       }
     }
     // Logging in again from elsewhere replaces the old session, like Minecraft.
-    for (const s of this.sessions.values()) {
-      if (s.name.toLowerCase() === name.toLowerCase()) {
+    for (const s of [...this.sessions.values()]) {
+      if (lc(s.name) === lc(name)) {
         this.send(s, { t: 'kick', reason: 'You logged in from another location' });
-        s.ws.close();
         this.logout(s);
+        s.ws.close();
       }
     }
-    // Bots never keep a person out: one leaves to make room.
-    if (this.sessions.size >= this.maxPlayers && this.playerCount < this.maxPlayers) this.bots?.makeRoom();
-    if (this.sessions.size >= this.maxPlayers) {
+    // Seat accounting: kept seats (a dropped connection) and seats held for a party are both taken without a connection.
+    // This login's own seat (the one it takes back, or the one held for it) is not "somebody else's".
+    const hold = this.holdFor(hello.party);
+    const lname = name.toLowerCase();
+    const entitled = !!hold && (hold.joined.has(lname) || hold.joined.size < hold.size);
+    const heldForOthers = this.heldSeats - (entitled && !hold!.joined.has(lname) ? 1 : 0);
+    const keptForOthers = this.keptSeats - (seat ? 1 : 0);
+    if (this.match && this.playerCount + keptForOthers + heldForOthers >= this.maxPlayers) {
+      metrics.loginsFailed++;
+      ws.send(JSON.stringify({ t: 'kick', reason: 'The server is full', code: 'full' } satisfies ServerMessage));
+      ws.close(1008, 'The server is full');
+      return null;
+    }
+    // Bots never keep a person out: one leaves to make room (from the team the person joins).
+    const joinTeam = (seat?.team || (entitled ? hold!.team : '')) || undefined;
+    if (this.sessions.size + keptForOthers >= this.maxPlayers) this.bots?.makeRoom(joinTeam);
+    if (this.sessions.size + keptForOthers >= this.maxPlayers) {
       metrics.loginsFailed++;
       ws.send(JSON.stringify({ t: 'kick', reason: 'The server is full', code: 'full' } satisfies ServerMessage));
       ws.close(1008, 'The server is full');
@@ -864,10 +1016,21 @@ export class GameServer {
       binVersion: hello.bin === true && this.opts.binary !== false ? Math.max(1, Math.min(BINARY_VERSION, Math.floor(Number(hello.binv)) || 1)) : 0,
       bink: hello.bin === true && this.opts.binary !== false && !!this.match && Number(hello.binv) >= BINARY_VERSION_SNAP_TICK,
       guard: new InventoryGuard(initial.error ? [] : initial.slots),
-    });
-    const joined = this.match?.join(session.id, name) ?? null;
+    }, seat?.id);
+    // A returning player goes back to their team (and party); a party member with a ticket joins the party's team.
+    const joined = this.match?.join(session.id, name, false, {
+      ...(entitled ? { party: hold!.party, ...(hold!.team ? { team: hold!.team } : {}) } : {}),
+      ...(seat ? { restore: seat } : {}),
+    }) ?? null;
+    if (entitled) hold!.joined.add(lname);
+    // A fresh secret for the next drop (single use: the one this login showed is spent).
+    const rejoin = joined && this.rejoinGraceSec > 0 ? newToken() : undefined;
+    if (rejoin) session.rejoinHash = hashToken(rejoin);
     // Realms profile (before `ready` sends the roster, so the rank icon is there from the start).
-    if (joined) this.progress?.bind(session.id, hello.profile, name);
+    if (joined) {
+      if (seat) this.progress?.unpark(session.id, name);
+      else this.progress?.bind(session.id, hello.profile, name);
+    }
     if (joined) {
       session.x = joined.x; session.y = joined.y; session.z = joined.z; session.hasPos = true;
       this.guard?.join(session.id, name);
@@ -888,6 +1051,7 @@ export class GameServer {
       ...(session.bin ? { binary: true } : {}),
       ...(session.binq ? { binaryVersion: session.binVersion } : {}),
       ...(this.match ? { tickHz: this.tickHz } : {}),
+      ...(rejoin ? { rejoin, rejoinSec: this.rejoinGraceSec, rejoined: !!seat } : {}),
       ...(this.survival ? this.survival.welcome() : {}),
       ...(this.containers ? { containers: true } : {}),
     });
@@ -897,21 +1061,32 @@ export class GameServer {
     if (joined) {
       session.awaiting = { x: joined.x, y: joined.y, z: joined.z, until: Date.now() + 1500 };
       this.match!.ready(session.id);
+      this.progress?.flushReport(session.id);
     }
-    this.broadcast({ t: 'chat', from: '', text: `${name} joined the game`, system: true });
+    this.broadcast({ t: 'chat', from: '', text: `${name} ${seat ? 'rejoined' : 'joined'} the game`, system: true });
     if (op && this.isModerated()) this.send(session, { t: 'chat', from: '', text: 'You are an operator of this game. Type /help for the commands you can use.', system: true });
-    this.log(`[join] ${name} (${this.sessions.size} online)`);
-    this.logger.debug('join', { name, ip, op, verified: who.verified });
+    this.log(`[${seat ? 'rejoin' : 'join'}] ${name} (${this.sessions.size} online)`);
+    this.logger.debug(seat ? 'rejoin' : 'join', { name, ip, op, verified: who.verified });
     return session;
+  }
+
+  /** What a hello offers as proof of being a player who dropped: rejoin token, identity key and signed profile token. */
+  private rejoinProof(hello: Extract<ClientMessage, { t: 'hello' }>, keyHash: string | undefined): { token?: string; keyHash?: string; profile?: string } | null {
+    if (this.rejoinGraceSec <= 0) return null;
+    const token = typeof hello.rejoin === 'string' && hello.rejoin.length >= 16 && hello.rejoin.length <= 128 ? hashToken(hello.rejoin) : undefined;
+    const profile = this.progress?.verify(hello.profile) ?? undefined;
+    return token || keyHash || profile ? { token, keyHash, profile } : null;
   }
 
   /** A session with every rate limit and check a player has (people and bots alike). */
   private newSession(
     name: string, ws: WebSocket, ip: string, start: { x: number; y: number; z: number },
     extra: Pick<Session, 'op' | 'owner' | 'verified' | 'keyHash' | 'bin' | 'binq' | 'binShot' | 'binVersion' | 'bink' | 'guard'>,
+    /** A returning player keeps the id they had (their XP tally, assists and guard state hang on it). */
+    id?: number,
   ): Session {
     return {
-      id: this.nextId++, name, ws, ip, ...extra,
+      id: id ?? this.nextId++, name, ws, ip, ...extra,
       x: start.x, y: start.y, z: start.z, yaw: 0, pitch: 0, flags: 0, held: 0,
       hasPos: false, lastPosTime: Date.now(),
       edits: new Bucket(20, 40, 'edits'), attacks: new Bucket(8, 12, 'attacks'), shots: new Bucket(3, 5, 'shots'),
@@ -930,7 +1105,7 @@ export class GameServer {
    */
   private addBot(name: string, sink: (id: number) => (msg: ServerMessage) => void): number | null {
     const match = this.match;
-    if (!match || this.closed || this.sessions.size >= this.maxPlayers) return null;
+    if (!match || this.closed || this.sessions.size + this.reservedSeats >= this.maxPlayers) return null;
     const session = this.newSession(name, BOT_SOCKET, 'bot', this.world.spawn, {
       op: false, owner: false, verified: false, bin: false, binq: false, binShot: false, binVersion: 0, bink: false, guard: new InventoryGuard([]),
     });
@@ -960,8 +1135,12 @@ export class GameServer {
       },
       getBlock: (x: number, y: number, z: number) => gs.arena!.getBlock(x, y, z),
       getMeta: (x: number, y: number, z: number) => gs.arena!.getMeta(x, y, z),
-      humans: () => gs.playerCount,
+      // A kept seat is somebody's: bots neither take it nor leave the lobby empty of people while it is kept.
+      humans: () => gs.playerCount + gs.keptSeats,
+      connected: () => gs.playerCount,
       capacity: () => gs.maxPlayers,
+      // Seats held for parties on their way in (kept seats are already in `humans`).
+      reserved: () => gs.heldSeats,
       names: () => new Set([...gs.sessions.values()].map((s) => s.name.toLowerCase())),
       addBot: (name: string, sink: (id: number) => (msg: ServerMessage) => void) => gs.addBot(name, sink),
       removeBot: (id: number) => { const s = gs.sessions.get(id); if (s?.sink) gs.logout(s); },
@@ -986,22 +1165,51 @@ export class GameServer {
     return { bots: b.count, ticks: p.ticks, avgMs: p.ticks ? p.totalMs / p.ticks : 0, maxMs: p.maxMs, thinks: p.thinks, skippedThinks: p.skippedThinks };
   }
 
-  private logout(s: Session): void {
+  /**
+   * `keepSeat`: an arcade player's connection dropped (network, reload, crash, lag), as opposed to leaving on purpose or
+   * being removed (kick, ban): the seat, score and match XP wait for them (see Match.leave).
+   */
+  private logout(s: Session, keepSeat = false): void {
     if (!this.sessions.has(s.id)) return;
     this.storePlayer(s);
     this.sessions.delete(s.id);
     this.entities?.forget(s.id);
     this.survival?.forget(s.id);
     this.containers?.onLeave(s.id);
-    this.progress?.leave(s.id);
-    this.match?.leave(s.id);
-    if (this.match && this.match.players.size === 0) this.progress?.recorder.stop();
+    const match = this.match;
+    const proof = keepSeat && match && !s.sink && s.rejoinHash && this.rejoinGraceSec > 0 && match.phase !== 'ended' && match.players.has(s.id)
+      ? { token: s.rejoinHash, keyHash: s.keyHash, profile: this.progress?.profileOf(s.id) } : null;
+    let kept: ParkedPlayer | null = null;
+    if (proof && match) {
+      this.progress?.park(s.id);
+      kept = match.leave(s.id, { proof, graceSec: this.rejoinGraceSec, limit: Math.max(1, Math.floor(this.maxPlayers / 2)) });
+    } else {
+      this.progress?.leave(s.id);
+      match?.leave(s.id);
+    }
+    if (match && match.players.size === 0 && match.parked.size === 0) this.progress?.recorder.stop();
     this.guard?.leave(s.id);
     this.visibility?.forget(s.id);
     this.broadcast({ t: 'leave', id: s.id, name: s.name });
     if (s.sink) return; // bots come and go quietly (filling and emptying the lobby)
-    this.broadcast({ t: 'chat', from: '', text: `${s.name} left the game`, system: true });
-    this.log(`[leave] ${s.name} (${this.sessions.size} online)`);
+    this.broadcast({ t: 'chat', from: '', text: kept ? `${s.name} lost connection` : `${s.name} left the game`, system: true });
+    this.log(`[${kept ? 'drop' : 'leave'}] ${s.name} (${this.sessions.size} online)`);
+    if (!match) this.saveSoon();
+  }
+
+  /** A player's last position and state are on disk within moments of them leaving (the periodic save is 30 s apart). */
+  private saveSoon(): void {
+    if (this.saveSoonTimer || this.closed) return;
+    this.saveSoonTimer = setTimeout(() => {
+      this.saveSoonTimer = null;
+      try {
+        this.save();
+      } catch (e) {
+        this.dirty = true;
+        this.logger.error('saving failed', { error: String(e) });
+      }
+    }, 2000);
+    this.saveSoonTimer.unref();
   }
 
   /** The identity hash that claimed a name; own-property lookup so "constructor" and "__proto__" are ordinary names. */
@@ -1019,10 +1227,12 @@ export class GameServer {
     Object.defineProperty(this.world.players, name, { value: record, enumerable: true, writable: true, configurable: true });
   }
 
-  private kickSession(s: Session, reason: string): void {
-    this.send(s, { t: 'kick', reason });
+  /** `lag`: dropped for a connection problem, not for cheating: the seat is kept and the client is told to come back. */
+  private kickSession(s: Session, reason: string, lag = false): void {
+    this.send(s, lag ? { t: 'kick', reason, reconnect: 1500 } : { t: 'kick', reason });
+    // Out of the game first: the socket's own close event must not find the session and keep its seat.
+    this.logout(s, lag);
     try { s.ws.close(1008, reason.slice(0, 100)); } catch { /* already closed */ }
-    this.logout(s);
   }
 
   private findSession(name: string): Session | undefined {
@@ -1045,6 +1255,12 @@ export class GameServer {
   // ---------------------------------------------------------------- messages
 
   private handle(s: Session, msg: ClientMessage): void {
+    if (msg.t === 'bye') {
+      // Leaving on purpose (quit to title): the seat is free at once, nothing is kept.
+      this.logout(s);
+      try { s.ws.close(1000, 'Bye'); } catch { /* already closed */ }
+      return;
+    }
     if (this.match) return this.handleArcade(s, msg, this.match);
     const entities = this.entities!;
     switch (msg.t) {
@@ -1306,7 +1522,7 @@ export class GameServer {
     }
     metrics.cheatKicks++;
     this.broadcast({ t: 'chat', from: '', text: `${s.name} was kicked by the anti-cheat`, system: true });
-    this.kickSession(s, `Kicked by the anti-cheat (${r.rule}). Lagging? Check your connection.`);
+    this.kickSession(s, `Kicked by the anti-cheat (${r.rule}). Lagging? Check your connection.`, r.lag);
   }
 
   /** A name-only ban (no address: shared networks must not lock others out of the room). */
@@ -1562,6 +1778,8 @@ export class GameServer {
         this.entities?.clear();
         this.entitiesActive = false;
       }
+      // Only kept seats are left: the match stands still, and their time runs out here.
+      if (this.match && this.reservedSeats > 0) this.match.tick();
       return;
     }
     this.entitiesActive = true;

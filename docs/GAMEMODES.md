@@ -41,6 +41,55 @@ server → `{ t: 'vote', options, counts, mine?, endsIn }`), additief op protoco
 ermee speelt, zodat een vreemde met dezelfde naam je niet uit de lobby duwt en jij er later met een andere browser weer in
 kunt.
 
+## Party's (samen in dezelfde lobby en hetzelfde team)
+
+Vrienden groeperen zich in een **party** (maximaal 6) en spelen samen. Op de home staat een paneel **Party**
+(`src/ui/PartyPanel.ts`, tussen Lobby's/Privéwedstrijd en "Speel met vrienden"):
+
+- **Maken en joinen:** *Party maken* geeft een code van 5 tekens (alfabet van de lobbycodes zonder I, L, O, 0, 1) en een
+  link (`/?party=CODE`, knop *Link kopiëren*). Iemand anders typt de code in het partyveld (of in het gewone codeveld op de home:
+  vijf tekens of een `?party=`-link betekent party, zes tekens een lobby) of opent de link. Een lobbycode en een partycode
+  zijn dus nooit te verwarren.
+- **Paneel:** per lid het rang-icoon (level of prestige, een gast heeft er geen), de naam, een kroon voor de leider en een
+  chip: *Klaar* / *Niet klaar* / *Offline* / *In een potje*. De leider heeft per lid twee knoppen: leider maken en
+  verwijderen. *Verlaten* staat in de kop. Een leesregel (`aria-live`) meldt wie er bijkomt of weggaat.
+- **Leider en leden:** de leider kiest de mode (de playlist van de leden volgt) en drukt op **PLAY**: dat is Snel spelen voor
+  de hele party. De PLAY-knop van een lid is **KLAAR** (aan/uit); klaar-vlaggen zijn informatief (de leider kan altijd
+  starten) en worden na elke start gewist. De leider kan ook een lobby uit *Lobby's* of een code kiezen, of een privélobby
+  starten: dat gaat ook voor de hele party (een lid dat zelf een lobby kiest krijgt "Alleen de leider kiest de lobby").
+- **Matchmaking voor een party** (`src/modes/Realms.ts`: `partyFits`, `pickLobby(..., partySize)`; server in
+  `Rooms.quickPlay`/`Rooms.joinLobby`): alleen een lobby waar de **hele party** past: genoeg plekken (mensen + vastgehouden
+  plekken van andere party's; bots geven plek op) en, in teammodi met mensen erin, een team dat ze allemaal kan nemen zonder
+  dat de lobby scheef gaat (kleinste team + partygrootte ≤ de helft van de plekken, naar boven afgerond). Past ze nergens, dan
+  opent de server een nieuwe openbare lobby; die vult met bots tot twee keer de partygrootte (maximaal de lobbygrootte).
+  Een party groter dan `ROOM_MAX_PLAYERS` krijgt "te klein". Vrije-voor-allen-modi en infected kennen geen teamlimiet.
+- **Plekken vasthouden:** de server houdt de plekken in de gekozen lobby **45 s** vast (`GameServer.reserve`). Vreemden
+  kunnen ze niet innemen, bots in een volle quick-play-lobby stappen op en blijven weg (`BotHost.reserved`,
+  `BotManager.makeRoom(team)`); lukt het niet binnen 45 s, dan komen de bots terug. Een lid verbindt met de sleutel van het
+  ticket in `hello.party`; de sleutel hoort bij die ene lobby en is voor niemand anders te raden (128 bit).
+- **Zelfde team:** bij het vasthouden kiest de server het kleinste team (vastgehouden plekken meegeteld); elk lid dat met de
+  sleutel binnenkomt gaat daarheen (`Match.join(..., { party, team })`). De balans (`planBalance`, `rebalance` na een potje)
+  verplaatst nooit iemand weg van zijn party: alleen spelers zonder partygenoot in de match komen in aanmerking.
+- **Na het potje** blijft de party bestaan; elke speler komt terug op de home met het paneel, de leider drukt opnieuw op PLAY.
+  Leden die nog in een ander potje zitten (status *In een potje*) of offline zijn worden niet meegeteld en krijgen geen plek.
+- **Server-autoritair, in het geheugen, met verloop** (`server/Parties.ts`, `src/modes/Party.ts`): clients pollen elke 1,5 s
+  (4 s tijdens een potje) `GET /api/party`; de server pusht niets. Een lid is *offline* na 12 s zonder poll, wordt na 5 min
+  verwijderd; een leider die 20 s weg is geeft de kroon aan het langst aanwezige online lid; een party zonder polls verdwijnt
+  na 10 min. **Leider weg of verlaat de party: nieuwe leider** (langst aanwezige online lid). Geen accounts en geen
+  persoonsgegevens: alleen een gamertag, het rang-icoon en een willekeurig lidtoken (alleen de hash staat op de server;
+  geen IP-adressen of profiel-id's in wat leden terugkrijgen of in logs).
+- **Herladen:** het lidtoken staat in `sessionStorage` (`bunkcraft.party.<host>`): een herlaadde pagina zit meteen weer in de
+  party. Een nieuw tabblad of een herstart van de browser vindt de party via het profieltoken (`POST /api/party/resume`; het
+  oude lidtoken vervalt). Een ticket dat deze browser al volgde (`bunkcraft.party.ticket.<host>`) speelt na een herlaad niet
+  opnieuw af.
+- **Limieten:** party's per adres per uur `PARTY_CREATE_LIMIT` (20), meedoen 30 per minuut per adres (code raden), poll 120 per
+  minuut per lid, acties 40 per minuut per lid, 900 verzoeken per minuut per adres in totaal, `MAX_PARTIES` (2000) tegelijk.
+  `PARTIES=off` zet het uit (`/api/server` meldt `features.party`).
+- **Tests:** `tests/party.test.ts` (logica met nepklok: vol, leider weg, kick, verloop, herstel, ticket), `tests/partyMatchmaking.test.ts`
+  (past de hele party, zelfde team, plekken vasthouden, bots maken plek, balans splitst nooit), `tests/partyServer.test.ts`
+  (drie clients vormen een party, de leider speelt, alles in één lobby en hetzelfde team; limieten),
+  `tests/partyClient.test.ts` en `tests/e2e/party.spec.ts` (twee browsers).
+
 ## De types
 
 | Type | Id | Regels |
@@ -350,6 +399,7 @@ Alles is aan te passen in *Options → Controls → Key Binds* (categorie **Arca
 | Scoreboard | Tab (vasthouden) |
 | Create-a-Class (klassen) | B |
 | Scope stilhouden (adem inhouden) | Shift ingedrukt tijdens het richten door een scope |
+| Sniper-scope zoomen (twee standen) | muiswiel tijdens het richten door de scope (omhoog: in, omlaag: uit) |
 | Chat | T |
 | HUD verbergen | F1 |
 
@@ -397,34 +447,40 @@ Schade is uit 100 health. Zoom per optiek in de volgorde van de kolom *Optieken*
 
 | Wapen | Slot | Modus | Schade | Headshot | Schoten/min | Magazijn | Herladen leeg (tactisch) | Spreiding heup / ADS | Volle schade tot / val-af tot | ADS-tijd | Zoom (per optiek) | Snelheid | Optieken |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| Assault Rifle | primair | auto | 20 | ×2 | 600 | 30 | 1,3 s (0,98 s) | 2,2° / 0,4° | 32 / 80 m (min. 55%) | 0,24 s | 1,3× / 1,3× / 1,4× / 2,2× | ×1 | iron, reddot, holo, combat |
-| SMG | primair | auto | 15 | ×1,8 | 900 | 25 | 1,1 s (0,83 s) | 2,6° / 1,2° | 16 / 50 m (min. 50%) | 0,17 s | 1,2× / 1,2× / 1,3× | ×1,08 | iron, reddot, holo |
-| Shotgun | primair | semi | 8 × 18 | ×1,5 | 80 | 6 | 1,9 s (1,42 s) | 3,2° / 2,6° | 9 / 24 m (min. 20%) | 0,2 s | 1,1× / 1,2× | ×0,97 | iron, reddot |
-| LMG | primair | auto | 19 | ×1,7 | 720 | 75 | 3,4 s (2,55 s) | 3,2° / 0,55° | 38 / 95 m (min. 62%) | 0,42 s | 1,3× / 1,3× / 1,4× / 2× | ×0,88 | iron, reddot, holo, combat |
-| Burst Rifle | primair | burst (3) | 22 | ×1,6 | 900 (cyclus 0,34 s) | 30 | 1,35 s (1,01 s) | 2° / 0,25° | 45 / 85 m (min. 55%) | 0,25 s | 1,3× / 1,3× / 1,4× / 2,2× | ×1 | iron, reddot, holo, combat |
-| DMR | primair | semi | 34 | ×2 | 270 | 12 | 1,6 s (1,2 s) | 3,5° / 0,1° | 90 / 160 m (min. 70%) | 0,28 s | 1,4× / 1,5× / 1,6× / 2× / 2,2× | ×0,96 | iron, reddot, holo, combat, scope |
-| Semi-Auto Sniper | primair | semi | 55 | ×1,85 | 125 | 6 | 1,9 s (1,42 s) | 7° / 0,05° | 70 / 160 m (min. 80%) | 0,36 s | 3× / 2,4× | ×0,93 | scope, combat |
-| Bolt-Action Sniper | primair | grendel | 100 | ×1,5 | 45 | 4 | 2,1 s (1,58 s) | 9° / 0° | 70 / 160 m (min. 85%) | 0,3 s | 4,5× | ×0,92 | scope |
-| Battle Rifle | primair | auto | 30 | ×1,6 | 420 | 20 | 1,6 s (1,2 s) | 2,8° / 0,35° | 45 / 100 m (min. 60%) | 0,32 s | 2,3× / 1,3× / 1,4× / 1,5× | ×0,95 | combat, iron, reddot, holo |
-| Lever-Action Carbine | primair | hendel | 50 | ×2,1 | 120 | 8 | 1,9 s (1,42 s) | 2,4° / 0,1° | 40 / 90 m (min. 70%) | 0,24 s | 1,4× / 1,5× / 2,2× | ×1 | iron, reddot, combat |
-| Anti-Materiel Rifle | primair | grendel | 150 | ×1,2 | 30 | 3 | 2,4 s (1,8 s) | 12° / 0° | 120 / 300 m (min. 80%) | 0,5 s | 6,3× | ×0,85 | scope |
-| Pistol | secundair | semi | 18 | ×2 | 400 | 12 | 0,95 s (0,71 s) | 1,8° / 0,5° | 25 / 60 m (min. 50%) | 0,15 s | 1,1× | ×1,04 | iron |
-| Machine Pistol | secundair | auto | 12 | ×1,6 | 1000 | 20 | 1,2 s (0,9 s) | 3,2° / 1,5° | 9 / 30 m (min. 45%) | 0,14 s | 1,1× | ×1,05 | iron |
-| Revolver | secundair | semi | 52 | ×2 | 150 | 6 | 1,8 s (1,35 s) | 2,5° / 0,15° | 30 / 70 m (min. 60%) | 0,2 s | 1,2× | ×1 | iron |
+| Assault Rifle | primair | auto | 20 | ×2 | 600 | 30 | 1,3 s (0,98 s) | 2,2° / 0,25° | 32 / 80 m (min. 55%) | 0,19 s | 1,3× / 1,3× / 1,4× / 2,2× | ×1 | iron, reddot, holo, combat |
+| SMG | primair | auto | 15 | ×1,8 | 900 | 25 | 1,1 s (0,83 s) | 2,6° / 1° | 16 / 50 m (min. 50%) | 0,14 s | 1,2× / 1,2× / 1,3× | ×1,08 | iron, reddot, holo |
+| Shotgun | primair | semi | 8 × 18 | ×1,5 | 80 | 6 | 1,9 s (1,42 s) | 3,2° / 2,6° | 9 / 24 m (min. 20%) | 0,16 s | 1,1× / 1,2× | ×0,97 | iron, reddot |
+| LMG | primair | auto | 19 | ×1,7 | 720 | 75 | 3,4 s (2,55 s) | 3,2° / 0,35° | 38 / 95 m (min. 62%) | 0,34 s | 1,3× / 1,3× / 1,4× / 2× | ×0,88 | iron, reddot, holo, combat |
+| Burst Rifle | primair | burst (3) | 22 | ×1,6 | 900 (cyclus 0,34 s) | 30 | 1,35 s (1,01 s) | 2° / 0,15° | 45 / 85 m (min. 55%) | 0,2 s | 1,3× / 1,3× / 1,4× / 2,2× | ×1 | iron, reddot, holo, combat |
+| DMR | primair | semi | 34 | ×2 | 270 | 12 | 1,6 s (1,2 s) | 3,5° / 0,06° | 90 / 160 m (min. 70%) | 0,22 s | 1,4× / 1,5× / 1,6× / 2× / 2,2× (+4×) | ×0,96 | iron, reddot, holo, combat, scope |
+| Semi-Auto Sniper | primair | semi | 55 | ×1,85 | 125 | 6 | 1,9 s (1,42 s) | 7° / 0,03° | 70 / 160 m (min. 80%) | 0,29 s | 3× (+5,5×) / 2,4× | ×0,93 | scope, combat |
+| Bolt-Action Sniper | primair | grendel | 100 | ×1,5 | 45 | 4 | 2,1 s (1,58 s) | 9° / 0° | 70 / 160 m (min. 85%) | 0,24 s | 4,5× (+8,3×) | ×0,92 | scope |
+| Battle Rifle | primair | auto | 30 | ×1,6 | 420 | 20 | 1,6 s (1,2 s) | 2,8° / 0,22° | 45 / 100 m (min. 60%) | 0,26 s | 2,3× / 1,3× / 1,4× / 1,5× | ×0,95 | combat, iron, reddot, holo |
+| Lever-Action Carbine | primair | hendel | 50 | ×2,1 | 120 | 8 | 1,9 s (1,42 s) | 2,4° / 0,06° | 40 / 90 m (min. 70%) | 0,19 s | 1,4× / 1,5× / 2,2× | ×1 | iron, reddot, combat |
+| Anti-Materiel Rifle | primair | grendel | 150 | ×1,2 | 30 | 3 | 2,4 s (1,8 s) | 12° / 0° | 120 / 300 m (min. 80%) | 0,4 s | 6,3× (+11,4×) | ×0,85 | scope |
+| Pistol | secundair | semi | 18 | ×2 | 400 | 12 | 0,95 s (0,71 s) | 1,8° / 0,3° | 25 / 60 m (min. 50%) | 0,12 s | 1,1× | ×1,04 | iron |
+| Machine Pistol | secundair | auto | 12 | ×1,6 | 1000 | 20 | 1,2 s (0,9 s) | 3,2° / 1,2° | 9 / 30 m (min. 45%) | 0,11 s | 1,1× | ×1,05 | iron |
+| Revolver | secundair | semi | 52 | ×2 | 150 | 6 | 1,8 s (1,35 s) | 2,5° / 0,09° | 30 / 70 m (min. 60%) | 0,16 s | 1,2× | ×1 | iron |
 | Knife | melee | semi | 100 | ×1 | 120 | – | – | – | 2,6 / 2,6 m | – | – | ×1,08 | – |
 
 De spreiding is de halve openingshoek van de kegel waarin een kogel kan landen. Een scope op een wapen dat er niet voor gebouwd
-is kost 0,08 s extra ADS-tijd, de combat scope 0,05 s (niet op de Battle Rifle, die er standaard een heeft).
+is kost 0,08 s extra ADS-tijd, de combat scope 0,05 s (niet op de Battle Rifle, die er standaard een heeft). Sniper-scopes
+hebben een tweede, diepere zoomstand (tussen haakjes; `opticZoomLevels`): het scrolwiel wisselt zolang je door de scope kijkt
+(omhoog = inzoomen) in plaats van van wapen te wisselen. De gevoeligheid schaalt mee met de zoomstand. (Zoom in deze tabel is
+1 / FOV-factor; de uitlezing in de scope rekent met de tangens van de halve hoeken, dus de bolt-action toont 5,2x en 9,4x.)
 
 **Herladen:** met kogels in het magazijn is het een tactische herlading (75% van de lege, `reloadTimeFor`). De client speelt
 animatie en geluid op die tijd en is klaar zodra de animatie klaar is; de server neemt een schot tot 0,1 s vóór zijn eigen
 timer aan (het schot reist dezelfde halve ronde als het verzoek), dus na de animatie wacht je nergens op.
 
 **Richten (ADS):** `src/modes/AimMath.ts` (puur, getest in `tests/aimMath.test.ts`).
-- *Curves per wapenklasse* (op `adsTime`: tot 0,2 s licht, tot 0,32 s middel, daarboven zwaar): het beeld komt voorop geladen
+- *Curves per wapenklasse* (op `adsTime`: tot 0,16 s licht, tot 0,26 s middel, daarboven zwaar): het beeld komt voorop geladen
   omhoog (begint meteen te bewegen, geen smoothstep vanuit stilstand) en laat de vizieren 1,4 tot 1,9× sneller los. De
   gameplay-waarde (`ads`, lineair in de ADS-tijd van wapen, optiek en perk) blijft apart van de beeldwaarde (`adsEased`);
-  omkeren halverwege geeft geen sprong (`AdsBlend`). De camera-FOV volgt het beeld direct zolang de vizieren bewegen.
+  omkeren halverwege geeft geen sprong (`AdsBlend`). De camera zet de zoom zonder eigen smoothing (`Camera.zoom`; ervoor
+  liep de FOV ~50 ms achter de vizieren aan) en toont sway, terugslag en zoom die de sessie later in het frame zet nog in
+  datzelfde frame (`Camera.syncAim`). Komen de vizieren aan, dan zakt het wapenmodel 0,14 s een fractie in om het vizier
+  (`adsSettle`, alleen beeld; het richtpunt staat stil).
 - *Vizier staat op het midden:* het wapen draait bij kick, sway en bob om zijn vizierlijn (`WeaponViewmodel`), de rode stip en
   de holo-ring hangen in het beeld op het exacte midden (in schermpixels, schalen met de hoogte) en de open vizieren zijn een
   korrel met een lichte punt in een open kimme. `scripts/qa/aim-shots.py` projecteert elke wapen × optiek en meldt de afwijking
@@ -433,10 +489,12 @@ timer aan (het schot reist dezelfde halve ronde als het verzoek), dus na de anim
   FOV-verhouding van de optiek, zoals voorheen; **Schermafstand** = tangens van de halve hoeken: dezelfde afstand op het scherm,
   iets trager bij sterke zoom) en *Richtmodus* (vasthouden of schakelen: een druk aan, een druk uit; herladen, wisselen en
   doodgaan zetten de vizieren omlaag).
-- *Sway door open vizieren:* iron sights, rode stip en holo drijven licht (0,07 / 0,11 / 0,17° per licht/middel/zwaar wapen,
-  ×1,6 bij bewegen) en de kogels volgen het richtpunt, net als bij de scope; de combat scope en Reduced Motion hebben het niet.
+- *Geen sway door open vizieren:* iron sights, rode stip, holo en combat scope staan doodstil (`opticSways`); alleen de
+  sniper-scope zwaait nog (klein, zie hieronder). De oude drift van 0,07-0,17° trok het richtpunt van een doel af terwijl je
+  stil hield (aim-feel-meting: 0,13° top-top op een rifle).
 - *Spreiding heup tegen ADS (gedeeld met de server via `currentSpread`/`shotSpread`):* bewegen kost heupvuur ×1,3 en richten
-  ×1,08, de lucht ×1,4 tegen ×1,25 (daarvoor ×1,15 en ×1,4 voor allebei).
+  ×1,08, de lucht ×1,4 tegen ×1,25 (daarvoor ×1,15 en ×1,4 voor allebei). De ADS-spreiding van de enkelkogelwapens is
+  ~40% kleiner (aim-feel-pass): elk richtschot blijft binnen een speler op de volle-schade-afstand van het wapen.
 
 **One-hit wapens:** de Bolt-Action Sniper doodt met één bodyshot tot 70 m (daarna 85 schade: twee schoten of een headshot),
 de Anti-Materiel Rifle met één treffer op elke afstand, het mes met één steek. Eén headshot doodt met de Semi-Auto Sniper (op
@@ -446,13 +504,28 @@ elke afstand), de Lever-Action Carbine (tot ~45 m) en de revolver (tot ~30 m). D
 45%, vier op 85% van de kegel), per schot gedraaid en een beetje verschoven (`pelletPattern` in `server/Combat.ts`). Zo is de
 schade op een afstand voorspelbaar: een gecentreerde pomp op 8 m doodt altijd.
 
-**Scope en quickscope:** de eerste ~0,45 s na het inzoomen zwaait de scope maar 20% van zijn sway, daarna groeit het naar de
-volle sway in ~1 s (`SCOPE_SETTLE`); Shift houdt de adem in zoals voorheen. Tijdens het richten geeft de camera geen
+**Scope en quickscope:** de sniper-scope zwaait 0,15° (was 0,24°; adem inhouden 0,02°). De eerste ~0,45 s na het inzoomen
+zwaait hij maar 20% daarvan, daarna groeit het naar de volle sway in ~1 s (`SCOPE_SETTLE`); Shift houdt de adem in zoals
+voorheen. Tijdens het richten geeft de camera geen
 terugslag-kick meer (`viewKick`): wat in het midden van de scope staat is waar de kogel heen gaat. De combat scope zwaait niet.
 
-**Terugslag** is een vast, leerbaar patroon per wapen (`pattern`, `recoilX`): elk schot tilt je richtpunt `recoil × 0,32`°
-op (30% minder als je richt) en duwt het zijwaarts volgens het patroon; laat je de trekker los, dan zakt ~70% terug.
-Bij automatische wapens begint dat terugzakken pas na een pauze langer dan het schotinterval (×1,3, minstens 0,09 s), dus
+**Richtkruizen per optiek** (`src/ui/ScopeReticles.ts` als SVG, scherp op elke resolutie; rode stip en holo als textuur in
+`WeaponViewmodel`; screenshots `docs/screenshots/arcade/scope-*.png`, `scripts/qa/scope-shots.py`):
+- *Rode stip:* stip met witte kern in een dunne ring. *Holo:* 65 MOA-ring met drie streepjes, stip en twee chevrons eronder.
+- *Combat scope:* rode chevron waarvan de punt het richtpunt is, fijne lijn met mil-streepjes, en afstandsstreepjes onder het
+  midden in bullet-drop-stijl. Kogels vallen niet (hitscan), dus het zijn geen holdovers: elk streepje is zo breed als een speler
+  op de afstand ernaast (25/50/75/100 m). Past een doel er precies in, dan weet je de afstand.
+- *Sniper-scope:* duplex (zware buitenpalen, fijne binnenlijnen) met mil-dots, een vrij midden met een verlichte rode stip,
+  afstandsmeter (blokken tot wat in het midden staat: de eerste speler of wat een kogel stopt) en de zoomstand.
+- *Lens:* donkere rand met een lichte buisrand, coating-tint, randschaduw en een glans; de rand verschuift een paar pixels
+  tegen de kijkrichting en de pas in (parallax, uit bij Reduced Motion), het richtkruis blijft op het midden.
+- *Geluid:* een zachte oogschelp-tik bij het inkijken (`scopein`) en een klik van de zoomring (`zoom`). Vijanden zien een
+  scope-glinstering zodra je door een sniper-scope ongeveer naar ze kijkt (bestond al).
+
+**Terugslag** is een vast, leerbaar patroon per wapen (`pattern`, `recoilX`): elk schot tilt je richtpunt `recoil × 0,25`°
+op (40% minder als je richt) en duwt het zijwaarts volgens het patroon; laat je de trekker los, dan zakt 80% terug, binnen
+~0,25 s (`RECOIL_RECOVER`; was 70% in ~0,75 s). De camera-kick bij heupvuur is gehalveerd en korter (hoogstens 3,4°, weg in
+~0,2 s). Bij automatische wapens begint dat terugzakken pas na een pauze langer dan het schotinterval (×1,3, minstens 0,08 s), dus
 een vastgehouden trekker blijft klimmen, ook bij de rifle (600/min = elke 0,1 s). Het
 richtpunt zelf beweegt (yaw/pitch), dus wat je ziet is waar de server schiet. De LMG klimt het meest maar heeft 75 kogels.
 
@@ -467,20 +540,20 @@ TTK in ms (body, richtfactor 0,75, kans dat een kogel binnen de hitbox valt door
 
 | Wapen | 4 m | 10 m | 20 m | 35 m | 60 m | 90 m | Rol |
 |---|---|---|---|---|---|---|---|
-| Assault Rifle | 567 | 807 | **807** | 940 | 1073 | 1880 | Allrounder: wint op middenafstand, redt zich dichtbij en ver |
-| SMG | 556 | 726 | 814 | 1683 | >5 s | >5 s | Snelst te voet; sloopt alles dichtbij, zakt weg na 20 m |
-| Shotgun | **250** | **450** | >5 s | >5 s | – | – | Eén pomp doodt tot ~8 m; nutteloos voorbij 15 m |
-| LMG | 583 | 1003 | 1003 | 1003 | 1190 | 2804 | Groot magazijn (9,4 kills per magazijn op 20 m, de rest ≤ 4,3): houdt een lane en wint multikills; traag richten en herladen |
-| Burst Rifle | 611 | 861 | 861 | **861** | 997 | 1403 | Strakke bursts van drie: beloont precisie op 30–40 m |
-| DMR | 667 | 947 | 947 | 947 | 947 | **947** | Drie schoten tot 90 m; met scope voor lange lijnen |
-| Semi-Auto Sniper | 800 | 1160 | 1160 | 1160 | 1160 | 1160 | Twee snelle bodyshots of één headshot (55 × 1,85 = 102) op elke afstand |
-| Bolt-Action Sniper | 2023 | 1506 | 1506 | 1506 | 1506 | 4046 | Eén bodyshot doodt tot 70 m; quickscope (0,3 s), trage grendel, geen heupvuur |
-| Battle Rifle | 619 | 939 | 939 | 939 | **939** | 1130 | Zware automaat met combat scope: vier treffers tot 45 m, hard te beheersen, klein magazijn |
+| Assault Rifle | 567 | 757 | **757** | 890 | 1023 | 1423 | Allrounder: wint op middenafstand, redt zich dichtbij en ver |
+| SMG | 556 | 696 | 784 | 1170 | >5 s | >5 s | Snelst te voet; sloopt alles dichtbij, zakt weg na 20 m |
+| Shotgun | **250** | **410** | >5 s | >5 s | – | – | Eén pomp doodt tot ~8 m; nutteloos voorbij 15 m |
+| LMG | 583 | 923 | 923 | 923 | 1034 | 1257 | Groot magazijn (9,4 kills per magazijn op 20 m, de rest ≤ 4,3): houdt een lane en wint multikills; traag richten en herladen |
+| Burst Rifle | 611 | 811 | 811 | **811** | 947 | 1353 | Strakke bursts van drie: beloont precisie op 30–40 m |
+| DMR | 667 | 887 | 887 | 887 | 887 | **887** | Drie schoten tot 90 m; met scope voor lange lijnen |
+| Semi-Auto Sniper | 800 | 1090 | 1090 | 1090 | 1090 | 1090 | Twee snelle bodyshots of één headshot (55 × 1,85 = 102) op elke afstand |
+| Bolt-Action Sniper | 2023 | 1446 | 1446 | 1446 | 1446 | 3986 | Eén bodyshot doodt tot 70 m; quickscope (0,24 s), trage grendel, geen heupvuur |
+| Battle Rifle | 619 | 879 | 879 | 879 | **879** | 1070 | Zware automaat met combat scope: vier treffers tot 45 m, hard te beheersen, klein magazijn |
 | Lever-Action Carbine | – | – | – | – | – | – | Eén headshot doodt tot ~45 m, twee bodyshots; snel richten, trage hendel |
-| Anti-Materiel Rifle | 9350 | 2310 | 2310 | 2310 | 2310 | 2310 | Eén treffer doodt op elke afstand; het traagst met richten, lopen en doorladen |
-| Pistol | 1050 | 1200 | 1200 | 1400 | 3350 | >5 s | Snelle, precieze backup |
-| Machine Pistol | 660 | 800 | 1040 | >5 s | >5 s | – | Volautomatische paniekknop voor dichtbij |
-| Revolver | 667 | 867 | 867 | 1400 | 1400 | 1933 | Eén headshot tot 30 m, twee bodyshots; traag herladen |
+| Anti-Materiel Rifle | 9350 | 2210 | 2210 | 2210 | 2210 | 2210 | Eén treffer doodt op elke afstand; het traagst met richten, lopen en doorladen |
+| Pistol | 1050 | 1170 | 1170 | 1370 | 3320 | 3320 | Snelle, precieze backup |
+| Machine Pistol | 660 | 770 | 1010 | >5 s | >5 s | – | Volautomatische paniekknop voor dichtbij |
+| Revolver | 667 | 827 | 827 | 1360 | 1360 | 1893 | Eén headshot tot 30 m, twee bodyshots; traag herladen |
 
 (De Lever-Action Carbine staat in het model op 1,6–2,6 s: het rekent een grendelwapen met 70% van de richtfactor, `BOLT_PRECISION`,
 en ziet alleen bodyshots. Zijn rol is de headshot.)
@@ -621,6 +694,41 @@ Alles procedureel (geen samples), data in `src/core/audio/weaponSounds.ts`, rece
 - Hitboxen volgen het getekende model (zie *Treffers en lag compensation*): hoofd 1,35-1,8, romp, de opgeheven armen, benen;
   1,8 hoog staand, 1,5 gehurkt, 1,15 in een slide.
 - Een klasse geldt vanaf je **volgende leven**, behalve als je hem binnen 3 s na je spawn en vóór je eerste schot kiest: dan meteen.
+
+### Terugkeren na een verbroken verbinding (rejoin)
+
+Wie uit een arcade-match valt (netwerk, pagina herladen, browsercrash, de server die een speler voor lag verwijdert) hoeft niet
+opnieuw te beginnen. **Niet** voor valsspelen, een ban of een kick van een operator, en niet als je zelf via "Terug naar
+titelscherm" weggaat (de client stuurt dan `bye`: de plek is meteen vrij en het ticket weg).
+
+- **Wat de server bewaart** (`Match.parked`, `REJOIN_GRACE_SEC` = 120 s): team, kills, deaths, doelpunten (`pts`: gun-game-level,
+  vlaggen, zones), killstreak, de gekozen class, de rank en de **match-XP** (de `MatchRecorder`-tally; de klok van "tijd gespeeld"
+  staat stil zolang je weg bent). Niet bewaard: het leven zelf (health, munitie, positie): je spawnt vers.
+- **De plek blijft bezet.** Bots nemen hem niet (ze tellen bewaarde plekken als mensen voor het aantal, maar spelen alleen als er
+  iemand verbonden is), Snel spelen rekent hem mee als bezet, het team blijft in balans (`seatedTeamSize`), een nieuwe speler met
+  jouw naam wordt geweigerd. Een lobby bewaart hooguit de helft van zijn plekken tegelijk (daarna vervalt de oudste), zodat niemand
+  een lobby kan dichtzetten door te bellen en weg te vallen. Blijven er alleen bewaarde plekken over, dan **staat de match stil** en wordt
+  een lobby die helemaal leegloopt na de grace opnieuw begonnen; de kamer blijft zo lang geladen.
+- **Wie mag terugkomen** (`hello.rejoin` of een van de twee andere bewijzen, altijd met dezelfde naam): het **rejoin-token** uit de
+  vorige `welcome` (192 bit, alleen de hash staat op de server, eenmalig: elke welcome geeft een nieuwe), de **identiteitssleutel**
+  van de browser (de naamclaim), of het **ondertekende profieltoken**. Een token geldt alleen in de lobby die het uitgaf; een
+  ander token, naam of lobby geeft gewoon een nieuwe speler en raakt de bewaarde plek niet. Een login die nog open staat
+  (herladen vóór de server de oude socket zag sluiten) neemt de plek over.
+- **Geen misbruik:** een terugkerende speler spawnt pas na `max(3 s, de respawn waar hij op wachtte)`; wie binnen 5 s na schade
+  wegviel krijgt de **dood** alsnog (geen ontsnappen, genezen of herladen door opnieuw te verbinden); deaths, score en streak
+  worden nooit gereset; spawnbescherming is de gewone van een respawn. In een rondemode kom je terug als toeschouwer tot de volgende ronde.
+- **Match afgelopen terwijl je weg was:** de XP voor de gespeelde tijd wordt aan het einde uitbetaald (resultaat naar je team;
+  in een vrij-voor-allen beslissen de aanwezigen), precies één keer; het rapport (`progress`) wacht op je terugkeer. Loopt de
+  plek af midden in een match, dan krijg je wat je tot dan deed zonder voltooiings- of winbonus (zoals bij weggaan). Bij een
+  nieuwe match beginnen de bewaarde plekken ook op nul en worden opnieuw ingedeeld.
+- **Client:** valt de verbinding weg dan toont het spel "Opnieuw verbinden..." en probeert het opnieuw met een pauze die
+  groeit (1, 2, 4, 8 s, daarna 8 s) tot de grace (+20 s) voorbij is; een weigering van de server (vol, naam bezet, ban) stopt het
+  meteen. Het rejoin-token staat samen met de lobbycode in `sessionStorage` en `localStorage` (`bunkcraft.rejoin`, `src/net/Rejoin.ts`).
+  Na een herlading staat op het startscherm **"Ga terug naar je match (code XYZ, nog 1:45)"**, na een controle bij
+  `POST /api/rejoin`.
+- **Build & Survival** kent geen grace: positie, inventory en health staan per speler in `world.json` en horen bij de naam. Een
+  verbinding die wegvalt (of een herlading die de server voor is) levert dezelfde staat op; de server schrijft die nu ook
+  binnen twee seconden na het weggaan weg (niet pas bij de volgende 30-secondenronde). De client verbindt zelf opnieuw.
 
 ### Tempo gemeten (botmatches)
 

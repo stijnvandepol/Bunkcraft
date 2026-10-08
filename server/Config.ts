@@ -67,6 +67,14 @@ export interface Config {
   profileCreateLimit: number;
   /** HMAC secret for profile tokens (PROFILE_SECRET); unset = DATA_DIR/profiles/secret.key. */
   profileSecret?: string;
+  /** Seconds an arcade game keeps a dropped player's seat, score and match XP for a rejoin (REJOIN_GRACE_SEC, default 120, 0 = off). */
+  rejoinGraceSec: number;
+  /** Parties: friends queue together (PARTIES, default on; needs games). */
+  parties: boolean;
+  /** Most parties alive at once (MAX_PARTIES). */
+  maxParties: number;
+  /** New parties per client address per hour (PARTY_CREATE_LIMIT). */
+  partyCreateLimit: number;
 }
 
 const flag = (v: string | undefined, dflt: boolean): boolean => (v === undefined || v === '' ? dflt : !/^(0|off|false|no)$/i.test(v));
@@ -119,6 +127,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     maxProfiles: Math.max(0, Math.floor(num(env.MAX_PROFILES, 50_000))),
     profileCreateLimit: Math.max(1, Math.floor(num(env.PROFILE_CREATE_LIMIT, 10))),
     profileSecret: env.PROFILE_SECRET || undefined,
+    rejoinGraceSec: Math.max(0, Math.min(3600, num(env.REJOIN_GRACE_SEC, 120))),
+    parties: flag(env.PARTIES, true),
+    maxParties: Math.max(1, Math.floor(num(env.MAX_PARTIES, 2000))),
+    partyCreateLimit: Math.max(1, Math.floor(num(env.PARTY_CREATE_LIMIT, 20))),
   };
 }
 

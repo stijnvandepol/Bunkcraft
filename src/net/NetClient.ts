@@ -1,9 +1,18 @@
 import { BINARY_VERSION, decodeBinary } from './binary';
 import { type ClientMessage, type ContainerClientMessage, PROTOCOL_VERSION, type ServerMessage } from './protocol';
 import { forgetRoomPassword, identityKey, ownerToken, roomPassword } from './RoomApi';
+import { partyKey } from './PartyApi';
 import { profileToken } from './ProfileApi';
+import { clearTicket, saveTicket, ticketToken } from './Rejoin';
 
 export type WelcomeMessage = Extract<ServerMessage, { t: 'welcome' }>;
+
+/** A login that failed: `fatal` when the server answered and refused (full, banned, name taken, password), not when it could not be reached. */
+export class ConnectError extends Error {
+  constructor(message: string, readonly fatal = false) {
+    super(message);
+  }
+}
 
 interface PendingEdit {
   x: number;
@@ -26,13 +35,17 @@ export class NetClient {
   /** Seconds between position messages (20 Hz; arcade rooms send at their tick rate, up to 30 Hz). */
   posInterval = 0.05;
   private closedByUser = false;
+  private room: string | undefined;
   id = -1;
   /** All server messages after the welcome. */
   onMessage: ((msg: ServerMessage) => void) | null = null;
   /** Rollback of a rejected local edit. */
   onRevert: ((x: number, y: number, z: number, id: number, meta: number) => void) | null = null;
-  /** The connection ended; `reconnectMs` is set when the server said it is restarting and will be back. */
-  onClose: ((reason: string, reconnectMs?: number) => void) | null = null;
+  /**
+   * The connection ended; `reconnectMs` is set when the server said to come back (restart, or a dropped arcade player's seat is
+   * kept), `lost` when the connection broke without the server saying anything (network, server crash).
+   */
+  onClose: ((reason: string, reconnectMs?: number, lost?: boolean) => void) | null = null;
 
   /**
    * Accepts "host:port", a full ws(s):// URL, or empty for the page's own server.
@@ -58,9 +71,10 @@ export class NetClient {
       }
       ws.binaryType = 'arraybuffer';
       this.ws = ws;
+      this.room = room;
       let welcomed = false;
       const timeout = window.setTimeout(() => {
-        if (!welcomed) { ws.close(); reject(new Error('Connection timed out')); }
+        if (!welcomed) { ws.close(); reject(new ConnectError('Connection timed out')); }
       }, 10_000);
       const host = address.trim() || location.host;
       ws.onopen = () => {
@@ -68,8 +82,12 @@ export class NetClient {
         const password = room ? roomPassword(room) : undefined;
         // Realms profile (server-issued, per host): the server grants XP and shows the rank icon with it.
         const profile = room ? profileToken(host) : undefined;
+        // The secret of the last visit to this lobby: after a dropped connection it takes the kept seat back.
+        const rejoin = room ? ticketToken(host, room) : undefined;
+        // Party ticket: the seat held for this member, on the party's team (only valid for the lobby it was made for).
+        const party = partyKey(room);
         // `bin`: this client understands binary snap/ent frames, `binv` which formats (older servers ignore both).
-        this.send({ t: 'hello', v: PROTOCOL_VERSION, name, key: identityKey(host, room), bin: true, binv: BINARY_VERSION, ...(owner ? { owner } : {}), ...(password ? { password } : {}), ...(profile ? { profile } : {}) });
+        this.send({ t: 'hello', v: PROTOCOL_VERSION, name, key: identityKey(host, room), bin: true, binv: BINARY_VERSION, ...(owner ? { owner } : {}), ...(password ? { password } : {}), ...(profile ? { profile } : {}), ...(rejoin ? { rejoin } : {}), ...(party ? { party } : {}) });
       };
       ws.onmessage = (e) => {
         let msg: ServerMessage;
@@ -89,12 +107,16 @@ export class NetClient {
             welcomed = true;
             window.clearTimeout(timeout);
             this.id = msg.id;
+            // Arcade lobbies hand out the secret for the next drop (the one just used is spent).
+            if (room && msg.rejoin) {
+              saveTicket({ code: room, host, name, token: msg.rejoin, sec: msg.rejoinSec ?? 120, gameType: msg.gameType, savedAt: Date.now() });
+            }
             resolve(msg);
           } else if (msg.t === 'kick') {
             window.clearTimeout(timeout);
             // A refused password must not be sent again silently (the menu would never ask for it again).
             if (msg.code === 'password' && room) forgetRoomPassword(room);
-            reject(new Error(msg.reason));
+            reject(new ConnectError(msg.reason, true));
           }
           return;
         }
@@ -113,12 +135,12 @@ export class NetClient {
       };
       const notFound = room ? 'Game not found. It may have expired, check the code.' : 'Could not connect to the server';
       ws.onerror = () => {
-        if (!welcomed) { window.clearTimeout(timeout); reject(new Error(notFound)); }
+        if (!welcomed) { window.clearTimeout(timeout); reject(new ConnectError(notFound)); }
       };
       ws.onclose = () => {
         window.clearTimeout(timeout);
-        if (welcomed && !this.closedByUser) this.onClose?.('Connection lost');
-        if (!welcomed) reject(new Error(notFound));
+        if (welcomed && !this.closedByUser) this.onClose?.('Connection lost', undefined, true);
+        if (!welcomed) reject(new ConnectError(notFound));
       };
     });
   }
@@ -193,9 +215,19 @@ export class NetClient {
     this.send({ t: 'state', inventory, stats, ...(effects ? { effects } : {}) });
   }
 
+  /** Drops the connection without a word (the server keeps an arcade player's seat for a rejoin). */
   close(): void {
     this.closedByUser = true;
     this.ws?.close();
     this.ws = null;
+  }
+
+  /** The player leaves on purpose: the server frees the seat at once, and the rejoin ticket is thrown away. */
+  leave(): void {
+    if (this.room) {
+      this.send({ t: 'bye' });
+      clearTicket(this.room);
+    }
+    this.close();
   }
 }
