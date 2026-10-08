@@ -6,6 +6,7 @@ import { BOT_LEVELS, type BotLevel, REALMS_MODES, isArcade, lobbySizes } from '.
 import { OPTICS, PERKS, isPerk, weaponDef } from '../modes/Weapons';
 import { NAME_PATTERN, formatCode, normalizeCode } from '../net/protocol';
 import { currentProfile, currentRank, loadProfile, onProfile } from '../net/ProfileApi';
+import { checkRejoin } from '../net/Rejoin';
 import { type ListedRoom, type RoomInfo, browseRooms, createRoom, inviteLink, inviteText, lookupRoom, quickPlay, realmsStats, serverInfo } from '../net/RoomApi';
 import { button, h, menuScreen } from './dom';
 import { HomeScreen } from './HomeScreen';
@@ -148,6 +149,10 @@ export class RealmsMenu {
       settings: () => this.actions.openOptions(),
       language: () => this.actions.openLanguage(),
       survival: () => this.actions.openSurvival(),
+      rejoin: (offer) => {
+        home.setRejoin(null);
+        void this.join(offer.ticket.name, offer.ticket.code, (m) => this.say(m, true));
+      },
     }, { mode: savedMode(), version: this.actions.version, mapName: this.actions.backgroundMap() });
     this.home = home;
     this.stack.push(home.el);
@@ -168,6 +173,10 @@ export class RealmsMenu {
     this.sizes = lobbySizes(info.roomMaxPlayers);
     this.profilesOn = !!info.features?.profiles;
     home.setServer('online');
+    // Dropped from a match not long ago (reload, crash, network)? The server may still keep the seat.
+    void checkRejoin(location.host).then((offer) => {
+      if (offer && this.home === home && home.el.isConnected) home.setRejoin(offer);
+    });
     const off = onProfile((p) => {
       if (this.home !== home) { off(); return; }
       home.setProfile(p, validSavedName(), this.profilesOn);

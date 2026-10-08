@@ -402,6 +402,19 @@ export class MainMenu {
     ], [button(t('disconnected.back'), () => this.showTitle())]));
   }
 
+  /** "Reconnecting..." while the game tries to get the player back in; `update` shows the attempt, `cancel` goes to the title screen. */
+  showReconnecting(reason: string, cancel: () => void): { update(text: string): void } {
+    this.stack.clear();
+    announce(`${t('reconnect.title')} ${reason}`);
+    const status = h('div', { class: 'hint', role: 'status', 'aria-live': 'polite', text: '' });
+    this.stack.push(menuScreen(t('reconnect.title'), [
+      h('div', { class: 'hint', text: reason }),
+      h('div', { class: 'hint', text: t('reconnect.hint') }),
+      status,
+    ], [button(t('reconnect.cancel'), cancel)]));
+    return { update: (text) => { status.textContent = text; } };
+  }
+
   async showWorlds(): Promise<void> {
     const worlds = await this.actions.listWorlds();
     worlds.sort((a, b) => b.lastPlayed - a.lastPlayed);

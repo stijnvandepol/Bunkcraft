@@ -3,6 +3,8 @@ import { currentState, periodKey, resolveChallenges } from '../modes/progression
 import { levelFromXp } from '../modes/progression/Levels';
 import { type ProfileData, rankOf } from '../modes/progression/Profile';
 import { type ModeStats, REALMS_MODES } from '../modes/Realms';
+import { type RejoinOffer, formatLeft } from '../net/Rejoin';
+import { formatCode } from '../net/protocol';
 import { emblemSvg, svgDataUrl, wordmarkSvg } from './Brand';
 import { h } from './dom';
 import { type I18nKey, t } from './i18n';
@@ -32,6 +34,8 @@ export interface HomeHost {
   language(): void;
   /** Build & Survival (beta): the voxel sandbox. */
   survival(): void;
+  /** The "Rejoin your match" button: back into the lobby whose seat the server keeps. */
+  rejoin(offer: RejoinOffer): void;
 }
 
 export type ServerState = 'connecting' | 'online' | 'offline';
@@ -67,6 +71,9 @@ export class HomeScreen {
   private readonly playlistMeta: HTMLSpanElement;
   private stats: ModeStats[] = [];
   private server: ServerState = 'connecting';
+  /** "Rejoin your match": the seat the server keeps for this browser (hidden when there is none). */
+  private readonly rejoinEl: HTMLElement;
+  private rejoinTimer = 0;
 
   constructor(private readonly host: HomeHost, opts: { mode: GameType; version: string; mapName: string }) {
     this.mode = REALMS_MODES.includes(opts.mode) ? opts.mode : REALMS_MODES[0];
@@ -85,6 +92,7 @@ export class HomeScreen {
       h('span', { class: 'bc-play-label' }, iconEl('play'), h('span', { text: t('home.play') })),
       this.playMode, this.playSub);
     this.status = h('div', { class: 'home-status', role: 'status', 'aria-live': 'polite' });
+    this.rejoinEl = h('section', { class: 'bc-panel home-rejoin', 'aria-label': t('rejoin.title'), hidden: true });
 
     const lobbies = iconButton('list', t('home.lobbies'), () => this.host.lobbies());
     const priv = iconButton('lock', t('home.private'), () => this.host.privateMatch(this.mode));
@@ -105,6 +113,7 @@ export class HomeScreen {
     );
 
     const main = h('main', { class: 'home-main' },
+      this.rejoinEl,
       this.playBtn,
       h('div', { class: 'home-row' }, lobbies, priv),
       friends,
@@ -225,6 +234,33 @@ export class HomeScreen {
     const total = stats.reduce((sum, s) => sum + s.players, 0);
     this.playlistMeta.textContent = total > 0 ? `${t('home.modes', REALMS_MODES.length)} · ${t('home.online', total)}` : t('home.modes', REALMS_MODES.length);
     this.renderPlaySub();
+  }
+
+  /**
+   * The offer to get back into the match this browser was dropped from (the server still keeps the seat), with the
+   * time left counting down; `null` hides it. The offer goes away by itself when the time is up.
+   */
+  setRejoin(offer: RejoinOffer | null): void {
+    window.clearInterval(this.rejoinTimer);
+    const el = this.rejoinEl;
+    el.hidden = !offer;
+    if (!offer) { el.replaceChildren(); return; }
+    const end = Date.now() + offer.secondsLeft * 1000;
+    const sub = h('div', { class: 'home-rejoin-sub' });
+    const render = () => { sub.textContent = t('rejoin.sub', modeName(offer.gameType), formatCode(offer.ticket.code), formatLeft((end - Date.now()) / 1000)); };
+    render();
+    const button = h('button', { class: 'bc-btn primary-ghost', type: 'button', onclick: () => this.host.rejoin(offer) }, iconEl('play'), h('span', { text: t('rejoin.button') }));
+    el.replaceChildren(
+      h('div', { class: 'bc-eyebrow' }, iconEl('users'), h('span', { text: t('rejoin.title') })),
+      h('div', { class: 'home-rejoin-row' }, sub, button));
+    this.rejoinTimer = window.setInterval(() => {
+      if (Date.now() >= end || !el.isConnected) {
+        window.clearInterval(this.rejoinTimer);
+        if (Date.now() >= end) { el.hidden = true; el.replaceChildren(); this.setStatus(t('rejoin.expired')); }
+        return;
+      }
+      render();
+    }, 1000);
   }
 
   setStatus(text: string, error = false): void {
