@@ -256,8 +256,12 @@ export const BREATH_HOLD_SEC = 4;
 export const BREATH_SPENT_SEC = 2.5;
 /** Breath comes back this fast (fraction per second) when not holding. */
 export const BREATH_REGEN = 0.35;
-/** Sway amplitude through a scope (degrees): idle, holding the breath, out of breath, moving (multiplier). */
-export const SCOPE_SWAY = { idle: 0.24, held: 0.035, spent: 0.55, moving: 1.6 } as const;
+/**
+ * Sway amplitude through a sniper scope (degrees): idle, holding the breath, out of breath, moving (multiplier). The only
+ * sway left in the game (open sights and the combat scope are steady); aim-feel pass: idle 0.24 → 0.15, so a resting scope
+ * drifts about a head's width at 70 blocks and Shift makes it near still.
+ */
+export const SCOPE_SWAY = { idle: 0.15, held: 0.02, spent: 0.4, moving: 1.5 } as const;
 /**
  * Quickscope window: right after the scope comes up the sway is only SCOPE_SETTLE.start of its amplitude, growing to the
  * full amplitude between `calm` and `full` seconds scoped. A fast scope-in and shot lands where the reticle is; camping
@@ -337,7 +341,15 @@ export function swayOffset(t: number, amp: number, out: { x: number; y: number }
 // ---------------------------------------------------------------- recoil
 
 /** Shortest pause after a shot before the aim recovers. */
-export const RECOIL_REST_SEC = 0.09;
+export const RECOIL_REST_SEC = 0.08;
+/**
+ * Recoil recovery: the share of the climb that comes back down once the trigger rests, and how fast (per second, exponential).
+ * Aim-feel pass: 70% at 9/s took ~0.75 s after a rifle spray (the aim kept drifting under the player's hand); 80% at 18/s is
+ * back within ~0.25 s, so the next burst starts where the player put the reticle.
+ */
+export const RECOIL_RECOVER = { share: 0.8, rate: 18 } as const;
+/** Aiming down the sights takes this share off the climb and the sideways pattern. */
+export const RECOIL_ADS_CUT = 0.4;
 
 /**
  * Aim recoil: every shot climbs the aim by `recoil × AIM_CLIMB` degrees (less when aiming) and drifts it
@@ -364,19 +376,19 @@ export class RecoilState {
     if (now - this.lastShotAt > 0.35) this.shot = 0;
     this.lastShotAt = now;
     this.restAfter = Math.max(RECOIL_REST_SEC, interval * 1.3);
-    const k = 1 - 0.3 * Math.min(1, Math.max(0, ads));
+    const k = 1 - RECOIL_ADS_CUT * Math.min(1, Math.max(0, ads));
     const up = recoil * climbPerRecoil * k;
     this.out.pitch = up;
     this.out.yaw = pattern.length ? pattern[this.shot % pattern.length] * recoilX * k : 0;
     this.shot++;
-    this.climb += up * 0.7;
+    this.climb += up * RECOIL_RECOVER.share;
     return this.out;
   }
 
   /** Pitch change (degrees, negative = down) for this frame: recovers once the shooting stops. */
   recover(now: number, dt: number): number {
     if (this.climb <= 1e-4 || now - this.lastShotAt < this.restAfter) return 0;
-    const r = this.climb * Math.min(1, dt * 9);
+    const r = this.climb * (1 - Math.exp(-dt * RECOIL_RECOVER.rate));
     this.climb -= r;
     return -r;
   }
