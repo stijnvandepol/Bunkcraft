@@ -159,7 +159,7 @@
 .screen.home {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, calc(var(--u) * 212));
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(min-content, 1fr) auto;
   grid-template-areas:
     'brand side'
     'main side'
@@ -398,9 +398,10 @@
 
 .home-party { padding: calc(var(--u) * 4) calc(var(--u) * 5) calc(var(--u) * 5); }
 .home-party[hidden] { display: none; }
-.home-party .home-code-row + .home-code-row { margin-top: calc(var(--u) * 3); }
-.home-party .home-code-row > .bc-btn:only-child { flex: 1 1 auto; }
-.party-hint { margin: calc(var(--u) * -1) 0 calc(var(--u) * 3.5); font-size: var(--f-xs); color: var(--bc-dim); }
+.party-row { flex-wrap: wrap; }
+.party-row .bc-btn { flex: none; }
+.party-row .bc-input { flex: 1 1 calc(var(--u) * 50); min-width: calc(var(--u) * 40); }
+.party-hint { margin-left: auto; font: 500 var(--f-xs) / 1.2 var(--bc-font); letter-spacing: 0; text-transform: none; text-align: right; }
 .party-input { text-transform: uppercase; }
 .party-input::placeholder { text-transform: none; }
 .party-count { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--bc-text); letter-spacing: 0.06em; }

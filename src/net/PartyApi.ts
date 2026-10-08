@@ -10,6 +10,8 @@ import { profileToken } from './ProfileApi';
  * server decides who leads, who is ready and where the party plays.
  */
 const TOKEN_KEY = 'bunkcraft.party.';
+/** The newest ticket this browser acted on, so a reload does not drag a player back into a lobby they just left. */
+const TICKET_KEY = 'bunkcraft.party.ticket.';
 /** Poll every this many ms in the menu and while playing a match. */
 export const POLL_MENU_MS = 1500;
 export const POLL_GAME_MS = 4000;
@@ -105,9 +107,9 @@ export class PartyClient {
   async resume(name?: string): Promise<PartyView | null> {
     if (this.token) {
       const r = await this.send('GET', this.pollPath(), undefined, this.token);
-      if (r.status === 200) { this.apply(r.data.party as PartyView); return this.view; }
+      if (r.status === 200) { this.apply(r.data.party as PartyView); this.keepPolling(); return this.view; }
       if (r.status !== 0 && r.status !== 429) this.forget();
-      else return this.view;
+      else { this.keepPolling(); return this.view; }
     }
     const profile = this.profile();
     if (!profile) return null;
@@ -115,8 +117,13 @@ export class PartyClient {
     if (r.status === 200 && typeof r.data.token === 'string') {
       this.save(r.data.token);
       this.apply(r.data.party as PartyView);
+      this.keepPolling();
     }
     return this.view;
+  }
+
+  private keepPolling(): void {
+    if (this.running && this.token && !this.timer && !this.inflight) this.schedule(POLL_MENU_MS);
   }
 
   async leave(): Promise<void> {
@@ -148,9 +155,13 @@ export class PartyClient {
    */
   async play(target: { gameType: GameType } | { code: string }): Promise<PartyTicket> {
     const r = await this.call('POST', '/api/party/play', target, this.token ?? undefined);
-    this.apply(r.party as PartyView);
     const ticket = r.ticket as PartyTicket;
-    this.take(ticket);
+    const view = r.party as PartyView;
+    // The leader joins with the answer in hand: the ticket is not announced to the menu a second time.
+    this.ticketSeen = Math.max(this.ticketSeen, ticket.id);
+    this.storeTicket(view.code, ticket.id);
+    this.apply(view);
+    this.held = { code: ticket.code, key: ticket.key, until: this.now() + ticket.ttlMs };
     return ticket;
   }
 
@@ -166,7 +177,7 @@ export class PartyClient {
   start(): void {
     if (this.running) return;
     this.running = true;
-    if (this.view) this.schedule(POLL_MENU_MS);
+    if (this.token) this.schedule(POLL_MENU_MS);
   }
 
   stop(): void {
@@ -229,6 +240,7 @@ export class PartyClient {
 
   private apply(next: PartyView): void {
     const prev = this.view;
+    if (this.ticketSeen === 0) this.ticketSeen = this.storedTicket(next.code);
     const changed = !prev || JSON.stringify(strip(prev)) !== JSON.stringify(strip(next));
     this.view = next;
     if (changed) {
@@ -243,6 +255,7 @@ export class PartyClient {
     this.held = { code: ticket.code, key: ticket.key, until: this.now() + ticket.ttlMs };
     if (ticket.id <= this.ticketSeen) return;
     this.ticketSeen = ticket.id;
+    if (this.view) this.storeTicket(this.view.code, ticket.id);
     for (const fn of this.ticketFns) fn(ticket);
   }
 
@@ -258,11 +271,24 @@ export class PartyClient {
     this.ticketSeen = 0;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
-    try { this.storage?.removeItem(TOKEN_KEY + this.host); } catch { /* nothing stored */ }
+    try { this.storage?.removeItem(TOKEN_KEY + this.host); this.storage?.removeItem(TICKET_KEY + this.host); } catch { /* nothing stored */ }
     if (this.view) {
       this.view = null;
       for (const fn of this.changeFns) fn(null);
     }
+  }
+
+  private storedTicket(code: string): number {
+    try {
+      const v = JSON.parse(this.storage?.getItem(TICKET_KEY + this.host) ?? 'null') as { code?: string; id?: number } | null;
+      return v && v.code === code && typeof v.id === 'number' ? v.id : 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  private storeTicket(code: string, id: number): void {
+    try { this.storage?.setItem(TICKET_KEY + this.host, JSON.stringify({ code, id })); } catch { /* private mode */ }
   }
 
   private save(token: string): void {

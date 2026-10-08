@@ -74,9 +74,10 @@ describe('PartyClient against a real server', () => {
     expect(lead.client.view!.members.find((m) => m.name === 'friend_bb')!.ready).toBe(true);
 
     const ticket = await lead.client.play({ gameType: 'tdm' });
-    expect(lead.tickets.map((x) => x.id)).toEqual([ticket.id]);
-    await lead.client.poll(); // the leader's own poll sees the ticket again but does not announce it twice
-    expect(lead.tickets).toHaveLength(1);
+    // The leader gets the ticket as the answer of play(); the menu is not told about it a second time.
+    await lead.client.poll();
+    expect(lead.tickets).toHaveLength(0);
+    expect(lead.client.keyFor(ticket.code)).toBe(ticket.key);
 
     await friend.client.poll();
     await friend.client.poll();
@@ -106,6 +107,24 @@ describe('PartyClient against a real server', () => {
 
     const stranger = browser(t);
     expect(await stranger.client.resume()).toBeNull();
+  });
+
+  it('a reload does not send a member after a ticket they already followed', async () => {
+    const t = await start();
+    const lead = browser(t);
+    const friend = browser(t);
+    const view = await lead.client.create('lead_aaa', 'tdm');
+    await friend.client.join(view.code, 'friend_aa');
+    await lead.client.play({ gameType: 'tdm' });
+    await friend.client.poll();
+    expect(friend.tickets).toHaveLength(1);
+    const reloaded = browser(t, friend.storage);
+    await reloaded.client.resume();
+    expect(reloaded.client.view?.ticket).toBeDefined(); // still valid on the server ...
+    expect(reloaded.tickets).toHaveLength(0); // ... but this browser already acted on it
+    await lead.client.play({ gameType: 'tdm' });
+    await reloaded.client.poll();
+    expect(reloaded.tickets).toHaveLength(1); // a new ticket is followed again
   });
 
   it('leaving ends it for you; the others see you go; a removed member is told', async () => {

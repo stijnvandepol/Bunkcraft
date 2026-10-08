@@ -110,10 +110,8 @@ export class PartyPanel {
     const join = h('button', { class: 'bc-btn', type: 'button', 'data-key': 'join', onclick: () => this.submit() }, h('span', { text: t('party.join') }));
     create.disabled = join.disabled = this.codeInput.disabled = this.busy;
     return [
-      h('div', { class: 'bc-eyebrow' }, iconEl('users'), h('span', { text: t('party.title') })),
-      h('div', { class: 'party-hint', text: t('party.hint') }),
-      h('div', { class: 'home-code-row' }, create),
-      h('div', { class: 'home-code-row' }, this.codeInput, join),
+      h('div', { class: 'bc-eyebrow' }, iconEl('users'), h('span', { text: t('party.title') }), h('span', { class: 'party-hint', text: t('party.hint') })),
+      h('div', { class: 'home-code-row party-row' }, create, this.codeInput, join),
     ];
   }
 
