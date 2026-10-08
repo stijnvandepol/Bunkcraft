@@ -40,8 +40,10 @@ export interface BotHost {
   graph(): NavGraph;
   getBlock: BlockGetter;
   getMeta?: BlockGetter;
-  /** Connected people (bots excluded). */
+  /** People who have a seat: connected ones plus those whose seat is kept for a rejoin (bots excluded). */
   humans(): number;
+  /** People who are connected right now (default: `humans`). Bots only play while somebody is there. */
+  connected?(): number;
   /** Seats in the lobby (people and bots). */
   capacity(): number;
   /** Lower-case names in use. */
@@ -105,7 +107,7 @@ export class BotManager {
   desired(): number {
     const s = this.settings;
     const humans = this.host.humans();
-    if (!s || humans === 0) return 0;
+    if (!s || (this.host.connected?.() ?? humans) === 0) return 0;
     const seats = Math.max(0, this.host.capacity() - humans);
     const want = s.fill ? s.fill - humans : s.count ?? 0;
     return Math.max(0, Math.min(seats, want));

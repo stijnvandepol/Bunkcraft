@@ -867,8 +867,8 @@ export class GameServer {
         if (old.sink || lc(old.name) !== lc(name)) continue;
         if (!((proof.token && old.rejoinHash === proof.token) || (proof.keyHash && old.keyHash === proof.keyHash))) continue;
         this.send(old, { t: 'kick', reason: 'You logged in from another location' });
-        try { old.ws.close(); } catch { /* already closed */ }
         this.logout(old, true);
+        try { old.ws.close(); } catch { /* already closed */ }
       }
     }
     const seat = proof && match ? match.findParked((p) => lc(p.name) === lc(name) && this.proves(p.proof, proof)) : undefined;
@@ -886,8 +886,8 @@ export class GameServer {
     for (const s of [...this.sessions.values()]) {
       if (lc(s.name) === lc(name)) {
         this.send(s, { t: 'kick', reason: 'You logged in from another location' });
-        s.ws.close();
         this.logout(s);
+        s.ws.close();
       }
     }
     // Kept seats count as taken, except the one this login is taking back.
@@ -1040,6 +1040,7 @@ export class GameServer {
       getMeta: (x: number, y: number, z: number) => gs.arena!.getMeta(x, y, z),
       // A kept seat is somebody's: bots neither take it nor leave the lobby empty of people while it is kept.
       humans: () => gs.playerCount + gs.reservedSeats,
+      connected: () => gs.playerCount,
       capacity: () => gs.maxPlayers,
       names: () => new Set([...gs.sessions.values()].map((s) => s.name.toLowerCase())),
       addBot: (name: string, sink: (id: number) => (msg: ServerMessage) => void) => gs.addBot(name, sink),
@@ -1130,8 +1131,9 @@ export class GameServer {
   /** `lag`: dropped for a connection problem, not for cheating: the seat is kept and the client is told to come back. */
   private kickSession(s: Session, reason: string, lag = false): void {
     this.send(s, lag ? { t: 'kick', reason, reconnect: 1500 } : { t: 'kick', reason });
-    try { s.ws.close(1008, reason.slice(0, 100)); } catch { /* already closed */ }
+    // Out of the game first: the socket's own close event must not find the session and keep its seat.
     this.logout(s, lag);
+    try { s.ws.close(1008, reason.slice(0, 100)); } catch { /* already closed */ }
   }
 
   private findSession(name: string): Session | undefined {
@@ -1677,6 +1679,8 @@ export class GameServer {
         this.entities?.clear();
         this.entitiesActive = false;
       }
+      // Only kept seats are left: the match stands still, and their time runs out here.
+      if (this.match && this.reservedSeats > 0) this.match.tick();
       return;
     }
     this.entitiesActive = true;
