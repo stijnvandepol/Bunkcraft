@@ -1,6 +1,6 @@
 import { BLOCK } from '../../world/BlockRegistry';
 import { type FreeArenaMapDef, type LayoutBuilder, TEAM } from './ArenaMap';
-import { AIR, turn, turned } from './helpers';
+import { AIR, jumpPad, turn, turned } from './helpers';
 import { C, crates, mannequin, steps } from './props';
 
 /**
@@ -161,6 +161,8 @@ function half(b: LayoutBuilder, s: 1 | -1, p: Side): void {
   box(-22, -9, 12, 12, 2, 2, BLOCK.YELLOW_WOOL);
   steps(t, -24, 14, 1, 0, 2, 3, GREY);
   steps(t, -7, 15, -1, 0, 2, 3, GREY);
+  // A jump pad beside the raised edge: the quick way up to the helicopter deck (the movement validator accepts this take-off).
+  jumpPad(t, -8, 11);
   // The helicopter: fuselage, glass nose, tail boom, rotor on a mast.
   box(-19, -14, 14, 16, 3, 5, p.heli);
   box(-18, -15, 15, 15, 3, 4, AIR);

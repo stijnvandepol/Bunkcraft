@@ -689,7 +689,7 @@ rode en blauwe wol markeert de teamzones. Elke kaart heeft eigen spawns die ver 
 
 | `mapId` | Naam | Grootte | Stijl |
 |---|---|---|---|
-| `classic` | Classic | 96 × 96 | Middenplatform, corridors en dekking (drie indelingen via de seed) |
+| `classic` | Classic | 72 × 72 | Middenplatform, corridors, uitkijkpost en dekking op elke lane, gesloten bases (drie indelingen via de seed) |
 | `suburb` | Maple Court | 64 × 40 | Klein en snel: twee huizen tegenover elkaar, straat, garages en tuinen |
 | `quarter` | Old Quarter | 80 × 64 | Stedelijk: binnenplaats, balkons, dakstairs en steegjes |
 | `dockyard` | Harbor Yard | 88 × 64 | Industrieel: containerstapels, centrale loods, kraandek en een schip |

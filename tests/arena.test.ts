@@ -121,31 +121,29 @@ describe('arena maps', () => {
         expect(seen.size).toBeGreaterThan(0.3 * (b.maxX - b.minX) * (b.maxZ - b.minZ));
       });
 
-      if (map.id !== 'classic') {
-        it(`${label}: no spawn sees an enemy spawn and spawns are far apart`, () => {
-          const world = { getBlock: (x: number, y: number, z: number) => at(x, y, z) };
-          const clear = (ax: number, ay: number, az: number, bx: number, by: number, bz: number) => {
-            const dx = bx - ax, dy = by - ay, dz = bz - az, d = Math.hypot(dx, dy, dz);
-            return traceBlocks(world, ax, ay, az, dx / d, dy / d, dz / d, d) >= d;
-          };
-          let nearest = Infinity;
-          for (const r of map.spawns.red) {
-            for (const bl of map.spawns.blue) {
-              nearest = Math.min(nearest, Math.hypot(r.x - bl.x, r.z - bl.z));
-              for (const [ay, by] of [[1.62, 1.62], [1.62, 0.9], [0.9, 1.62], [0.2, 1.62]]) {
-                expect(clear(r.x, r.y + ay, r.z, bl.x, bl.y + by, bl.z), `${r.x},${r.z} sees ${bl.x},${bl.z}`).toBe(false);
-              }
+      it(`${label}: no spawn sees an enemy spawn and spawns are far apart`, () => {
+        const world = { getBlock: (x: number, y: number, z: number) => at(x, y, z) };
+        const clear = (ax: number, ay: number, az: number, bx: number, by: number, bz: number) => {
+          const dx = bx - ax, dy = by - ay, dz = bz - az, d = Math.hypot(dx, dy, dz);
+          return traceBlocks(world, ax, ay, az, dx / d, dy / d, dz / d, d) >= d;
+        };
+        let nearest = Infinity;
+        for (const r of map.spawns.red) {
+          for (const bl of map.spawns.blue) {
+            nearest = Math.min(nearest, Math.hypot(r.x - bl.x, r.z - bl.z));
+            for (const [ay, by] of [[1.62, 1.62], [1.62, 0.9], [0.9, 1.62], [0.2, 1.62]]) {
+              expect(clear(r.x, r.y + ay, r.z, bl.x, bl.y + by, bl.z), `${r.x},${r.z} sees ${bl.x},${bl.z}`).toBe(false);
             }
           }
-          expect(nearest).toBeGreaterThan(24);
-          for (let i = 0; i < map.spawns.ffa.length; i++) {
-            for (let j = i + 1; j < map.spawns.ffa.length; j++) {
-              const a = map.spawns.ffa[i], c = map.spawns.ffa[j];
-              expect(Math.hypot(a.x - c.x, a.z - c.z), `ffa ${i} and ${j}`).toBeGreaterThan(8);
-            }
+        }
+        expect(nearest).toBeGreaterThan(24);
+        for (let i = 0; i < map.spawns.ffa.length; i++) {
+          for (let j = i + 1; j < map.spawns.ffa.length; j++) {
+            const a = map.spawns.ffa[i], c = map.spawns.ffa[j];
+            expect(Math.hypot(a.x - c.x, a.z - c.z), `ffa ${i} and ${j}`).toBeGreaterThan(8);
           }
-        });
-      }
+        }
+      });
 
       it(`${label} is fenced in: a wall ring, bedrock below and nothing outside`, () => {
         for (let x = b.minX; x < b.maxX; x++) {
@@ -277,8 +275,10 @@ describe('arena maps', () => {
     gen.generate(-3, -3, a, biomes);
     new ArenaGenerator(1234).generate(-3, -3, b);
     expect(a).toEqual(b);
-    // Corner chunk: wall at local (0, 0) and the floor of the interior at (15, 15).
-    expect(a[blockIndex(0, ARENA_FLOOR_Y + 1, 0)]).toBe(BLOCK.STONE_BRICKS);
+    // Corner chunk (the classic arena is 72 × 72: its wall is at -36): outside at local (0, 0), the corner of the wall
+    // at (12, 12) and the floor of the interior at (15, 15).
+    expect(a[blockIndex(0, ARENA_FLOOR_Y + 1, 0)]).toBe(BLOCK.AIR);
+    expect(a[blockIndex(12, ARENA_FLOOR_Y + 1, 12)]).toBe(BLOCK.STONE_BRICKS);
     expect(a[blockIndex(15, ARENA_FLOOR_Y + 1, 15)]).toBe(BLOCK.AIR);
     gen.generate(10, 10, a); // far outside the arena: empty
     expect(a.every((v) => v === 0)).toBe(true);

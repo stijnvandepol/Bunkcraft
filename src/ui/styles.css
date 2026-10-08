@@ -912,6 +912,10 @@ html, body {
 .arc-ammo-mag { font-size: calc(var(--fs) * 3); }
 .arc-ammo-mag.empty { color: #ff5555; }
 .arc-ammo-reserve { font-size: calc(var(--fs) * 1.5); color: #a0a0a0; }
+/* Fully scoped (sniper scope or 2.5x combat scope): the weapon label and slots go away, the ammo count is dimmed, so nothing covers the lens. */
+.arc-slots, .arc-weapon-name, .arc-ammo-row { transition: opacity 0.12s linear; }
+.arc-hud.scoped .arc-slots, .arc-hud.scoped .arc-weapon-name { opacity: 0; }
+.arc-hud.scoped .arc-ammo-row { opacity: 0.3; }
 .arc-reload { width: calc(var(--s) * 70); height: calc(var(--s) * 4); background: rgba(0, 0, 0, 0.6); border: var(--s) solid #000; }
 .arc-reload-fill { height: 100%; width: 0; background: #ffff55; }
 

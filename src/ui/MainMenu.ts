@@ -8,7 +8,7 @@ import { type RoomInfo, browseRooms, createRoom, forgetGame, lookupRoom, ownerTo
 import { gameTypeDef } from '../modes/GameTypes';
 import { getMap } from '../modes/maps';
 import { isArcade } from '../modes/Realms';
-import { RealmsMenu } from './RealmsMenu';
+import { RealmsMenu, realmsModeName } from './RealmsMenu';
 import { savePlayerName, savedPlayerName } from './playerName';
 import { installButton } from '../pwa/Pwa';
 import { button, dirtBackground, h, menuScreen, screen } from './dom';
@@ -54,16 +54,19 @@ const STATIC_BUILD = import.meta.env.VITE_STATIC === '1';
 /** "Team Deathmatch · first to 30 · 10 min · 3/12 players", shown before joining. */
 export function describeRoom(info: RoomInfo): string {
   const def = gameTypeDef(info.gameType ?? 'minecraft');
-  const parts = [def.name];
+  const parts = [def.arcade ? realmsModeName(def.id) : t('home.build')];
   if (def.arcade) {
-    if (info.scoreLimit && def.options?.score.length !== 0) parts.push(`first to ${info.scoreLimit}${def.scoreUnit && def.scoreUnit !== 'kills' ? ` ${def.scoreUnit}` : ''}`);
-    if (info.timeLimitSec) parts.push(`${Math.round(info.timeLimitSec / 60)} min`);
-    if (info.map) parts.push(info.map === 'rotate' ? 'Map: Rotate' : `Map: ${getMap(info.map).name}`);
-  } else if (info.gameMode) {
-    parts.push(info.gameMode[0].toUpperCase() + info.gameMode.slice(1));
+    if (info.scoreLimit && def.options?.score.length !== 0) {
+      const unit = def.scoreUnit && def.scoreUnit !== 'kills' ? t(`mp.unit.${def.scoreUnit}`, def.scoreUnit) : '';
+      parts.push(unit ? t('mp.room.firstToUnit', info.scoreLimit, unit) : t('mp.room.firstTo', info.scoreLimit));
+    }
+    if (info.timeLimitSec) parts.push(t('mp.room.min', Math.round(info.timeLimitSec / 60)));
+    if (info.map) parts.push(t('mp.room.map', info.map === 'rotate' ? t('mp.room.rotate') : getMap(info.map).name));
+  } else if (info.gameMode && info.gameMode in GAME_MODE_NAMES) {
+    parts.push(modeName(info.gameMode as GameMode));
   }
-  parts.push(`${info.players}/${info.maxPlayers} players`);
-  if (info.locked) parts.push('Password');
+  parts.push(t('mp.room.players', info.players, info.maxPlayers));
+  if (info.locked) parts.push(t('mp.password'));
   return parts.join(' · ');
 }
 
@@ -159,14 +162,14 @@ export class MainMenu {
   async showMultiplayer(prefillCode = ''): Promise<void> {
     const info = await serverInfo();
     if (!info) return this.showDirectConnect();
-    const name = h('input', { class: 'mc-input', value: savedPlayerName(), maxLength: 16, placeholder: 'Your name (3–16 letters)' });
-    const code = h('input', { class: 'mc-input', value: prefillCode, maxLength: 80, placeholder: 'Game code or invite link' });
+    const name = h('input', { class: 'mc-input', value: savedPlayerName(), maxLength: 16, placeholder: t('mp.name.placeholder') });
+    const code = h('input', { class: 'mc-input', value: prefillCode, maxLength: 80, placeholder: t('mp.code.placeholder') });
     const error = h('div', { class: 'error' });
     const roomInfo = h('div', { class: 'hint' });
     const validName = (): string | null => {
       const n = name.value.trim();
       if (!NAME_PATTERN.test(n)) {
-        error.textContent = 'Name must be 3–16 letters, digits or _';
+        error.textContent = t('mp.name.invalid');
         name.focus();
         return null;
       }
@@ -179,7 +182,7 @@ export class MainMenu {
       if (!n) return;
       const c = normalizeCode(raw);
       if (!c) {
-        error.textContent = 'That is not a game code (6 letters and digits, like K7Q-M2X)';
+        error.textContent = t('mp.code.invalid');
         return;
       }
       await this.joinByCode(n, c, (msg) => { error.textContent = msg; }, (text) => { roomInfo.textContent = text; });
@@ -204,21 +207,21 @@ export class MainMenu {
       button(`${g.name}  (${formatCode(g.code)})`, () => void joinCode(g.code), { cls: 'w150' }));
     const column = 'display: flex; flex-direction: column; align-items: center; gap: calc(var(--s) * 4);';
     const body = h('div', { style: column },
-      h('div', { class: 'field-label', text: 'Player Name' }), name,
-      info.rooms ? button('Create Game', () => { const n = validName(); if (n) this.showCreateGame(n); }, { cls: 'w150' }) : null,
-      info.rooms ? h('div', { class: 'field-label', text: 'Join a Friend' }) : null,
+      h('div', { class: 'field-label', text: t('mp.name') }), name,
+      info.rooms ? button(t('mp.create'), () => { const n = validName(); if (n) this.showCreateGame(n); }, { cls: 'w150' }) : null,
+      info.rooms ? h('div', { class: 'field-label', text: t('mp.joinFriend') }) : null,
       info.rooms ? code : null,
       info.rooms ? roomInfo : null,
-      info.rooms ? button('Join Game', join, { cls: 'w150' }) : null,
-      info.rooms && info.features?.browse ? button('Browse Games', () => { const n = validName(); if (n) void this.showBrowse(n); }, { cls: 'w150' }) : null,
-      recent.length ? h('div', { class: 'field-label', text: 'Recent Games' }) : null,
+      info.rooms ? button(t('mp.join'), join, { cls: 'w150' }) : null,
+      info.rooms && info.features?.browse ? button(t('mp.browse'), () => { const n = validName(); if (n) void this.showBrowse(n); }, { cls: 'w150' }) : null,
+      recent.length ? h('div', { class: 'field-label', text: t('mp.recent') }) : null,
       ...recent,
       error,
     );
     const footer: HTMLElement[] = [];
-    if (info.main) footer.push(button('Join Public Server', () => { const n = validName(); if (n) this.actions.joinServer(n, ''); }, { cls: 'w150' }));
-    footer.push(button('Direct Connect...', () => this.showDirectConnect(), { cls: 'w150' }), button('Back', () => this.stack.pop(), { cls: 'w150' }));
-    this.stack.push(menuScreen('Play Multiplayer', [body], footer, { list: true }));
+    if (info.main) footer.push(button(t('mp.public'), () => { const n = validName(); if (n) this.actions.joinServer(n, ''); }, { cls: 'w150' }));
+    footer.push(button(t('mp.direct'), () => this.showDirectConnect(), { cls: 'w150' }), button(t('common.back'), () => this.stack.pop(), { cls: 'w150' }));
+    this.stack.push(menuScreen(t('mp.title'), [body], footer, { list: true }));
     window.setTimeout(() => (name.value ? (prefillCode ? code : name) : name).focus(), 0);
     if (prefillCode && name.value) error.textContent = '';
     if (prefillCode) previewCode();
@@ -254,32 +257,32 @@ export class MainMenu {
 
   /** Password prompt for a locked game. The password goes to the server in `hello` and is kept in memory only. */
   private askPassword(playerName: string, code: string, info: RoomInfo): void {
-    const password = h('input', { class: 'mc-input', type: 'password', maxLength: 64, placeholder: 'Password', autocomplete: 'off' });
+    const password = h('input', { class: 'mc-input', type: 'password', maxLength: 64, placeholder: t('mp.password'), autocomplete: 'off' });
     const join = () => {
       if (!password.value) { password.focus(); return; }
       setRoomPassword(code, password.value);
       this.actions.joinServer(playerName, '', code);
     };
     password.addEventListener('keydown', (e) => { if (e.key === 'Enter') join(); });
-    this.stack.push(menuScreen('Password Required', [
+    this.stack.push(menuScreen(t('mp.password.title'), [
       h('div', { style: COLUMN },
-        h('div', { class: 'hint', text: `${info.name} is protected with a password.` }),
+        h('div', { class: 'hint', text: t('mp.password.text', info.name) }),
         password,
       ),
-    ], [button('Join Game', join, { cls: 'w150' }), button('Cancel', () => this.stack.pop(), { cls: 'w150' })]));
+    ], [button(t('mp.join'), join, { cls: 'w150' }), button(t('common.cancel'), () => this.stack.pop(), { cls: 'w150' })]));
     window.setTimeout(() => password.focus(), 0);
   }
 
   /** The public server list: games whose owners chose to show them. */
   private async showBrowse(playerName: string): Promise<void> {
     const error = h('div', { class: 'error' });
-    const list = h('div', { style: COLUMN }, h('div', { class: 'hint', text: 'Loading...' }));
+    const list = h('div', { style: COLUMN }, h('div', { class: 'hint', text: t('common.loading') }));
     const render = async () => {
       list.replaceChildren();
       error.textContent = '';
       try {
         const rooms = await browseRooms('minecraft');
-        if (rooms.length === 0) list.append(h('div', { class: 'hint', text: 'No public games right now. Create one and tick "Show in Server List".' }));
+        if (rooms.length === 0) list.append(h('div', { class: 'hint', text: t('mp.browse.empty') }));
         for (const r of rooms) {
           list.append(
             button(r.name, () => void this.joinByCode(playerName, r.code, (m) => { error.textContent = m; }), { cls: 'w150' }),
@@ -291,32 +294,34 @@ export class MainMenu {
         error.textContent = e instanceof Error ? e.message : String(e);
       }
     };
-    this.stack.push(menuScreen('Browse Games', [h('div', { style: COLUMN }, list, error)], [
-      button('Refresh', () => void render(), { cls: 'w150' }),
-      button('Back', () => this.stack.pop(), { cls: 'w150' }),
+    this.stack.push(menuScreen(t('mp.browse'), [h('div', { style: COLUMN }, list, error)], [
+      button(t('mp.refresh'), () => void render(), { cls: 'w150' }),
+      button(t('common.back'), () => this.stack.pop(), { cls: 'w150' }),
     ], { list: true }));
     await render();
   }
 
   /** Name, game mode, seed and visibility for a new Minecraft game; the server answers with its share code. Arcade lobbies are made under Realms. */
   private showCreateGame(playerName: string): void {
-    const name = h('input', { class: 'mc-input', value: `${playerName}'s Game`.slice(0, 32), maxLength: 32 });
-    const seed = h('input', { class: 'mc-input', placeholder: 'Leave blank for a random seed', maxLength: 32 });
-    const password = h('input', { class: 'mc-input', type: 'password', maxLength: 64, placeholder: 'Optional password', autocomplete: 'off' });
+    const name = h('input', { class: 'mc-input', value: t('mp.create.defaultName', playerName).slice(0, 32), maxLength: 32 });
+    const seed = h('input', { class: 'mc-input', placeholder: t('create.seed.placeholder'), maxLength: 32 });
+    const password = h('input', { class: 'mc-input', type: 'password', maxLength: 64, placeholder: t('mp.password.optional'), autocomplete: 'off' });
     let listed = false;
-    const listedHint = h('div', { class: 'hint', text: 'Private: only people with the code or link can find this game.' });
-    const listedButton = button('Show in Server List: No', () => {
+    const listedText = () => t('mp.listed', listed ? t('mp.yes') : t('mp.no'));
+    const listedHintText = () => (listed ? t('mp.listed.public') : t('mp.listed.private'));
+    const listedHint = h('div', { class: 'hint', text: listedHintText() });
+    const listedButton = button(listedText(), () => {
       listed = !listed;
-      listedButton.textContent = `Show in Server List: ${listed ? 'Yes' : 'No'}`;
-      listedHint.textContent = listed ? 'Anyone can see this game under Browse Games and join it.' : 'Private: only people with the code or link can find this game.';
+      listedButton.textContent = listedText();
+      listedHint.textContent = listedHintText();
     });
     const error = h('div', { class: 'error' });
     let mode: GameMode = 'survival';
-    const modeHint = h('div', { class: 'hint', text: GAME_MODE_HINTS[mode] });
-    const modeButton = button(`Game Mode: ${GAME_MODE_NAMES[mode]}`, () => {
+    const modeHint$ = h('div', { class: 'hint', text: modeHint(mode, GAME_MODE_HINTS[mode]) });
+    const modeButton = button(t('create.mode', modeName(mode)), () => {
       mode = GAME_MODES[(GAME_MODES.indexOf(mode) + 1) % GAME_MODES.length];
-      modeButton.textContent = `Game Mode: ${GAME_MODE_NAMES[mode]}`;
-      modeHint.textContent = GAME_MODE_HINTS[mode];
+      modeButton.textContent = t('create.mode', modeName(mode));
+      modeHint$.textContent = modeHint(mode, GAME_MODE_HINTS[mode]);
     });
 
     let busy = false;
@@ -335,36 +340,36 @@ export class MainMenu {
       }
     };
     for (const i of [name, seed, password]) i.addEventListener('keydown', (e) => { if (e.key === 'Enter') void create(); });
-    this.stack.push(menuScreen('Create Game', [
+    this.stack.push(menuScreen(t('mp.create'), [
       h('div', { style: COLUMN },
-        h('div', { class: 'field-label', text: 'Game Name' }), name,
-        modeButton, modeHint,
-        h('div', { class: 'field-label', text: 'Seed for the World Generator' }), seed,
-        h('div', { class: 'field-label', text: 'Password' }), password,
+        h('div', { class: 'field-label', text: t('mp.create.name') }), name,
+        modeButton, modeHint$,
+        h('div', { class: 'field-label', text: t('create.seed') }), seed,
+        h('div', { class: 'field-label', text: t('mp.password') }), password,
         listedButton, listedHint,
-        h('div', { class: 'hint', text: 'You get a code and a link to share. Friends can join any time while the game exists.' }),
+        h('div', { class: 'hint', text: t('mp.create.share') }),
         error,
       ),
     ], [
-      button('Create and Play', () => void create(), { cls: 'w150' }),
-      button('Cancel', () => this.stack.pop(), { cls: 'w150' }),
+      button(t('mp.create.go'), () => void create(), { cls: 'w150' }),
+      button(t('common.cancel'), () => this.stack.pop(), { cls: 'w150' }),
     ]));
     window.setTimeout(() => name.select(), 0);
   }
 
   /** Join any BunkCraft server by address (the page's own server when left empty). */
   showDirectConnect(): void {
-    const name = h('input', { class: 'mc-input', value: savedPlayerName(), maxLength: 16, placeholder: 'Your name (3–16 letters)' });
+    const name = h('input', { class: 'mc-input', value: savedPlayerName(), maxLength: 16, placeholder: t('mp.name.placeholder') });
     const address = h('input', { class: 'mc-input', value: load('bunkcraft.server', ''), maxLength: 120, placeholder: STATIC_BUILD ? 'play.example.com' : location.host });
     const error = h('div', { class: 'error' });
     const join = () => {
       const n = name.value.trim();
       if (!NAME_PATTERN.test(n)) {
-        error.textContent = 'Name must be 3–16 letters, digits or _';
+        error.textContent = t('mp.name.invalid');
         return;
       }
       if (STATIC_BUILD && !address.value.trim()) {
-        error.textContent = 'Enter the address of a BunkCraft server';
+        error.textContent = t('mp.direct.needAddress');
         return;
       }
       savePlayerName(n);
@@ -373,16 +378,16 @@ export class MainMenu {
     };
     for (const i of [name, address]) i.addEventListener('keydown', (e) => { if (e.key === 'Enter') join(); });
     const column = 'display: flex; flex-direction: column; align-items: center; gap: calc(var(--s) * 4);';
-    this.stack.push(menuScreen('Direct Connect', [
+    this.stack.push(menuScreen(t('mp.direct.title'), [
       h('div', { style: column },
-        h('div', { class: 'field-label', text: 'Player Name' }), name,
-        h('div', { class: 'field-label', text: 'Server Address' }), address,
-        h('div', { class: 'hint', text: STATIC_BUILD ? 'Host name or ip:port of a BunkCraft server. This copy of the game has no server of its own.' : 'Host name or ip:port of a BunkCraft server. Leave empty for the server this page came from.' }),
+        h('div', { class: 'field-label', text: t('mp.name') }), name,
+        h('div', { class: 'field-label', text: t('mp.direct.address') }), address,
+        h('div', { class: 'hint', text: STATIC_BUILD ? t('mp.direct.hintStatic') : t('mp.direct.hint') }),
         error,
       ),
     ], [
-      button('Join Server', join, { cls: 'w150' }),
-      button('Cancel', () => this.stack.pop(), { cls: 'w150' }),
+      button(t('mp.direct.join'), join, { cls: 'w150' }),
+      button(t('common.cancel'), () => this.stack.pop(), { cls: 'w150' }),
     ]));
     window.setTimeout(() => (name.value ? address : name).focus(), 0);
   }

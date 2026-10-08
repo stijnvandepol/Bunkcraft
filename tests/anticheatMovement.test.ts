@@ -621,9 +621,9 @@ describe('movement validator: arcade slides, slide-hops, bunny hop chains and ai
     expect(bad).toEqual([]);
   });
 
-  // The Flight Deck's elevator pad ("next to a raised edge") was removed because it got honest players a `fly` correction
-  // under a network backlog. Back in place, on the carrier, none of 300 runs may be corrected.
-  it('arcade movement on the carrier with its old elevator jump pads (next to a raised edge): never corrected', () => {
+  // The Flight Deck's elevator pad ("next to a raised edge") once got honest players a `fly` correction under a network
+  // backlog. The pads are on the map again (carrier.ts); none of 300 runs may be corrected.
+  it('arcade movement on the carrier with its elevator jump pads (next to a raised edge): never corrected', () => {
     const bad: string[] = [];
     const pads: [number, number][] = [[-8, 11], [7, -12]];
     for (let i = 0; i < 300; i++) {

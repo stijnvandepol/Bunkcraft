@@ -76,7 +76,7 @@ kleurenpalet, spiegelsymmetrisch voor tdm, omheind en met spawns die ver uit elk
 
 | Kaart | Id | Wat | Objectives |
 |---|---|---|---|
-| Classic | `classic` | De oorspronkelijke arena (96 × 96): middenplatform, corridors, dekking. Steen en hout. | zones, vlaggen |
+| Classic | `classic` | De oorspronkelijke arena, compact (72 × 72, was 96 × 96): middenplatform, corridors, uitkijkpost, dekking, gesloten bases. Steen en hout. | zones, vlaggen |
 | Maple Court | `suburb` | Klein en snel (64 × 40): twee bakstenen huizen met tuin tegenover elkaar, een straat met auto's en een bestelbus, garages op de hoeken, trappen naar de platte daken. Close quarters. | zones, vlaggen, bommen |
 | Old Quarter | `quarter` | Stedelijk (80 × 64): een binnenplaats met fontein, een poortgebouw, hoge bakstenen blokken met balkons en dakstairs, steegjes van 4 breed als flanken, een omheind plein per team. | zones, vlaggen, bommen |
 | Harbor Yard | `dockyard` | Industrieel (88 × 64): containerstapels van gekleurde wol (teamkleuren aan de eigen kant), een grote loods in het midden, een kraandek op houten pilaren en een schip met een brug om vanaf te snipen. | zones, vlaggen, bommen |
@@ -167,7 +167,7 @@ Bomplaatsen (search and destroy, `sites`, A en B in de blauwe helft) plaats je m
 **Kaartkwaliteit meten** (zie `docs/research/MAPS.md`): `npx tsx scripts/map-metrics.ts` (dekking, zichtlijnen, `vis%`),
 `npx tsx scripts/qa/map-flow.ts` (botsimulatie: tijd tot eerste contact, gevechtsafstand), `npx tsx scripts/qa/map-audit.ts`
 (bereikbaarheid, vallen, spawn-blootstelling) en `npx tsx scripts/ascii-map.ts <map>` (bovenaanzicht in tekst).
-`tests/spawnExposure.test.ts` eist op alle kaarten behalve Classic dat geen plek op de vijandelijke helft een spawn ziet.
+`tests/spawnExposure.test.ts` eist op alle kaarten dat geen plek op de vijandelijke helft een spawn ziet.
 
 Met **Rotate** speelt elke volgende match op de volgende kaart (die het type ondersteunt); de client voegt zich dan automatisch opnieuw bij de
 game (even het laadscherm). Tijdens een match valt er niets aan de kaart te kiezen.

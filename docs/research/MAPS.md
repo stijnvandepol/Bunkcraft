@@ -86,20 +86,33 @@ zicht blijft ~3,5 s.
 Ter vergelijking de oude grote kaarten: spawn→see 4,1–6,4 s, lopen 10–12 s, kpm 47–57.
 
 **Oudere kaarten**: Maple Court, Old Quarter en Harbor Yard hebben elk één spawn per kwadrant verplaatst; geen enkele plek
-op de vijandelijke helft kijkt nog in een spawn (alle kaarten behalve Classic staan nu in `tests/spawnExposure.test.ts`).
-Dust Bazaar kreeg zones en vlaggen, Maple Court vlaggen, zodat elke kaart elke mode kan hosten (Classic blijft zoals hij
-is: oude arena-saves gebruiken hem).
+op de vijandelijke helft kijkt nog in een spawn (alle kaarten, ook Classic, staan nu in `tests/spawnExposure.test.ts`).
+Dust Bazaar kreeg zones en vlaggen, Maple Court vlaggen, zodat elke kaart elke mode kan hosten.
+
+**Classic, compact** (72 × 72, was 96 × 96): de kaart-id en het kwadrantensysteem blijven (oude arena-saves behouden hun
+kaart-id, maar de geometrie is nieuw). Twee gesloten bases met deuren in de zijmuur en een tweede deur in de voormuur
+waarvan de zichtlijnen in de corridormuur eindigen (geen enkele plek op de vijandelijke helft ziet nog een spawn: 1554
+plekken naar 0), de lange noord-zuidlijn in het midden is met muurtjes en kratten in stukken gehakt, de uitkijkpost
+heeft een jump pad vanuit het achterveld. Bomplaatsen, zones en vlaggen staan op nieuwe plekken (alle kaarttests groen).
+
+| Classic | vis% | range | long% | first | spawn→see | kpm | lopen spawn-spawn | vijand ziet spawn |
+|---|---|---|---|---|---|---|---|---|
+| Oud (96 × 96) | 23,7 | 34 | 8,5 | 4,0 s | 3,2 s | 54,1 | 9,9 s | 1730 |
+| Nieuw (72 × 72) | 11,5 | 24 | 0,6 | 3,2 s | 4,1 s | 56,4 | 8,6-9,0 s | 0 |
+
+`spawn→see` is langer omdat spawns niet meer vanaf de vijandelijke helft te beschieten zijn; de rest is korter en dichter.
 
 **Jump pads** liggen waar een route anders traag of onmogelijk is: oprit naar garagedak (Atomic Lane), plein naar
 galerijdak en hotelbalkon (Fountain Square), atrium naar de eerste verdieping (Rebar), steeg naar krotdak (Tin Roofs),
 gang naar de mezzanine (Galleria), bandenberg naar autostapel (Scrapyard). Een pad naast de liftrand op Flight Deck gaf
 onder netwerkachterstand een `fly`-correctie en is toen weggehaald. De oorzaak zat in de bewegingsvalidator (afzet van
 een pad die de rechte lijn tussen twee `pos` net mist, een muur die als grond gold) en is verholpen; de pads van de
-lift zijn als regressietest teruggelegd (`tests/anticheatMovement.test.ts`), de kaart zelf is niet veranderd.
+lift zijn als regressietest teruggelegd (`tests/anticheatMovement.test.ts`) en liggen sinds de validator-fix ook weer op
+de kaart zelf (`carrier.ts`, naast de liftrand).
 
 ## Wat nog beter kan
 
-- **Classic** uit de standaardrotatie halen of een compacte variant maken; nu de meest open en traagste kaart.
+- **Classic** is compact gemaakt (zie boven); echte playtests moeten uitwijzen of de deuren van de bases niet te veel kampeerplekken geven.
 - **Skyline Villa, Terminus, Harbor Yard** zijn 88 breed: inkorten naar ~72 of jump pads op de lange routes (Terminus:
   perron naar loopbrug; Villa: gazon naar dakterras) zou spawn→see onder 4 s brengen.
 - **Riptide**: drijvende dekking (steigers, boten) op het open water rond het jacht.
