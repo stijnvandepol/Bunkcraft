@@ -146,6 +146,8 @@ export interface MatchPlayer {
   joinSeq: number;
   /** A server-side bot (server/bots): marked in the roster, otherwise a player like any other. */
   bot?: boolean;
+  /** Id of the party this player queued with (server/Parties.ts): the team balance never splits party members. */
+  party?: string;
   x: number; y: number; z: number;
   yaw: number; pitch: number;
   /** Hitbox height of the current pose (standing, crouching, sliding), as the connection layer accepted it. */
@@ -261,9 +263,11 @@ export class Match {
    * Adds a player: picks the team and a spawn and returns them so the welcome message can carry
    * them. Nothing is sent yet; call `ready` once the player is in the game.
    */
-  join(id: number, name: string, bot = false): MatchPlayer {
+  join(id: number, name: string, bot = false, seat: { party?: string; team?: Team } = {}): MatchPlayer {
     const now = this.host.now();
     let team: Team | '' = this.teams ? this.logic.teamFor?.(this) ?? '' : '';
+    // A party that reserved its seats keeps together: the team was picked when the seats were reserved.
+    if (this.teams && !team && seat.team) team = seat.team;
     if (this.teams && !team) {
       let red = 0, blue = 0;
       for (const p of this.players.values()) if (p.team === 'red') red++; else if (p.team === 'blue') blue++;
@@ -279,6 +283,7 @@ export class Match {
       spreadSeed: Math.floor(this.host.random() * 0x100000000) >>> 0, shotN: 0,
       height: HITBOX.height,
       ...(bot ? { bot: true } : {}),
+      ...(seat.party ? { party: seat.party } : {}),
     };
     this.players.set(id, p);
     this.resetLife(p, now);
@@ -829,9 +834,20 @@ export class Match {
     const red = this.teamSize('red'), blue = this.teamSize('blue');
     if (Math.abs(red - blue) < 2) return;
     const larger: Team = red > blue ? 'red' : 'blue';
-    let latest: MatchPlayer | null = null;
-    for (const p of this.players.values()) if (p.team === larger && (!latest || p.joinSeq > latest.joinSeq)) latest = p;
+    const latest = this.latestMovable(larger);
     if (latest) this.moveId = latest.id;
+  }
+
+  /** People who queued together stay together: only a player without party mates in this match may be moved. */
+  private latestMovable(team: Team): MatchPlayer | null {
+    const mates = new Map<string, number>();
+    for (const p of this.players.values()) if (p.party) mates.set(p.party, (mates.get(p.party) ?? 0) + 1);
+    let latest: MatchPlayer | null = null;
+    for (const p of this.players.values()) {
+      if (p.team !== team || (p.party && (mates.get(p.party) ?? 0) > 1)) continue;
+      if (!latest || p.joinSeq > latest.joinSeq) latest = p;
+    }
+    return latest;
   }
 
   /** At a respawn: carries out a planned team switch if the teams are still uneven. */
@@ -848,11 +864,13 @@ export class Match {
 
   private rebalance(): void {
     for (;;) {
-      const red = [...this.players.values()].filter((p) => p.team === 'red');
-      const blue = [...this.players.values()].filter((p) => p.team === 'blue');
-      if (Math.abs(red.length - blue.length) <= 1) return;
-      const [from, to]: [MatchPlayer[], Team] = red.length > blue.length ? [red, 'blue'] : [blue, 'red'];
-      from[from.length - 1].team = to; // the latest joiner moves
+      const red = this.teamSize('red'), blue = this.teamSize('blue');
+      if (Math.abs(red - blue) <= 1) return;
+      const [from, to]: [Team, Team] = red > blue ? ['red', 'blue'] : ['blue', 'red'];
+      // The latest joiner moves, but never somebody away from their party (a party bigger than the gap stays as it is).
+      const mover = this.latestMovable(from);
+      if (!mover) return;
+      mover.team = to;
     }
   }
 

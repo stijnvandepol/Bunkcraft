@@ -7,7 +7,8 @@ import {
   type ClientMessage, type MatchPhase, NAME_PATTERN, PROTOCOL_VERSION, type PlayerRecord, SNAP_FLAG_CROUCH, SNAP_FLAG_SLIDE, SNAP_FLAG_STALE, type ServerMessage, type SnapshotEntry, sanitizeChat,
 } from '../src/net/protocol';
 import { ARENA_FLOOR_Y, DEFAULT_MAP, type MapId, type MapSetting, getMap, mapFor, nextMap, parseMapId, parseMapSetting, voteChoices } from '../src/modes/maps';
-import { type GameType, gameTypeDef } from '../src/modes/GameTypes';
+import { type GameType, type Team, gameTypeDef } from '../src/modes/GameTypes';
+import { partyTeamed } from '../src/modes/Party';
 import { GAME_MODES, type GameMode, hasSurvivalRules } from '../src/player/GameMode';
 import { BINARY_VERSION, BINARY_VERSION_SHOT, BINARY_VERSION_SNAP_Q, BINARY_VERSION_SNAP_TICK, encodeBinary, encodeShot, encodeSnap, encodeSnapQ } from '../src/net/binary';
 import { ARCADE_TICK_HZ, ARCADE_TICK_MAX, ARCADE_TICK_MIN, arcadeInterpDelay, arcadeMaxSpeed } from '../src/modes/ArcadeLogic';
@@ -273,6 +274,18 @@ export interface ServerOptions {
   profiles?: ProfileService | null;
 }
 
+/** Seats a party reserved in this lobby: its members connect with the ticket key and land on one team. */
+interface SeatHold {
+  /** Id of the party (kept on the match players so the team balance never splits it). */
+  party: string;
+  size: number;
+  /** The team all members join ('' = a mode without teams). */
+  team: Team | '';
+  /** Lower-case names that took a seat already. */
+  joined: Set<string>;
+  expires: number;
+}
+
 /**
  * Authoritative multiplayer server for one shared world: owns the edit list, the
  * time of day and saved player data, validates edits (reach, block id, rate) and
@@ -315,6 +328,8 @@ export class GameServer {
   private readonly visibility: Visibility | null = null;
   /** Arcade: server-side bots of this lobby. */
   private readonly bots: BotManager | null = null;
+  /** Seats held for parties on their way in, by ticket key (see reserve). */
+  private readonly holds = new Map<string, SeatHold>();
   private readonly viewers: Viewer[] = [];
   /** Steady snapshot clock (ms): the moment each Minecraft snapshot shows, one tick apart (see tick()). */
   private snapClock = 0;
@@ -561,6 +576,64 @@ export class GameServer {
   /** Bots in the game right now. */
   get botCount(): number {
     return this.bots?.count ?? 0;
+  }
+
+  /** Seats held for parties that have not arrived yet (matchmaking and the bots keep clear of them). */
+  get reservedSeats(): number {
+    this.pruneHolds();
+    let n = 0;
+    for (const h of this.holds.values()) n += Math.max(0, h.size - h.joined.size);
+    return n;
+  }
+
+  private pruneHolds(): void {
+    if (this.holds.size === 0) return;
+    const now = Date.now();
+    for (const [k, h] of this.holds) if (h.expires <= now) this.holds.delete(k);
+  }
+
+  /**
+   * People per team, seats held for parties included (bots yield and are not counted); null without teams.
+   * Quick play uses it to see whether a party fits one team, and `reserve` to pick that team.
+   */
+  teamLoad(): { red: number; blue: number } | null {
+    const m = this.match;
+    if (!m || !m.teams) return null;
+    const load = { red: 0, blue: 0 };
+    for (const p of m.players.values()) if (!p.bot && p.team) load[p.team]++;
+    this.pruneHolds();
+    for (const h of this.holds.values()) if (h.team) load[h.team] += Math.max(0, h.size - h.joined.size);
+    return load;
+  }
+
+  /**
+   * Holds `size` seats for a party until `ttlMs` from now. Its members connect with `key` in `hello.party` and all
+   * join the team picked here (the smaller one, held seats counted). Bots step aside. Null when the seats are not there.
+   */
+  reserve(key: string, party: string, size: number, ttlMs: number): { team: Team | '' } | null {
+    const m = this.match;
+    if (!m || this.closed || size < 1) return null;
+    if (this.playerCount + this.reservedSeats + size > this.maxPlayers) return null;
+    let team: Team | '' = '';
+    if (partyTeamed(m.teams, m.info.type)) {
+      const load = this.teamLoad()!;
+      team = load.red !== load.blue ? (load.red < load.blue ? 'red' : 'blue') : m.scores.red <= m.scores.blue ? 'red' : 'blue';
+    }
+    this.holds.set(key, { party, size, team, joined: new Set(), expires: Date.now() + ttlMs });
+    this.bots?.refresh();
+    return { team };
+  }
+
+  /** Gives a reservation up (the party chose another lobby). */
+  release(key: string): void {
+    if (this.holds.delete(key)) this.bots?.refresh();
+  }
+
+  /** The unexpired reservation for a ticket key, if the key is one. */
+  private holdFor(key: unknown): SeatHold | undefined {
+    if (typeof key !== 'string' || key.length < 16 || key.length > 128) return undefined;
+    const h = this.holds.get(key);
+    return h && h.expires > Date.now() ? h : undefined;
   }
 
   /**
@@ -832,8 +905,19 @@ export class GameServer {
         this.logout(s);
       }
     }
-    // Bots never keep a person out: one leaves to make room.
-    if (this.sessions.size >= this.maxPlayers && this.playerCount < this.maxPlayers) this.bots?.makeRoom();
+    // A party member with a ticket key has a seat held for them; everybody else must leave those seats alone.
+    const hold = this.holdFor(hello.party);
+    const lname = name.toLowerCase();
+    const entitled = !!hold && (hold.joined.has(lname) || hold.joined.size < hold.size);
+    const heldForOthers = this.reservedSeats - (entitled && !hold!.joined.has(lname) ? 1 : 0);
+    if (this.match && this.playerCount + heldForOthers >= this.maxPlayers) {
+      metrics.loginsFailed++;
+      ws.send(JSON.stringify({ t: 'kick', reason: 'The server is full', code: 'full' } satisfies ServerMessage));
+      ws.close(1008, 'The server is full');
+      return null;
+    }
+    // Bots never keep a person out: one leaves to make room (from the team the party joins).
+    if (this.sessions.size >= this.maxPlayers && this.playerCount < this.maxPlayers) this.bots?.makeRoom(entitled && hold!.team ? hold!.team : undefined);
     if (this.sessions.size >= this.maxPlayers) {
       metrics.loginsFailed++;
       ws.send(JSON.stringify({ t: 'kick', reason: 'The server is full', code: 'full' } satisfies ServerMessage));
@@ -865,7 +949,8 @@ export class GameServer {
       bink: hello.bin === true && this.opts.binary !== false && !!this.match && Number(hello.binv) >= BINARY_VERSION_SNAP_TICK,
       guard: new InventoryGuard(initial.error ? [] : initial.slots),
     });
-    const joined = this.match?.join(session.id, name) ?? null;
+    const joined = this.match?.join(session.id, name, false, entitled ? { party: hold!.party, ...(hold!.team ? { team: hold!.team } : {}) } : {}) ?? null;
+    if (entitled) hold!.joined.add(lname);
     // Realms profile (before `ready` sends the roster, so the rank icon is there from the start).
     if (joined) this.progress?.bind(session.id, hello.profile, name);
     if (joined) {
@@ -962,6 +1047,7 @@ export class GameServer {
       getMeta: (x: number, y: number, z: number) => gs.arena!.getMeta(x, y, z),
       humans: () => gs.playerCount,
       capacity: () => gs.maxPlayers,
+      reserved: () => gs.reservedSeats,
       names: () => new Set([...gs.sessions.values()].map((s) => s.name.toLowerCase())),
       addBot: (name: string, sink: (id: number) => (msg: ServerMessage) => void) => gs.addBot(name, sink),
       removeBot: (id: number) => { const s = gs.sessions.get(id); if (s?.sink) gs.logout(s); },

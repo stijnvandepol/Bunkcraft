@@ -237,7 +237,8 @@ export type ClientMessage =
    */
   /** `binv`: highest binary format understood (2 = quantised arcade snapshots, see binary.ts); absent = 1. */
   /** `profile`: the Realms profile token (POST /api/profile) for server-side XP and the rank icon; optional. */
-  | { t: 'hello'; v: number; name: string; key?: string; owner?: string; password?: string; bin?: boolean; binv?: number; profile?: string }
+  /** `party`: the ticket key a party member got from POST /api/party/play: the seat held for them, on the party's team; optional. */
+  | { t: 'hello'; v: number; name: string; key?: string; owner?: string; password?: string; bin?: boolean; binv?: number; profile?: string; party?: string }
   /**
    * `step` (optional, older clients leave it out): the client's physics clock, 60 Hz steps simulated so far. The
    * arcade movement validator times the jump curve and the speed budget with it (arrival times bunch up under load).

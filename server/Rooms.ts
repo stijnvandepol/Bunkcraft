@@ -5,7 +5,7 @@ import { type GameType, type MapFeature, gameTypeDef, parseGameType } from '../s
 import { DEFAULT_MAP, MAP_IDS, type MapSetting, getMap, mapFor, parseMapId, parseMapSetting } from '../src/modes/maps';
 import { CODE_ALPHABET, CODE_LENGTH, type MatchPhase, normalizeCode } from '../src/net/protocol';
 import {
-  LOBBY_SIZE_RANGE, type LobbyCandidate, type ListingKind, type ModeStats, REALMS_MODES, filterRooms, pickLobby, quickPlayName,
+  LOBBY_SIZE_RANGE, type LobbyCandidate, type ListingKind, type ModeStats, REALMS_MODES, filterRooms, partyFits, pickLobby, quickPlayName,
 } from '../src/modes/Realms';
 import { GAME_MODES, type GameMode } from '../src/player/GameMode';
 import { GameServer, parseGameMode } from './GameServer';
@@ -71,8 +71,14 @@ export interface ListedRoom {
   bots?: number;
 }
 
-/** Answer of quick play: the lobby to join, and whether it was just opened. */
-export type QuickPlayResult = { code: string; created: boolean } | { error: 'full' | 'limited' };
+/** A party asking for seats: the ticket key its members connect with, the party's id and its size. */
+export interface PartySeats { key: string; party: string; size: number; ttlMs: number }
+
+/** Answer of quick play: the lobby to join (and whether it was just opened), or why there is none. */
+export type QuickPlayResult = { code: string; created: boolean } | { error: 'full' | 'limited' | 'toobig' };
+
+/** Answer of a party joining one particular lobby. */
+export type PartyJoinResult = { code: string } | { error: 'not_found' | 'locked' | 'mode' | 'no_room' };
 
 export interface AdminRoom {
   code: string; name: string; loaded: boolean; players: number; listed: boolean; locked: boolean; gameType: GameType; gameMode: GameMode;
@@ -296,28 +302,46 @@ export class Rooms {
     const out: LobbyCandidate[] = [];
     for (const [code, m] of this.listedMeta) {
       if (m.gameType !== mode) continue;
-      const live = this.loaded.get(code);
-      const status = live?.server.lobbyStatus() ?? null;
-      out.push({
-        code, gameType: m.gameType, players: live?.server.playerCount ?? 0, maxPlayers: live?.server.maxPlayers ?? m.maxPlayers,
-        open: m.listed && !m.locked,
-        ...(status && live!.server.playerCount > 0 ? { phase: status.phase, timeLeft: status.timeLeft, progress: status.progress } : {}),
-      });
+      out.push(this.candidate(code, m));
     }
     return out;
+  }
+
+  /** One lobby as matchmaking sees it: seats held for parties count as taken. */
+  private candidate(code: string, m: RoomMeta): LobbyCandidate {
+    const live = this.loaded.get(code);
+    const status = live?.server.lobbyStatus() ?? null;
+    const people = live?.server.playerCount ?? 0;
+    const held = live?.server.reservedSeats ?? 0;
+    const teams = live && people + held > 0 ? live.server.teamLoad() : null;
+    return {
+      code, gameType: m.gameType, players: people + held, maxPlayers: live?.server.maxPlayers ?? m.maxPlayers,
+      open: m.listed && !m.locked,
+      ...(teams ? { teams } : {}),
+      ...(status && people > 0 ? { phase: status.phase, timeLeft: status.timeLeft, progress: status.progress } : {}),
+    };
   }
 
   /**
    * Realms quick play: the fullest public lobby of the mode that has room and is not about to end, else a new
    * public lobby on rotating maps. `mayCreate` is asked only when a lobby has to be opened (room creation limit).
+   * A party looks for a lobby with room for all of its members on one team (or opens one) and holds those seats.
    */
-  quickPlay(mode: GameType, mayCreate: () => boolean): QuickPlayResult {
+  quickPlay(mode: GameType, mayCreate: () => boolean, party?: PartySeats): QuickPlayResult {
     const def = gameTypeDef(mode);
     if (!def.arcade) return { error: 'full' };
+    const size = party?.size ?? 1;
+    if (size > this.opts.maxPlayers) return { error: 'toobig' };
+    const tried = new Set<string>();
     for (;;) {
-      const pick = pickLobby(this.lobbies(mode), mode);
+      const pick = pickLobby(this.lobbies(mode).filter((c) => !tried.has(c.code)), mode, size);
       if (!pick) break;
-      if (this.loaded.has(pick.code) || existsSync(join(this.opts.dataDir, pick.code, 'world.json'))) return { code: pick.code, created: false };
+      if (this.loaded.has(pick.code) || existsSync(join(this.opts.dataDir, pick.code, 'world.json'))) {
+        // The seats are held in the lobby itself; if that fails the lobby moved on, look at the others.
+        if (!party || this.hold(pick.code, party)) return { code: pick.code, created: false };
+        tried.add(pick.code);
+        continue;
+      }
       // Its files are gone (deleted by hand, a restored backup): forget it, or every quick play of the mode would answer
       // "Game not found" from now on (QA round 3).
       this.listedMeta.delete(pick.code);
@@ -329,12 +353,47 @@ export class Rooms {
     const maps = MAP_IDS.filter((id) => getMap(id).supports(def.requires));
     const startMap = maps[randomInt(maps.length)];
     // A lone player gets a full match at once: bots fill the lobby and step aside as people come in.
-    const fill = this.opts.quickPlayBots ?? 0;
+    // A party's lobby fills up to twice the party (the other team), at most the lobby size.
+    const base = this.opts.quickPlayBots ?? 0;
+    const fill = base > 0 ? Math.min(this.opts.maxPlayers, Math.max(base, size * 2)) : 0;
     const code = this.create((c) => quickPlayName(mode, c), undefined, undefined, {
       gameType: mode, mapId: 'rotate', startMap, ...(fill > 0 ? { botFill: fill, botDifficulty: this.opts.quickPlayBotDifficulty ?? 'normal' } : {}),
     }, { listed: true });
     if (!code) return { error: 'full' };
+    if (party && !this.hold(code, party)) return { error: 'toobig' };
     return { code, created: true };
+  }
+
+  /** Holds the seats of a party in a lobby; false when they are not there (any more). */
+  private hold(code: string, party: PartySeats): boolean {
+    const room = this.get(code);
+    return !!room?.server.reserve(party.key, party.party, party.size, party.ttlMs);
+  }
+
+  /**
+   * A party goes to one particular lobby (the leader picked it from the list or typed its code): it must be an arcade
+   * lobby without a password, and have room for everybody on one team. Seats are held on success.
+   */
+  joinLobby(raw: string, party: PartySeats): PartyJoinResult {
+    const room = this.get(raw);
+    if (!room) return { error: 'not_found' };
+    const info = room.server.info();
+    if (!gameTypeDef(info.gameType).arcade) return { error: 'mode' };
+    if (info.locked) return { error: 'locked' };
+    // Private lobbies are not in the public list: judge them by their live numbers, like the listed ones.
+    const teams = room.server.teamLoad();
+    const c: LobbyCandidate = {
+      code: room.code, gameType: info.gameType, open: true, maxPlayers: info.maxPlayers,
+      players: info.players + room.server.reservedSeats, ...(teams ? { teams } : {}),
+    };
+    if (!partyFits(c, info.gameType, party.size) || !room.server.reserve(party.key, party.party, party.size, party.ttlMs)) return { error: 'no_room' };
+    return { code: room.code };
+  }
+
+  /** Gives the seats held under a ticket key back (the party picked another lobby). */
+  release(raw: string, key: string): void {
+    const code = normalizeCode(raw);
+    if (code) this.loaded.get(code)?.server.release(key);
   }
 
   /** Players and public lobbies with players per arcade mode (the Realms playlist). */
