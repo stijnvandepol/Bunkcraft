@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BREATH_HOLD_SEC, BREATH_SPENT_SEC, RecoilState, SCOPE_SETTLE, SCOPE_SWAY, ScopeBreath, swayOffset } from '../src/modes/ArcadeLogic';
+import { BREATH_HOLD_SEC, BREATH_SPENT_SEC, RECOIL_RECOVER, RecoilState, SCOPE_SETTLE, SCOPE_SWAY, ScopeBreath, swayOffset } from '../src/modes/ArcadeLogic';
 import { AIM_CLIMB, WEAPONS, fireInterval, weaponDef } from '../src/modes/Weapons';
 import {
   GUN_SOUNDS, MECH_KINDS, MULTI_KILL_WINDOW, RELOAD_STEPS, SUPPRESSED_EARSHOT, gunEarshot, medalFor, outdoorShare, reloadSteps,
@@ -73,8 +73,8 @@ describe('recoil', () => {
     expect(pitch).toBeCloseTo(lmg.recoil * AIM_CLIMB * lmg.pattern.length, 9);
     let back = 0;
     for (let t = 1; t < 2; t += 1 / 60) back += r.recover(t, 1 / 60);
-    expect(-back).toBeGreaterThan(pitch * 0.6);
-    expect(-back).toBeLessThanOrEqual(pitch * 0.7 + 1e-9);
+    expect(-back).toBeGreaterThan(pitch * (RECOIL_RECOVER.share - 0.05));
+    expect(-back).toBeLessThanOrEqual(pitch * RECOIL_RECOVER.share + 1e-9);
     const aimed = new RecoilState().kick(0, lmg.recoil, lmg.recoilX, lmg.pattern, 1, AIM_CLIMB);
     expect(aimed.pitch).toBeLessThan(lmg.recoil * AIM_CLIMB);
   });

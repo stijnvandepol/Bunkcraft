@@ -78,11 +78,11 @@ export function outdoorShare(enclosure: number): number {
 /** Weapon handling sounds (reload steps, bolt, dry fire, aiming). */
 export type MechKind =
   | 'magout' | 'magin' | 'charge' | 'boltup' | 'boltback' | 'boltfwd' | 'shell' | 'pump'
-  | 'cylopen' | 'cylclose' | 'eject' | 'coveropen' | 'coverclose' | 'belt' | 'dry' | 'adsin' | 'adsout' | 'switch';
+  | 'cylopen' | 'cylclose' | 'eject' | 'coveropen' | 'coverclose' | 'belt' | 'dry' | 'adsin' | 'adsout' | 'switch' | 'scopein' | 'zoom';
 
 export const MECH_KINDS: readonly MechKind[] = [
   'magout', 'magin', 'charge', 'boltup', 'boltback', 'boltfwd', 'shell', 'pump', 'cylopen', 'cylclose', 'eject', 'coveropen', 'coverclose', 'belt',
-  'dry', 'adsin', 'adsout', 'switch',
+  'dry', 'adsin', 'adsout', 'switch', 'scopein', 'zoom',
 ];
 
 /** Reload sequences: [progress 0..1, sound]. Each weapon class has its own. */

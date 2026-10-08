@@ -14,47 +14,66 @@ const BOLT_TIME = 0.55;
 const tmpMuzzle: [number, number, number] = [0, 0, 0];
 
 /**
- * Reticle textures (drawn once, 128 px): a red dot with a white-hot core, and a holographic ring with four ticks and a dot.
- * The plane they are drawn on is sized in screen pixels (see RETICLE_PX), so the dot stays crisp and the same size on every screen.
+ * Reticle textures (drawn once, 256 px, mip-mapped down to the plane's on-screen size so the lines stay crisp):
+ * - red dot: a 2 MOA-style dot with a white-hot core inside a thin 30 MOA ring (the ring frames a target at mid range),
+ * - holographic: a 65 MOA ring with three ticks, a centre dot, and two small chevrons in the ring's lower half pointing up at
+ *   the dot (marks that lead the eye in, not hold-overs: bullets fly straight, the dot is the aim point).
+ * The plane they are drawn on is sized in screen pixels (see RETICLE_PX), the same size on every screen.
  */
 function reticleTexture(kind: 'reddot' | 'holo'): THREE.CanvasTexture {
+  const S = 256, C = S / 2;
   const c = document.createElement('canvas');
-  c.width = c.height = 128;
+  c.width = c.height = S;
   const ctx = c.getContext('2d')!;
   const glow = (r: number, a: number) => {
-    const g = ctx.createRadialGradient(64, 64, 0, 64, 64, r);
+    const g = ctx.createRadialGradient(C, C, 0, C, C, r);
     g.addColorStop(0, `rgba(255,60,40,${a})`);
     g.addColorStop(1, 'rgba(255,0,0,0)');
     ctx.fillStyle = g;
-    ctx.fillRect(0, 0, 128, 128);
+    ctx.fillRect(0, 0, S, S);
   };
   const disc = (r: number, fill: string) => {
     ctx.fillStyle = fill;
     ctx.beginPath();
-    ctx.arc(64, 64, r, 0, Math.PI * 2);
+    ctx.arc(C, C, r, 0, Math.PI * 2);
     ctx.fill();
   };
+  const ring = (r: number, width: number, halo: number) => {
+    ctx.strokeStyle = 'rgba(255,40,30,0.28)';
+    ctx.lineWidth = width + halo;
+    ctx.beginPath();
+    ctx.arc(C, C, r, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,72,56,1)';
+    ctx.lineWidth = width;
+    ctx.beginPath();
+    ctx.arc(C, C, r, 0, Math.PI * 2);
+    ctx.stroke();
+  };
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
   if (kind === 'reddot') {
-    glow(60, 0.55);
-    disc(11, 'rgba(255,50,35,1)');
-    disc(6, 'rgba(255,190,170,1)');
+    glow(46, 0.45);
+    ring(104, 5, 7);
+    disc(15, 'rgba(255,50,35,1)');
+    disc(7.5, 'rgba(255,200,180,1)');
   } else {
-    glow(18, 0.5);
-    ctx.lineCap = 'round';
-    ctx.strokeStyle = 'rgba(255,40,30,0.3)';
-    ctx.lineWidth = 8;
-    ctx.beginPath();
-    ctx.arc(64, 64, 52, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.strokeStyle = 'rgba(255,70,55,1)';
-    ctx.lineWidth = 3.4;
-    ctx.beginPath();
-    ctx.arc(64, 64, 52, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.fillStyle = 'rgba(255,70,55,1)';
-    for (const [x, y, w, hgt] of [[62, 4, 4, 14], [62, 110, 4, 14], [4, 62, 14, 4], [110, 62, 14, 4]]) ctx.fillRect(x, y, w, hgt);
-    disc(5, 'rgba(255,60,45,1)');
-    disc(2.6, 'rgba(255,200,185,1)');
+    glow(30, 0.45);
+    ring(104, 6.5, 9);
+    ctx.fillStyle = 'rgba(255,72,56,1)';
+    // Ticks at 12, 3 and 9 o'clock on the ring (inside it), the 6 o'clock one replaced by the range chevrons.
+    for (const [x, y, w, hgt] of [[C - 4, 12, 8, 30], [12, C - 4, 30, 8], [S - 42, C - 4, 30, 8]]) ctx.fillRect(x, y, w, hgt);
+    ctx.strokeStyle = 'rgba(255,72,56,1)';
+    ctx.lineWidth = 5;
+    for (const [y, half] of [[C + 42, 22], [C + 66, 14]]) {
+      ctx.beginPath();
+      ctx.moveTo(C - half, y + half * 0.55);
+      ctx.lineTo(C, y);
+      ctx.lineTo(C + half, y + half * 0.55);
+      ctx.stroke();
+    }
+    disc(9, 'rgba(255,60,45,1)');
+    disc(4.5, 'rgba(255,205,190,1)');
   }
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.NoColorSpace;
@@ -62,8 +81,8 @@ function reticleTexture(kind: 'reddot' | 'holo'): THREE.CanvasTexture {
   return t;
 }
 
-/** Size of the reticle planes in screen pixels on a 720 px tall screen (scaled with the height): dot with its glow, holographic ring. */
-const RETICLE_PX = { reddot: 30, holo: 70 } as const;
+/** Size of the reticle planes in screen pixels on a 720 px tall screen (scaled with the height): dot in its ring, holographic ring. */
+const RETICLE_PX = { reddot: 40, holo: 76 } as const;
 
 /** Distance in front of the camera (view space z) of the weapon origin while aiming. */
 const ADS_Z = -0.5;
@@ -146,6 +165,8 @@ export class WeaponViewmodel {
   private swayY = 0;
   private time = 0;
   visible = true;
+  /** ADS settle (degrees, see adsSettle): a short dip of the weapon about its sight when the sights arrive. */
+  settle = 0;
 
   constructor() {
     this.material = this.weaponMesh.material as THREE.MeshBasicMaterial;
@@ -299,8 +320,8 @@ export class WeaponViewmodel {
       this.camera.updateProjectionMatrix();
     }
     // Weapon sways against the look direction, then settles.
-    this.swayX = approach(this.swayX, Math.max(-1, Math.min(1, lookX * 0.02)), 9, dt);
-    this.swayY = approach(this.swayY, Math.max(-1, Math.min(1, lookY * 0.02)), 9, dt);
+    this.swayX = approach(this.swayX, Math.max(-1, Math.min(1, lookX * 0.02)), 14, dt);
+    this.swayY = approach(this.swayY, Math.max(-1, Math.min(1, lookY * 0.02)), 14, dt);
 
     const model = WEAPON_MODELS[def.id];
     const e = Math.min(1, Math.max(0, eased));
@@ -327,7 +348,7 @@ export class WeaponViewmodel {
     // (Not with an optic: its housing frames the reticle.)
     r.scale.set(0.85 * (1 - (this.optic === 'iron' ? 0.55 : 0.1) * e), 0.85, 0.85);
     r.rotation.set(
-      this.kick * 0.1 + equipDrop * 0.6 - reloadT * 0.2 - sw * 0.5 + this.swayY * 0.03,
+      this.kick * 0.1 - this.settle * (Math.PI / 180) + equipDrop * 0.6 - reloadT * 0.2 - sw * 0.5 + this.swayY * 0.03,
       -this.swayX * 0.035 + sw * 0.5 + reloadT * 0.25,
       reloadT * 0.9 - this.swayX * 0.015 - sw * 0.7 + boltT * 0.35,
       'YXZ',

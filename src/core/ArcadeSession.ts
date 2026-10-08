@@ -5,7 +5,7 @@ import {
 } from '../modes/ArcadeLogic';
 import {
   AdsBlend, AdsInput, type AdsMode, type AdsScaling, CROSSHAIR_MIN_GAP, CrosshairBloom, type CrosshairColor, type CrosshairStyle, adsClassOf, adsSensitivity,
-  adsSwayAmplitude, crosshairAlpha, crosshairGap,
+  adsSettle, crosshairAlpha, crosshairGap, opticSways,
 } from '../modes/AimMath';
 import { type GameTypeDef, type Team, TEAM_COLORS, gameTypeDef } from '../modes/GameTypes';
 import { eventView, localizeServerText, modeSpeedMul, phaseBanner, teamWinTitle } from '../modes/ModeView';
@@ -14,8 +14,9 @@ import {
 } from '../modes/Loadouts';
 import {
   AIM_CLIMB, DEFAULT_PRIMARY, DEFAULT_SECONDARY, HITBOX, type OpticId, PLAYER_MAX_HEALTH, RESPAWN_SECONDS, type WeaponDef, adsTimeFor, fireInterval,
-  isMagnified, isPerk, magazineFor, opticFor, opticZoom, perkMoveSpeed, reloadTimeFor, switchDelayFor, weaponDef,
+  isMagnified, isPerk, magazineFor, opticFor, opticZoomLevels, perkMoveSpeed, reloadTimeFor, switchDelayFor, weaponDef,
 } from '../modes/Weapons';
+import { magnification } from '../ui/ScopeReticles';
 import { poseHeight, slideCooldown } from '../player/ArcadeMove';
 import { type ClientMessage, type MatchInfo, type MatchPhase, type ModeState, type RosterEntry, SNAP_FLAG_ADS, SNAP_FLAG_CROUCH, SNAP_FLAG_SLIDE, type ServerMessage } from '../net/protocol';
 import type { RemotePlayers } from '../net/RemotePlayers';
@@ -116,6 +117,8 @@ const STEP_TRACK_RANGE = 30;
 const LOW_HEALTH = 35;
 /** At most this many scope glints at once. */
 const MAX_GLINTS = 4;
+/** The sniper scope's range finder reads up to this many blocks. */
+const RANGE_FINDER_MAX = 400;
 
 /** Per remote player: footstep bookkeeping and what the server told about their gear. */
 interface RemoteGear { x: number; z: number; y: number; acc: number; quiet: boolean; optic: OpticId; known: boolean }
@@ -235,6 +238,21 @@ export class ArcadeSession {
   private scoped = false;
   /** Looking through a magnified optic (scope or combat scope): the overlay is up. */
   private magnified = false;
+  private wasMagnified = false;
+  /**
+   * Zoom level of a variable (sniper) scope: 0 = the first level, 1 = the deeper one (the scroll wheel switches while scoped,
+   * instead of cycling weapons), and the zoom the view shows (eases between levels in about 0.1 s). Back to 0 every life.
+   */
+  private zoomLevel = 0;
+  private zoomShown = 1;
+  /** When the sights last came fully up (the weapon model's settle) and whether they are up. */
+  private adsUpAt = -1e9;
+  private adsWasUp = false;
+  /** Sniper scope range finder: when it measures next (10 times a second). */
+  private nextRange = 0;
+  /** Lens parallax: the scope surround's offset in pixels, trailing the look input. */
+  private parX = 0;
+  private parY = 0;
   /** Next reload step to play per slot, and the pending bolt cycle (time of the next stage, 0 = none). */
   private readonly reloadStep = [0, 0, 0];
   private boltAt = 0;
@@ -605,6 +623,7 @@ export class ArcadeSession {
     this.trigger.reset();
     this.recoil.reset();
     this.breath.reset();
+    this.zoomLevel = 0;
     this.streak = 0;
     this.multi = 0;
     if (this.ended && this.phase !== 'ended') {
@@ -977,7 +996,10 @@ export class ArcadeSession {
     const sup = this.cls.perk === 'suppressor';
     this.d.audio.playGun(w.id, 1, undefined, sup);
     this.viewmodel.fire();
-    this.kick = Math.min(0.12, this.kick + (w.recoil * Math.PI) / 180 * 0.8);
+    // Hip fire tilts the view up for a moment (the crosshair moves down with it, so the aim point is honest). Kept small and
+    // short: a big kick moved the target on screen and made tracking feel heavy (aim-feel pass: 0.8 -> 0.45 of the recoil,
+    // at most 3.4 degrees, gone in ~0.2 s).
+    this.kick = Math.min(0.06, this.kick + (w.recoil * Math.PI) / 180 * 0.45);
     if (w.bolt) { this.boltAt = now + BOLT_DELAY; this.boltStage = 0; }
     // Muzzle in the world: the weapon model's muzzle transformed by the view model's pose is close
     // enough to a fixed offset from the camera.
@@ -1087,7 +1109,11 @@ export class ArcadeSession {
 
     if (canAct) {
       for (let i = 0; i < 3; i++) if (input.actionPressed(KB.WEAPON_1 + i)) this.equipSlot(i as Slot, true);
-      if (input.wheel !== 0) this.equipSlot(cycleSlot(this.slot, input.wheel), true);
+      // Through a variable scope the wheel zooms (up: in, down: out); otherwise it cycles the weapons.
+      if (input.wheel !== 0) {
+        if (this.magnified && this.optic === 'scope') this.changeZoom(input.wheel < 0 ? 1 : 0);
+        else this.equipSlot(cycleSlot(this.slot, input.wheel), true);
+      }
       if (input.actionPressed(KB.QUICK_SWITCH)) this.equipSlot(this.prevSlot, true);
       if (input.actionPressed(KB.RELOAD)) this.requestReload(now);
     } else if (this.dead && f.controls && this.def.loadout !== 'ladder') {
@@ -1127,15 +1153,23 @@ export class ArcadeSession {
     this.adsBlend.update(dt, wantAds, adsTimeFor(w, optic, this.cls.perk), cls);
     this.ads = this.adsBlend.t;
     const eased = this.adsEased = this.adsBlend.eased;
-    this.optZoom = opticZoom(w, optic);
+    // The optic's zoom (a variable scope at its level, easing between levels while scoped). The camera applies it as is:
+    // the aim blend is the only easing, so the zoom never trails the sights.
+    const levels = opticZoomLevels(w, optic);
+    const target = levels[Math.min(this.zoomLevel, levels.length - 1)];
+    this.zoomShown = this.magnified ? target + (this.zoomShown - target) * Math.exp(-dt * 30) : target;
+    this.optZoom = this.zoomShown;
     const cam = this.d.cam;
     cam.zoom = 1 + (this.optZoom - 1) * eased;
-    // While the sights move the view follows the eased blend closely (the camera's usual FOV smoothing would lag behind a snappy aim).
-    cam.fovRate = this.ads > 0 || wantAds ? 30 : 8;
-    this.updateAimFeel(f, input, w, optic);
+    // The weapon model settles on the sights the moment they arrive (visual only; the reticle stays on the aim point).
+    const up = this.adsBlend.t >= 1;
+    if (up && !this.adsWasUp) this.adsUpAt = now;
+    this.adsWasUp = up;
+    this.viewmodel.settle = cam.reducedMotion ? 0 : adsSettle(now - this.adsUpAt);
+    this.updateAimFeel(f, input, optic);
     this.updateMechanics(now, w, ammo);
     this.updateRemotes(f);
-    this.kick *= Math.exp(-9 * dt);
+    this.kick *= Math.exp(-14 * dt);
     // Aimed down the sights the sights are the aim point: the kick goes into the weapon model, not the view.
     cam.kick = this.kick * (1 - eased);
     this.hurt = Math.max(0, this.hurt - dt * 2);
@@ -1165,7 +1199,16 @@ export class ArcadeSession {
     const now = f.now;
     hud.setAmmo(w, ammo.mag, reload);
     const scoped = this.scoped;
-    hud.setScope(this.magnified, scoped ? this.breath.breath : -1, this.breath.holding, this.breath.spent, this.optic === 'combat' ? 'combat' : 'scope');
+    const kind = this.optic === 'combat' ? 'combat' : 'scope';
+    hud.setScope(this.magnified, scoped ? this.breath.breath : -1, this.breath.holding, this.breath.spent, kind);
+    if (this.magnified) {
+      hud.setScopeView(kind, this.d.cam.camera.fov, magnification(this.d.cam.baseFov, this.optZoom), opticZoomLevels(w, this.optic).length);
+      hud.setScopeParallax(this.parX, this.parY);
+      if (kind === 'scope' && now >= this.nextRange) {
+        this.nextRange = now + 0.1;
+        hud.setScopeRange(this.rangeAhead());
+      }
+    }
     // Hip fire: the crosshair is the spread cone as drawn on screen (moving and jumping open it) and fades out while the sights
     // come up (the sights or the reticle are the crosshair then).
     const spread = w.magazine === 0 ? 0.5 : currentSpread(w, this.ads, this.moving, !p.onGround);
@@ -1232,28 +1275,35 @@ export class ArcadeSession {
    * Scope sway with breath control and recoil recovery, applied to the real view (the server takes the
    * aim from yaw and pitch, so what you see is where you shoot). Allocation-free.
    */
-  private updateAimFeel(f: ArcadeFrame, input: Input, w: WeaponDef, optic: OpticId): void {
+  private updateAimFeel(f: ArcadeFrame, input: Input, optic: OpticId): void {
     const p = this.d.player;
     const dt = f.dt;
-    // Magnified optics show the scope overlay; only the sniper scope sways (the combat scope is steady).
+    // Magnified optics show the scope overlay; only the sniper scope sways (every other sight is steady: opticSways).
     this.magnified = isMagnified(optic) && this.ads > 0.92 && !this.dead;
-    this.scoped = this.magnified && optic === 'scope';
+    this.scoped = this.magnified && opticSways(optic);
+    if (this.magnified && !this.wasMagnified) this.d.audio.playMech('scopein');
+    this.wasMagnified = this.magnified;
+    // Lens parallax: the surround trails the look input and the walk by a few pixels (the reticle stays put).
+    const still = this.d.cam.reducedMotion || !this.magnified;
+    const k = window.innerHeight / 720;
+    const lx = still ? 0 : (Math.max(-12, Math.min(12, -f.lookX * 0.5)) + Math.cos(f.bobPhase) * f.bobStrength * 3) * k;
+    const ly = still ? 0 : (Math.max(-12, Math.min(12, -f.lookY * 0.5)) + Math.abs(Math.sin(f.bobPhase)) * f.bobStrength * 4) * k;
+    const pk = 1 - Math.exp(-dt * 10);
+    this.parX += (lx - this.parX) * pk;
+    this.parY += (ly - this.parY) * pk;
     const moving = Math.hypot(p.vx, p.vz) > 0.5 || !p.onGround;
     const cue = this.breath.update(dt, f.now, this.scoped, f.controls && input.actionDown(KB.SPRINT), moving);
     if (cue) this.d.audio.playBreath(cue === 'hold');
-    // Sway: a figure-eight around the aim while scoped, a smaller drift (the weapon's weight) through open sights, fading out when not.
+    // Sway: a small figure-eight around the aim through a sniper scope (Shift steadies it); it unwinds quickly when the scope comes down.
     this.swayTime += dt;
     let tx = 0, ty = 0;
-    const open = this.ads > 0.5 && !this.d.cam.reducedMotion && !this.dead;
     if (this.scoped) {
       swayOffset(this.swayTime, this.breath.amp, tmpSway);
       tx = tmpSway.x * DEG; ty = tmpSway.y * DEG;
-    } else if (open && adsSwayAmplitude(w, optic, moving) > 0) {
-      swayOffset(this.swayTime, adsSwayAmplitude(w, optic, moving) * this.adsEased, tmpSway);
-      tx = tmpSway.x * DEG; ty = tmpSway.y * DEG;
     } else {
-      tx = this.swayYaw * Math.max(0, 1 - dt * 8);
-      ty = this.swayPitch * Math.max(0, 1 - dt * 8);
+      const decay = Math.exp(-dt * 20);
+      tx = this.swayYaw * decay;
+      ty = this.swayPitch * decay;
     }
     p.yaw += tx - this.swayYaw;
     p.pitch += ty - this.swayPitch;
@@ -1264,6 +1314,26 @@ export class ArcadeSession {
     if (rec !== 0) p.pitch += rec * DEG;
     const limit = Math.PI / 2 - 0.001;
     p.pitch = Math.max(-limit, Math.min(limit, p.pitch));
+  }
+
+  /** Variable scope: go to zoom `level` (0 or 1) with a click of the turret. */
+  private changeZoom(level: number): void {
+    const n = opticZoomLevels(this.weapon, this.optic).length;
+    const next = Math.min(level, n - 1);
+    if (next === this.zoomLevel) return;
+    this.zoomLevel = next;
+    this.d.audio.playMech('zoom');
+  }
+
+  /** Range finder: blocks to what the scope's centre is on (the first player or what stops a bullet), -1 when nothing within reach. */
+  private rangeAhead(): number {
+    const p = this.d.player;
+    this.aim(tmpAim);
+    const tr = traceBullet(this.blocks, p.x, p.eyeY, p.z, tmpAim.x, tmpAim.y, tmpAim.z, RANGE_FINDER_MAX, this.trace);
+    const wall = tr.blocked ? tr.t : Infinity;
+    const body = this.firstPlayer(p.x, p.eyeY, p.z, tmpAim.x, tmpAim.y, tmpAim.z, Math.min(wall, RANGE_FINDER_MAX));
+    const d = body ? body.t : wall;
+    return Number.isFinite(d) ? d : -1;
   }
 
   /** Reload steps (mag out, mag in, bolt) as the reload progresses, and the bolt of a bolt-action after a shot. */
@@ -1377,7 +1447,6 @@ export class ArcadeSession {
     for (const s of this.glintSprites) s.visible = false;
     this.d.cam.kick = 0;
     this.d.cam.zoom = 1;
-    this.d.cam.fovRate = 8;
     this.d.cam.sprintFov = true;
     this.d.player.speedMultiplier = 1;
     this.d.player.airAccel = PHYSICS.AIR_ACCEL;
