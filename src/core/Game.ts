@@ -22,6 +22,7 @@ import { NetClient, type WelcomeMessage } from '../net/NetClient';
 import { NetEntities } from '../net/NetEntities';
 import { useBoneMeal } from '../world/Growth';
 import { farmStateText, trample } from '../world/Farming';
+import { normalizePartyCode } from '../modes/Party';
 import { type ClientMessage, SNAP_FLAG_CROUCH, SNAP_FLAG_SLIDE, type ServerMessage, formatCode, normalizeCode } from '../net/protocol';
 import { type GameType, TEAM_COLORS, gameTypeDef } from '../modes/GameTypes';
 import { ARCADE_POS_HZ, arcadeInterpDelay } from '../modes/ArcadeLogic';
@@ -495,7 +496,9 @@ export class Game {
     this.precompileShaders();
     // An invite link (?join=CODE) goes straight to the join screen with the code filled in.
     const invited = normalizeCode(new URLSearchParams(location.search).get('join') ?? '');
+    const partyInvite = normalizePartyCode(new URLSearchParams(location.search).get('party') ?? '');
     if (invited) void this.menu.openInvite(invited);
+    else if (partyInvite) this.menu.openPartyInvite(partyInvite);
     // A share link (?seed=…&mode=…) opens Create World prefilled.
     else {
       const share = parseShareParams(location.search);

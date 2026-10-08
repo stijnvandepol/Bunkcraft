@@ -17,6 +17,10 @@ const PATHS = {
   back: '<path d="m15 5-7 7 7 7"/>',
   link: '<path d="M10 14a4.5 4.5 0 0 0 6.4 0l3-3a4.5 4.5 0 0 0-6.4-6.4l-1.2 1.2"/><path d="M14 10a4.5 4.5 0 0 0-6.4 0l-3 3a4.5 4.5 0 0 0 6.4 6.4l1.2-1.2"/>',
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 21c.8-4.4 4-6.8 8-6.8s7.2 2.4 8 6.8"/>',
+  crown: '<path d="M3.5 19h17M4.2 17 2.8 7.2l5.2 4.3L12 4.6l4 6.9 5.2-4.3L19.8 17z"/>',
+  close: '<path d="m6 6 12 12M18 6 6 18"/>',
+  check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
 } as const;
 
 export type ShellIcon = keyof typeof PATHS;

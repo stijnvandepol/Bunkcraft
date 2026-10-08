@@ -4,7 +4,9 @@ import { MAP_SETTINGS, type MapSetting, getMap } from '../modes/maps';
 import { classUnlocked, unlockLevel } from '../modes/progression/Unlocks';
 import { BOT_LEVELS, type BotLevel, REALMS_MODES, isArcade, lobbySizes } from '../modes/Realms';
 import { OPTICS, PERKS, isPerk, weaponDef } from '../modes/Weapons';
+import { type PartyChange, normalizePartyCode } from '../modes/Party';
 import { NAME_PATTERN, formatCode, normalizeCode } from '../net/protocol';
+import { PartyCallError, party as partyClient } from '../net/PartyApi';
 import { currentProfile, currentRank, loadProfile, onProfile } from '../net/ProfileApi';
 import { type ListedRoom, type RoomInfo, browseRooms, createRoom, inviteLink, inviteText, lookupRoom, quickPlay, realmsStats, serverInfo } from '../net/RoomApi';
 import { button, h, menuScreen } from './dom';
@@ -113,6 +115,22 @@ function setOption(btn: HTMLButtonElement, text: string): void {
   btn.replaceChildren(h('span', { class: 'opt-k', text: text.slice(0, i) }), h('span', { class: 'opt-v', text: text.slice(i + 2) }));
 }
 
+/** A failed party call in words. */
+function partyError(e: unknown): string {
+  if (e instanceof PartyCallError) return t(`party.err.${e.code}` as I18nKey);
+  return e instanceof Error ? e.message : String(e);
+}
+
+function partyChangeText(c: PartyChange): string {
+  switch (c.kind) {
+    case 'joined': return t('party.joined', c.name);
+    case 'left': return t('party.left', c.name);
+    case 'leader': return c.you ? t('party.youLead') : t('party.newLeader', c.name);
+    case 'kicked': return t('party.kicked');
+    default: return t('party.ended');
+  }
+}
+
 /** A menu screen in the shell look (docs/research/IDENTITY.md). */
 function shellScreen(title: string, body: (Node | null)[], footer: (Node | null)[], opts: { list?: boolean; tallFooter?: boolean; cls?: string } = {}): HTMLDivElement {
   return menuScreen(title, body, footer, { ...opts, cls: `bc ${opts.cls ?? ''}` });
@@ -127,16 +145,26 @@ export class RealmsMenu {
   /** Whether this server runs the arena (null until /api/server answered). */
   private online: boolean | null = null;
   private home: HomeScreen | null = null;
+  /** Whether this server runs parties (from /api/server). */
+  private partyOn = false;
+  /** Unsubscribes of the party listeners of the current home screen. */
+  private partyOffs: (() => void)[] = [];
 
   constructor(private readonly stack: ScreenStack, private readonly actions: RealmsActions) {
     this.profiles = new ProfileScreens(stack);
+    // The server wants to know whether this browser sits in the menu or plays a match (the leader does not wait for the latter).
+    partyClient.statusOf = () => (this.home?.el.isConnected ? 'menu' : 'game');
   }
 
   /** The front door (the stack is expected to be empty). */
   showHome(message = ''): HomeScreen {
     const home = new HomeScreen({
-      play: (mode) => void this.quickPlay(mode),
-      selectMode: (mode) => saveMode(mode),
+      play: (mode) => void this.play(mode),
+      selectMode: (mode) => {
+        saveMode(mode);
+        // In a party the leader's pick is everybody's mode.
+        if (partyClient.isLeader) void partyClient.setMode(mode).catch(() => undefined);
+      },
       lobbies: () => void this.showBrowse(),
       privateMatch: (mode) => this.showCreate(mode),
       joinCode: (raw) => this.joinTyped(raw),
@@ -148,6 +176,13 @@ export class RealmsMenu {
       settings: () => this.actions.openOptions(),
       language: () => this.actions.openLanguage(),
       survival: () => this.actions.openSurvival(),
+      party: {
+        create: () => void this.createParty(),
+        join: (raw) => void this.joinParty(raw),
+        leave: () => void this.leaveParty(),
+        kick: (id) => void partyClient.kick(id).catch((e) => this.home?.partyPanel.say(partyError(e), true)),
+        promote: (id) => void partyClient.promote(id).catch((e) => this.home?.partyPanel.say(partyError(e), true)),
+      },
     }, { mode: savedMode(), version: this.actions.version, mapName: this.actions.backgroundMap() });
     this.home = home;
     this.stack.push(home.el);
@@ -167,7 +202,10 @@ export class RealmsMenu {
     }
     this.sizes = lobbySizes(info.roomMaxPlayers);
     this.profilesOn = !!info.features?.profiles;
+    this.partyOn = !!info.features?.party;
     home.setServer('online');
+    home.partyPanel.setAvailable(this.partyOn);
+    if (this.partyOn) this.startParty(home);
     const off = onProfile((p) => {
       if (this.home !== home) { off(); return; }
       home.setProfile(p, validSavedName(), this.profilesOn);
@@ -182,6 +220,126 @@ export class RealmsMenu {
       if (this.home !== home || !home.el.isConnected) window.clearInterval(timer);
       else if (!document.hidden && this.stack.top === home.el) void refresh();
     }, STATS_REFRESH_MS);
+  }
+
+  // ---------------------------------------------------------------- party
+
+  /** Shows the party of this browser on `home`, announces who comes and goes, and follows the leader into a lobby. */
+  private startParty(home: HomeScreen): void {
+    for (const off of this.partyOffs.splice(0)) off();
+    this.partyOffs.push(
+      partyClient.onChange((v) => { if (this.home === home) home.setParty(v); }),
+      partyClient.onEvent((c) => { if (this.home === home) home.partyPanel.announce(partyChangeText(c)); }),
+      partyClient.onTicket((ticket) => {
+        // Only a browser that sits in the menu follows the leader (one in a match plays on).
+        const here = this.home;
+        const name = validSavedName();
+        if (!here || !here.el.isConnected || !name) return;
+        here.partyPanel.say(t('party.heading', realmsModeName(ticket.gameType)));
+        this.say(t('party.heading', realmsModeName(ticket.gameType)));
+        void this.actions.joinCode(name, ticket.code, (m) => this.say(m, true));
+      }),
+    );
+    partyClient.start();
+    void partyClient.resume(validSavedName() ?? undefined);
+  }
+
+  /** Name first (parties show gamertags), then the profile (rank icon), then `go`. */
+  private async withIdentity(go: (name: string) => Promise<void>): Promise<void> {
+    const name = validSavedName();
+    if (!name) { this.showName(() => { this.refreshHome(); void this.withIdentity(go); }); return; }
+    await Promise.race([this.profileReady, new Promise<void>((r) => window.setTimeout(r, 3000))]);
+    await go(name);
+  }
+
+  private async createParty(): Promise<void> {
+    await this.withIdentity(async (name) => {
+      const panel = this.home?.partyPanel;
+      if (!panel) return;
+      panel.setBusy(true);
+      try {
+        if (partyClient.active) await partyClient.leave();
+        await partyClient.create(name, this.home?.selectedMode ?? savedMode());
+        partyClient.start();
+        panel.say(t('party.created'));
+        this.focusParty('copy');
+      } catch (e) {
+        panel.say(partyError(e), true);
+      } finally {
+        panel.setBusy(false);
+      }
+    });
+  }
+
+  private async joinParty(raw: string): Promise<void> {
+    const code = normalizePartyCode(raw);
+    const panel = this.home?.partyPanel;
+    if (!code) { panel?.say(t('party.err.not_found'), true); return; }
+    await this.withIdentity(async (name) => {
+      const p = this.home?.partyPanel;
+      if (!p) return;
+      p.setBusy(true);
+      try {
+        if (partyClient.active && partyClient.view?.code === code) return;
+        if (partyClient.active) await partyClient.leave();
+        await partyClient.join(code, name);
+        partyClient.start();
+        p.say(t('party.joinedYou'));
+        this.focusParty('copy');
+      } catch (e) {
+        p.say(partyError(e), true);
+      } finally {
+        p.setBusy(false);
+      }
+    });
+  }
+
+  private async leaveParty(): Promise<void> {
+    await partyClient.leave();
+    this.focusParty('create');
+  }
+
+  private focusParty(key: string): void {
+    window.setTimeout(() => (this.home?.partyPanel.el.querySelector(`[data-key="${key}"]`) as HTMLElement | null)?.focus({ preventScroll: true }), 0);
+  }
+
+  /** An invite link (?party=CODE): join that party as soon as there is a name. */
+  openPartyInvite(code: string): void {
+    const go = () => {
+      if (!this.home || !this.home.el.isConnected) {
+        this.stack.clear();
+        this.showHome();
+      }
+      this.say(t('party.invite'));
+      void this.joinParty(code).then(() => { if (new URLSearchParams(location.search).has('party')) history.replaceState(null, '', location.pathname); });
+    };
+    if (validSavedName()) go();
+    else this.showName(go);
+  }
+
+  /** PLAY: quick play alone, for the whole party as its leader, or READY as a party member. */
+  private async play(mode: GameType): Promise<void> {
+    if (!partyClient.active) return this.quickPlay(mode);
+    const name = validSavedName();
+    if (!name) { this.showName(() => { this.refreshHome(); void this.play(mode); }); return; }
+    if (!partyClient.isLeader) {
+      const v = partyClient.view!;
+      const ready = !!v.members.find((m) => m.id === v.me)?.ready;
+      await partyClient.setReady(!ready).catch((e) => this.say(partyError(e), true));
+      return;
+    }
+    if (this.busy) return;
+    this.busy = true;
+    saveMode(mode);
+    this.say(t('party.starting', realmsModeName(mode)));
+    try {
+      const ticket = await partyClient.play({ gameType: mode });
+      await this.join(name, ticket.code, (m) => this.say(m, true));
+    } catch (e) {
+      this.say(partyError(e), true);
+    } finally {
+      this.busy = false;
+    }
   }
 
   /** The profile of this browser (created on first use) once there is a name; joining waits for it. */
@@ -232,6 +390,18 @@ export class RealmsMenu {
 
   /** Joins a game once the profile is known (at most a few seconds), so the hello carries the profile token. */
   private async join(name: string, code: string, onError: (msg: string) => void): Promise<void> {
+    if (partyClient.active) {
+      // A party goes into a lobby together: only its leader chooses, and the server holds the seats for everybody.
+      if (!partyClient.isLeader) { onError(t('party.onlyLeader')); return; }
+      if (!partyClient.keyFor(code)) {
+        try {
+          code = (await partyClient.play({ code })).code;
+        } catch (e) {
+          onError(partyError(e));
+          return;
+        }
+      }
+    }
     await Promise.race([this.profileReady, new Promise<void>((r) => window.setTimeout(r, 3000))]);
     return this.actions.joinCode(name, code, onError);
   }
@@ -239,6 +409,8 @@ export class RealmsMenu {
   /** A code or invite link typed on the home screen. */
   private joinTyped(raw: string): void {
     const c = normalizeCode(raw);
+    // A party code (five characters, or a ?party= link) typed into the same box joins that party.
+    if (!c && this.partyOn && normalizePartyCode(raw)) { void this.joinParty(raw); return; }
     if (!c) { this.say(t('realms.join.bad'), true); return; }
     const name = validSavedName();
     if (!name) { this.showName(() => { this.refreshHome(); this.joinTyped(raw); }); return; }

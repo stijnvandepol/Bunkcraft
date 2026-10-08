@@ -1,6 +1,7 @@
 import { BINARY_VERSION, decodeBinary } from './binary';
 import { type ClientMessage, type ContainerClientMessage, PROTOCOL_VERSION, type ServerMessage } from './protocol';
 import { forgetRoomPassword, identityKey, ownerToken, roomPassword } from './RoomApi';
+import { partyKey } from './PartyApi';
 import { profileToken } from './ProfileApi';
 
 export type WelcomeMessage = Extract<ServerMessage, { t: 'welcome' }>;
@@ -68,8 +69,10 @@ export class NetClient {
         const password = room ? roomPassword(room) : undefined;
         // Realms profile (server-issued, per host): the server grants XP and shows the rank icon with it.
         const profile = room ? profileToken(host) : undefined;
+        // Party ticket: the seat held for this member, on the party's team (only valid for the lobby it was made for).
+        const party = partyKey(room);
         // `bin`: this client understands binary snap/ent frames, `binv` which formats (older servers ignore both).
-        this.send({ t: 'hello', v: PROTOCOL_VERSION, name, key: identityKey(host, room), bin: true, binv: BINARY_VERSION, ...(owner ? { owner } : {}), ...(password ? { password } : {}), ...(profile ? { profile } : {}) });
+        this.send({ t: 'hello', v: PROTOCOL_VERSION, name, key: identityKey(host, room), bin: true, binv: BINARY_VERSION, ...(owner ? { owner } : {}), ...(password ? { password } : {}), ...(profile ? { profile } : {}), ...(party ? { party } : {}) });
       };
       ws.onmessage = (e) => {
         let msg: ServerMessage;

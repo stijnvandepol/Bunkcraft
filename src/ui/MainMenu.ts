@@ -118,6 +118,11 @@ export class MainMenu {
     return Promise.resolve();
   }
 
+  /** A party invite link (?party=CODE): join that party from the home screen. */
+  openPartyInvite(code: string): void {
+    this.realms.openPartyInvite(code);
+  }
+
   /** An invite link (?join=CODE): a Realms lobby opens in Realms, anything else in Multiplayer with the code filled in. */
   async openInvite(code: string): Promise<void> {
     let info: RoomInfo | null = null;

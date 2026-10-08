@@ -84,3 +84,23 @@ export function partyLink(origin: string, code: string): string {
 export function partyTeamed(teams: boolean, mode: GameType): boolean {
   return teams && mode !== 'infected';
 }
+
+/** Something that changed between two views of a party, for the screen reader line under the panel. */
+export type PartyChange =
+  | { kind: 'joined' | 'left'; name: string }
+  | { kind: 'leader'; name: string; you: boolean }
+  | { kind: 'ended' | 'kicked' };
+
+/** What happened between two polls (names only). */
+export function partyChanges(prev: PartyView | null, next: PartyView | null): PartyChange[] {
+  if (!prev) return [];
+  if (!next) return [{ kind: 'ended' }];
+  const out: PartyChange[] = [];
+  for (const m of next.members) if (!prev.members.some((p) => p.id === m.id)) out.push({ kind: 'joined', name: m.name });
+  for (const m of prev.members) if (!next.members.some((p) => p.id === m.id)) out.push({ kind: 'left', name: m.name });
+  if (prev.leader !== next.leader) {
+    const lead = next.members.find((m) => m.id === next.leader);
+    if (lead) out.push({ kind: 'leader', name: lead.name, you: lead.id === next.me });
+  }
+  return out;
+}

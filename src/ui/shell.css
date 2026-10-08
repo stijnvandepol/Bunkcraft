@@ -394,6 +394,74 @@
 .home-build-hint { font-size: var(--f-xs); color: var(--bc-dim); }
 .home-foot-meta { display: flex; flex-direction: column; align-items: flex-end; gap: calc(var(--u) * 0.8); font-size: calc(var(--f-xs) * 0.92); color: rgba(154, 166, 181, 0.85); text-align: right; }
 
+/* ---------------------------------------------------------------- party (friends queue together) */
+
+.home-party { padding: calc(var(--u) * 4) calc(var(--u) * 5) calc(var(--u) * 5); }
+.home-party[hidden] { display: none; }
+.home-party .home-code-row + .home-code-row { margin-top: calc(var(--u) * 3); }
+.home-party .home-code-row > .bc-btn:only-child { flex: 1 1 auto; }
+.party-hint { margin: calc(var(--u) * -1) 0 calc(var(--u) * 3.5); font-size: var(--f-xs); color: var(--bc-dim); }
+.party-input { text-transform: uppercase; }
+.party-input::placeholder { text-transform: none; }
+.party-count { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--bc-text); letter-spacing: 0.06em; }
+.party-head { display: flex; align-items: center; justify-content: space-between; gap: calc(var(--u) * 3); margin-bottom: calc(var(--u) * 3); }
+.party-code {
+  font: 900 calc(var(--u) * 10 * var(--ts, 1)) / 1 ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  letter-spacing: 0.22em;
+  color: var(--bc-volt);
+  user-select: all;
+  -webkit-user-select: all;
+}
+.party-head-actions { display: flex; gap: calc(var(--u) * 1); flex-wrap: wrap; justify-content: flex-end; }
+.party-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: calc(var(--u) * 1.5); }
+.party-member {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--u) * 2.5);
+  min-height: calc(var(--u) * 13);
+  padding: calc(var(--u) * 1.5) calc(var(--u) * 3);
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid transparent;
+  border-radius: var(--bc-r);
+}
+.party-member.you { border-color: var(--bc-line); background: rgba(255, 255, 255, 0.07); }
+.party-member.away { opacity: 0.55; }
+.party-member .rank-badge { margin: 0; }
+.party-guest { flex: none; width: calc(var(--s) * 11); height: calc(var(--s) * 9); }
+.party-name { min-width: 0; font: 800 var(--f-sm) / 1.1 var(--bc-font); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.party-you { font-size: var(--f-xs); color: var(--bc-dim); white-space: nowrap; }
+.party-crown { display: inline-flex; color: #ffd24a; }
+.party-crown .bc-icon-wrap { width: calc(var(--u) * 5); height: calc(var(--u) * 5); }
+.party-chip {
+  margin-left: auto;
+  padding: calc(var(--u) * 1.3) calc(var(--u) * 2.8);
+  font: 800 var(--f-xs) / 1 var(--bc-font);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--bc-dim);
+  border: 1px solid var(--bc-line);
+  border-radius: 999px;
+}
+.party-chip.ready { color: var(--bc-volt); border-color: rgba(212, 255, 58, 0.5); }
+.party-chip.game { color: var(--bc-cyan); border-color: rgba(74, 216, 255, 0.45); }
+.party-member.leader .party-actions, .party-member .party-crown + .party-actions { margin-left: auto; }
+.party-actions { display: flex; gap: calc(var(--u) * 0.5); }
+.party-actions .bc-btn.icon-only { width: calc(var(--u) * 10); min-height: calc(var(--u) * 10); }
+.party-actions .bc-btn.icon-only .bc-icon-wrap { width: calc(var(--u) * 5.5); height: calc(var(--u) * 5.5); }
+.party-actions .bc-btn.danger:hover:not(:disabled) { color: var(--bc-danger); }
+.party-foot { margin-top: calc(var(--u) * 3); font-size: var(--f-xs); color: var(--bc-dim); }
+.party-foot.all { color: var(--bc-volt); }
+.party-note:not(:empty) { margin-top: calc(var(--u) * 3); font-size: var(--f-xs); color: var(--bc-dim); }
+.party-note.error { color: var(--bc-danger); }
+
+/* PLAY as the member's READY button, and the playlist while the leader picks. */
+.bc-play.member::before { filter: saturate(0.7) brightness(0.85); }
+.bc-play.member.on::before { filter: none; }
+.bc-play.member.on .bc-play-label { letter-spacing: 0.03em; }
+.mode-card.party-locked { cursor: default; }
+.mode-card.party-locked:not(.selected) { opacity: 0.5; }
+
 /* Narrow and portrait screens: one scrolling column. */
 @media (max-width: 760px), (max-aspect-ratio: 1/1) {
   .screen.home {
