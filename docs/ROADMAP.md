@@ -241,6 +241,10 @@ Volgende stappen:
    (`pos`) en de overige berichten zijn nog JSON; delta-compressie van `snap` (alleen wat bewoog) is de volgende stap.
 6. **Observability en beheer: Gedaan.** JSON-logs, `/metrics`, `/health`, back-ups, verbindingslimieten, `ALLOWED_ORIGINS`,
    gracieus afsluiten met reconnect-hint. Open: Grafana-dashboard als voorbeeld, rate limits per game in `/admin`, alerting.
+6b. **Terugkeren na een verbroken verbinding: Gedaan** (arcade). De server bewaart plek, score, class en match-XP van een weggevallen
+   speler `REJOIN_GRACE_SEC` (120 s); de client verbindt zelf opnieuw ("Opnieuw verbinden...") en na een herlading staat "Ga terug naar je
+   match" op het startscherm. Zie `docs/GAMEMODES.md` §Terugkeren. Open: bewaarde plekken overleven geen serverherstart (alleen de XP wordt
+   dan uitbetaald), en een speler die een FFA-match leidde terwijl hij weg was telt niet mee voor de winnaar.
 7. **Weer in multiplayer: Gedaan** (regen, onweer en bliksem op de server; `/weather` werkt). Kisten en ovens zijn klaar, zie `docs/MULTIPLAYER.md`.
 8. **Uit de QA-ronde (`docs/qa/MULTIPLAYER.md`): Gedaan.** Plaatsen kost nu het item (`InventoryGuard.authorizeEdit`,
    ook net gecraft), andere spelers lopen vloeiend (server bemonstert posities op een vaste klok, client stempelt
