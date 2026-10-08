@@ -1,7 +1,7 @@
 import { WEAPON_CLASS, ASSIST_WINDOW, KILL_REPEAT_FULL, type MatchTally, MIN_COMPLETION_SECONDS, XP, emptyTally, emptyWeaponTally } from '../../src/modes/progression/XpRules';
 
 /** Objective kinds the recorder credits (Match.event / Match.creditObjective). */
-export type ObjectiveKind = 'flag-captured' | 'flag-returned' | 'zone-captured' | 'hill';
+export type ObjectiveKind = 'flag-captured' | 'flag-returned' | 'zone-captured' | 'hill' | 'tag-confirmed' | 'tag-denied';
 
 interface Entry {
   tally: MatchTally;
@@ -22,6 +22,9 @@ interface Entry {
 export class MatchRecorder {
   private readonly entries = new Map<number, Entry>();
   private live = false;
+
+  /** `isBot` tells whether a player id is a server bot: kills and assists on bots are tallied apart (XpRules: reduced XP, capped). */
+  constructor(private readonly isBot: (id: number) => boolean = () => false) {}
 
   /** A new match went live: everybody present starts from zero. */
   start(ids: Iterable<number>, now: number): void {
@@ -71,12 +74,15 @@ export class MatchRecorder {
       v.tally.deaths++;
       v.streak = 0;
       // Everybody else who hurt the victim recently helped.
+      const botVictim = this.isBot(victim);
       for (const [by, h] of v.hurtBy) {
         if (by === killer || now - h.at > ASSIST_WINDOW) continue;
         const a = this.entry(by);
         if (!a) continue;
         a.tally.assists++;
-        (a.tally.weapons[h.weapon] ??= emptyWeaponTally()).assists++;
+        const aw = (a.tally.weapons[h.weapon] ??= emptyWeaponTally());
+        aw.assists++;
+        if (botVictim) { a.tally.botAssists++; aw.botAssists = (aw.botAssists ?? 0) + 1; }
       }
       v.hurtBy.clear();
     }
@@ -84,17 +90,28 @@ export class MatchRecorder {
     const k = this.entry(killer);
     if (!k) return;
     const t = k.tally;
+    const bot = this.isBot(victim);
+    const melee = WEAPON_CLASS[weapon] === 'melee';
     t.kills++;
     if (head) t.headshots++;
-    if (WEAPON_CLASS[weapon] === 'melee') t.knifeKills++;
-    const n = (k.victims.get(victim) ?? 0) + 1;
-    k.victims.set(victim, n);
-    t.killXp += n > KILL_REPEAT_FULL ? XP.killRepeat : XP.kill;
-    k.streak++;
-    t.bestStreak = Math.max(t.bestStreak, k.streak);
+    if (melee) t.knifeKills++;
     const w = (t.weapons[weapon] ??= emptyWeaponTally());
     w.kills++;
     if (head) w.headshots++;
+    if (bot) {
+      // Paid at a reduced rate, capped, by matchXp from these counts.
+      t.botKills++;
+      if (head) t.botHeadshots++;
+      if (melee) t.botKnifeKills++;
+      w.botKills = (w.botKills ?? 0) + 1;
+      if (head) w.botHeadshots = (w.botHeadshots ?? 0) + 1;
+    } else {
+      const n = (k.victims.get(victim) ?? 0) + 1;
+      k.victims.set(victim, n);
+      t.killXp += n > KILL_REPEAT_FULL ? XP.killRepeat : XP.kill;
+    }
+    k.streak++;
+    t.bestStreak = Math.max(t.bestStreak, k.streak);
   }
 
   /** Objective credit; `amount` is seconds for `hill`, otherwise 1. */
@@ -105,6 +122,8 @@ export class MatchRecorder {
     if (kind === 'flag-captured') t.flagCaptures++;
     else if (kind === 'flag-returned') t.flagReturns++;
     else if (kind === 'zone-captured') t.zoneCaptures++;
+    else if (kind === 'tag-confirmed') t.tagConfirms++;
+    else if (kind === 'tag-denied') t.tagDenies++;
     else if (kind === 'hill') t.hillSeconds += Math.max(0, Math.min(1, amount));
   }
 

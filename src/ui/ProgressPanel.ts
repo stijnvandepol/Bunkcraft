@@ -42,7 +42,7 @@ export class ProgressPanel {
         h('span', {}, rankBadge({ level: after.level, prestige: r.after.prestige }), t('prog.level', after.level))),
       h('div', { class: 'xr-lines' },
         ...r.lines.map((l) => h('div', { class: 'xr-line' },
-          h('span', { text: l.count !== undefined && l.count > 0 ? `${lineText(l.key)} x${l.count}` : lineText(l.key) }),
+          h('span', { text: `${l.count !== undefined && l.count > 0 ? `${lineText(l.key)} x${l.count}` : lineText(l.key)}${l.mult !== undefined ? ` \u00d7${l.mult}` : ''}${l.capped ? ` (${t('xp.capped')})` : ''}` }),
           h('b', { text: `${l.xp >= 0 ? '+' : ''}${l.xp}` }))),
         h('div', { class: 'xr-line total' }, h('span', { text: t('xp.total') }), h('b', { text: `+${r.xp}` })),
       ),

@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# BunkCraft: backup of all worlds (main world, every game, bans) from the Docker volume to the host.
+# BunkCraft: backup of the whole data directory (main world, every game, bans, player profiles and the token
+# secret profiles/secret.key) from the Docker volume to the host.
 #
 #   ./scripts/backup.sh [--dest /var/backups/bunkcraft] [--keep 14]
 #
 # Writes <dest>/bunkcraft-YYYYmmdd-HHMMSS.tar.gz and keeps the newest --keep archives. Safe while players are
-# online: the server writes every world file atomically (temp file + rename). The server's own rotating copies
-# (data/backups) are left out; they are copies of the same files.
+# online: the server writes every world and profile file atomically (temp file + rename). The server's own rotating
+# copies (data/backups) are left out; they are copies of the same files. Losing profiles/secret.key invalidates
+# every player's profile token, so the archive must always contain it: this script warns when it does not.
 #
 # Restore (stops the game for a moment):
 #   docker compose stop bunkcraft
@@ -39,6 +41,10 @@ fi
 # An empty or broken archive must never replace a good one.
 gzip -t "$file.part"
 mv "$file.part" "$file"
+# Profiles (and the secret that signs their tokens) are part of the data directory; say so when they are missing.
+if [ "$(tar -tzf "$file" | grep -c '^data/profiles/secret.key$' || true)" -eq 0 ]; then
+  echo "warning: $file has no data/profiles/secret.key (profiles switched off, or PROFILE_SECRET set and kept elsewhere)" >&2
+fi
 echo "backup: $file ($(du -h "$file" | cut -f1))"
 
 # Keep the newest $KEEP archives.

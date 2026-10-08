@@ -362,6 +362,12 @@ browser bewaart het in `localStorage` per serverhost (`bunkcraft.profile.<host>`
 - **Tegen farmen:** maximaal 6000 XP per match (uitdagingen komen erbovenop), kills op hetzelfde slachtoffer leveren na
   6 keer nog 25 XP op, voltooiings- en winstbonus pas na 45 s in de match, en één profiel telt maar één keer per lobby
   (twee tabbladen in dezelfde lobby verdubbelen niets). XP komt uit openbare en privé-lobby's.
+  **Bots:** kills, headshots, meskills en assists op een bot leveren 25 % XP op (maximaal 600 XP per match in totaal), en
+  tellen voor uitdagingen en wapen-XP/camo's maar voor de eerste 3 per match. In een lobby met minder dan 2 mensen is ook de
+  objective-, voltooiings-, win- en gelijkspel-XP 25 %, en tellen potjes, winsten en objectives niet voor uitdagingen
+  (`BOT_XP_FACTOR`, `BOT_XP_CAP`, `BOT_COUNT_CAP`, `LOBBY_BOT_FACTOR` in `src/modes/progression/XpRules.ts`); het
+  XP-overzicht na het potje toont dit als "×0.25". Kill Confirmed geeft XP voor bevestigde (50) en ontkende (25) tags en
+  heeft een eigen uitdaging. Klasse-uitdagingen ("5 sniper-kills") worden alleen aangeboden als het wapen ontgrendeld is.
 - **Ontgrendelingen** gelden ook op de server: een `loadout` met een wapen, vizier of perk boven je level wordt het
   standaardonderdeel (`lockClass` in `src/modes/progression/Unlocks.ts`).
 
@@ -369,8 +375,10 @@ browser bewaart het in `localStorage` per serverhost (`bunkcraft.profile.<host>`
 `DATA_DIR/profiles/<xx>/<id>.json`, één klein JSON-bestand per profiel (enkele kB; `<xx>` = de eerste twee tekens van het
 id). De server schrijft gewijzigde profielen elke 5 s en bij afsluiten (tmp + rename), houdt er hooguit 2000 in het
 geheugen en weigert bestanden groter dan 32 kB. Alles wat van schijf komt gaat door `sanitizeProfile` (onbekende velden
-weg, getallen begrensd, laatste 10 matches). De ingebouwde back-ups (`BACKUP_KEEP`) dekken alleen `world.json`: neem
-`profiles/` (vooral `secret.key`) mee in je eigen back-up van `DATA_DIR`.
+weg, getallen begrensd, laatste 10 matches). De ingebouwde back-ups (`BACKUP_KEEP`) kopiëren ook `profiles/`
+(met `secret.key`) naar `data/backups/profiles/<tijdstempel>/` zodra er iets veranderd is; `scripts/backup.sh` neemt de hele
+`data/` mee en waarschuwt als `profiles/secret.key` ontbreekt. Terugzetten: stop de server, kopieer een snapshot terug naar
+`data/profiles/`. `PROFILE_SECRET` in de omgeving staat niet in de back-up: bewaar die zelf.
 
 ## Operators en commando's
 
@@ -458,7 +466,8 @@ adressen blokkeren. Alle data gaat via `textContent` de pagina in en een strikte
   `kick` met `reconnect: <ms>` en sluit de sockets met code 1012. De client toont "Server restarting" en probeert tot vijf keer
   zelf opnieuw te joinen. Docker stuurt SIGTERM en wacht 10 seconden: ruim genoeg.
 - **Back-ups:** elke `BACKUP_INTERVAL_MIN` minuten een kopie van elke gewijzigde `world.json` naar
-  `data/backups/<main|CODE>/<tijdstempel>.json`, de nieuwste `BACKUP_KEEP` blijven. Back-ups van verwijderde games blijven
+  `data/backups/<main|CODE>/<tijdstempel>.json`, de nieuwste `BACKUP_KEEP` blijven. Hetzelfde voor de profielen:
+  `data/profiles/` (profielbestanden + `secret.key`) naar `data/backups/profiles/<tijdstempel>/`. Back-ups van verwijderde games blijven
   30 dagen. De wereld zelf wordt al atomair geschreven (tijdelijk bestand + rename). Is een `world.json` toch onleesbaar, dan
   gebruikt de server de nieuwste leesbare back-up (en bewaart het kapotte bestand als `world.json.corrupt-<tijd>`); zonder
   back-up weigert hij te starten in plaats van de wereld te overschrijven. Terugzetten: kopieer een back-up naar `world.json`

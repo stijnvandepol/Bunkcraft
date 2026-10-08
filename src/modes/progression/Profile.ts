@@ -4,7 +4,7 @@ import { type CamoDef, WEAPON_XP, camoUnlocked, camosBetween, isCamo } from './C
 import { type ChallengeDef, type ChallengeState, applyChallenges, currentState, periodKey } from './Challenges';
 import { MAX_LEVEL, MAX_PRESTIGE, PRESTIGE_XP, type Rank, canPrestige, levelFromXp } from './Levels';
 import { CARDS, DEFAULT_CARD, DEFAULT_TITLE, TITLES, type Unlock, hasUnlock, isCard, isTitle, unlocksBetween } from './Unlocks';
-import { type MatchOutcome, type MatchResultKind, type MatchTally, type XpLine, matchXp } from './XpRules';
+import { type MatchOutcome, type MatchResultKind, type MatchTally, type XpLine, countedTally, matchXp } from './XpRules';
 
 /**
  * A Realms player profile: level, prestige, lifetime statistics, weapon XP, recent matches, challenge progress
@@ -21,6 +21,8 @@ export interface LifetimeStats {
   kills: number; deaths: number; assists: number; headshots: number; shots: number; hits: number;
   wins: number; losses: number; draws: number; matches: number;
   captures: number; returns: number; zones: number; hillSeconds: number;
+  /** Kill Confirmed tags picked up. */
+  tags: number;
   /** Seconds played in live matches. */
   seconds: number;
   bestStreak: number;
@@ -66,7 +68,7 @@ const WEAPON_IDS = new Set(WEAPONS.map((w) => w.id));
 function emptyStats(): LifetimeStats {
   return {
     kills: 0, deaths: 0, assists: 0, headshots: 0, shots: 0, hits: 0, wins: 0, losses: 0, draws: 0, matches: 0,
-    captures: 0, returns: 0, zones: 0, hillSeconds: 0, seconds: 0, bestStreak: 0, challenges: 0,
+    captures: 0, returns: 0, zones: 0, hillSeconds: 0, tags: 0, seconds: 0, bestStreak: 0, challenges: 0,
   };
 }
 
@@ -128,7 +130,11 @@ export function sanitizeProfile(raw: unknown): ProfileData | null {
   const challengeState = (v: unknown): ChallengeState => {
     const e = obj(v);
     const key = own(e, 'key');
-    return currentState({ key: typeof key === 'string' ? key.slice(0, 16) : '', progress: Array.isArray(own(e, 'progress')) ? own(e, 'progress') as number[] : [] }, typeof key === 'string' ? key.slice(0, 16) : '');
+    const ids = own(e, 'ids');
+    return currentState({
+      key: typeof key === 'string' ? key.slice(0, 16) : '', progress: Array.isArray(own(e, 'progress')) ? own(e, 'progress') as number[] : [],
+      ...(Array.isArray(ids) ? { ids: ids as string[] } : {}),
+    }, typeof key === 'string' ? key.slice(0, 16) : '');
   };
   const prestige = num(own(r, 'prestige'), MAX_PRESTIGE);
   const created = own(r, 'created');
@@ -173,8 +179,9 @@ export function applyMatch(p: ProfileData, t: MatchTally, o: MatchOutcome, nowMs
 
   // Challenges first: their XP goes into the same award.
   const completed: { def: ChallengeDef; period: 'daily' | 'weekly' }[] = [];
-  const daily = applyChallenges('daily', p.daily, nowMs, t, o);
-  const weekly = applyChallenges('weekly', p.weekly, nowMs, t, o);
+  const rank = rankOf(p);
+  const daily = applyChallenges('daily', p.daily, nowMs, t, o, rank);
+  const weekly = applyChallenges('weekly', p.weekly, nowMs, t, o, rank);
   p.daily = daily.state;
   p.weekly = weekly.state;
   for (const c of daily.completed) completed.push({ def: c, period: 'daily' });
@@ -191,7 +198,7 @@ export function applyMatch(p: ProfileData, t: MatchTally, o: MatchOutcome, nowMs
   const add = (k: keyof LifetimeStats, v: number) => { s[k] = Math.min(MAX_COUNT, s[k] + Math.max(0, Math.floor(v))); };
   add('kills', t.kills); add('deaths', t.deaths); add('assists', t.assists); add('headshots', t.headshots);
   add('shots', t.shots); add('hits', t.hits); add('captures', t.flagCaptures); add('returns', t.flagReturns);
-  add('zones', t.zoneCaptures); add('hillSeconds', t.hillSeconds); add('seconds', t.seconds);
+  add('zones', t.zoneCaptures); add('hillSeconds', t.hillSeconds); add('tags', t.tagConfirms + t.tagDenies); add('seconds', t.seconds);
   add('challenges', completed.length);
   s.bestStreak = Math.max(s.bestStreak, Math.min(MAX_COUNT, t.bestStreak));
   if (o.completed) {
@@ -209,7 +216,8 @@ export function applyMatch(p: ProfileData, t: MatchTally, o: MatchOutcome, nowMs
   // Weapon XP and camos.
   const camos: ProgressReport['camos'] = [];
   const weaponLevels: ProgressReport['weaponLevels'] = [];
-  for (const [id, wt] of Object.entries(t.weapons)) {
+  // Kills on bots feed weapon XP and camos only up to a small cap per match.
+  for (const [id, wt] of Object.entries(countedTally(t).weapons)) {
     if (!WEAPON_IDS.has(id)) continue;
     const rec = (p.weapons[id] ??= { xp: 0, kills: 0, headshots: 0, shots: 0, hits: 0 });
     const gain = wt.kills * WEAPON_XP.kill + wt.headshots * WEAPON_XP.headshot + wt.assists * WEAPON_XP.assist;

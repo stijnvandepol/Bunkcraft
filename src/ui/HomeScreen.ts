@@ -1,5 +1,5 @@
 import type { GameType } from '../modes/GameTypes';
-import { activeChallenges, currentState, periodKey } from '../modes/progression/Challenges';
+import { currentState, periodKey, resolveChallenges } from '../modes/progression/Challenges';
 import { levelFromXp } from '../modes/progression/Levels';
 import { type ProfileData, rankOf } from '../modes/progression/Profile';
 import { type ModeStats, REALMS_MODES } from '../modes/Realms';
@@ -279,7 +279,7 @@ export class HomeScreen {
     this.challengesEl.classList.remove('empty');
     const key = periodKey('daily', Date.now());
     const state = currentState(p.daily, key);
-    const rows = activeChallenges('daily', key).map((c, i) => {
+    const rows = resolveChallenges('daily', state, key, rankOf(p)).map((c, i) => {
       const have = Math.min(c.target, state.progress[i] ?? 0);
       const done = have >= c.target;
       return h('div', { class: `home-chal${done ? ' done' : ''}`, 'data-challenge': c.id },

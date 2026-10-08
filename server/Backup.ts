@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
+import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { log } from './Log';
 
@@ -31,11 +31,53 @@ export function backupFile(src: string, dir: string, keep: number, now = Date.no
   return name;
 }
 
-/** Backs up the main world and every room; returns how many files were copied. */
+/** Folder inside the backup directory that holds the profile snapshots (a game code is 6 characters, so no clash). */
+export const PROFILES_BACKUP_DIR = 'profiles';
+
+/** Newest modification time of a file or of anything below a directory (0 when missing). */
+function newestMtime(path: string): number {
+  if (!existsSync(path)) return 0;
+  const st = statSync(path);
+  if (!st.isDirectory()) return st.mtimeMs;
+  let newest = st.mtimeMs;
+  for (const name of readdirSync(path)) newest = Math.max(newest, newestMtime(join(path, name)));
+  return newest;
+}
+
+/** Snapshot folders of the profiles backup, newest first. */
+export function listProfileBackups(dir: string): string[] {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir).filter((f) => !f.endsWith('.tmp') && statSync(join(dir, f)).isDirectory()).sort().reverse();
+}
+
+/**
+ * Copies DATA_DIR/profiles (every profile file and secret.key, which is what makes the issued tokens valid) into
+ * `<dir>/<timestamp>/` when anything in it changed since the newest snapshot, then keeps the newest `keep`.
+ * Profile files are written atomically, so a copy at any moment is consistent. Returns the snapshot name or null.
+ */
+export function backupProfiles(dataDir: string, dir: string, keep: number, now = Date.now()): string | null {
+  const src = join(dataDir, 'profiles');
+  if (keep <= 0 || !existsSync(src)) return null;
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const existing = listProfileBackups(dir);
+  if (existing.length > 0 && newestMtime(src) <= statSync(join(dir, existing[0])).mtimeMs) return null;
+  let name = stamp(now);
+  while (existsSync(join(dir, name))) name = stamp(now++);
+  const tmp = join(dir, `${name}.tmp`);
+  // Snapshot stays private: secret.key signs the profile tokens.
+  cpSync(src, tmp, { recursive: true, filter: (p) => !p.endsWith('.tmp') });
+  chmodSync(tmp, 0o700);
+  renameSync(tmp, join(dir, name));
+  for (const old of listProfileBackups(dir).slice(keep)) rmSync(join(dir, old), { recursive: true, force: true });
+  return name;
+}
+
+/** Backs up the main world and every room, plus the profiles; returns how many files / snapshots were made. */
 export function backupAll(dataDir: string, backupDir: string, keep: number, now = Date.now()): number {
   let copied = 0;
   try {
     if (backupFile(join(dataDir, 'world.json'), join(backupDir, 'main'), keep, now)) copied++;
+    if (backupProfiles(dataDir, join(backupDir, PROFILES_BACKUP_DIR), keep, now)) copied++;
     const roomsDir = join(dataDir, 'rooms');
     if (existsSync(roomsDir)) {
       for (const code of readdirSync(roomsDir)) {
@@ -45,7 +87,7 @@ export function backupAll(dataDir: string, backupDir: string, keep: number, now 
       // Backups of games that no longer exist are kept for 30 days (an accidental delete can be undone), then dropped.
       if (existsSync(backupDir)) {
         for (const code of readdirSync(backupDir)) {
-          if (code === 'main' || existsSync(join(roomsDir, code))) continue;
+          if (code === 'main' || code === PROFILES_BACKUP_DIR || existsSync(join(roomsDir, code))) continue;
           const newest = listBackups(join(backupDir, code))[0];
           const age = newest ? now - statSync(join(backupDir, code, newest)).mtimeMs : Infinity;
           if (age > 30 * 86_400_000) rmSync(join(backupDir, code), { recursive: true, force: true });

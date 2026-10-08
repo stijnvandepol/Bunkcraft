@@ -1,6 +1,6 @@
 import { getMap } from '../modes/maps';
 import { CAMOS, type CamoDef, camoUnlocked, weaponLevel } from '../modes/progression/Camos';
-import { type ChallengePeriod, activeChallenges, currentState, periodEndsIn, periodKey } from '../modes/progression/Challenges';
+import { type ChallengePeriod, currentState, periodEndsIn, periodKey, resolveChallenges } from '../modes/progression/Challenges';
 import { canPrestige, levelFromXp } from '../modes/progression/Levels';
 import { type ProfileData, accuracy, favouriteWeapon, kd, rankOf } from '../modes/progression/Profile';
 import { CARDS, TITLES, hasUnlock, isUnlocked, unlockLevel } from '../modes/progression/Unlocks';
@@ -149,7 +149,7 @@ export class ProfileScreens {
       const state = currentState(period === 'daily' ? p.daily : p.weekly, key);
       return [
         h('div', { class: 'prog-section-title', text: `${t(period === 'daily' ? 'chal.daily' : 'chal.weekly')} - ${t('chal.resets', duration(periodEndsIn(period, now)))}` }),
-        ...activeChallenges(period, key).map((c, i) => {
+        ...resolveChallenges(period, state, key, rankOf(p)).map((c, i) => {
           const have = Math.min(c.target, state.progress[i] ?? 0);
           const done = have >= c.target;
           return h('div', { class: `prog-row${done ? ' done' : ''}`, 'data-challenge': c.id },

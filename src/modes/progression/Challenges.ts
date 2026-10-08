@@ -1,4 +1,7 @@
-import { type MatchOutcome, type MatchTally, type WeaponClass, classKills } from './XpRules';
+import { PRIMARY_WEAPONS, SECONDARY_WEAPONS } from '../Weapons';
+import type { Rank } from './Levels';
+import { unlockLevel } from './Unlocks';
+import { WEAPON_CLASS, type MatchOutcome, type MatchTally, type WeaponClass, botLobby, classKills, countedTally } from './XpRules';
 
 /**
  * Daily and weekly challenges: three of each, the same for every player on a server, picked from a pool
@@ -8,7 +11,7 @@ import { type MatchOutcome, type MatchTally, type WeaponClass, classKills } from
 export type ChallengePeriod = 'daily' | 'weekly';
 
 export type ChallengeStat =
-  | 'kills' | 'headshots' | 'assists' | 'wins' | 'matches' | 'knife' | 'captures' | 'returns' | 'zones' | 'hill' | 'class';
+  | 'kills' | 'headshots' | 'assists' | 'wins' | 'matches' | 'knife' | 'captures' | 'returns' | 'zones' | 'hill' | 'tags' | 'class';
 
 export interface ChallengeDef {
   id: string;
@@ -46,6 +49,7 @@ export const DAILY_POOL: readonly ChallengeDef[] = [
   d('d_flags', 'captures', 1),
   d('d_zones', 'zones', 3),
   d('d_hill', 'hill', 60),
+  d('d_tags', 'tags', 8),
 ];
 
 export const WEEKLY_POOL: readonly ChallengeDef[] = [
@@ -61,6 +65,7 @@ export const WEEKLY_POOL: readonly ChallengeDef[] = [
   w('w_smg', 'class', 50, 'smg'),
   w('w_sniper', 'class', 25, 'sniper'),
   w('w_shotgun', 'class', 30, 'shotgun'),
+  w('w_tags', 'tags', 40),
 ];
 
 const DAY_MS = 86_400_000;
@@ -89,20 +94,52 @@ function hash(s: string): number {
   return h >>> 0;
 }
 
-/** The challenges of a period key: CHALLENGES_PER_PERIOD different ones, at most one objective-mode challenge. */
-export function activeChallenges(period: ChallengePeriod, key: string): ChallengeDef[] {
+const isObjective = (c: ChallengeDef) => c.stat === 'captures' || c.stat === 'zones' || c.stat === 'hill' || c.stat === 'returns' || c.stat === 'tags';
+
+/** Lowest player level at which some weapon of a class is available (1 = from the start; Infinity = no such weapon). */
+export function classUnlockLevel(cls: WeaponClass): number {
+  if (cls === 'melee') return 1;
+  let best = Infinity;
+  for (const id of PRIMARY_WEAPONS) if (WEAPON_CLASS[id] === cls) best = Math.min(best, unlockLevel('primary', id));
+  for (const id of SECONDARY_WEAPONS) if (WEAPON_CLASS[id] === cls) best = Math.min(best, unlockLevel('secondary', id));
+  return best;
+}
+
+/** Whether a player of this rank owns a weapon the challenge can be done with. Prestiged players have everything. */
+export function challengeAvailable(c: ChallengeDef, rank: Rank): boolean {
+  if (c.stat !== 'class' || !c.weaponClass || rank.prestige > 0) return true;
+  return rank.level >= classUnlockLevel(c.weaponClass);
+}
+
+/**
+ * The challenges of a period key: CHALLENGES_PER_PERIOD different ones, at most one objective-mode challenge.
+ * Without a rank this is the server-wide set; with one, class challenges for weapons the player has not
+ * unlocked yet are skipped (the next pick of the same sequence takes their place).
+ */
+export function activeChallenges(period: ChallengePeriod, key: string, rank?: Rank): ChallengeDef[] {
   const pool = period === 'daily' ? DAILY_POOL : WEEKLY_POOL;
-  const objective = (c: ChallengeDef) => c.stat === 'captures' || c.stat === 'zones' || c.stat === 'hill' || c.stat === 'returns';
   const out: ChallengeDef[] = [];
   let seed = hash(`${period}|${key}`);
   for (let tries = 0; out.length < CHALLENGES_PER_PERIOD && tries < 200; tries++) {
     seed = hash(`${seed}`);
     const c = pool[seed % pool.length];
     if (out.includes(c)) continue;
-    if (objective(c) && out.some(objective)) continue;
+    if (isObjective(c) && out.some(isObjective)) continue;
+    if (rank && !challengeAvailable(c, rank)) continue;
     out.push(c);
   }
   return out;
+}
+
+/**
+ * The challenges a profile plays this period: the ones stored with its progress (`ids`, fixed at the first match
+ * so a level-up in between cannot shift the progress onto another challenge), otherwise today's set for its rank.
+ */
+export function resolveChallenges(period: ChallengePeriod, state: ChallengeState | undefined, key: string, rank?: Rank): ChallengeDef[] {
+  const fresh = activeChallenges(period, key, rank);
+  if (!state || state.key !== key || !state.ids) return fresh;
+  const pool = period === 'daily' ? DAILY_POOL : WEEKLY_POOL;
+  return fresh.map((f, i) => pool.find((c) => c.id === state.ids?.[i]) ?? f);
 }
 
 /** How much one match moves a challenge. */
@@ -111,13 +148,14 @@ export function challengeProgress(c: ChallengeDef, t: MatchTally, o: MatchOutcom
     case 'kills': return t.kills;
     case 'headshots': return t.headshots;
     case 'assists': return t.assists;
-    case 'wins': return o.completed && o.result === 'win' ? 1 : 0;
-    case 'matches': return o.completed ? 1 : 0;
+    case 'wins': return o.completed && o.result === 'win' && !botLobby(o) ? 1 : 0;
+    case 'matches': return o.completed && !botLobby(o) ? 1 : 0;
     case 'knife': return t.knifeKills;
-    case 'captures': return t.flagCaptures;
-    case 'returns': return t.flagReturns;
-    case 'zones': return t.zoneCaptures;
-    case 'hill': return Math.floor(t.hillSeconds);
+    case 'captures': return botLobby(o) ? 0 : t.flagCaptures;
+    case 'returns': return botLobby(o) ? 0 : t.flagReturns;
+    case 'zones': return botLobby(o) ? 0 : t.zoneCaptures;
+    case 'hill': return botLobby(o) ? 0 : Math.floor(t.hillSeconds);
+    case 'tags': return botLobby(o) ? 0 : t.tagConfirms + t.tagDenies;
     case 'class': return c.weaponClass ? classKills(t, c.weaponClass) : 0;
   }
 }
@@ -126,12 +164,16 @@ export function challengeProgress(c: ChallengeDef, t: MatchTally, o: MatchOutcom
 export interface ChallengeState {
   key: string;
   progress: number[];
+  /** Ids of the challenges the progress belongs to (set by the first match of the period). */
+  ids?: string[];
 }
 
 /** The state for the current key: the stored one when it is still this period's, else a fresh one. */
 export function currentState(state: ChallengeState | undefined, key: string): ChallengeState {
   if (state && state.key === key && Array.isArray(state.progress)) {
-    return { key, progress: Array.from({ length: CHALLENGES_PER_PERIOD }, (_, i) => clampCount(state.progress[i])) };
+    const ids = Array.isArray(state.ids) && state.ids.length === CHALLENGES_PER_PERIOD && state.ids.every((x) => typeof x === 'string' && x.length <= 24)
+      ? [...state.ids] : undefined;
+    return { key, progress: Array.from({ length: CHALLENGES_PER_PERIOD }, (_, i) => clampCount(state.progress[i])), ...(ids ? { ids } : {}) };
   }
   return { key, progress: Array.from({ length: CHALLENGES_PER_PERIOD }, () => 0) };
 }
@@ -145,15 +187,18 @@ function clampCount(v: unknown): number {
  * match (each completes exactly once: progress stops at the target).
  */
 export function applyChallenges(
-  period: ChallengePeriod, state: ChallengeState | undefined, nowMs: number, t: MatchTally, o: MatchOutcome,
+  period: ChallengePeriod, state: ChallengeState | undefined, nowMs: number, t: MatchTally, o: MatchOutcome, rank?: Rank,
 ): { state: ChallengeState; completed: ChallengeDef[] } {
   const key = periodKey(period, nowMs);
   const next = currentState(state, key);
   const completed: ChallengeDef[] = [];
-  activeChallenges(period, key).forEach((c, i) => {
+  const defs = resolveChallenges(period, next, key, rank);
+  next.ids = defs.map((c) => c.id);
+  const counted = countedTally(t); // kills on bots count only up to a small cap
+  defs.forEach((c, i) => {
     const before = next.progress[i];
     if (before >= c.target) return;
-    const after = Math.min(c.target, before + challengeProgress(c, t, o));
+    const after = Math.min(c.target, before + challengeProgress(c, counted, o));
     next.progress[i] = after;
     if (after >= c.target) completed.push(c);
   });

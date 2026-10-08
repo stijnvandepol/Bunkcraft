@@ -93,8 +93,8 @@ export interface MatchHost {
   onDamage?(attacker: number, victim: number, amount: number, weapon: string, head: boolean): void;
   /** `victim` died; `killer` is 0 for deaths without one. */
   onKill?(killer: number, victim: number, weapon: string, head: boolean): void;
-  /** A player did an objective (flag captured or returned, zone captured, `amount` seconds in a hill). */
-  onObjective?(id: number, kind: 'flag-captured' | 'flag-returned' | 'zone-captured' | 'hill', amount: number): void;
+  /** A player did an objective (flag captured or returned, zone captured, `amount` seconds in a hill, a Kill Confirmed tag confirmed or denied). */
+  onObjective?(id: number, kind: 'flag-captured' | 'flag-returned' | 'zone-captured' | 'hill' | 'tag-confirmed' | 'tag-denied', amount: number): void;
   /** The match ended with this result (after the `matchend` message went out). */
   onMatchEnd?(result: MatchResult): void;
 }
@@ -995,7 +995,7 @@ export class Match {
   /** A one-off happening for the clients (banner and sound). */
   event(kind: ModeEventKind, team: Team | '' = '', id = 0, text = ''): void {
     this.host.broadcast({ t: 'event', kind, ...(team ? { team } : {}), ...(id ? { id } : {}), ...(text ? { text } : {}) });
-    if (id && (kind === 'flag-captured' || kind === 'flag-returned') && this.phase === 'live') this.host.onObjective?.(id, kind, 1);
+    if (id && (kind === 'flag-captured' || kind === 'flag-returned' || kind === 'tag-confirmed' || kind === 'tag-denied') && this.phase === 'live') this.host.onObjective?.(id, kind, 1);
   }
 
   /** Objective credit for a player the event does not name (zone capturers, time in a hill); live phase only. */

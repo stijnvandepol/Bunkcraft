@@ -23,7 +23,9 @@ export interface ProgressHost {
  * Players without a profile (guests, bots) are counted by nobody and earn nothing.
  */
 export class MatchProgress {
-  readonly recorder = new MatchRecorder();
+  readonly recorder = new MatchRecorder((id) => this.host.match().players.get(id)?.bot === true);
+  /** Most human players seen in this match: below MIN_HUMANS it is a bot lobby and pays less (XpRules). */
+  private peakHumans = 0;
   /** Connected player id → profile id. */
   private readonly profiles = new Map<number, string>();
 
@@ -32,7 +34,11 @@ export class MatchProgress {
   /** The Match hooks that feed the recorder (spread into the MatchHost). */
   hooks(): Pick<MatchHost, 'onMatchStart' | 'onDamage' | 'onKill' | 'onObjective' | 'onMatchEnd'> {
     return {
-      onMatchStart: () => this.recorder.start(this.host.match().players.keys(), this.host.now()),
+      onMatchStart: () => {
+        this.peakHumans = 0;
+        this.countHumans();
+        this.recorder.start(this.host.match().players.keys(), this.host.now());
+      },
       onDamage: (a, v, _amount, weapon) => this.recorder.damage(a, v, weapon, this.host.now()),
       onKill: (k, v, weapon, head) => this.recorder.kill(k || null, v, weapon, head, this.host.now()),
       onObjective: (id, kind, amount) => this.recorder.objective(id, kind, amount),
@@ -53,11 +59,19 @@ export class MatchProgress {
     const p = this.host.match().players.get(id);
     if (p) p.rank = this.service.rank(pid);
     this.recorder.join(id, this.host.now());
+    this.countHumans();
     return pid;
   }
 
   profileOf(id: number): string | undefined {
     return this.profiles.get(id);
+  }
+
+  /** Notes how many humans (everyone but bots) are in the match now. */
+  private countHumans(): void {
+    let n = 0;
+    for (const p of this.host.match().players.values()) if (!p.bot) n++;
+    this.peakHumans = Math.max(this.peakHumans, n);
   }
 
   /** A fired shot (live phase only): accuracy per weapon. */
@@ -79,16 +93,18 @@ export class MatchProgress {
   leave(id: number): void {
     const pid = this.profiles.get(id);
     this.profiles.delete(id);
+    this.countHumans();
     const taken = this.recorder.take(id, this.host.now());
     const m = this.host.match();
     if (!pid || !taken || !this.recorder.counting || m.phase === 'warmup' || m.phase === 'ended') return;
-    this.grant(id, pid, taken.tally, { mode: m.def.id, map: m.map.id, result: 'loss', completed: false }, false);
+    this.grant(id, pid, taken.tally, { mode: m.def.id, map: m.map.id, result: 'loss', completed: false, humans: this.peakHumans }, false);
   }
 
   /** The match is over: everybody still in it gets their XP, once. */
   private end(r: MatchResult): void {
     const m = this.host.match();
     const now = this.host.now();
+    this.countHumans();
     const ids = this.recorder.ids();
     for (const id of ids) {
       const taken = this.recorder.take(id, now);
@@ -97,7 +113,7 @@ export class MatchProgress {
       if (!taken || !pid || !p) continue;
       const result: MatchResultKind = !r.winnerTeam && !r.winnerId ? 'draw'
         : (r.winnerTeam ? p.team === r.winnerTeam : r.winnerId === id) ? 'win' : 'loss';
-      this.grant(id, pid, taken.tally, { mode: m.def.id, map: m.map.id, result, completed: taken.completed }, true);
+      this.grant(id, pid, taken.tally, { mode: m.def.id, map: m.map.id, result, completed: taken.completed, humans: this.peakHumans }, true);
     }
     this.recorder.stop();
     m.broadcastRoster();
