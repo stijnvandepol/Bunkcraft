@@ -15,6 +15,7 @@ import type { ChunkGenPool } from './chunkgen/ChunkGenPool';
 import { parseBotSettings } from './bots/BotManager';
 import type { BotDifficulty } from './bots/BotSkill';
 import type { ProfileService } from './progression/ProfileService';
+import type { SkinService } from './skins/SkinService';
 
 export { RateLimiter };
 
@@ -44,6 +45,8 @@ export interface RoomOptions {
   quickPlayBotDifficulty?: BotDifficulty;
   /** Realms progression shared by every game (absent = no XP). */
   profiles?: ProfileService | null;
+  /** Custom player skins (absent = off). */
+  skins?: SkinService | null;
 }
 
 /** Hashes and flags for a new game, computed by the caller (hashing is async). */
@@ -245,6 +248,7 @@ export class Rooms {
       binary: this.opts.binary,
       genPool: this.opts.genPool,
       profiles: this.opts.profiles,
+      skins: this.opts.skins,
       onMetaChange: () => { const r = this.loaded.get(code); if (r) this.writeMeta(code, r.server); },
     };
   }
@@ -422,6 +426,11 @@ export class Rooms {
     let n = 0;
     for (const r of this.loaded.values()) n += r.server.playersInPlay;
     return n;
+  }
+
+  /** A profile's skin changed, or (no id) hashes were banned: every loaded game recomputes what its players wear. */
+  refreshSkins(profileId?: string): void {
+    for (const r of this.loaded.values()) r.server.refreshSkins(profileId);
   }
 
   /** A server message to every loaded game; returns the number of players reached. */

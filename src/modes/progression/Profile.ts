@@ -1,3 +1,4 @@
+import { isSkinHash } from '../../skins/SkinFormat';
 import { type GameType, gameTypeDef } from '../GameTypes';
 import { WEAPONS } from '../Weapons';
 import { type CamoDef, WEAPON_XP, camoUnlocked, camosBetween, isCamo } from './Camos';
@@ -61,6 +62,8 @@ export interface ProfileData {
   daily: ChallengeState;
   weekly: ChallengeState;
   equip: { title: string; card: string; camos: Record<string, string> };
+  /** Hash of the custom player skin (see src/skins/SkinFormat.ts; the file lives on the server), '' = the default skin. */
+  skin: string;
 }
 
 const WEAPON_IDS = new Set(WEAPONS.map((w) => w.id));
@@ -77,7 +80,7 @@ export function newProfile(id: string, name: string, nowMs: number): ProfileData
     v: PROFILE_VERSION, id, name: cleanName(name), created: nowMs, xp: 0, totalXp: 0, prestige: 0,
     stats: emptyStats(), modes: {}, weapons: {}, recent: [],
     daily: currentState(undefined, periodKey('daily', nowMs)), weekly: currentState(undefined, periodKey('weekly', nowMs)),
-    equip: { title: DEFAULT_TITLE, card: DEFAULT_CARD, camos: {} },
+    equip: { title: DEFAULT_TITLE, card: DEFAULT_CARD, camos: {} }, skin: '',
   };
 }
 
@@ -144,6 +147,7 @@ export function sanitizeProfile(raw: unknown): ProfileData | null {
     stats, modes, weapons, recent,
     daily: challengeState(own(r, 'daily')), weekly: challengeState(own(r, 'weekly')),
     equip: { title: isTitle(title) ? title : DEFAULT_TITLE, card: isCard(card) ? card : DEFAULT_CARD, camos },
+    skin: isSkinHash(own(r, 'skin')) ? own(r, 'skin') as string : '',
   };
 }
 

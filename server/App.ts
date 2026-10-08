@@ -19,6 +19,8 @@ import { RateLimiter, bearer, hashPassword, hashToken, newToken, safeEqual } fro
 import { ChunkGenPool } from './chunkgen/ChunkGenPool';
 import { prewarmNavGraphs } from './bots/BotWorld';
 import { ProfileService } from './progression/ProfileService';
+import { SkinService } from './skins/SkinService';
+import { SKIN_MAX_BYTES } from '../src/skins/SkinFormat';
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -70,6 +72,8 @@ export interface RunningServer {
   rooms: Rooms | null;
   /** Realms profiles (null when switched off or without games). */
   profiles: ProfileService | null;
+  /** Custom player skins (null when SKINS is off or profiles are unavailable). */
+  skins: SkinService | null;
   /** Saves everything, tells clients to reconnect after `reconnectMs` (when given), and stops listening. */
   close(reconnectMs?: number): Promise<void>;
 }
@@ -85,6 +89,15 @@ export async function startServer(config: Config): Promise<RunningServer> {
   metrics.chunkGen = genPool ? () => genPool.getStats() : null;
   const guard = { inventoryGuard: config.inventoryGuard, binary: config.binary, genPool };
 
+  // Realms progression: one profile service for every game, so XP follows players from lobby to lobby.
+  const profiles = config.roomsEnabled && config.profiles
+    ? new ProfileService({ dataDir: config.dataDir, maxProfiles: config.maxProfiles, secret: config.profileSecret })
+    : null;
+  // Custom player skins hang on the signed profiles: no profiles, no skins.
+  const skins = profiles && config.skins
+    ? new SkinService({ dataDir: config.dataDir, profiles, maxBytes: config.skinStorageMb * 1048576, uploadsPerHour: config.skinUploadLimit })
+    : null;
+
   const main = config.mainWorld
     ? new GameServer({
       dataDir: config.dataDir,
@@ -99,14 +112,11 @@ export async function startServer(config: Config): Promise<RunningServer> {
       adminToken: config.adminToken,
       failLimiter,
       backupDir: config.backupKeep > 0 ? join(backupDir, 'main') : undefined,
+      profiles, skins,
       ...guard,
     })
     : null;
 
-  // Realms progression: one profile service for every game, so XP follows players from lobby to lobby.
-  const profiles = config.roomsEnabled && config.profiles
-    ? new ProfileService({ dataDir: config.dataDir, maxProfiles: config.maxProfiles, secret: config.profileSecret })
-    : null;
 
   const rooms = config.roomsEnabled
     ? new Rooms({
@@ -122,10 +132,11 @@ export async function startServer(config: Config): Promise<RunningServer> {
       listMax: config.listMax,
       quickPlayBots: config.quickPlayBots,
       quickPlayBotDifficulty: config.quickPlayBotDifficulty,
-      profiles,
+      profiles, skins,
       ...guard,
     })
     : null;
+  if (skins) skins.onChange = (pid) => { main?.refreshSkins(pid); rooms?.refreshSkins(pid); };
 
   // Per client address: creating rooms and looking up codes (stops code guessing).
   const createLimit = new RateLimiter(config.roomCreateLimit, 3_600_000);
@@ -142,7 +153,7 @@ export async function startServer(config: Config): Promise<RunningServer> {
   const adminFailures = newAuthLimiter();
   const timers: NodeJS.Timeout[] = [];
   const every = (ms: number, fn: () => void) => { const t = setInterval(fn, ms); t.unref(); timers.push(t); };
-  every(600_000, () => { createLimit.prune(); lookupLimit.prune(); listLimit.prune(); quickLimit.prune(); profileLimit.prune(); profileCreateLimit.prune(); failLimiter.prune(); adminFailures.prune(); });
+  every(600_000, () => { createLimit.prune(); lookupLimit.prune(); listLimit.prune(); quickLimit.prune(); profileLimit.prune(); profileCreateLimit.prune(); skins?.prune(); failLimiter.prune(); adminFailures.prune(); });
   every(5000, () => metrics.rollWindow());
   // Bot navigation for every arena, built in the background before the first lobby needs it.
   if (rooms && config.botPrewarm) prewarmNavGraphs((ms, n) => log.info('bot nav graphs ready', { graphs: n, ms: Math.round(ms) }));
@@ -175,7 +186,7 @@ export async function startServer(config: Config): Promise<RunningServer> {
     res.setHeader('access-control-allow-origin', origin);
     res.setHeader('vary', 'Origin');
     res.setHeader('access-control-allow-headers', 'content-type, authorization');
-    res.setHeader('access-control-allow-methods', 'GET, POST, OPTIONS');
+    res.setHeader('access-control-allow-methods', 'GET, POST, DELETE, OPTIONS');
   }
 
   function json(res: ServerResponse, status: number, body: unknown, extra: Record<string, string> = {}): void {
@@ -198,6 +209,25 @@ export async function startServer(config: Config): Promise<RunningServer> {
     });
   }
 
+  /** A request body as bytes, at most `limit` of them (a larger one is cut off with an error). */
+  function readBytes(req: IncomingMessage, limit: number): Promise<Buffer> {
+    return new Promise((resolveBody, reject) => {
+      const parts: Buffer[] = [];
+      let size = 0;
+      req.on('data', (chunk: Buffer) => {
+        size += chunk.length;
+        if (size > limit) {
+          reject(new Error('too large'));
+          req.destroy();
+          return;
+        }
+        parts.push(chunk);
+      });
+      req.on('end', () => resolveBody(Buffer.concat(parts)));
+      req.on('error', reject);
+    });
+  }
+
   /** JSON API used by the menu: server capabilities, creating a room, looking one up, the public list. */
   async function api(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
     const path = url.pathname;
@@ -208,7 +238,7 @@ export async function startServer(config: Config): Promise<RunningServer> {
         // Largest lobby a game may have (ROOM_MAX_PLAYERS): Realms only offers sizes up to it.
         ...(rooms ? { roomMaxPlayers: config.roomMaxPlayers } : {}),
         // What this server can do beyond the basics; clients hide features an older server lacks.
-        features: { passwords: true, browse: !!rooms, binary: config.binary, realms: !!rooms, profiles: !!profiles },
+        features: { passwords: true, browse: !!rooms, binary: config.binary, realms: !!rooms, profiles: !!profiles, skins: !!skins },
       });
     }
     if (path === '/api/profile' || path.startsWith('/api/profile/')) return profileApi(req, res, path, ip);
@@ -308,8 +338,11 @@ export async function startServer(config: Config): Promise<RunningServer> {
     const id = profiles.verify(token);
     const own = id ? profiles.get(id) : null;
     if (path === '/api/profile' && req.method === 'GET') {
+      // A banned skin is dropped from the profile the next time its owner looks.
+      if (own?.skin && skins && skins.isBanned(own.skin)) skins.clear(own.id);
       return own ? json(res, 200, { profile: own }) : json(res, 401, { error: 'Unknown profile' });
     }
+    if (path === '/api/profile/skin') return skinApi(req, res, own);
     if (req.method !== 'POST') return json(res, 404, { error: 'Not found' });
     let body: Record<string, unknown>;
     try {
@@ -339,6 +372,37 @@ export async function startServer(config: Config): Promise<RunningServer> {
       return p ? json(res, 200, { profile: p }) : json(res, 409, { error: 'Reach the maximum level first' });
     }
     return json(res, 404, { error: 'Not found' });
+  }
+
+  /**
+   * Skin upload (POST, the PNG file as the body) and removal (DELETE) of the profile behind the token. The file is
+   * decoded, checked and re-encoded by the SkinService; nothing the client sent is stored or served as it came.
+   */
+  async function skinApi(req: IncomingMessage, res: ServerResponse, own: ReturnType<ProfileService['get']>): Promise<void> {
+    if (req.method === 'DELETE' || req.method === 'POST') {
+      // Take the (small) body off the socket before answering, whatever the answer is: an early reply to a client that is
+      // still sending makes some of them fail with a connection error instead of showing the status.
+      const declared = Number(req.headers['content-length']);
+      if (Number.isFinite(declared) && declared > SKIN_MAX_BYTES) { req.resume(); return json(res, 413, { error: 'The file is larger than 16 KB', code: 'too-large' }); }
+    } else return json(res, 404, { error: 'Not found' });
+    let body: Buffer;
+    try {
+      body = await readBytes(req, SKIN_MAX_BYTES);
+    } catch {
+      return json(res, 413, { error: 'The file is larger than 16 KB', code: 'too-large' });
+    }
+    if (!skins) return json(res, 404, { error: 'Skins are disabled on this server', code: 'disabled' });
+    if (!own) return json(res, 401, { error: 'Unknown profile', code: 'auth' });
+    if (req.method === 'DELETE') {
+      skins.clear(own.id);
+      return json(res, 200, { profile: own });
+    }
+    const result = skins.upload(own.id, body);
+    if (!result.ok) {
+      if (result.code === 'rate') metrics.rateLimited('skin_upload');
+      return json(res, result.status, { error: result.error, code: result.code });
+    }
+    return json(res, 200, { hash: result.hash, created: result.created, profile: own });
   }
 
   /** /metrics: bearer token when METRICS_TOKEN or ADMIN_TOKEN is set; otherwise only from this machine (not via a proxy). */
@@ -383,6 +447,15 @@ export async function startServer(config: Config): Promise<RunningServer> {
       res.end(metrics.prometheus(gauges(), version));
       return;
     }
+    if (url.pathname.startsWith('/skins/')) {
+      // Content-addressed and immutable, so browsers and proxies may keep them for good; a banned hash is simply gone.
+      const m = /^\/skins\/([0-9a-f]{64})\.png$/.exec(url.pathname);
+      const png = m && skins ? skins.read(m[1]) : null;
+      if (!png) { res.writeHead(404, { 'content-type': 'text/plain', 'cache-control': 'no-store' }).end('Not found'); return; }
+      res.writeHead(200, { 'content-type': 'image/png', 'content-length': png.length, 'cache-control': 'public, max-age=31536000, immutable', 'x-content-type-options': 'nosniff' });
+      res.end(req.method === 'HEAD' ? undefined : png);
+      return;
+    }
     if (url.pathname === '/admin' || url.pathname === '/admin/') {
       if (!config.adminToken) {
         res.writeHead(404, { 'content-type': 'text/plain' }).end('Admin is disabled (set ADMIN_TOKEN).');
@@ -399,7 +472,7 @@ export async function startServer(config: Config): Promise<RunningServer> {
       if (!config.adminToken) return json(res, 404, { error: 'Admin is disabled' });
       if (!authorizeAdmin({ token: config.adminToken, clientIp, json, failures: adminFailures }, req, res)) return;
       adminApi({
-        token: config.adminToken, rooms, main, bans: ipBans, version, gauges, clientIp, readBody, json,
+        token: config.adminToken, rooms, main, bans: ipBans, skins, version, gauges, clientIp, readBody, json,
         dropIp: (ip) => { for (const c of wss.clients) if ((c as WebSocket & { ip?: string }).ip === ip) c.terminate(); },
       }, req, res, url.pathname).catch(() => { if (!res.headersSent) json(res, 500, { error: 'Server error' }); });
       return;
@@ -540,12 +613,12 @@ export async function startServer(config: Config): Promise<RunningServer> {
   log.info('server started', {
     version, port, static: config.staticDir, mainWorld: !!main, games: !!rooms, admin: !!config.adminToken,
     originCheck: config.allowedOrigins.length > 0, backups: config.backupKeep, inventoryGuard: config.inventoryGuard, binary: config.binary,
-    chunkWorkers: genPool?.size ?? 0,
+    chunkWorkers: genPool?.size ?? 0, skins: !!skins,
   });
 
   let closing: Promise<void> | null = null;
   return {
-    port, main, rooms, profiles,
+    port, main, rooms, profiles, skins,
     close(reconnectMs) {
       closing ??= (async () => {
         draining = true;

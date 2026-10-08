@@ -3,7 +3,7 @@
  * sessionStorage for this tab only and talks to /api/admin/*. Everything dynamic is inserted with
  * textContent, never as HTML.
  */
-export const ADMIN_CSP = "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+export const ADMIN_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 export const ADMIN_HTML = `<!doctype html>
 <html lang="en">
@@ -33,6 +33,8 @@ export const ADMIN_HTML = `<!doctype html>
   .mute { color:var(--mute); } .err { color:var(--bad); min-height:1.4em; } code { font-family: ui-monospace, monospace; }
   .players { margin: 4px 0 0; padding: 0; list-style: none; } .players li { display:flex; gap:8px; align-items:center; padding:2px 0; }
   .wrap { overflow-x:auto; }
+  .skin-thumb { width:64px; height:64px; image-rendering:pixelated; background:repeating-conic-gradient(var(--line) 0 25%, transparent 0 50%) 0 0 / 16px 16px; border:1px solid var(--line); }
+  .hash { font-family: ui-monospace, monospace; font-size:11px; word-break:break-all; }
 </style>
 </head>
 <body>
@@ -51,6 +53,14 @@ export const ADMIN_HTML = `<!doctype html>
     <h2>Blocked addresses</h2>
     <form id="banform" class="row"><input id="banip" placeholder="IP address" size="24" aria-label="IP address"><button type="submit">Block</button></form>
     <ul id="bans" class="players"></ul>
+    <section id="skins" hidden>
+      <h2>Skin reports</h2>
+      <div class="mute" id="skininfo"></div>
+      <div class="wrap"><table id="skinreports"><thead><tr><th>Skin</th><th>Reports</th><th>Worn by</th><th></th></tr></thead><tbody></tbody></table></div>
+      <h2>Banned skins</h2>
+      <form id="skinbanform" class="row"><input id="skinbanhash" placeholder="Skin hash (64 hex characters)" size="48" aria-label="Skin hash"><button type="submit">Ban hash</button></form>
+      <ul id="skinbans" class="players"></ul>
+    </section>
   </section>
 </main>
 <script>
@@ -137,11 +147,38 @@ export const ADMIN_HTML = `<!doctype html>
     if (!bans.ips.length) ul.append(el('li', 'None', 'mute'));
   }
 
+  function renderSkins(s) {
+    $('skins').hidden = false;
+    $('skininfo').textContent = s.count + ' skins stored, ' + (s.bytes / 1048576).toFixed(1) + ' of ' + Math.round(s.maxBytes / 1048576) + ' MB. A banned skin is never served again.';
+    var body = $('skinreports').tBodies[0]; body.textContent = '';
+    s.reports.forEach(function (r) {
+      var tr = el('tr'); var pic = el('td'); var last = el('td');
+      var img = el('img', undefined, 'skin-thumb'); img.alt = 'reported skin'; img.width = 64; img.height = 64;
+      if (!r.banned) img.src = '/skins/' + r.hash + '.png';
+      pic.append(img, el('div', r.hash, 'hash'));
+      last.append(act(r.banned ? 'Unban' : 'Ban hash', function () {
+        api('POST', '/skins/' + (r.banned ? 'unban' : 'ban'), { hash: r.hash }).then(refresh, fail);
+      }, !r.banned), ' ', act('Dismiss', function () { api('POST', '/skins/dismiss', { hash: r.hash }).then(refresh, fail); }));
+      tr.append(pic, el('td', r.count + (r.banned ? ' (banned)' : '')), el('td', r.names.join(', '), 'mute'), last);
+      body.append(tr);
+    });
+    if (!s.reports.length) { var none = el('tr'); none.append(el('td', 'No reports', 'mute')); body.append(none); }
+    var ul = $('skinbans'); ul.textContent = '';
+    s.bans.forEach(function (h) {
+      var li = el('li'); li.append(el('span', h, 'hash'), act('Unban', function () { api('POST', '/skins/unban', { hash: h }).then(refresh, fail); }));
+      ul.append(li);
+    });
+    if (!s.bans.length) ul.append(el('li', 'None', 'mute'));
+  }
+
   function refresh() {
     if (!token) return Promise.resolve();
-    return Promise.all([api('GET', '/stats'), api('GET', '/rooms'), api('GET', '/ip-bans')]).then(function (r) {
+    // The skins list is optional: a server with SKINS=off answers 404 and the section stays hidden.
+    var skins = api('GET', '/skins').catch(function () { return null; });
+    return Promise.all([api('GET', '/stats'), api('GET', '/rooms'), api('GET', '/ip-bans'), skins]).then(function (r) {
       $('err').textContent = ''; $('app').hidden = false; $('logout').hidden = false;
       render(r[0], r[1], r[2]);
+      if (r[3]) renderSkins(r[3]); else $('skins').hidden = true;
     }, function (e) { fail(e); if (e.message === 'Wrong token') signOut(); });
   }
   function signOut() {
@@ -155,6 +192,11 @@ export const ADMIN_HTML = `<!doctype html>
     refresh().then(function () { clearInterval(timer); timer = setInterval(refresh, 5000); });
   };
   $('logout').onclick = signOut;
+  $('skinbanform').onsubmit = function (e) {
+    e.preventDefault();
+    var hash = $('skinbanhash').value.trim().toLowerCase(); if (!hash) return;
+    api('POST', '/skins/ban', { hash: hash }).then(function () { $('skinbanhash').value = ''; refresh(); }, fail);
+  };
   $('banform').onsubmit = function (e) {
     e.preventDefault();
     var ip = $('banip').value.trim(); if (!ip) return;

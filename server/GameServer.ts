@@ -46,6 +46,7 @@ import { BotManager, type BotSettings, parseBotSettings } from './bots/BotManage
 import { arenaGraph } from './bots/BotWorld';
 import { MatchProgress } from './progression/MatchProgress';
 import type { ProfileService } from './progression/ProfileService';
+import type { SkinService } from './skins/SkinService';
 import { type RateLimiter, hashIp, newToken, safeEqual, tokenMatches, verifyPassword, hashToken } from './Security';
 
 const TICK_MS = 50; // 20 ticks per second, like Minecraft
@@ -198,6 +199,11 @@ interface Session {
   guard: InventoryGuard;
   /** Arcade: fire, reload, weapon and loadout requests. */
   fires: Bucket;
+  /** Skin reports (slow: a report is a deliberate act). */
+  skinReports: Bucket;
+  /** The signed profile this connection plays with (hello.profile), and the custom skin hash it shows ('' = default). */
+  profileId?: string;
+  skin: string;
   actions: Bucket;
   violations: number;
   /** Round trip in ms (WebSocket ping/pong, arcade games). */
@@ -271,6 +277,8 @@ export interface ServerOptions {
   bots?: BotSettings;
   /** Realms progression (profiles, XP) shared by every game on the server; absent = no XP. */
   profiles?: ProfileService | null;
+  /** Custom player skins: sessions with a profile token wear their profile's skin (absent = off). */
+  skins?: SkinService | null;
 }
 
 /**
@@ -865,9 +873,18 @@ export class GameServer {
       bink: hello.bin === true && this.opts.binary !== false && !!this.match && Number(hello.binv) >= BINARY_VERSION_SNAP_TICK,
       guard: new InventoryGuard(initial.error ? [] : initial.slots),
     });
+    // The custom skin of the profile this connection plays with (before the welcome and the roster carry it).
+    if (this.opts.skins && this.opts.profiles) {
+      const pid = this.opts.profiles.verify(hello.profile);
+      if (pid && this.opts.profiles.get(pid)) {
+        session.profileId = pid;
+        session.skin = this.opts.skins.effective(pid);
+      }
+    }
     const joined = this.match?.join(session.id, name) ?? null;
     // Realms profile (before `ready` sends the roster, so the rank icon is there from the start).
     if (joined) this.progress?.bind(session.id, hello.profile, name);
+    if (joined && session.skin) this.match!.players.get(session.id)!.skin = session.skin;
     if (joined) {
       session.x = joined.x; session.y = joined.y; session.z = joined.z; session.hasPos = true;
       this.guard?.join(session.id, name);
@@ -882,7 +899,7 @@ export class GameServer {
       t: 'welcome', id: session.id, worldName: this.world.name, seed: this.world.seed, genVersion: this.match ? undefined : this.world.genVersion, gameMode: this.world.gameMode,
       gameType: this.match?.info.type ?? 'minecraft', worldType: this.match ? 'arena' : 'terrain', match: this.match?.info,
       time: this.world.time, day: this.world.day ?? 0, spawn: joined ? { x: joined.x, y: joined.y, z: joined.z } : record ? this.world.spawn : start, edits, player: record,
-      players: [...this.sessions.values()].map((s) => ({ id: s.id, name: s.name, team: this.match?.players.get(s.id)?.team || undefined })),
+      players: [...this.sessions.values()].map((s) => ({ id: s.id, name: s.name, team: this.match?.players.get(s.id)?.team || undefined, ...(s.skin ? { skin: s.skin } : {}) })),
       motd: this.opts.motd,
       ...(op ? { op: true } : {}),
       ...(session.bin ? { binary: true } : {}),
@@ -893,7 +910,7 @@ export class GameServer {
     });
     if (!this.match) this.send(session, this.weatherMessage(true));
     this.sessions.set(session.id, session);
-    this.broadcast({ t: 'join', id: session.id, name }, session.id);
+    this.broadcast({ t: 'join', id: session.id, name, ...(session.skin ? { skin: session.skin } : {}) }, session.id);
     if (joined) {
       session.awaiting = { x: joined.x, y: joined.y, z: joined.z, until: Date.now() + 1500 };
       this.match!.ready(session.id);
@@ -918,6 +935,7 @@ export class GameServer {
       drops: new Bucket(30, 60, 'drops'), takes: new Bucket(20, 30, 'takes'),
       chat: new Bucket(1, 5, 'chat'), moves: new Bucket(40, 80, 'moves'), states: new Bucket(0.5, 10, 'states'), containers: new Bucket(20, 40, 'containers'),
       fires: new Bucket(25, 30, 'fires'), actions: new Bucket(15, 30, 'actions'), violations: 0,
+      skinReports: new Bucket(0.2, 3, 'skin_reports'), skin: '',
       pingMs: 0, pingSentAt: 0, awaiting: null, velX: 0, velY: 0, velZ: 0, aim: new AimStats(), lastFireAt: 0, trail: new PoseTrail(),
     };
   }
@@ -1068,7 +1086,38 @@ export class GameServer {
         return this.survival.bed(s, Number(msg.x), Number(msg.y), Number(msg.z), this.sessions.size);
       case 'wake': return this.survival?.wake(s.id);
       case 'container': return this.containers?.handle(s, msg);
+      case 'skinreport': return this.onSkinReport(s, Number(msg.id));
     }
+  }
+
+  /** A player reports the custom skin another player wears; the server looks the hash up, so only worn skins can be reported. */
+  private onSkinReport(s: Session, id: number): void {
+    const skins = this.opts.skins;
+    if (!skins || !s.skinReports.take()) return;
+    const target = this.sessions.get(id);
+    if (!target || target.id === s.id || !target.skin) return;
+    skins.report(target.skin, s.profileId ?? s.ip, target.name);
+  }
+
+  /**
+   * Recomputes what the players of this game wear (a profile uploaded or removed a skin, or hashes were banned) and
+   * tells everyone about the changes. Pass a profile id to look at its sessions only.
+   */
+  refreshSkins(profileId?: string): void {
+    const skins = this.opts.skins;
+    if (!skins) return;
+    let changed = false;
+    for (const s of this.sessions.values()) {
+      if (!s.profileId || (profileId && s.profileId !== profileId)) continue;
+      const skin = skins.effective(s.profileId);
+      if (skin === s.skin) continue;
+      s.skin = skin;
+      const p = this.match?.players.get(s.id);
+      if (p) p.skin = skin;
+      this.broadcast({ t: 'skin', id: s.id, skin });
+      changed = true;
+    }
+    if (changed) this.match?.broadcastRoster();
   }
 
   /** Survival games check inventories (see InventoryGuard); creative and spectator trust the client. */
@@ -1120,6 +1169,7 @@ export class GameServer {
       case 'fire': return void (s.fires.take() && this.onFire(s, msg, match));
       case 'reload': return void (s.actions.take() && match.reload(s.id, Number(msg.slot)));
       case 'weapon': return void (s.actions.take() && match.switchWeapon(s.id, Number(msg.slot)));
+      case 'skinreport': return this.onSkinReport(s, Number(msg.id));
       case 'vote': return void (s.actions.take() && match.castVote(s.id, Number(msg.map)));
       case 'loadout': {
         if (!s.actions.take()) return;

@@ -171,6 +171,8 @@ export interface MatchPlayer {
   slot: 0 | 1 | 2;
   /** Realms rank for the roster (prestige * 100 + level, see progression/Levels.ts); 0 or absent = none. */
   rank?: number;
+  /** Hash of the custom skin for the roster ('' or absent = default). */
+  skin?: string;
   switchReadyAt: number;
   history: Sample[];
   historyHead: number;
@@ -1015,6 +1017,7 @@ export class Match {
       ...(withPts ? { pts: p.pts } : {}),
       ...(p.bot ? { bot: 1 as const } : {}),
       ...(p.rank ? { rk: p.rank } : {}),
+      ...(p.skin ? { sk: p.skin } : {}),
     }));
   }
 

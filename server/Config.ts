@@ -67,6 +67,12 @@ export interface Config {
   profileCreateLimit: number;
   /** HMAC secret for profile tokens (PROFILE_SECRET); unset = DATA_DIR/profiles/secret.key. */
   profileSecret?: string;
+  /** Custom player skins (SKINS, default on; needs profiles). Content moderation is the operator's job (docs/SERVER.md). */
+  skins: boolean;
+  /** Most megabytes of skin files kept in DATA_DIR/skins (SKIN_STORAGE_MB). */
+  skinStorageMb: number;
+  /** Skin uploads per profile per hour (SKIN_UPLOAD_LIMIT). */
+  skinUploadLimit: number;
 }
 
 const flag = (v: string | undefined, dflt: boolean): boolean => (v === undefined || v === '' ? dflt : !/^(0|off|false|no)$/i.test(v));
@@ -119,6 +125,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     maxProfiles: Math.max(0, Math.floor(num(env.MAX_PROFILES, 50_000))),
     profileCreateLimit: Math.max(1, Math.floor(num(env.PROFILE_CREATE_LIMIT, 10))),
     profileSecret: env.PROFILE_SECRET || undefined,
+    skins: flag(env.SKINS, true),
+    skinStorageMb: Math.max(1, num(env.SKIN_STORAGE_MB, 128)),
+    skinUploadLimit: Math.max(1, Math.floor(num(env.SKIN_UPLOAD_LIMIT, 5))),
   };
 }
 

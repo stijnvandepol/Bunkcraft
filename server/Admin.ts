@@ -3,10 +3,12 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { join } from 'node:path';
 import { isIP } from 'node:net';
 import { normalizeCode, sanitizeChat } from '../src/net/protocol';
+import { isSkinHash } from '../src/skins/SkinFormat';
 import type { GameServer } from './GameServer';
 import { log } from './Log';
 import { type Gauges, metrics } from './Metrics';
 import type { Rooms } from './Rooms';
+import type { SkinService } from './skins/SkinService';
 import { RateLimiter, bearer, safeEqual } from './Security';
 
 /** Blocked client addresses (server-wide), persisted in DATA_DIR/ip-bans.json. */
@@ -53,6 +55,8 @@ export interface AdminContext {
   rooms: Rooms | null;
   main: GameServer | null;
   bans: IpBans;
+  /** Custom skins (null = switched off). */
+  skins?: SkinService | null;
   version: string;
   gauges(): Gauges;
   clientIp(req: IncomingMessage): string;
@@ -148,6 +152,25 @@ export async function adminApi(ctx: AdminContext, req: IncomingMessage, res: Ser
     ctx.rooms?.saveAll();
     log.info('admin save');
     return json(res, 200, { ok: true });
+  }
+  // Skins: what players reported, and the hashes that are never served. Moderation is the operator's job (docs/SERVER.md).
+  if (parts[0] === 'skins') {
+    const skins = ctx.skins;
+    if (!skins) return json(res, 404, { error: 'Skins are disabled' });
+    if (parts.length === 1 && method === 'GET') {
+      return json(res, 200, { reports: skins.listReports(), bans: skins.listBans(), count: skins.count, bytes: skins.storedBytes, maxBytes: skins.maxBytes });
+    }
+    if (parts.length === 2 && method === 'POST') {
+      const hash = String((await body()).hash ?? '').toLowerCase();
+      if (!isSkinHash(hash)) return json(res, 400, { error: 'Not a skin hash' });
+      if (parts[1] === 'ban') {
+        skins.ban(hash);
+        return json(res, 200, { ok: true });
+      }
+      if (parts[1] === 'unban') return json(res, skins.unban(hash) ? 200 : 404, { ok: true });
+      if (parts[1] === 'dismiss') return json(res, skins.dismiss(hash) ? 200 : 404, { ok: true });
+      if (parts[1] === 'purge') return json(res, skins.purge(hash) ? 200 : 404, { ok: true });
+    }
   }
   if (parts[0] === 'ip-bans') {
     if (method === 'GET' && parts.length === 1) return json(res, 200, { ips: ctx.bans.list() });

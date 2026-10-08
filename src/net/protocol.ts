@@ -41,6 +41,8 @@ export interface RemotePlayerInfo {
   name: string;
   /** Arcade game types only. */
   team?: Team;
+  /** Hash of the player's custom skin (GET /skins/<hash>.png); absent = the default skin. */
+  skin?: string;
 }
 
 /** One row of the scoreboard (arcade game types). */
@@ -58,6 +60,8 @@ export interface RosterEntry {
   bot?: 1;
   /** Realms rank: prestige * 100 + level (progression/Levels.ts rankCode); absent for guests and bots. */
   rk?: number;
+  /** Hash of the player's custom skin; absent = the default skin. */
+  sk?: string;
 }
 
 /**
@@ -260,6 +264,8 @@ export type ClientMessage =
    * key/level pairs (ITEM_DATA_KEYS indices, optional; the server clamps them and ignores those the weapon cannot have).
    */
   | { t: 'attack'; id: number; e?: number[] }
+  /** Report the custom skin player `id` wears right now (the server looks the hash up itself; shown on the admin page). */
+  | { t: 'skinreport'; id: number }
   /** Right click on a server mob with the held item (feed, tame, shear, milk, dye, saddle). */
   | { t: 'usemob'; id: number }
   /** Bow shot; power 0..1. `e`: the bow's enchantments (Power, Punch, Flame), like `attack`. */
@@ -336,7 +342,9 @@ export type ServerMessage =
   | { t: 'spawnpoint'; bed: { x: number; y: number; z: number; point?: boolean } | null }
   /** /effect: give or clear status effects (the client applies them; effects are client-authoritative). */
   | { t: 'effect'; action: 'give' | 'clear'; effect?: string; amp?: number; ticks?: number }
-  | { t: 'join'; id: number; name: string }
+  | { t: 'join'; id: number; name: string; skin?: string }
+  /** A player's custom skin changed (or was banned: ''). Optional message: old clients ignore it. */
+  | { t: 'skin'; id: number; skin: string }
   | { t: 'leave'; id: number; name: string }
   /** `k`: server tick of an arcade snapshot (the client sends back which tick it drew, see `fire.rk`). */
   | { t: 'snap'; players: SnapshotEntry[]; k?: number }
