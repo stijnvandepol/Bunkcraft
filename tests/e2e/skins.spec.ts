@@ -98,8 +98,10 @@ test('skins: an uploaded skin shows on another player, can be hidden and switche
   await b.screenshot({ path: test.info().outputPath('alice-seen-by-bob.png') });
 
   // Bob hides the skin from the player list (pause menu), reports it, shows it again.
+  // Bob's window must be in front: a background page in CI throttles rendering and the click never settles.
+  await b.bringToFront();
   await b.evaluate(() => { (window as any).game.input.locked = false; (window as any).game.state = 'paused'; (window as any).game.showPauseMenu(); });
-  await clickButton(b, 'Players & Skins');
+  await b.getByRole('button', { name: 'Players & Skins' }).filter({ visible: true }).first().click();
   const row = b.locator('.players-row[data-player="alice_skin"]');
   await expect(row).toContainText('Custom skin');
   await row.getByRole('button', { name: 'Hide Skin' }).click();
