@@ -480,6 +480,8 @@ export class ArcadeHud {
     if (on !== this.scopeOn) {
       this.scopeOn = on;
       this.scope.classList.toggle('hidden', !on);
+      // Weapon label, slots and ammo fade out so they do not sit on top of the lens (see `.arc-hud.scoped` in styles.css).
+      this.el.classList.toggle('scoped', on);
     }
     if (on && kind !== this.scopeKind) {
       this.scopeKind = kind;
