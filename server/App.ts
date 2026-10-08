@@ -83,7 +83,7 @@ export async function startServer(config: Config): Promise<RunningServer> {
     ? new ChunkGenPool({ size: config.chunkWorkers, onError: (message) => log.error('chunk generation', { error: message }) })
     : null;
   metrics.chunkGen = genPool ? () => genPool.getStats() : null;
-  const guard = { inventoryGuard: config.inventoryGuard, binary: config.binary, genPool };
+  const guard = { inventoryGuard: config.inventoryGuard, binary: config.binary, genPool, rejoinGraceSec: config.rejoinGraceSec };
 
   const main = config.mainWorld
     ? new GameServer({
@@ -277,6 +277,23 @@ export async function startServer(config: Config): Promise<RunningServer> {
           : json(res, 503, { error: 'This server has reached its game limit' });
       }
       return json(res, result.created ? 201 : 200, result);
+    }
+    // Rejoin offer: does this game still keep my seat? The secrets travel in the body and the Authorization header
+    // (never in a URL), and a proof only ever says something about the seat it belongs to.
+    if (path === '/api/rejoin' && req.method === 'POST') {
+      if (!lookupLimit.take(ip)) {
+        metrics.rateLimited('room_lookup');
+        return json(res, 429, { error: 'Too many requests' });
+      }
+      let body: Record<string, unknown>;
+      try {
+        body = JSON.parse(await readBody(req)) as Record<string, unknown>;
+        if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('bad');
+      } catch {
+        return json(res, 400, { error: 'Bad request' });
+      }
+      const st = typeof body.code === 'string' ? rooms.rejoinStatus(body.code, { token: body.token, profile: bearer(req.headers.authorization) }) : null;
+      return json(res, 200, st ?? { state: 'none', secondsLeft: 0 }, { 'cache-control': 'no-store' });
     }
     const m = /^\/api\/rooms\/([^/]+)$/.exec(path);
     if (m && req.method === 'GET') {

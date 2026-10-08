@@ -12,6 +12,8 @@ interface Entry {
   streak: number;
   /** When this player started counting (match start or join), seconds. */
   since: number;
+  /** Set while the player's connection is down (a kept seat): that time is not time played. */
+  pausedAt: number | null;
 }
 
 /**
@@ -45,6 +47,25 @@ export class MatchRecorder {
   /** A player came in during a live match. */
   join(id: number, now: number): void {
     if (this.live && !this.entries.has(id)) this.entries.set(id, newEntry(now));
+  }
+
+  /** The player's connection dropped but their seat is kept: the clock of the time they play stops. */
+  pause(id: number, now: number): void {
+    const e = this.entries.get(id);
+    if (e && e.pausedAt === null) e.pausedAt = now;
+  }
+
+  /** They are back: the time away is taken off the time played. Returns whether a tally was waiting for them. */
+  resume(id: number, now: number): boolean {
+    const e = this.entries.get(id);
+    if (!e) return false;
+    if (e.pausedAt !== null) e.since += Math.max(0, now - e.pausedAt);
+    e.pausedAt = null;
+    return true;
+  }
+
+  has(id: number): boolean {
+    return this.entries.has(id);
   }
 
   private entry(id: number): Entry | null {
@@ -135,7 +156,7 @@ export class MatchRecorder {
     const e = this.entries.get(id);
     if (!e) return null;
     this.entries.delete(id);
-    e.tally.seconds = Math.max(0, now - e.since);
+    e.tally.seconds = Math.max(0, (e.pausedAt ?? now) - e.since);
     return { tally: e.tally, completed: e.tally.seconds >= MIN_COMPLETION_SECONDS };
   }
 
@@ -146,5 +167,5 @@ export class MatchRecorder {
 }
 
 function newEntry(now: number): Entry {
-  return { tally: emptyTally(), victims: new Map(), hurtBy: new Map(), streak: 0, since: now };
+  return { tally: emptyTally(), victims: new Map(), hurtBy: new Map(), streak: 0, since: now, pausedAt: null };
 }

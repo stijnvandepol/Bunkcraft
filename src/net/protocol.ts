@@ -237,7 +237,14 @@ export type ClientMessage =
    */
   /** `binv`: highest binary format understood (2 = quantised arcade snapshots, see binary.ts); absent = 1. */
   /** `profile`: the Realms profile token (POST /api/profile) for server-side XP and the rank icon; optional. */
-  | { t: 'hello'; v: number; name: string; key?: string; owner?: string; password?: string; bin?: boolean; binv?: number; profile?: string }
+  /**
+   * `rejoin`: the secret an arcade game handed out in its last `welcome` (see `welcome.rejoin`). After a dropped
+   * connection it claims the seat that was kept for this player (team, score, class, match XP); no other proof
+   * works against another player's seat, and a token only ever applies to the lobby that issued it.
+   */
+  | { t: 'hello'; v: number; name: string; key?: string; owner?: string; password?: string; bin?: boolean; binv?: number; profile?: string; rejoin?: string }
+  /** The player leaves on purpose (quit to title): the seat is freed at once instead of being kept for a rejoin. */
+  | { t: 'bye' }
   /**
    * `step` (optional, older clients leave it out): the client's physics clock, 60 Hz steps simulated so far. The
    * arcade movement validator times the jump curve and the speed budget with it (arrival times bunch up under load).
@@ -327,6 +334,13 @@ export type ServerMessage =
     rules?: Record<string, boolean | number>;
     /** The server stores chests and furnaces and understands `container` messages. Absent on older servers. */
     containers?: boolean;
+    /**
+     * Arcade rejoin: a fresh secret for the next `hello.rejoin` (single use), the seconds the server keeps a dropped
+     * player's seat, and whether this login took back a kept seat (team, score and match XP restored).
+     */
+    rejoin?: string;
+    rejoinSec?: number;
+    rejoined?: boolean;
   }
   /** Difficulty or game rules changed (/difficulty, /gamerule). */
   | { t: 'rules'; difficulty: Difficulty; rules: Record<string, boolean | number> }
@@ -356,7 +370,10 @@ export type ServerMessage =
   /** A lightning strike on the ground at this position (everyone renders the same bolt and hears the thunder). */
   | { t: 'bolt'; x: number; y: number; z: number }
   | { t: 'teleport'; x: number; y: number; z: number }
-  /** `reconnect`: the server is restarting; try again after this many milliseconds. `code` tells why for login failures. */
+  /**
+   * `reconnect`: come back after this many milliseconds (the server is restarting, or an arcade player was dropped for
+   * lag and their seat is kept). `code` tells why for login failures.
+   */
   | { t: 'kick'; reason: string; reconnect?: number; code?: 'password' | 'banned' | 'whitelist' | 'identity' | 'full' }
   /** The server corrected your inventory (it did not accept your last update); replace it. */
   | { t: 'state'; inventory: number[][]; reason?: string }

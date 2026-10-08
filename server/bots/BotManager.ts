@@ -141,7 +141,7 @@ export class BotManager {
     const m = this.host.match;
     let from: Team | '' = team ?? '';
     if (!from && m.teams) {
-      const red = m.teamSize('red'), blue = m.teamSize('blue');
+      const red = m.seatedTeamSize('red'), blue = m.seatedTeamSize('blue');
       from = red > blue ? 'red' : blue > red ? 'blue' : '';
     }
     let best: number | null = null, bestScore = -Infinity;
@@ -179,7 +179,7 @@ export class BotManager {
     const m = this.host.match;
     if (m.teams && added === 0) {
       // Uneven by two or more and the bigger team has a bot: it leaves, and the next step adds one to the smaller team.
-      const red = m.teamSize('red'), blue = m.teamSize('blue');
+      const red = m.seatedTeamSize('red'), blue = m.seatedTeamSize('blue');
       if (Math.abs(red - blue) >= 2) {
         const big: Team = red > blue ? 'red' : 'blue';
         for (const id of this.bots.keys()) {

@@ -44,6 +44,8 @@ export interface RoomOptions {
   quickPlayBotDifficulty?: BotDifficulty;
   /** Realms progression shared by every game (absent = no XP). */
   profiles?: ProfileService | null;
+  /** Seconds an arcade game keeps a dropped player's seat (see ServerOptions.rejoinGraceSec). */
+  rejoinGraceSec?: number;
 }
 
 /** Hashes and flags for a new game, computed by the caller (hashing is async). */
@@ -166,6 +168,17 @@ export class Rooms {
     return n;
   }
 
+  /** Whether a loaded game keeps a seat for the player this proof (rejoin token / profile token) belongs to; never loads a game. */
+  rejoinStatus(raw: string, proof: { token?: unknown; profile?: unknown }): ReturnType<GameServer['rejoinStatus']> & { gameType?: GameType; map?: string } | null {
+    const code = normalizeCode(raw);
+    const live = code ? this.loaded.get(code) : undefined;
+    if (!live) return null;
+    const st = live.server.rejoinStatus(proof);
+    if (st.state === 'none') return st;
+    const status = live.server.lobbyStatus();
+    return { ...st, gameType: live.server.info().gameType, ...(status ? { map: status.map } : {}) };
+  }
+
   /** Creates a new room and returns its code, or null when the server is full of rooms. */
   create(name: string | ((code: string) => string), gameMode: string | undefined, seed: string | undefined, match: MatchRequest = {}, security: RoomSecurity = {}): string | null {
     if (this.onDisk >= this.opts.maxRooms) return null;
@@ -245,6 +258,7 @@ export class Rooms {
       binary: this.opts.binary,
       genPool: this.opts.genPool,
       profiles: this.opts.profiles,
+      rejoinGraceSec: this.opts.rejoinGraceSec,
       onMetaChange: () => { const r = this.loaded.get(code); if (r) this.writeMeta(code, r.server); },
     };
   }
@@ -299,7 +313,8 @@ export class Rooms {
       const live = this.loaded.get(code);
       const status = live?.server.lobbyStatus() ?? null;
       out.push({
-        code, gameType: m.gameType, players: live?.server.playerCount ?? 0, maxPlayers: live?.server.maxPlayers ?? m.maxPlayers,
+        // Kept seats are somebody's: matchmaking does not hand them out.
+        code, gameType: m.gameType, players: (live?.server.playerCount ?? 0) + (live?.server.reservedSeats ?? 0), maxPlayers: live?.server.maxPlayers ?? m.maxPlayers,
         open: m.listed && !m.locked,
         ...(status && live!.server.playerCount > 0 ? { phase: status.phase, timeLeft: status.timeLeft, progress: status.progress } : {}),
       });
@@ -448,7 +463,8 @@ export class Rooms {
   private maintain(): void {
     const now = Date.now();
     for (const [code, r] of this.loaded) {
-      if (r.server.playerCount > 0) {
+      // A kept seat keeps the game loaded: its player may be back any moment (and its XP is paid when the game unloads).
+      if (r.server.playerCount > 0 || r.server.reservedSeats > 0) {
         r.lastActive = now;
       } else if (now - r.lastActive > this.opts.idleUnloadMs) {
         r.server.shutdown(); // saves to disk

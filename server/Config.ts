@@ -67,6 +67,8 @@ export interface Config {
   profileCreateLimit: number;
   /** HMAC secret for profile tokens (PROFILE_SECRET); unset = DATA_DIR/profiles/secret.key. */
   profileSecret?: string;
+  /** Seconds an arcade game keeps a dropped player's seat, score and match XP for a rejoin (REJOIN_GRACE_SEC, default 120, 0 = off). */
+  rejoinGraceSec: number;
 }
 
 const flag = (v: string | undefined, dflt: boolean): boolean => (v === undefined || v === '' ? dflt : !/^(0|off|false|no)$/i.test(v));
@@ -119,6 +121,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     maxProfiles: Math.max(0, Math.floor(num(env.MAX_PROFILES, 50_000))),
     profileCreateLimit: Math.max(1, Math.floor(num(env.PROFILE_CREATE_LIMIT, 10))),
     profileSecret: env.PROFILE_SECRET || undefined,
+    rejoinGraceSec: Math.max(0, Math.min(3600, num(env.REJOIN_GRACE_SEC, 120))),
   };
 }
 
