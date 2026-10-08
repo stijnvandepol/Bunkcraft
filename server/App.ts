@@ -163,7 +163,7 @@ export async function startServer(config: Config): Promise<RunningServer> {
   /** Client address; X-Forwarded-For only when a trusted reverse proxy sets it, CF-Connecting-IP only behind a Cloudflare Tunnel. */
   function clientIp(req: IncomingMessage): string {
     // Only the last X-Forwarded-For entry (appended by our own proxy) can be trusted: see HttpSecurity.clientAddress.
-    const ip = clientAddress(req.headers['x-forwarded-for'], req.socket.remoteAddress, config.trustProxy, req.headers['cf-connecting-ip'], config.trustCloudflare);
+    const ip = clientAddress(req.headers['x-forwarded-for'], req.socket.remoteAddress, config.trustProxy, req.headers['cf-connecting-ip'], config.trustCloudflare, config.trustedProxyAddrs);
     // IPv4 clients of a dual-stack socket show up as ::ffff:1.2.3.4; keep one spelling for limits and blocks.
     return ip.replace(/^::ffff:/i, '');
   }

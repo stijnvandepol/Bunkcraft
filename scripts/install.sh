@@ -21,10 +21,13 @@
 #   --proxy MODE         caddy (default): Caddy in front, automatic HTTPS on ports 80/443 (PROXY, kept in .env)
 #                        none: no Caddy and no 80/443; the game server is published on --bind:--port for a Cloudflare
 #                        Tunnel or another proxy you run yourself (TRUST_CLOUDFLARE=1: the CF-Connecting-IP header
-#                        is the client address, so only let the tunnel reach that port)
+#                        is the client address, but only on connections from --trust-from)
 #   --bind ADDR          --proxy none: 127.0.0.1 (default; the proxy runs on this machine) or 0.0.0.0 (it runs
 #                        elsewhere) (BIND_ADDR)
 #   --port N             --proxy none: the port on the host, default 3000 (BUNKCRAFT_PORT)
+#   --trust-from ADDRS   --proxy none: address(es)/IPv4 CIDRs of the cloudflared host, comma separated
+#                        (TRUSTED_PROXY_ADDRS). Required with --bind 0.0.0.0 to trust CF-Connecting-IP; with
+#                        --bind 127.0.0.1 the default is this machine and the Docker networks
 #   --admin-token TOKEN  admin token for /admin (ADMIN_TOKEN); generated when missing
 #   --dir PATH           where the code lives (BUNKCRAFT_DIR); default: this checkout, else /opt/bunkcraft
 #   --repo URL           git repository to clone (BUNKCRAFT_REPO)
@@ -55,7 +58,7 @@ IMAGE_ARG="${BUNKCRAFT_IMAGE:-}"
 MODE=""   # build | pull | "" (keep what .env says; pull on a fresh install)
 FIREWALL=1 SWAP=1 BACKUPS=1 START=1 DRY=0
 AUTOUPDATE_ARG="" INTERVAL_ARG=""
-PROXY="${PROXY:-}" BIND_ARG="${BIND_ADDR:-}" PORT_ARG="${BUNKCRAFT_PORT:-}"
+PROXY="${PROXY:-}" BIND_ARG="${BIND_ADDR:-}" PORT_ARG="${BUNKCRAFT_PORT:-}" TRUST_FROM_ARG="${TRUSTED_PROXY_ADDRS:-}"
 ORIG_ARGS=("$@")
 
 usage() { sed -n '2,/^set -euo/p' "$0" | sed -e '$d' -e 's/^# \{0,1\}//'; }
@@ -79,6 +82,8 @@ while [ $# -gt 0 ]; do
     --bind) BIND_ARG="${2:?--bind needs a value}"; shift 2 ;;
     --bind=*) BIND_ARG="${1#*=}"; shift ;;
     --port) PORT_ARG="${2:?--port needs a value}"; shift 2 ;;
+    --trust-from) TRUST_FROM_ARG="${2:?--trust-from needs a value}"; shift 2 ;;
+    --trust-from=*) TRUST_FROM_ARG="${1#*=}"; shift ;;
     --port=*) PORT_ARG="${1#*=}"; shift ;;
     --build) MODE=build; shift ;;
     --pull) MODE=pull; shift ;;
@@ -288,10 +293,21 @@ if [ "$PROXY" = none ]; then
   set_env BIND_ADDR "$BIND_ADDR" "$([ -n "$BIND_ARG" ] && echo 1 || echo 0)"
   set_env BUNKCRAFT_PORT "$GAME_PORT" "$([ -n "$PORT_ARG" ] && echo 1 || echo 0)"
   set_env TRUST_PROXY 0
-  set_env TRUST_CLOUDFLARE 1
+  # CF-Connecting-IP is only trusted on connections from the cloudflared host: anyone else reaching the
+  # port could forge it. On 127.0.0.1 only this machine (via Docker's bridge gateway) can connect.
+  TRUST_FROM="${TRUST_FROM_ARG:-$(env_value TRUSTED_PROXY_ADDRS)}"
+  if [ -z "$TRUST_FROM" ] && [ "$BIND_ADDR" = 127.0.0.1 ]; then TRUST_FROM="127.0.0.1,::1,172.16.0.0/12"; fi
+  if [ -n "$TRUST_FROM" ]; then
+    set_env TRUSTED_PROXY_ADDRS "$TRUST_FROM" 1
+    set_env TRUST_CLOUDFLARE 1 1
+  else
+    set_env TRUST_CLOUDFLARE 0 1
+    warn "--bind $BIND_ADDR without --trust-from: CF-Connecting-IP is NOT trusted (anyone reaching the port could forge it), so"
+    warn "rate limits use the cloudflared host's address. Rerun with --trust-from <cloudflared-ip> and firewall the port to it."
+  fi
   set_profiles nocaddy
 else
-  if [ "$PREV_PROXY" = none ]; then unset_env TRUST_PROXY; unset_env TRUST_CLOUDFLARE; fi
+  if [ "$PREV_PROXY" = none ]; then unset_env TRUST_PROXY; unset_env TRUST_CLOUDFLARE; unset_env TRUSTED_PROXY_ADDRS; fi
   set_profiles caddy
 fi
 if [ -n "$ADMIN_TOKEN_ARG" ]; then set_env ADMIN_TOKEN "$ADMIN_TOKEN_ARG" 1; else set_env ADMIN_TOKEN "$(token)"; fi

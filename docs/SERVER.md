@@ -165,7 +165,7 @@ optioneel):
 
 ```bash
 sudo ./scripts/install.sh --proxy none --domain play.example.com            # cloudflared draait op deze machine
-sudo ./scripts/install.sh --proxy none --domain play.example.com --bind 0.0.0.0   # cloudflared draait elders
+sudo ./scripts/install.sh --proxy none --domain play.example.com --bind 0.0.0.0 --trust-from 192.168.1.20   # cloudflared draait elders (op dat IP)
 ```
 
 `--port 3000` verandert de poort op de host (standaard 3000). De keuze (`PROXY`, `BIND_ADDR`, `BUNKCRAFT_PORT`) blijft in
@@ -183,11 +183,13 @@ dit ook):
 WebSockets (`/ws`) werken door een tunnel zonder extra instelling. Cloudflare regelt HTTPS; HSTS zet je in het dashboard
 (SSL/TLS → Edge Certificates), want de Caddyfile doet dat in deze modus niet.
 
-**Bezoekers-IP.** `--proxy none` zet `TRUST_CLOUDFLARE=1` en `TRUST_PROXY=0` in `.env`: de limieten per bezoeker gebruiken de
-`CF-Connecting-IP`-header en `X-Forwarded-For` wordt genegeerd. Dat is alleen veilig als **uitsluitend de tunnel** de poort
-bereikt, anders kan iedereen de header zelf meesturen. Met `--bind 127.0.0.1` is dat vanzelf zo. Met `--bind 0.0.0.0` beperk je de
-poort tot de cloudflared-machine via de firewall van je cloudprovider of `iptables` in de `DOCKER-USER`-chain (Docker
-publiceert poorten langs `ufw` heen).
+**Bezoekers-IP.** `--proxy none` zet `TRUST_PROXY=0` en, als de server weet wie de tunnel is, `TRUST_CLOUDFLARE=1` met
+`TRUSTED_PROXY_ADDRS` in `.env`. De limieten per bezoeker gebruiken dan de `CF-Connecting-IP`-header, maar **alleen** op
+verbindingen vanaf die adressen; van ieder ander wordt de header genegeerd (anders kan iedereen die de poort bereikt zijn eigen
+IP kiezen). Met `--bind 127.0.0.1` vertrouwt hij automatisch deze machine en de Docker-netwerken. Met `--bind 0.0.0.0` geef je
+het IP van de cloudflared-machine op met `--trust-from` (meerdere adressen of IPv4-CIDR's met komma's); zonder die optie wordt de
+header niet vertrouwd en waarschuwt het script. Beperk de poort daarnaast tot de cloudflared-machine via de firewall van je
+cloudprovider of `iptables` in de `DOCKER-USER`-chain (Docker publiceert poorten langs `ufw` heen).
 
 **Controleren of autoupdate draait:**
 

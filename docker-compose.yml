@@ -49,6 +49,8 @@ services:
       # 1 = the proxy in front (Caddy) sets X-Forwarded-For. install.sh --proxy none sets 0 and TRUST_CLOUDFLARE=1.
       TRUST_PROXY: ${TRUST_PROXY:-1}
       TRUST_CLOUDFLARE: ${TRUST_CLOUDFLARE:-0}
+      # Who may send CF-Connecting-IP: the cloudflared host (install.sh sets it; empty = loopback only).
+      TRUSTED_PROXY_ADDRS: ${TRUSTED_PROXY_ADDRS:-}
       MAIN_WORLD: ${MAIN_WORLD:-on}
       ROOMS: ${ROOMS:-on}
       MAX_ROOMS: ${MAX_ROOMS:-200}

@@ -15,6 +15,8 @@ export interface Config {
   trustProxy: boolean;
   /** Use the CF-Connecting-IP header as the client address (TRUST_CLOUDFLARE): only behind a Cloudflare Tunnel. */
   trustCloudflare: boolean;
+  /** Addresses/IPv4 CIDRs allowed to send CF-Connecting-IP (TRUSTED_PROXY_ADDRS): the cloudflared host. Default loopback. */
+  trustedProxyAddrs: string[];
   mainWorld: boolean;
   roomsEnabled: boolean;
   worldName: string;
@@ -83,6 +85,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     dataDir: resolve(env.DATA_DIR ?? 'data'),
     trustProxy: flag(env.TRUST_PROXY, false),
     trustCloudflare: flag(env.TRUST_CLOUDFLARE, false),
+    trustedProxyAddrs: list(env.TRUSTED_PROXY_ADDRS).length ? list(env.TRUSTED_PROXY_ADDRS) : ['127.0.0.1', '::1'],
     mainWorld: flag(env.MAIN_WORLD, true),
     roomsEnabled: flag(env.ROOMS, true),
     worldName: env.WORLD_NAME ?? 'BunkCraft Server',
