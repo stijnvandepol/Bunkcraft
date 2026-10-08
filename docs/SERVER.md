@@ -306,6 +306,7 @@ limieten per bezoeker werken in plaats van per proxy.
 | `ARCADE_CULLING` | `on` | Anti-wallhack: arcade-snapshots per speler zonder onzichtbare vijanden (`off` = iedereen naar iedereen) |
 | `ARCADE_AUTOKICK_SCORE` | `0` | Kick bij deze aim-verdenkingsscore (0-100; `0` = nooit, alleen loggen) |
 | `QUICKPLAY_BOTS` | `8` | Nieuwe Snel spelen-lobby's vullen met server-bots tot zoveel spelers; bots maken plaats voor wie erbij komt (`0` = geen bots). Zie GAMEMODES.md §Bots. |
+| `REJOIN_GRACE_SEC` | `120` | Seconden dat een arcade-lobby de plek, score, class en match-XP van een speler bewaart nadat de verbinding wegviel (netwerk, herladen, crash, kick voor lag). Binnen die tijd komt de speler met zijn rejoin-token terug in dezelfde match; erna is de plek vrij en wordt de XP uitbetaald. `0` = uit. Zie GAMEMODES.md §Terugkeren na een verbroken verbinding. |
 | `QUICKPLAY_BOT_DIFFICULTY` | `normal` | Niveau van die bots: `easy`, `normal`, `hard` of `veteran` |
 | `BOT_PREWARM` | `on` | Bouwt bij het opstarten op de achtergrond de navigatiegrafen van alle kaarten (~1 s CPU, ~20 MB), zodat een lobby nooit midden in een potje hapert |
 | `BACKUP_KEEP` | `12` | Aantal back-ups per wereld (`0` = geen back-ups) |
@@ -667,6 +668,10 @@ Een game aanmaken (`POST /api/rooms`) accepteert `{ name, gameMode, seed, gameTy
   `201 { code, created: true }` voor een nieuwe (openbaar, `rotate`, standaardlimieten, naam "Team Deathmatch #K7Q").
   Eigen limiet van 20 verzoeken per minuut per adres; alleen het **openen** van een lobby telt mee voor
   `ROOM_CREATE_LIMIT` (anders `429`). Keuzeregels: `src/modes/Realms.ts`.
+- `POST /api/rejoin { code, token }` (profieltoken optioneel in `Authorization: Bearer`): bewaart die lobby nog de plek van
+  deze browser? `200 { state: 'kept' | 'live' | 'none', secondsLeft, name?, gameType?, map? }`. De geheimen staan in de body
+  en header, nooit in de URL; een bewijs zegt alleen iets over de plek waar het bij hoort. Laadt nooit een game van schijf
+  (een plek bestaat alleen in een draaiende lobby). Valt onder de opzoeklimiet.
 - `GET /api/realms`: `{ modes: [{ gameType, players, lobbies }] }` per arcade-mode (spelers in alle geladen games van die
   mode, openbare lobby's zonder wachtwoord met spelers). Valt onder de lijstlimiet.
 - `GET /api/rooms?public=1&kind=minecraft|arcade`: de serverlijst voor Multiplayer of Realms; zonder `kind` beide (oudere

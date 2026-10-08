@@ -622,6 +622,41 @@ Alles procedureel (geen samples), data in `src/core/audio/weaponSounds.ts`, rece
   1,8 hoog staand, 1,5 gehurkt, 1,15 in een slide.
 - Een klasse geldt vanaf je **volgende leven**, behalve als je hem binnen 3 s na je spawn en vóór je eerste schot kiest: dan meteen.
 
+### Terugkeren na een verbroken verbinding (rejoin)
+
+Wie uit een arcade-match valt (netwerk, pagina herladen, browsercrash, de server die een speler voor lag verwijdert) hoeft niet
+opnieuw te beginnen. **Niet** voor valsspelen, een ban of een kick van een operator, en niet als je zelf via "Terug naar
+titelscherm" weggaat (de client stuurt dan `bye`: de plek is meteen vrij en het ticket weg).
+
+- **Wat de server bewaart** (`Match.parked`, `REJOIN_GRACE_SEC` = 120 s): team, kills, deaths, doelpunten (`pts`: gun-game-level,
+  vlaggen, zones), killstreak, de gekozen class, de rank en de **match-XP** (de `MatchRecorder`-tally; de klok van "tijd gespeeld"
+  staat stil zolang je weg bent). Niet bewaard: het leven zelf (health, munitie, positie): je spawnt vers.
+- **De plek blijft bezet.** Bots nemen hem niet (ze tellen bewaarde plekken als mensen voor het aantal, maar spelen alleen als er
+  iemand verbonden is), Snel spelen rekent hem mee als bezet, het team blijft in balans (`seatedTeamSize`), een nieuwe speler met
+  jouw naam wordt geweigerd. Een lobby bewaart hooguit de helft van zijn plekken tegelijk (daarna vervalt de oudste), zodat niemand
+  een lobby kan dichtzetten door te bellen en weg te vallen. Blijven er alleen bewaarde plekken over, dan **staat de match stil** en wordt
+  een lobby die helemaal leegloopt na de grace opnieuw begonnen; de kamer blijft zo lang geladen.
+- **Wie mag terugkomen** (`hello.rejoin` of een van de twee andere bewijzen, altijd met dezelfde naam): het **rejoin-token** uit de
+  vorige `welcome` (192 bit, alleen de hash staat op de server, eenmalig: elke welcome geeft een nieuwe), de **identiteitssleutel**
+  van de browser (de naamclaim), of het **ondertekende profieltoken**. Een token geldt alleen in de lobby die het uitgaf; een
+  ander token, naam of lobby geeft gewoon een nieuwe speler en raakt de bewaarde plek niet. Een login die nog open staat
+  (herladen vóór de server de oude socket zag sluiten) neemt de plek over.
+- **Geen misbruik:** een terugkerende speler spawnt pas na `max(3 s, de respawn waar hij op wachtte)`; wie binnen 5 s na schade
+  wegviel krijgt de **dood** alsnog (geen ontsnappen, genezen of herladen door opnieuw te verbinden); deaths, score en streak
+  worden nooit gereset; spawnbescherming is de gewone van een respawn. In een rondemode kom je terug als toeschouwer tot de volgende ronde.
+- **Match afgelopen terwijl je weg was:** de XP voor de gespeelde tijd wordt aan het einde uitbetaald (resultaat naar je team;
+  in een vrij-voor-allen beslissen de aanwezigen), precies één keer; het rapport (`progress`) wacht op je terugkeer. Loopt de
+  plek af midden in een match, dan krijg je wat je tot dan deed zonder voltooiings- of winbonus (zoals bij weggaan). Bij een
+  nieuwe match beginnen de bewaarde plekken ook op nul en worden opnieuw ingedeeld.
+- **Client:** valt de verbinding weg dan toont het spel "Opnieuw verbinden..." en probeert het opnieuw met een pauze die
+  groeit (1, 2, 4, 8 s, daarna 8 s) tot de grace (+20 s) voorbij is; een weigering van de server (vol, naam bezet, ban) stopt het
+  meteen. Het rejoin-token staat samen met de lobbycode in `sessionStorage` en `localStorage` (`bunkcraft.rejoin`, `src/net/Rejoin.ts`).
+  Na een herlading staat op het startscherm **"Ga terug naar je match (code XYZ, nog 1:45)"**, na een controle bij
+  `POST /api/rejoin`.
+- **Build & Survival** kent geen grace: positie, inventory en health staan per speler in `world.json` en horen bij de naam. Een
+  verbinding die wegvalt (of een herlading die de server voor is) levert dezelfde staat op; de server schrijft die nu ook
+  binnen twee seconden na het weggaan weg (niet pas bij de volgende 30-secondenronde). De client verbindt zelf opnieuw.
+
 ### Tempo gemeten (botmatches)
 
 `npx tsx scripts/flow-metrics.ts 8 300 --maps=classic,suburb,quarter,town,dockyard --type=tdm|ffa --seed=1..3`: 8 bots via de echte
