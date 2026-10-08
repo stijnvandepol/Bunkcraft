@@ -72,6 +72,27 @@ export async function forcePlaying(page: Page): Promise<void> {
   });
 }
 
+/**
+ * Opens the pause menu (Esc) on a page that is in the forced playing state. forcePlaying only fakes the lock flag:
+ * Linux Chromium (CI) grants the real Pointer Lock after the click that started the game, and while it is held every
+ * mouse event goes to the locked canvas, so no menu button can be clicked ("<div role=dialog> intercepts pointer
+ * events"). macOS Chromium does not grant it, which hid this locally. Release the real lock like Esc does.
+ */
+export async function openPauseMenu(page: Page): Promise<void> {
+  await page.bringToFront();
+  await page.evaluate(async () => {
+    const g = (window as unknown as { game: { input: { locked: boolean }; state: string; showPauseMenu(): void } }).game;
+    if (document.pointerLockElement) {
+      const released = new Promise<void>((resolve) => document.addEventListener('pointerlockchange', () => resolve(), { once: true }));
+      document.exitPointerLock();
+      await released;
+    }
+    // The lock change pauses the game by itself when the real lock was held; without a real lock do what it does.
+    if (!document.querySelector('.screen.pause')) { g.input.locked = false; g.state = 'paused'; g.showPauseMenu(); }
+  });
+  await page.waitForFunction(() => document.pointerLockElement === null);
+}
+
 /** Runs `ms` of game time with the window in front (a background window renders at 1-10 FPS). */
 export async function play(page: Page, ms: number): Promise<void> {
   const end = Date.now() + ms;
