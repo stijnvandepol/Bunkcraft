@@ -4,7 +4,7 @@ import { traceBlocks } from '../../server/Combat';
 import { ServerWorld } from '../../server/ServerWorld';
 import { arenaWorldType } from '../../src/world/WorldGenerator';
 import { type MapId, getMap } from '../../src/modes/maps';
-import { arenaPath, follow } from '../../scripts/lib/arenaPath';
+import { arenaPath, clientStep, follow } from '../../scripts/lib/arenaPath';
 import { arcadeMaxSpeed } from '../../src/modes/ArcadeLogic';
 
 /** Running pace of the victim: just under the rifle's run speed (the server allows 3 % on top). */
@@ -18,16 +18,21 @@ const EYE = 1.62;
 /** Reports the position the server just gave us (it ignores positions from before a spawn until we arrive). */
 async function arrive(c: Client, after: number): Promise<Spawn> {
   const sp = await c.waitType('spawn', 8000, after);
-  c.send({ t: 'pos', x: sp.x, y: sp.y, z: sp.z, yaw: sp.yaw, pitch: 0, flags: 4, held: 0 });
+  c.send({ t: 'pos', x: sp.x, y: sp.y, z: sp.z, yaw: sp.yaw, pitch: 0, flags: 4, held: 0, step: clientStep() });
   return sp;
 }
 
-/** Can a bullet from `eye` reach the feet, the chest and the head of a player standing at `p`? */
+/**
+ * Can a bullet from `eye` reach the feet, the chest and the head of a player standing at `p`? Each of the three points
+ * must be reachable in a straight line: no solid block between the eye and the point itself. (The trace used to run
+ * 0.5 blocks past the point, so the floor behind a victim standing close by counted as "blocked", and a victim that
+ * reached the shooter's own cell was never "in sight" on maps where cover hid the whole approach.)
+ */
 function inSight(world: ServerWorld, eye: { x: number; y: number; z: number }, p: { x: number; y: number; z: number }): boolean {
   for (const h of [0.2, 1.0, HITBOX.height - HITBOX.head / 2]) {
     const t = { x: p.x, y: p.y + h, z: p.z };
     const len = Math.hypot(t.x - eye.x, t.y - eye.y, t.z - eye.z);
-    if (traceBlocks(world, eye.x, eye.y, eye.z, (t.x - eye.x) / len, (t.y - eye.y) / len, (t.z - eye.z) / len, len + 0.5) < len + 0.5) return false;
+    if (traceBlocks(world, eye.x, eye.y, eye.z, (t.x - eye.x) / len, (t.y - eye.y) / len, (t.z - eye.z) / len, len) < len - 0.05) return false;
   }
   return true;
 }
@@ -35,19 +40,37 @@ function inSight(world: ServerWorld, eye: { x: number; y: number; z: number }, p
 /**
  * Walks a player like an honest client (the server validates movement against the map): along a floor
  * path towards `to`, at running pace with 30 Hz position reports, and stops as soon as `stop` says so.
+ *
+ * Like the real client it reports its physics clock (`step`, real time: never ahead of it, so the server times the
+ * speed budget with the client's own clock instead of packet arrival times, which bunch up on a loaded machine), and
+ * when the server rubber-bands it (`teleport`) it continues from where the server put it.
  */
 async function walk(
   c: Client, from: { x: number; y: number; z: number }, to: { x: number; z: number }, mapId: MapId, seed: number,
   stop: (p: { x: number; y: number; z: number }) => boolean,
 ): Promise<{ x: number; y: number; z: number }> {
   const map = getMap(mapId);
-  const route = arenaPath(map, map.variantFor(seed), [from.x, from.z], [to.x, to.z]);
-  expect(route, 'a walking path to the shooter').not.toBeNull();
+  const variant = map.variantFor(seed);
+  const pathFrom = (p: { x: number; y: number; z: number }) => {
+    const r = arenaPath(map, variant, [p.x, p.z, p.y], [to.x, to.z]);
+    expect(r, 'a walking path to the shooter').not.toBeNull();
+    return r!;
+  };
   const me = { x: from.x, y: from.y, z: from.z };
-  while (route!.length && !stop(me)) {
-    follow(me, route!, PACE / 30);
-    c.send({ t: 'pos', x: me.x, y: me.y, z: me.z, yaw: 0, pitch: 0, flags: 4, held: 0 });
+  let route = pathFrom(me);
+  let seen = c.of('teleport').length;
+  while (route.length && !stop(me)) {
+    follow(me, route, PACE / 30);
+    c.send({ t: 'pos', x: me.x, y: me.y, z: me.z, yaw: 0, pitch: 0, flags: 4, held: 0, step: clientStep() });
     await sleep(33);
+    const tps = c.of('teleport');
+    if (tps.length > seen) {
+      const tp = tps[tps.length - 1];
+      seen = tps.length;
+      me.x = tp.x; me.y = tp.y; me.z = tp.z;
+      route = pathFrom(me);
+      c.send({ t: 'pos', x: me.x, y: me.y, z: me.z, yaw: 0, pitch: 0, flags: 4, held: 0, step: clientStep() });
+    }
   }
   return me;
 }
@@ -74,7 +97,7 @@ export async function playArcadeMatch(srv: TestServer, type: 'tdm' | 'ffa', mapI
     await sleep(300);
     const latest = (c: Client): Spawn => {
       const sp = c.of('spawn').at(-1)!;
-      c.send({ t: 'pos', x: sp.x, y: sp.y, z: sp.z, yaw: sp.yaw, pitch: 0, flags: 4, held: 0 });
+      c.send({ t: 'pos', x: sp.x, y: sp.y, z: sp.z, yaw: sp.yaw, pitch: 0, flags: 4, held: 0, step: clientStep() });
       return sp;
     };
     const shooterSpawn = latest(shooter);
