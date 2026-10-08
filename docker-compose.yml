@@ -1,10 +1,14 @@
-# BunkCraft on your own domain with automatic HTTPS (Caddy gets the certificate).
+# BunkCraft on your own domain with automatic HTTPS (Caddy gets the certificate), or behind your own proxy.
 #
 #   Fresh Ubuntu/Debian server:  sudo ./scripts/install.sh --domain play.example.com
 #   By hand:
 #   1. Point an A/AAAA record for your domain at this server (ports 80 and 443 open).
-#   2. DOMAIN=play.example.com docker compose up -d
+#   2. DOMAIN=play.example.com COMPOSE_PROFILES=caddy docker compose up -d
 #   3. Open https://play.example.com and press Multiplayer → Create Game.
+#
+# Caddy is the compose profile "caddy" (install.sh writes COMPOSE_PROFILES=caddy to .env); without it only the game
+# server starts. Behind a Cloudflare Tunnel (or any proxy you run yourself) use  install.sh --proxy none  instead:
+# that adds docker-compose.direct.yml (through COMPOSE_FILE in .env), which publishes the game on BIND_ADDR:BUNKCRAFT_PORT.
 #
 # Optional settings go in a .env file next to this one (see docs/SERVER.md). Updates: ./scripts/update.sh.
 #
@@ -42,7 +46,9 @@ services:
     # SIGTERM saves every game and tells players to reconnect; give it time to finish.
     stop_grace_period: 15s
     environment:
-      TRUST_PROXY: "1"
+      # 1 = the proxy in front (Caddy) sets X-Forwarded-For. install.sh --proxy none sets 0 and TRUST_CLOUDFLARE=1.
+      TRUST_PROXY: ${TRUST_PROXY:-1}
+      TRUST_CLOUDFLARE: ${TRUST_CLOUDFLARE:-0}
       MAIN_WORLD: ${MAIN_WORLD:-on}
       ROOMS: ${ROOMS:-on}
       MAX_ROOMS: ${MAX_ROOMS:-200}
@@ -74,9 +80,16 @@ services:
       retries: 3
       start_period: 10s
 
+  # Only with the profile "caddy" (COMPOSE_PROFILES=caddy in .env). DOMAIN is checked when it starts, not when the
+  # file is read, so the game server alone does not need it.
   caddy:
+    profiles: ["caddy"]
     image: caddy:2-alpine
     restart: unless-stopped
+    command:
+      - sh
+      - -c
+      - '[ -n "$$DOMAIN" ] || { echo "Set DOMAIN, e.g. DOMAIN=play.example.com docker compose up -d" >&2; exit 1; }; exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile'
     depends_on:
       bunkcraft:
         condition: service_healthy
@@ -90,7 +103,7 @@ services:
       - "443:443"
       - "443:443/udp"
     environment:
-      DOMAIN: ${DOMAIN:?Set DOMAIN, e.g. DOMAIN=play.example.com docker compose up -d}
+      DOMAIN: ${DOMAIN:-}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data

@@ -16,6 +16,30 @@ dotenv_set() {
 # A setting: the environment wins over .env, then the default.
 setting() { local v="${!1:-}"; [ -n "$v" ] || v="$(dotenv_get "$1")"; printf '%s' "${v:-$2}"; }
 
+# The proxy in front of the game server (PROXY in .env, written by install.sh): caddy (also every install from before
+# this setting existed) or none (Cloudflare Tunnel or another proxy of your own; docker-compose.direct.yml publishes the port).
+proxy_mode() { local v; v="$(dotenv_get PROXY)"; printf '%s' "${v:-caddy}"; }
+
+# Caddy is a compose profile: with the Caddy proxy COMPOSE_PROFILES in .env must name it, or 'docker compose up' leaves it
+# alone. Installs from before the profile existed get PROXY=caddy and the profile here, on their first update.
+# Never fatal and silent when .env is not writable (a status command run as a normal user).
+migrate_proxy_env() {
+  [ -w .env ] && [ "${dry:-0}" != 1 ] || return 0
+  [ "$(proxy_mode)" = caddy ] || return 0
+  [ -n "$(dotenv_get PROXY)" ] || dotenv_set PROXY caddy
+  local profiles; profiles="$(dotenv_get COMPOSE_PROFILES)"
+  case ",$profiles," in *,caddy,*) ;; *) dotenv_set COMPOSE_PROFILES "${profiles:+$profiles,}caddy" ;; esac
+}
+
+# The COMPOSE_FILE value for "build" or "pull" (the image) plus the proxy mode; empty = docker compose's default file.
+compose_file_value() {
+  local files=docker-compose.yml
+  [ "$1" = build ] && files="$files:docker-compose.build.yml"
+  [ "$(proxy_mode)" = none ] && files="$files:docker-compose.direct.yml"
+  [ "$files" = docker-compose.yml ] && files=""
+  printf '%s' "$files"
+}
+
 # One line per deploy event in the deploy log (and on stdout, so the systemd journal has it too).
 deploy_log() {
   local line file

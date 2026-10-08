@@ -16,6 +16,7 @@ Het script installeert wat ontbreekt (Docker Engine + compose uit de officiële 
 passend bij de machine), opent poort 80/443 in `ufw` als die actief is, haalt de kant-en-klare image op, start de game
 achter Caddy (automatisch HTTPS, HTTP/3) en zet een dagelijkse back-up en [automatische updates](#automatisch-deployen) klaar.
 Opnieuw draaien is veilig: bestaande instellingen en werelden blijven staan. `--dry-run` laat zien wat het zou doen.
+Zonder Caddy (eigen proxy, Cloudflare Tunnel): [Achter een Cloudflare Tunnel](#achter-een-cloudflare-tunnel).
 
 **De image komt kant-en-klaar van GHCR** (`ghcr.io/stijnvandepol/bunkcraft`, amd64 en arm64, gebouwd door CI na elke
 groene push naar `main`). Op de server wordt niets gebouwd: installeren en updaten kost seconden en een VPS met 1 GB
@@ -153,6 +154,54 @@ port forwarding), als een eigen gebruiker zonder Docker-rechten die via sudo pre
 een release wel. Laat `AUTOUPDATE` gerust aan: de timer is dan het vangnet als een push-deploy mislukt (lock voorkomt
 dubbel werk). Alleen push: `bunkcraft autoupdate off`, `bunkcraft deploy` blijft werken.
 
+### Achter een Cloudflare Tunnel
+
+Draait `cloudflared` al ergens (op deze machine of een andere) en wil je geen Caddy, geen poort 80/443 en geen DNS-check?
+Dan start `--proxy none` alleen de game-server en publiceert die op één poort. Updates blijven automatisch: de standaard
+is kanaal `latest` (= elke groene push naar `main`) met `AUTOUPDATE=on`.
+
+Vanuit een bestaande clone (met `--domain` gaat alleen `ALLOWED_ORIGINS=https://play.example.com` in `.env`; het domein is
+optioneel):
+
+```bash
+sudo ./scripts/install.sh --proxy none --domain play.example.com            # cloudflared draait op deze machine
+sudo ./scripts/install.sh --proxy none --domain play.example.com --bind 0.0.0.0   # cloudflared draait elders
+```
+
+`--port 3000` verandert de poort op de host (standaard 3000). De keuze (`PROXY`, `BIND_ADDR`, `BUNKCRAFT_PORT`) blijft in
+`.env`, dus `bunkcraft update`, `rollback`, `restart` en de autoupdate-timer werken zonder extra opties. Opnieuw draaien met
+`--proxy caddy --domain …` gaat terug naar Caddy (en andersom wordt de Caddy-container verwijderd).
+
+**Tunnel instellen** (Cloudflare Zero Trust → Networks → Tunnels → je tunnel → *Public Hostname* → *Add*; het script print
+dit ook):
+
+| Veld | Waarde |
+|---|---|
+| Hostname | `play.example.com` |
+| Service | `HTTP` met URL `127.0.0.1:3000` (cloudflared op dezelfde machine, `--bind 127.0.0.1`) of `<ip van deze server>:3000` (`--bind 0.0.0.0`) |
+
+WebSockets (`/ws`) werken door een tunnel zonder extra instelling. Cloudflare regelt HTTPS; HSTS zet je in het dashboard
+(SSL/TLS → Edge Certificates), want de Caddyfile doet dat in deze modus niet.
+
+**Bezoekers-IP.** `--proxy none` zet `TRUST_CLOUDFLARE=1` en `TRUST_PROXY=0` in `.env`: de limieten per bezoeker gebruiken de
+`CF-Connecting-IP`-header en `X-Forwarded-For` wordt genegeerd. Dat is alleen veilig als **uitsluitend de tunnel** de poort
+bereikt, anders kan iedereen de header zelf meesturen. Met `--bind 127.0.0.1` is dat vanzelf zo. Met `--bind 0.0.0.0` beperk je de
+poort tot de cloudflared-machine via de firewall van je cloudprovider of `iptables` in de `DOCKER-USER`-chain (Docker
+publiceert poorten langs `ufw` heen).
+
+**Controleren of autoupdate draait:**
+
+```bash
+bunkcraft autoupdate status   # instelling, timer (volgende run), of er een nieuwe build klaarstaat, laatste deploylog
+bunkcraft status              # image, /health, en op welk adres de game is gepubliceerd
+curl http://127.0.0.1:3000/health
+```
+
+Een nieuwe `latest` komt binnen ≤ 5 minuten (`AUTOUPDATE_INTERVAL`) binnen: back-up, herstart, health check en smoketest, en bij
+een fout automatisch terug. Zelf terugdraaien: `bunkcraft rollback`. Bestaande Caddy-installs veranderen niet: de eerste
+`bunkcraft update` na deze wijziging zet `PROXY=caddy` en `COMPOSE_PROFILES=caddy` in `.env` (Caddy is nu een compose-profiel;
+zonder die regel start `docker compose up -d` alleen de game).
+
 ## Overzicht
 
 Eén Node.js-proces serveert de game (de gebouwde `dist/`) **en** de multiplayer-server
@@ -205,7 +254,7 @@ Het snelst met Docker en Caddy, die het certificaat automatisch regelt:
 ```bash
 # DNS: een A-record van play.example.com naar je server; poort 80 en 443 open.
 git clone <deze repo> && cd Game
-DOMAIN=play.example.com docker compose up -d
+DOMAIN=play.example.com COMPOSE_PROFILES=caddy docker compose up -d   # Caddy is het compose-profiel "caddy"
 ```
 
 Open daarna `https://play.example.com`. De wereld staat in het volume `bunkcraft-data` en overleeft
@@ -228,6 +277,7 @@ limieten per bezoeker werken in plaats van per proxy.
 | `MOTD` | `Welcome to BunkCraft!` | Bericht bij het inloggen |
 | `MAX_PLAYERS` | `20` | Maximum aantal spelers in de hoofdwereld |
 | `TRUST_PROXY` | `0` | `1` achter een reverse proxy: gebruik `X-Forwarded-For` voor de limieten per bezoeker |
+| `TRUST_CLOUDFLARE` | `0` | `1` achter een Cloudflare Tunnel: gebruik de `CF-Connecting-IP`-header voor de limieten per bezoeker (gaat voor op `X-Forwarded-For`). Alleen aanzetten als de server uitsluitend via Cloudflare bereikbaar is: anders kan iedereen die de poort direct bereikt de header zelf meesturen. Zonder deze optie wordt de header genegeerd. `install.sh --proxy none` zet hem aan. |
 | `MAIN_WORLD` | `on` | De hoofdwereld op `/ws` (knop *Join Public Server*) |
 | `ROOMS` | `on` | Spelers kunnen zelf games aanmaken (`off` = alleen de hoofdwereld) |
 | `MAX_ROOMS` | `200` | Maximum aantal games op de server |

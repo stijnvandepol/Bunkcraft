@@ -344,6 +344,23 @@ Gevonden en opgelost: `install.sh` stopte zonder melding bij een domein dat (nog
 vóór zijn eigen waarschuwing daarover. Niet getest: de echte GitHub-job `deploy` en het `stable`-tag (pas bij de eerste
 push naar `main` en de eerste `v*`-tag); de SSH-stap is wel exact zo nagespeeld.
 
+### 5.3 Zonder Caddy: `--proxy none` voor een Cloudflare Tunnel (gedaan)
+
+- **Compose:** Caddy is het profiel `caddy` (`COMPOSE_PROFILES=caddy` in `.env`; `DOMAIN` wordt pas gecontroleerd als Caddy
+  start, dus de game-server alleen heeft het niet nodig). `docker-compose.direct.yml` publiceert `BIND_ADDR:BUNKCRAFT_PORT` →
+  3000 en wordt via `COMPOSE_FILE` gekozen (naast `docker-compose.build.yml`; `lib/deploy.sh` `compose_file_value` houdt
+  beide bij). Bestaande installs krijgen bij de eerste `bunkcraft update`/autoupdate `PROXY=caddy` en `COMPOSE_PROFILES=caddy`
+  (`migrate_proxy_env`); het oude `update.sh` van de allereerste update laat een draaiende Caddy gewoon staan.
+- **Client-IP:** `TRUST_CLOUDFLARE=1` gebruikt `CF-Connecting-IP` (alleen een geldig IP-adres), `TRUST_PROXY=0` negeert
+  `X-Forwarded-For`. Zonder de optie wordt de header genegeerd (unit tests in `tests/security/headers.test.ts`).
+- **Getest** in een `ubuntu:24.04`-container met systemd als PID 1 (Docker 29.8 uit de officiële repo via `install.sh`, lokale
+  `registry:2` als GHCR): verse `install.sh --proxy none --bind 0.0.0.0` vanuit een bestaande clone (geen Caddy, `/health` en
+  gamepagina op de gepubliceerde poort); nieuwe image gepusht → de timer rolt hem uit (back-up, smoketest, `update ok`);
+  `bunkcraft rollback` (twee keer), `update --pull --force` (`COMPOSE_FILE` blijft), `backup`, `restart`, `status`; kapotte
+  image → automatisch terug. Caddy-pad: install met de oude scripts, daarna `bunkcraft update` naar de nieuwe code (Caddy blijft
+  draaien, tweede update migreert `.env`, HTTPS blijft werken); wisselen caddy → none → caddy op dezelfde map (Caddy-container
+  weg/terug, `TRUST_*` weg/terug, `--bind 127.0.0.1` is van buiten niet bereikbaar). shellcheck: schoon.
+
 ## 6. Open beslissingen voor Stijn
 
 - **A. Chunkgeneratie naar een worker thread:** gedaan (§2.6). Het "19 %" uit het profiel bleek vooral de join-fase te zijn; in

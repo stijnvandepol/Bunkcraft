@@ -18,6 +18,8 @@ cd "$(dirname "$(readlink -f "$0")")/.."
 # shellcheck source=scripts/lib/deploy.sh
 . scripts/lib/deploy.sh
 
+migrate_proxy_env || true
+
 UNIT=/etc/systemd/system/bunkcraft-autoupdate
 CRON=/etc/cron.d/bunkcraft-autoupdate
 
@@ -101,6 +103,14 @@ case "${1:-status}" in
       echo "image: $ref, id ${id:7:12}${digest:+, $digest}"
     fi
     docker compose exec -T bunkcraft wget -qO- http://127.0.0.1:3000/health && echo
+    if [ "$(proxy_mode)" = none ]; then
+      addr="$(setting BIND_ADDR 127.0.0.1)"; port="$(setting BUNKCRAFT_PORT 3000)"
+      probe="$addr"; [ "$probe" = 0.0.0.0 ] && probe=127.0.0.1
+      if curl -fsS -m 5 "http://$probe:$port/health" >/dev/null 2>&1; then reach=reachable; else reach="NOT reachable"; fi
+      echo "proxy: none (Cloudflare Tunnel or your own proxy); game published on $addr:$port, $reach from this machine"
+    else
+      echo "proxy: caddy (https://$(setting DOMAIN '<DOMAIN not set>'))"
+    fi
     ;;
   logs) docker compose logs -f --tail=100 bunkcraft ;;
   update) shift; exec ./scripts/update.sh "$@" ;;

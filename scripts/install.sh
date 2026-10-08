@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# BunkCraft: one-command install on a fresh Ubuntu or Debian server (Docker + Caddy with automatic HTTPS).
+# BunkCraft: one-command install on a fresh Ubuntu or Debian server (Docker + Caddy with automatic HTTPS,
+# or --proxy none behind a Cloudflare Tunnel / a proxy of your own).
 #
 #   curl -fsSL https://raw.githubusercontent.com/stijnvandepol/Bunkcraft/main/scripts/install.sh \
 #     | sudo bash -s -- --domain play.example.com
 #   # or from a checkout:
 #   sudo ./scripts/install.sh --domain play.example.com [--admin-token TOKEN]
+#   # behind a Cloudflare Tunnel (cloudflared runs here or elsewhere), no Caddy, no ports 80/443:
+#   sudo ./scripts/install.sh --proxy none --domain play.example.com [--bind 0.0.0.0] [--port 3000]
 #
 # The game server comes as a ready-made image (ghcr.io/stijnvandepol/bunkcraft, amd64 + arm64): nothing is
 # built on the server, so 1 GB of RAM is enough. --build builds it from the checkout instead.
@@ -14,6 +17,14 @@
 #
 # Options (or the environment variable in brackets):
 #   --domain NAME        domain that points at this server (DOMAIN); asked when missing and a terminal is attached
+#                        (with --proxy none it is optional: only used for ALLOWED_ORIGINS=https://NAME)
+#   --proxy MODE         caddy (default): Caddy in front, automatic HTTPS on ports 80/443 (PROXY, kept in .env)
+#                        none: no Caddy and no 80/443; the game server is published on --bind:--port for a Cloudflare
+#                        Tunnel or another proxy you run yourself (TRUST_CLOUDFLARE=1: the CF-Connecting-IP header
+#                        is the client address, so only let the tunnel reach that port)
+#   --bind ADDR          --proxy none: 127.0.0.1 (default; the proxy runs on this machine) or 0.0.0.0 (it runs
+#                        elsewhere) (BIND_ADDR)
+#   --port N             --proxy none: the port on the host, default 3000 (BUNKCRAFT_PORT)
 #   --admin-token TOKEN  admin token for /admin (ADMIN_TOKEN); generated when missing
 #   --dir PATH           where the code lives (BUNKCRAFT_DIR); default: this checkout, else /opt/bunkcraft
 #   --repo URL           git repository to clone (BUNKCRAFT_REPO)
@@ -44,6 +55,7 @@ IMAGE_ARG="${BUNKCRAFT_IMAGE:-}"
 MODE=""   # build | pull | "" (keep what .env says; pull on a fresh install)
 FIREWALL=1 SWAP=1 BACKUPS=1 START=1 DRY=0
 AUTOUPDATE_ARG="" INTERVAL_ARG=""
+PROXY="${PROXY:-}" BIND_ARG="${BIND_ADDR:-}" PORT_ARG="${BUNKCRAFT_PORT:-}"
 ORIG_ARGS=("$@")
 
 usage() { sed -n '2,/^set -euo/p' "$0" | sed -e '$d' -e 's/^# \{0,1\}//'; }
@@ -62,6 +74,12 @@ while [ $# -gt 0 ]; do
     --tag=*) TAG_ARG="${1#*=}"; shift ;;
     --image) IMAGE_ARG="${2:?--image needs a value}"; shift 2 ;;
     --image=*) IMAGE_ARG="${1#*=}"; shift ;;
+    --proxy) PROXY="${2:?--proxy needs a value}"; shift 2 ;;
+    --proxy=*) PROXY="${1#*=}"; shift ;;
+    --bind) BIND_ARG="${2:?--bind needs a value}"; shift 2 ;;
+    --bind=*) BIND_ARG="${1#*=}"; shift ;;
+    --port) PORT_ARG="${2:?--port needs a value}"; shift 2 ;;
+    --port=*) PORT_ARG="${1#*=}"; shift ;;
     --build) MODE=build; shift ;;
     --pull) MODE=pull; shift ;;
     --no-firewall) FIREWALL=0; shift ;;
@@ -112,13 +130,29 @@ if [ -z "$DIR" ]; then
   if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/../docker-compose.yml" ]; then DIR="$(cd "$SCRIPT_DIR/.." && pwd)"; else DIR=/opt/bunkcraft; fi
 fi
 
-# The domain: argument, existing .env, or ask.
-if [ -z "$DOMAIN" ] && [ -f "$DIR/.env" ]; then DOMAIN="$(sed -n 's/^DOMAIN=//p' "$DIR/.env" | tail -n1)"; fi
-if [ -z "$DOMAIN" ] && [ -r /dev/tty ] && { : </dev/tty; } 2>/dev/null; then
+# The proxy: argument, else what an earlier run wrote to .env, else Caddy.
+env_value() { [ -f "$DIR/.env" ] && sed -n "s/^$1=//p" "$DIR/.env" | tail -n1 || true; }
+PREV_PROXY="$(env_value PROXY)"
+[ -n "$PROXY" ] || PROXY="${PREV_PROXY:-caddy}"
+case "$PROXY" in
+  caddy|none) ;;
+  *) die "--proxy '$PROXY': use caddy or none." ;;
+esac
+BIND_ADDR="${BIND_ARG:-$(env_value BIND_ADDR)}"; BIND_ADDR="${BIND_ADDR:-127.0.0.1}"
+GAME_PORT="${PORT_ARG:-$(env_value BUNKCRAFT_PORT)}"; GAME_PORT="${GAME_PORT:-3000}"
+[[ "$BIND_ADDR" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || die "--bind '$BIND_ADDR': use an IPv4 address such as 127.0.0.1 or 0.0.0.0."
+{ [[ "$GAME_PORT" =~ ^[0-9]{1,5}$ ]] && [ "$GAME_PORT" -ge 1 ] && [ "$GAME_PORT" -le 65535 ]; } || die "--port '$GAME_PORT': use a number from 1 to 65535."
+if [ "$PROXY" = caddy ] && { [ -n "$BIND_ARG" ] || [ -n "$PORT_ARG" ]; }; then warn "--bind and --port only apply with --proxy none; ignored."; fi
+
+# The domain: argument, existing .env, or ask. Caddy needs it (certificate); without a proxy it is optional.
+if [ -z "$DOMAIN" ]; then DOMAIN="$(env_value DOMAIN)"; fi
+if [ -z "$DOMAIN" ] && [ "$PROXY" = caddy ] && [ -r /dev/tty ] && { : </dev/tty; } 2>/dev/null; then
   printf 'Domain for BunkCraft (e.g. play.example.com): ' >/dev/tty
   read -r DOMAIN </dev/tty || true
 fi
-[ -n "$DOMAIN" ] || die "no domain: pass --domain play.example.com (an A/AAAA record must point at this server)."
+if [ "$PROXY" = caddy ]; then
+  [ -n "$DOMAIN" ] || die "no domain: pass --domain play.example.com (an A/AAAA record must point at this server), or --proxy none behind a Cloudflare Tunnel."
+fi
 case "$DOMAIN" in
   *[!A-Za-z0-9.:-]*) die "domain '$DOMAIN' contains invalid characters." ;;
 esac
@@ -134,7 +168,7 @@ if [ -z "$MODE" ]; then
   if [ -f "$DIR/.env" ] && grep -q '^COMPOSE_FILE=.*docker-compose\.build\.yml' "$DIR/.env"; then MODE=build; fi
 fi
 
-say "BunkCraft install: domain $DOMAIN, directory $DIR, image $([ "$MODE" = build ] && echo 'built here' || echo 'pulled')$([ "$DRY" = 1 ] && echo ' (dry run)')"
+say "BunkCraft install: $([ "$PROXY" = caddy ] && echo "domain $DOMAIN (Caddy)" || echo "no proxy, ${DOMAIN:-no domain}, ${BIND_ADDR}:${GAME_PORT}"), directory $DIR, image $([ "$MODE" = build ] && echo 'built here' || echo 'pulled')$([ "$DRY" = 1 ] && echo ' (dry run)')"
 
 # ---------------------------------------------------------------- packages
 if [ "$APT" = 1 ]; then
@@ -230,8 +264,36 @@ CPUS=$(nproc 2>/dev/null || echo 1)
 # Container memory: 60 % of RAM (384 MB .. 3 GB); the V8 heap gets 60 % of that (docs/research/SERVER-DEPLOY.md).
 CONTAINER_MB=$(( MEM_MB * 6 / 10 )); [ "$CONTAINER_MB" -lt 384 ] && CONTAINER_MB=384; [ "$CONTAINER_MB" -gt 3072 ] && CONTAINER_MB=3072
 HEAP_MB=$(( CONTAINER_MB * 6 / 10 ))
-set_env DOMAIN "$DOMAIN" 1
-set_env ALLOWED_ORIGINS "https://$DOMAIN"
+unset_env() { # key
+  [ -f "$ENV_FILE" ] && grep -q "^$1=" "$ENV_FILE" || return 0
+  if [ "$DRY" = 1 ]; then echo "  [dry-run] .env: remove $1"; return 0; fi
+  local tmp; tmp="$(mktemp)"; grep -v "^$1=" "$ENV_FILE" >"$tmp" || true; cat "$tmp" >"$ENV_FILE"; rm -f "$tmp"
+}
+# COMPOSE_PROFILES: Caddy is the compose profile "caddy"; add or remove it and keep any other profile the owner set.
+set_profiles() { # caddy|nocaddy
+  local cur new="" p list=()
+  cur="$(env_value COMPOSE_PROFILES)"
+  IFS=, read -ra list <<<"$cur"
+  for p in ${list[@]+"${list[@]}"}; do [ "$p" = caddy ] || new="${new:+$new,}$p"; done
+  [ "$1" = caddy ] && new="${new:+$new,}caddy"
+  if [ -n "$new" ]; then set_env COMPOSE_PROFILES "$new" 1; else unset_env COMPOSE_PROFILES; fi
+}
+set_env PROXY "$PROXY" 1
+if [ -n "$DOMAIN" ]; then
+  set_env DOMAIN "$DOMAIN" 1
+  set_env ALLOWED_ORIGINS "https://$DOMAIN"
+fi
+if [ "$PROXY" = none ]; then
+  # Behind Cloudflare: its edge sets CF-Connecting-IP (the visitor); X-Forwarded-For is not trusted.
+  set_env BIND_ADDR "$BIND_ADDR" "$([ -n "$BIND_ARG" ] && echo 1 || echo 0)"
+  set_env BUNKCRAFT_PORT "$GAME_PORT" "$([ -n "$PORT_ARG" ] && echo 1 || echo 0)"
+  set_env TRUST_PROXY 0
+  set_env TRUST_CLOUDFLARE 1
+  set_profiles nocaddy
+else
+  if [ "$PREV_PROXY" = none ]; then unset_env TRUST_PROXY; unset_env TRUST_CLOUDFLARE; fi
+  set_profiles caddy
+fi
 if [ -n "$ADMIN_TOKEN_ARG" ]; then set_env ADMIN_TOKEN "$ADMIN_TOKEN_ARG" 1; else set_env ADMIN_TOKEN "$(token)"; fi
 set_env METRICS_TOKEN "$(token)"
 set_env BUNKCRAFT_CPUS "$CPUS"
@@ -242,17 +304,21 @@ if [ -n "$IMAGE_ARG" ]; then set_env BUNKCRAFT_IMAGE "$IMAGE_ARG" 1; fi
 # Auto-update (scripts/autoupdate.sh): on by default; a re-run keeps an earlier choice unless told otherwise.
 if [ -n "$AUTOUPDATE_ARG" ]; then set_env AUTOUPDATE "$AUTOUPDATE_ARG" 1; else set_env AUTOUPDATE on; fi
 if [ -n "$INTERVAL_ARG" ]; then set_env AUTOUPDATE_INTERVAL "$INTERVAL_ARG" 1; else set_env AUTOUPDATE_INTERVAL 5min; fi
-# docker compose reads COMPOSE_FILE from .env, so every later command (update, backup, restart) builds too.
-if [ "$MODE" = build ]; then
-  set_env COMPOSE_FILE docker-compose.yml:docker-compose.build.yml 1
-elif [ -f "$ENV_FILE" ] && grep -q '^COMPOSE_FILE=' "$ENV_FILE"; then
-  if [ "$DRY" = 1 ]; then echo "  [dry-run] .env: remove COMPOSE_FILE (back to the ready-made image)"
-  else tmp="$(mktemp)"; grep -v '^COMPOSE_FILE=' "$ENV_FILE" >"$tmp" || true; cat "$tmp" >"$ENV_FILE"; rm -f "$tmp"; fi
-fi
+# docker compose reads COMPOSE_FILE from .env, so every later command (update, backup, restart) builds too and
+# publishes the port: base file + build override (--build) + direct-port override (--proxy none).
+COMPOSE_FILES=docker-compose.yml
+[ "$MODE" = build ] && COMPOSE_FILES="$COMPOSE_FILES:docker-compose.build.yml"
+[ "$PROXY" = none ] && COMPOSE_FILES="$COMPOSE_FILES:docker-compose.direct.yml"
+if [ "$COMPOSE_FILES" != docker-compose.yml ]; then set_env COMPOSE_FILE "$COMPOSE_FILES" 1; else unset_env COMPOSE_FILE; fi
 say ".env ready ($ENV_FILE, mode 600): ${CPUS} CPU, ${CONTAINER_MB} MB for the game server"
 
 # ---------------------------------------------------------------- firewall
-if [ "$FIREWALL" = 1 ]; then
+if [ "$PROXY" = none ]; then
+  echo "    Firewall: nothing changed (no proxy, so no 80/443). Only the tunnel should reach ${BIND_ADDR}:${GAME_PORT}."
+  if [ "$BIND_ADDR" != 127.0.0.1 ]; then
+    echo "    Restrict that port to the cloudflared machine with a cloud firewall, or iptables in the DOCKER-USER chain (ufw does not filter Docker ports)."
+  fi
+elif [ "$FIREWALL" = 1 ]; then
   if have ufw && ufw status 2>/dev/null | grep -q '^Status: active'; then
     say "ufw: opening 80/tcp, 443/tcp and 443/udp (HTTP/3)"
     run ufw allow 80/tcp >/dev/null; run ufw allow 443/tcp >/dev/null; run ufw allow 443/udp >/dev/null
@@ -264,7 +330,7 @@ if [ "$FIREWALL" = 1 ]; then
 fi
 
 # ---------------------------------------------------------------- DNS sanity check (warning only)
-if have getent; then
+if [ "$PROXY" = caddy ] && have getent; then
   # getent fails for a name that does not resolve yet; with pipefail that must not end the install.
   resolved="$(getent ahosts "$DOMAIN" 2>/dev/null | awk '{ print $1 }' | sort -u | tr '\n' ' ' || true)"
   local_ips="$(hostname -I 2>/dev/null || true)"
@@ -319,6 +385,10 @@ fi
 # From the install directory, so compose finds its files and reads .env (COMPOSE_FILE, BUNKCRAFT_TAG).
 compose() { (cd "$DIR" && docker compose "$@"); }
 if [ "$START" = 1 ]; then
+  if [ "$PROXY" = none ] && [ "$DRY" = 0 ] && [ -n "$(compose --profile caddy ps -aq caddy 2>/dev/null)" ]; then
+    say "switching to --proxy none: removing the Caddy container (certificates stay in the caddy-data volume)"
+    compose --profile caddy rm -sf caddy >/dev/null 2>&1 || warn "could not remove the Caddy container: docker compose --profile caddy rm -sf caddy"
+  fi
   if [ "$MODE" = build ]; then
     say "building and starting (the first build takes a few minutes)"
     run compose up -d --build --remove-orphans || warn "not every container started (see the health check below)"
@@ -334,6 +404,11 @@ if [ "$START" = 1 ]; then
       sleep 2
     done
     [ "$ok" = 1 ] || die "the game server is not healthy: see 'bunkcraft logs'."
+    if [ "$PROXY" = none ] && have curl; then
+      probe="$BIND_ADDR"; [ "$probe" = 0.0.0.0 ] && probe=127.0.0.1
+      curl -fsS -m 5 "http://$probe:${GAME_PORT}/health" >/dev/null 2>&1 \
+        || warn "the game is healthy in its container but not reachable on ${BIND_ADDR}:${GAME_PORT} from here: is the port in use?"
+    fi
   fi
 fi
 
@@ -352,6 +427,36 @@ else
 fi
 
 if [ "$DRY" = 1 ]; then echo; say "dry run finished: nothing was changed"; exit 0; fi
+if [ "$PROXY" = none ]; then
+  HOST_IP="$(hostname -I 2>/dev/null | awk '{ print $1 }' || true)"
+  if [ "$BIND_ADDR" = 127.0.0.1 ]; then TARGET="127.0.0.1:${GAME_PORT}"; else TARGET="${HOST_IP:-<ip of this server>}:${GAME_PORT}"; fi
+  TAG_NOW="$(env_value BUNKCRAFT_TAG)"
+  cat <<EOF
+
+BunkCraft is running (no proxy: for a Cloudflare Tunnel).
+  Game server:  http://${BIND_ADDR}:${GAME_PORT}   (check: curl http://127.0.0.1:${GAME_PORT}/health)
+
+  Cloudflare Zero Trust → Networks → Tunnels → your tunnel → Public Hostname → Add:
+      Hostname:  ${DOMAIN:-play.example.com}
+      Service:   HTTP   ${TARGET}          (= http://${TARGET})
+  WebSockets work through a tunnel by default; nothing else to enable.
+EOF
+  if [ "$BIND_ADDR" = 127.0.0.1 ]; then
+    echo "  Bound to 127.0.0.1: cloudflared must run on THIS machine. cloudflared elsewhere? Re-run with --bind 0.0.0.0."
+  else
+    echo "  Bound to ${BIND_ADDR}: let only the cloudflared machine reach port ${GAME_PORT} (TRUST_CLOUDFLARE=1 trusts the CF-Connecting-IP header)."
+  fi
+  cat <<EOF
+
+  Admin:     https://${DOMAIN:-<your hostname>}/admin   token: ADMIN_TOKEN in $ENV_FILE
+  Metrics:   https://${DOMAIN:-<your hostname>}/metrics with 'Authorization: Bearer <METRICS_TOKEN>'
+  Commands:  bunkcraft status | logs | update | rollback | backup | restart | autoupdate [on|off|status]
+  Updates:   automatic, channel '${TAG_NOW:-latest}' (every green push to main); check: bunkcraft autoupdate status
+  Version:   /health shows the version and commit that are live
+  Settings:  $ENV_FILE (docs/SERVER.md), then 'bunkcraft restart'
+EOF
+  exit 0
+fi
 cat <<EOF
 
 BunkCraft is running.
