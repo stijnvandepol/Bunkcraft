@@ -19,6 +19,7 @@ import {
 import { poseHeight, slideCooldown } from '../player/ArcadeMove';
 import { type ClientMessage, type MatchInfo, type MatchPhase, type ModeState, type RosterEntry, SNAP_FLAG_ADS, SNAP_FLAG_CROUCH, SNAP_FLAG_SLIDE, type ServerMessage } from '../net/protocol';
 import type { RemotePlayers } from '../net/RemotePlayers';
+import { skinPrefs } from '../net/SkinPrefs';
 import type { Player } from '../player/Player';
 import { PHYSICS } from '../player/Physics';
 import type { Particles } from '../rendering/Particles';
@@ -549,7 +550,7 @@ export class ArcadeSession {
 
   /** The server sends the final `match` and `roster` right after `matchend`: show those numbers on the end screen. */
   private refreshEnd(): void {
-    if (this.ended && this.endTitle) this.hud.setMatchEnd({ ...this.endTitle, roster: this.roster, ctx: this.boardContext() });
+    if (this.ended && this.endTitle) this.hud.setMatchEnd({ ...this.endTitle, roster: this.roster, ctx: { ...this.boardContext(), skinTools: this.skinTools } });
   }
 
   private onRoster(players: RosterEntry[]): void {
@@ -797,7 +798,7 @@ export class ArcadeSession {
     const draw = !msg.winnerTeam && !msg.winnerId;
     this.d.audio.playStinger(draw ? 'draw' : won ? 'win' : 'lose');
     this.d.feedback?.caption(draw ? t('arc.cap.draw') : won ? t('arc.cap.victory') : t('arc.cap.defeat'), this.d.player.x, this.d.player.z);
-    this.hud.setMatchEnd({ title, color, roster: this.roster, ctx: this.boardContext() });
+    this.hud.setMatchEnd({ title, color, roster: this.roster, ctx: { ...this.boardContext(), skinTools: this.skinTools } });
   }
 
   private onShot(msg: Extract<ServerMessage, { t: 'shot' }>): void {
@@ -1154,6 +1155,13 @@ export class ArcadeSession {
     // The note follows the clock: the quick-swap window closes while the menu is open.
     if (this.loadoutOpen) this.hud.setClassApply(this.classApplies());
   }
+
+  /** Hide and report buttons for custom skins on the end-of-match board. */
+  private readonly skinTools: NonNullable<ScoreboardContext['skinTools']> = {
+    isHidden: (hash) => skinPrefs.isHidden(hash),
+    toggle: (hash) => skinPrefs.setHidden(hash, !skinPrefs.isHidden(hash)),
+    report: (id) => this.d.send({ t: 'skinreport', id }),
+  };
 
   private boardContext(): ScoreboardContext {
     return { selfId: this.d.selfId, teams: this.teams, scores: this.scores, scoreColumn: this.def.scoreColumn };

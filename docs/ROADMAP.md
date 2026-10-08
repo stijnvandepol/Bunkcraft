@@ -15,6 +15,10 @@ BunkCraft is geen Minecraft-kloon meer, maar een online arenashooter. De shooter
   loadouts, wapenkamer, statistieken, instellingen en taal, boven een vlucht over een arenamap. Lobby, einde wedstrijd,
   instellingen en alle arenamenu's in de nieuwe look; "Realms" is uit de UI verdwenen (intern en in het protocol blijft
   de naam). Embleem, woordmerk, favicon, PWA-iconen en social preview komen uit `src/ui/Brand.ts`.
+- **Eigen spelersskins: Gedaan.** Klassieke 64×64 (en oude 64×32) PNG-skins, geüpload in het profiel en in Bouwen & Survival,
+  strikt gevalideerd en opnieuw gecodeerd op de server, content-addressed opgeslagen, met meld-/verbied-flow in `/admin`
+  (zie docs/SERVER.md §Spelersskins). Nog niet: de eerste-persoonshand met je eigen skin, skins van andere servers
+  (Direct Connect) en het opruimen van skins zonder eigenaar.
 - **Volgende stappen, op volgorde:**
   1. Een eigen display-font (OFL, lokaal gebundeld) voor titels en de PLAY-knop, als Stijn er een kiest (S).
   2. Create-a-Class ook vanaf de home: de editor loskoppelen van de match-HUD (M).

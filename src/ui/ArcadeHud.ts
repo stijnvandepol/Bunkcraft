@@ -30,6 +30,8 @@ export interface ScoreboardContext {
   scores: { red: number; blue: number };
   /** Header of the mode's objective column ("Caps", "Level"); absent = no column. */
   scoreColumn?: string;
+  /** End-of-match board only (the mouse is free there): hide or report the custom skin a player wears. */
+  skinTools?: { isHidden(hash: string): boolean; toggle(hash: string): void; report(id: number): void };
 }
 
 interface DamageMarker {
@@ -841,10 +843,16 @@ function renderBoard(host: HTMLElement, roster: readonly RosterEntry[], ctx: Sco
     if (selfAt >= keep) shown[keep - 1] = [sorted[selfAt], selfAt];
     more = sorted.length - keep;
   }
+  const tools = ctx.skinTools;
   shown.forEach(([p, i]) => {
+    const skinButtons = tools && p.sk && p.id !== ctx.selfId
+      ? h('span', { class: 'skin-tools' },
+        h('button', { class: 'skin-tool', type: 'button', text: tools.isHidden(p.sk) ? t('players.show') : t('players.hide'), onclick: () => { tools.toggle(p.sk!); renderBoard(host, roster, ctx, limit); } }),
+        h('button', { class: 'skin-tool', type: 'button', text: t('players.report'), onclick: (e: Event) => { tools.report(p.id); const b = e.target as HTMLButtonElement; b.textContent = t('players.reported'); b.disabled = true; } }))
+      : null;
     rows.push(h('div', { class: `arc-row${cols}${p.id === ctx.selfId ? ' self' : ''}` },
       h('span', { class: 'rank', text: String(i + 1) }),
-      h('span', { class: 'name', style: `color:${teamColor(p.team)}` }, rankBadge(p.rk), p.name),
+      h('span', { class: 'name', style: `color:${teamColor(p.team)}` }, rankBadge(p.rk), p.name, skinButtons),
       ctx.scoreColumn ? h('span', { text: String(ctx.scoreColumn === 'Level' ? (p.pts ?? 0) + 1 : p.pts ?? 0) }) : null,
       h('span', { text: String(p.kills) }), h('span', { text: String(p.deaths) }),
       h('span', { text: kdRatio(p.kills, p.deaths) }), h('span', { text: p.ping > 0 ? String(Math.round(p.ping)) : '-' })));

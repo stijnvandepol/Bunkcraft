@@ -290,6 +290,9 @@ limieten per bezoeker werken in plaats van per proxy.
 | `MAX_PROFILES` | `50000` | Maximum aantal profielen in `DATA_DIR/profiles/`; daarna maakt de server geen nieuwe meer aan |
 | `PROFILE_CREATE_LIMIT` | `10` | Nieuwe profielen per bezoeker per uur |
 | `PROFILE_SECRET` | niet gezet | HMAC-geheim voor profieltokens (minstens 16 tekens). Leeg = een willekeurig geheim in `DATA_DIR/profiles/secret.key` (mode 0600). Zet het als meerdere servers dezelfde profielen delen. |
+| `SKINS` | `on` | Eigen spelersskins (zie [Spelersskins](#spelersskins-uploaden-en-moderatie)). `off` = geen uploads, `/skins/…` geeft 404 en `features.skins` is `false`. Vereist profielen. |
+| `SKIN_STORAGE_MB` | `128` | Totale grootte van `DATA_DIR/skins/`; daarna weigert de server nieuwe (niet eerder opgeslagen) skins met `507` |
+| `SKIN_UPLOAD_LIMIT` | `5` | Uploads per profiel per uur (ook mislukte tellen mee: decoderen kost CPU) |
 | `ROOM_IDLE_UNLOAD_MIN` | `5` | Minuten dat een lege game in het geheugen blijft voordat hij wordt opgeslagen en uitgeladen |
 | `CHUNK_WORKERS` | `min(2, cores − 1)` | Threads die nieuw terrein genereren voor alle survival-games samen, zodat verkennende spelers de ticks niet ophouden. `0` = op de main thread (het oude pad, ook de standaard met één core). Cores = die van de machine, of minder als Docker een CPU-limiet zet (`BUNKCRAFT_CPUS`). Elke thread kost ~20-25 MB RSS. Meer dan 2 helpt pas bij honderden verkennende spelers. |
 | `ADMIN_TOKEN` | niet gezet | Geheim voor `/admin` en `/api/admin/*`. Leeg = beheer staat uit. Minstens 16 willekeurige tekens (`openssl rand -hex 24`). Wie dit token als `owner` meestuurt, is ook operator in elke game. |
@@ -380,6 +383,52 @@ weg, getallen begrensd, laatste 10 matches). De ingebouwde back-ups (`BACKUP_KEE
 `data/` mee en waarschuwt als `profiles/secret.key` ontbreekt. Terugzetten: stop de server, kopieer een snapshot terug naar
 `data/profiles/`. `PROFILE_SECRET` in de omgeving staat niet in de back-up: bewaar die zelf.
 
+## Spelersskins: uploaden en moderatie
+
+Spelers kunnen een eigen skin uploaden: een klassieke Minecraft-skin (PNG van 64×64, of het oude 64×32; brede Steve-armen of
+slanke Alex-armen), hooguit 16 KB. Uploaden kan in het Realms-profiel (*Skin*) en in Build & Survival (*Skin*), met een
+draaiend voorbeeld. De skin hangt aan het ondertekende profiel (zie hierboven) en geldt in elke game op de server, ook in
+de hoofdwereld (de client stuurt het profieltoken mee in `hello`). Skins van een andere server (Direct Connect) worden niet
+opgehaald; die spelers zien de standaardskin.
+
+**Wat de server doet met een upload** (`POST /api/profile/skin`, het bestand als body, `Authorization: Bearer <profieltoken>`;
+`DELETE` zet de standaardskin terug):
+
+1. Maximaal 16 KB, anders `413`. Maximaal `SKIN_UPLOAD_LIMIT` uploads per profiel per uur (`429`).
+2. Een eigen, strikte PNG-decoder in pure JavaScript (`server/skins/Png.ts`, alleen `node:zlib`; geen native pakketten):
+   handtekening, IHDR eerst en IEND laatst, CRC van elk blok, geen data na IEND, afmetingen 64×64 of 64×32 **voordat** er
+   iets wordt gealloceerd, gedecomprimeerde data begrensd op precies wat zo'n plaatje nodig heeft (een zip-bom-IDAT wordt
+   afgebroken), 8-bit grijs, grijs+alpha, RGB, RGBA of palet (1-8 bit). Geanimeerde PNG (APNG), interlacing, 16-bit en
+   onbekende kritieke blokken worden geweigerd; SVG, JPEG en rommel zijn gewoon "geen PNG". Elk antwoord bevat een `code`
+   (`not-png`, `too-large`, `size`, `corrupt`, `animated`, `interlaced`, `format`, `banned`, `rate`, `storage`).
+3. De pixels worden omgezet naar **één canonieke vorm** (`src/skins/SkinFormat.ts`): 64×64, oude 64×32-skins krijgen gespiegelde
+   linkerledematen, slanke armen worden verbreed, de onderlaag is ondoorzichtig, de bovenlaag (hoed, jas, mouwen, broek) is
+   ondoorzichtig of leeg, en elke pixel die geen vlak van het model gebruikt wordt gewist. Er blijft dus niets van het
+   uploadbestand over (geen tekstblokken, geen verborgen data), en daarna wordt het opnieuw als kale RGBA-PNG gecodeerd.
+4. Opslag in `DATA_DIR/skins/<sha256>.png`, **content-addressed**: de hash is de sha256 van de canonieke pixels, dus dezelfde
+   skin van twee spelers is één bestand. Totaal maximaal `SKIN_STORAGE_MB`.
+
+**Verspreiding:** clients halen skins op met `GET /skins/<hash>.png` (alleen exact 64 hex-tekens; `Cache-Control: public,
+max-age=31536000, immutable`, `nosniff`). De hash staat in `welcome.players[].skin`, `join.skin`, het nieuwe `skin`-bericht
+(live wijziging of verbod) en `roster[].sk` (arcade); het protocol blijft versie 4 (additief). Ontbreekt de skin of kan hij niet
+geladen worden, dan draagt de speler de standaardskin van zijn team. Achter een CDN of Cloudflare: verboden hashes verdwijnen
+bij de server direct, maar een CDN kan een al gecachete kopie blijven tonen tot je de cache leegt.
+
+**Voor spelers:** de optie *Custom Skins of Others* (standaard aan) zet alle eigen skins van anderen uit. In het pauzemenu
+(*Players & Skins*) en op het eindscherm van een arcade-potje kan een speler per andere speler de skin verbergen (onthouden
+per hash in de browser) of melden. Een melding gaat als `skinreport` naar de server, die zelf opzoekt welke hash die speler
+nu draagt (er is dus niets te melden wat niemand draagt); één melding per melder per skin, ten hoogste 3 snel achter
+elkaar.
+
+**Moderatie is de verantwoordelijkheid van de operator.** BunkCraft bekijkt geen inhoud: wie `SKINS=on` laat staan, laat
+spelers plaatjes publiceren die andere spelers te zien krijgen (denk aan haatsymbolen of seksuele inhoud) en moet de meldingen
+bijhouden. Gebruik `/admin` (*Skin reports*) of de API hierboven om een hash te verbieden; een verboden hash wordt nooit meer
+geserveerd, kan niet opnieuw geüpload worden (ook niet in een andere bestandsvorm, want de hash hangt aan de pixels) en
+verdwijnt direct bij verbonden spelers. Zet je geen moderatie in, gebruik dan `SKINS=off` of beperk de server tot mensen die
+je kent. De meldingen en verboden hashes staan in `DATA_DIR/skin-reports.json` en `DATA_DIR/skin-bans.json`; `DATA_DIR/skins/`
+hoort bij de back-ups. Skins zonder eigenaar (iemand koos een andere skin) blijven staan tot de opslaggrens; een leeg
+`skins/` verwijdert alles zonder schade (spelers zien dan de standaardskin).
+
 ## Operators en commando's
 
 Een game heeft een **eigenaar** (de maker, via het token) en **operators** (`/op`). Alles wordt op de server gecontroleerd; de
@@ -419,10 +468,13 @@ alleen open via HTTPS, of beperk het in je reverse proxy tot je eigen IP.
 | `GET/POST /api/admin/ip-bans`, `DELETE /api/admin/ip-bans/<ip>` | adressen blokkeren (bewaard in `data/ip-bans.json`); open verbindingen sluiten direct |
 | `POST /api/admin/announce` | `{"text":"..."}`: servermelding in de chat van elke game (auto-update waarschuwt zo voor een herstart) |
 | `POST /api/admin/save` | elke geladen wereld nu naar schijf (auto-update doet dit vlak voor de back-up) |
+| `GET /api/admin/skins` | gemelde skins (hash, aantal meldingen, namen van dragers), verboden hashes en opslaggebruik; `404` bij `SKINS=off` |
+| `POST /api/admin/skins/ban`, `unban`, `dismiss`, `purge` | `{"hash":"…"}`: verbieden (wordt nooit meer geserveerd of geüpload en verdwijnt live bij de spelers), terugdraaien, meldingen wissen, bestand definitief verwijderen |
 
 `/admin` is één statische HTML-pagina zonder framework en zonder geheimen erin: je plakt het token in (alleen in
 `sessionStorage` van dat tabblad), ziet elke 5 seconden de cijfers en kunt games sluiten of verwijderen, spelers kicken en
-adressen blokkeren. Alle data gaat via `textContent` de pagina in en een strikte CSP verbiedt externe scripts.
+adressen blokkeren. Onder *Skin reports* staan gemelde skins met een voorbeeld, het aantal meldingen en knoppen *Ban hash* en
+*Dismiss*; daaronder de verboden hashes. Alle data gaat via `textContent` de pagina in en een strikte CSP verbiedt externe scripts.
 
 ## Observability en betrouwbaarheid
 

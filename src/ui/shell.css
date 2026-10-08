@@ -794,3 +794,6 @@
 .bc .skin-status { min-height: 1.4em; }
 .bc .skin-status.bad { color: #ff7a6b; }
 .bc .players-row .row { display: flex; gap: calc(var(--u) * 2); }
+.arc-hud .skin-tools { display: inline-flex; gap: calc(var(--u) * 1.5); margin-left: calc(var(--u) * 3); vertical-align: middle; }
+.arc-hud .skin-tool { pointer-events: auto; cursor: pointer; font: 700 var(--f-xs) / 1 var(--bc-font); padding: calc(var(--u) * 1) calc(var(--u) * 2); color: var(--bc-dim); background: rgba(255, 255, 255, 0.08); border: 1px solid var(--bc-line); border-radius: calc(var(--u) * 1); }
+.arc-hud .skin-tool:hover:not(:disabled) { color: #fff; }

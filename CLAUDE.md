@@ -44,6 +44,7 @@ Server configuration uses environment variables (`PORT`, `DATA_DIR`, `SEED`, `GA
   - Item drops render as billboards.
 - `src/items/`: items and tools (ids ≥ 256), `Inventory` (36 slots), `Recipes` (recipe-book crafting, stations within 4 blocks).
 - `src/player/`: `Player` (AABB physics), `PlayerStats` (health, hunger, air, Minecraft numbers at 20 ticks/s), `GameMode`.
+- Custom player skins: `src/skins/SkinFormat.ts` (classic 64x64 layout, canonical form, shared), `server/skins/` (strict PNG decoder + store + moderation), `src/rendering/SkinAtlas.ts` (one atlas for all players; the player model in `MobTypes.ts` uses classic box UV). Docs in `docs/SERVER.md`.
 - `src/net/` + `server/`: JSON protocol (`src/net/protocol.ts`, shared). The server owns the edits, time and player records (`data/world.json`) and validates reach, ids, rates and speed. Clients apply edits optimistically and roll back on reject. Multiplayer v1 is peaceful (no server-side mobs yet).
   Server terrain is generated on worker threads (`server/chunkgen/`, `CHUNK_WORKERS`); not-yet-arrived chunks read as UNLOADED, `ServerWorld.ensureChunk` generates one synchronously when it cannot wait.
 - `src/ui/`: shooter-first home and arena menus in the own visual identity (`Brand.ts`, `RealmsMenu.ts`; see `docs/research/IDENTITY.md`), Minecraft-style menus only for Build & Survival (beta), integer GUI scale (`--s`), OFL pixel font (`public/fonts`), HUD, inventories, chat and the F3 overlay.
