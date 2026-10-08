@@ -287,7 +287,7 @@ regenereert, respawns en een scoreboard. Beschrijving, besturing en wapentabel: 
   interieur, doorloopbare bus en verhuiswagen, dichte straat: zichtbare vloer 30% → 11%, gevechtsafstand 38 → 25 blokken),
   zes nieuwe kleine kaarten met drie lanes en een landmark: Fountain Square, Rebar, Flight Deck, Tin Roofs, Galleria
   (binnen, ook voor verstoppen) en Scrapyard; jump pads op trage routes; bomplaatsen op alle nieuwe kaarten; geen spawn
-  meer zichtbaar vanaf de vijandelijke helft (behalve Classic). Analyse en metingen: [`research/MAPS.md`](research/MAPS.md),
+  meer zichtbaar vanaf de vijandelijke helft (ook Classic, sinds de compacte versie). Analyse en metingen: [`research/MAPS.md`](research/MAPS.md),
   meetscripts `scripts/qa/map-flow.ts` en `scripts/map-metrics.ts`. **Volgende stap:** Classic uit de rotatie of compacter,
   Villa/Terminus/Harbor Yard inkorten of jump pads op de lange routes, playtest per kaart.
 - **BunkCraft Realms: Gedaan.** Multiplayer is alleen Minecraft; de arcade-modes zitten onder *BunkCraft Realms*: playlist

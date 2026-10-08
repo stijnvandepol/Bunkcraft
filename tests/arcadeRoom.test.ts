@@ -158,7 +158,7 @@ describe('arcade maps on the server', () => {
     const a = connect(server, 'alice');
     const spawn = a.of('spawn')[0];
     a.say({ t: 'pos', x: spawn.x, y: spawn.y, z: spawn.z, yaw: 0, pitch: 0, flags: 4, held: 0 });
-    // x = 40 is inside the classic arena (48) but outside the suburb (32).
+    // x = 40 is inside a big arena (the old 96-wide ones) but outside the suburb (32).
     for (let i = 0; i < 6; i++) a.say({ t: 'pos', x: 40, y: 65, z: 0, yaw: 0, pitch: 0, flags: 4, held: 0 });
     expect(a.of('teleport').length).toBeGreaterThan(0);
   });
