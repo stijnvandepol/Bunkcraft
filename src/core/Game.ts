@@ -27,6 +27,8 @@ import { type GameType, TEAM_COLORS, gameTypeDef } from '../modes/GameTypes';
 import { ARCADE_POS_HZ, arcadeInterpDelay } from '../modes/ArcadeLogic';
 import { inviteLink, inviteText, rememberGame } from '../net/RoomApi';
 import { RemotePlayers } from '../net/RemotePlayers';
+import { skinPrefs } from '../net/SkinPrefs';
+import { playersScreen } from '../ui/PlayersPanel';
 import { Chat } from '../ui/Chat';
 import { PlayerInventory } from '../items/Inventory';
 import { facingFromCameraYaw } from './Facing';
@@ -659,6 +661,7 @@ export class Game {
     if (s.reducedMotion) this.renderer.uniforms.uSway.value = 0;
     applyAccessibilityDocument(s);
     this.subtitles.setEnabled(s.subtitles);
+    skinPrefs.setShowCustom(s.showCustomSkins);
     if (this.arcade) {
       this.arcade.hud.damageNumbers = s.damageNumbers;
       this.arcade.setAimSettings(s);
@@ -1192,7 +1195,7 @@ export class Game {
       if (new URLSearchParams(location.search).has('join')) history.replaceState(null, '', location.pathname);
     }
     this.remote.clear();
-    if (welcome.gameType === 'minecraft') for (const p of welcome.players) this.remote.add(p.id, p.name);
+    if (welcome.gameType === 'minecraft') for (const p of welcome.players) this.remote.add(p.id, p.name, '', p.skin ?? '');
     if (welcome.gameType !== 'minecraft') {
       this.startArcade(welcome, (m) => net.send(m), name);
       // Arcade rooms tick faster (30 Hz): draw others two ticks in the past and report the position as often.
@@ -1265,7 +1268,7 @@ export class Game {
     this.renderer.shadowExcluded.push(session.glints);
     this.root.append(session.hud.el, session.hud.loadoutEl);
     session.setHudVisible(false);
-    for (const pl of welcome.players) session.addPlayer(pl.id, pl.name, pl.team ?? '');
+    for (const pl of welcome.players) session.addPlayer(pl.id, pl.name, pl.team ?? '', pl.skin ?? '');
     const slideKey = keyDisplayName(this.input.bound(KB.SNEAK)) || 'Sneak';
     this.arcadeHint = `${realmsModeName(def.id)}: ${t(`realms.desc.${def.id}` as I18nKey)}. ${t(def.loadout === 'ladder' ? 'arc.keysLadder' : 'arc.keys')}`
       + ` ${t('arc.keySlide', slideKey)}`;
@@ -1347,9 +1350,10 @@ export class Game {
         }
         break;
       case 'join':
-        if (this.arcade) this.arcade.addPlayer(msg.id, msg.name, '');
-        else this.remote.add(msg.id, msg.name);
+        if (this.arcade) this.arcade.addPlayer(msg.id, msg.name, '', msg.skin ?? '');
+        else this.remote.add(msg.id, msg.name, '', msg.skin ?? '');
         break;
+      case 'skin': this.remote.setSkin(msg.id, msg.skin); break;
       case 'leave':
         if (this.arcade) this.arcade.removePlayer(msg.id);
         else this.remote.remove(msg.id);
@@ -1594,6 +1598,7 @@ export class Game {
       statistics: this.net ? undefined : () => this.stack.push(statisticsScreen(this.statTracker, () => this.stack.pop())),
       advancements: this.net ? undefined : () => this.stack.push(advancementsScreen(this.advancements, this.icons, () => this.stack.pop())),
       invite: this.roomCode ? () => this.openInvite(this.roomCode!) : undefined,
+      players: this.net ? () => this.openPlayers() : undefined,
       seed: !this.net && this.meta && this.meta.worldType !== 'arena' ? this.meta.seedText || String(this.meta.seed) : undefined,
       difficulty: this.arcade ? undefined : {
         get: () => this.worldRules.difficulty,
@@ -1606,6 +1611,13 @@ export class Game {
     // The arena's pause menu wears the shell; the survival pause menu keeps its look for now.
     if (this.arcade) this.pushShell(pause);
     else this.stack.push(pause);
+  }
+
+  /** The player list of the pause menu: hide or report the custom skins of other players. */
+  private openPlayers(): void {
+    const screen = playersScreen(() => this.remote.entries(), (id) => this.net?.send({ t: 'skinreport', id }), () => this.stack.pop());
+    if (this.arcade) this.pushShell(screen);
+    else this.stack.push(screen);
   }
 
   private openInvite(code: string): void {

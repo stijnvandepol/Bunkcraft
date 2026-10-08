@@ -12,6 +12,7 @@ import { type I18nKey, t } from './i18n';
 import { camoName, challengeText, duration, lockText } from './ProgressText';
 import { cardBackground, rankBadge } from './RankBadge';
 import { realmsModeName } from './RealmsMenu';
+import { showSkinScreen } from './SkinScreen';
 import type { ScreenStack } from './Screens';
 
 /** Progression screens use the shell look (docs/research/IDENTITY.md). */
@@ -238,7 +239,7 @@ export class ProfileScreens {
       banner,
       h('div', { class: 'prog-muted', text: t('custom.created', new Date(p.created).toLocaleDateString()) }),
       h('div', { class: 'row' }, titleBtn, cardBtn),
-      prestigeBtn,
+      h('div', { class: 'row' }, button(t('skin.open'), () => showSkinScreen(this.stack), { cls: 'w150' }), prestigeBtn),
       h('div', { class: 'prog-muted', text: t('custom.prestigeHint') }),
       locked.length ? h('div', { class: 'prog-section-title', text: t('custom.lockedTitle') }) : null,
       locked.length ? h('div', { class: 'prog-locked' }, ...locked.map((line) => h('div', { class: 'prog-muted', text: line }))) : null,

@@ -17,6 +17,7 @@ export default mergeConfig(base, {
     proxy: {
       '/ws': { target: `ws://127.0.0.1:${GAME_PORT}`, ws: true },
       '/api': { target: `http://127.0.0.1:${GAME_PORT}` },
+      '/skins': { target: `http://127.0.0.1:${GAME_PORT}` },
     },
   },
 });

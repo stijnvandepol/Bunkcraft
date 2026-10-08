@@ -5,7 +5,9 @@ import { DYES } from '../world/Content';
 import { SOLID } from '../world/BlockRegistry';
 import type { World } from '../world/World';
 import type { Mob, MobFx } from './Mob';
-import { HORSE_COATS, MOB_TYPES, type MobKind, type ModelBox, type ModelPart, type PartAnim } from './MobTypes';
+import { SKIN_SIZE, SOLID_STRIP } from '../skins/SkinFormat';
+import { SKIN_ATLAS_CELLS, skinAtlas } from '../rendering/SkinAtlas';
+import { HORSE_COATS, MOB_TYPES, type MobKind, type ModelBox, type ModelPart, type PartAnim, SKIN_SLOT } from './MobTypes';
 
 const MAX_PER_TYPE = 48;
 const TEX_W = 128;
@@ -78,11 +80,15 @@ function paintTexture(boxes: ModelBox[], regions: Region[]): THREE.CanvasTexture
 }
 
 /** Box geometry in block units with Minecraft box-UV mapping (front = −Z). */
-function boxGeometry(b: ModelBox, r: Region, positions: number[], normals: number[], uvs: number[], indices: number[]): void {
+function boxGeometry(
+  b: ModelBox, r: Region, positions: number[], normals: number[], uvs: number[], indices: number[], texW = TEX_W, texH = TEX_H,
+): void {
   const [x0, y0, z0] = b.from.map((v) => v / 16);
   const [x1, y1, z1] = b.to.map((v) => v / 16);
-  const U = (px: number) => px / TEX_W, V = (py: number) => 1 - py / TEX_H;
+  const U = (px: number) => px / texW, V = (py: number) => 1 - py / texH;
   const face = (pts: number[][], n: number[], ru: number, rv: number, rw: number, rh: number) => {
+    // A solid box (team head band) samples one flat strip of the skin on every face.
+    if (b.solid) { ru = SOLID_STRIP.x + 1; rv = SOLID_STRIP.y + 1; rw = SOLID_STRIP.w - 2; rh = SOLID_STRIP.h - 2; }
     const base = positions.length / 3;
     // pts order: top-left, top-right, bottom-right, bottom-left (as seen in the texture).
     const uv = [[ru, rv], [ru + rw, rv], [ru + rw, rv + rh], [ru, rv + rh]];
@@ -158,13 +164,15 @@ export class MobRenderer {
     this.fogFar = uniforms.uFogFar;
     for (const type of Object.values(MOB_TYPES)) {
       const boxes = type.parts.flatMap((p) => p.boxes);
-      const regions = packRegions(boxes);
-      const texture = paintTexture(boxes, regions);
-      const material = createMobMaterial(uniforms, texture);
+      // Skinned models (players) read the shared skin atlas; their boxes carry their place in a 64x64 skin.
+      const skinned = type.skinSlot !== undefined;
+      const regions = skinned ? boxes.map((b) => ({ u: b.skin!.u, v: b.skin!.v, w: b.skin!.w, h: b.skin!.h, d: b.skin!.d })) : packRegions(boxes);
+      const texture = skinned ? skinAtlas().texture : paintTexture(boxes, regions);
+      const material = createMobMaterial(uniforms, texture, skinned);
       let bi = 0;
       const parts: PartMesh[] = type.parts.map((part) => {
         const positions: number[] = [], normals: number[] = [], uvs: number[] = [], indices: number[] = [];
-        for (const box of part.boxes) boxGeometry(box, regions[bi++], positions, normals, uvs, indices);
+        for (const box of part.boxes) boxGeometry(box, regions[bi++], positions, normals, uvs, indices, skinned ? SKIN_SIZE : TEX_W, skinned ? SKIN_SIZE : TEX_H);
         const geo = new THREE.BufferGeometry();
         geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
         geo.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
@@ -296,6 +304,7 @@ export class MobRenderer {
       const hurt = m.hurtTime > 0 || m.dead ? 1 : m.burning > 0 ? 0.5 : 0;
       const flash = fuse > 0 && Math.floor(fuse * 30 / 4) % 2 === 0 ? fuse : 0;
       const dye = DYE_RGB[m.variant & 15], coat = COAT_RGB[(m.variant & 15) % COAT_RGB.length];
+      const skinSlot = m.type.skinSlot === undefined ? -1 : m.skin >= 0 ? m.skin : m.type.skinSlot;
 
       for (let pi = 0; pi < parts.length; pi++) {
         const pm = parts[pi];
@@ -321,7 +330,12 @@ export class MobRenderer {
         d[index * 4 + 2] = hurt;
         d[index * 4 + 3] = flash;
         const t = pm.tint.array as Float32Array;
-        const c = part.tint === 'dye' ? dye : part.tint === 'coat' ? coat : null;
+        let c = part.tint === 'dye' ? dye : part.tint === 'coat' ? coat : part.tint === 'fixed' ? part.tintRGB! : null;
+        // Players: the atlas cell goes in the fourth tint component; a custom skin keeps the team readable via the torso tint.
+        if (skinSlot >= 0) {
+          if (part.customTint && skinSlot >= SKIN_SLOT.firstCustom) c = part.customTint;
+          t[index * 4 + 3] = skinSlot;
+        }
         t[index * 4] = c ? c[0] : 1;
         t[index * 4 + 1] = c ? c[1] : 1;
         t[index * 4 + 2] = c ? c[2] : 1;
@@ -544,7 +558,13 @@ function createShadowMaterial(u: WorldUniforms): THREE.ShaderMaterial {
   });
 }
 
-function createMobMaterial(u: WorldUniforms, map: THREE.Texture): THREE.ShaderMaterial {
+function createMobMaterial(u: WorldUniforms, map: THREE.Texture, skinned = false): THREE.ShaderMaterial {
+  // Skinned models: the geometry's UV is in the 64x64 skin and the instance's cell (iTint.w) places it in the atlas.
+  const uvCode = skinned
+    ? `float slot = iTint.w;
+        vec2 cell = vec2(mod(slot, ${SKIN_ATLAS_CELLS}.0), floor(slot / ${SKIN_ATLAS_CELLS}.0));
+        vUv = vec2((cell.x + uv.x) / ${SKIN_ATLAS_CELLS}.0, 1.0 - (cell.y + 1.0 - uv.y) / ${SKIN_ATLAS_CELLS}.0);`
+    : 'vUv = uv;';
   return new THREE.ShaderMaterial({
     uniforms: { ...u, uMap: { value: map } },
     vertexShader: /* glsl */ `
@@ -560,7 +580,7 @@ function createMobMaterial(u: WorldUniforms, map: THREE.Texture): THREE.ShaderMa
         vec3 n = normalize(mat3(instanceMatrix) * normal);
         // Minecraft-like face shading.
         vShade = n.y > 0.5 ? 1.0 : n.y < -0.5 ? 0.5 : abs(n.x) > abs(n.z) ? 0.65 : 0.82;
-        vUv = uv;
+        ${uvCode}
         vData = iData;
         vTint = iTint.rgb;
         vWorldPos = world.xyz;

@@ -127,3 +127,24 @@ export function noise(n: number, seed = 1): Uint8Array {
   for (let i = 0; i < n; i++) { s ^= s << 13; s >>>= 0; s ^= s >>> 17; s ^= s << 5; s >>>= 0; out[i] = s & 0xff; }
   return out;
 }
+
+/**
+ * A skin made of flat, recognisable colours (classic 64x64 layout): magenta face, lime chest, orange arms, white boots,
+ * a red cap in the hat layer. Opaque in the base layer so it survives canonicalisation unchanged.
+ */
+export function markerSkin(): Uint8Array {
+  const px = new Uint8Array(SKIN_SIZE * SKIN_SIZE * 4);
+  const rect = (x: number, y: number, w: number, h: number, c: [number, number, number, number]) => {
+    for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) px.set(c, ((y + j) * SKIN_SIZE + x + i) * 4);
+  };
+  rect(0, 0, 32, 16, [120, 70, 40, 255]); // head: brown all over
+  rect(8, 8, 8, 8, [255, 0, 255, 255]); // face: magenta
+  rect(16, 16, 24, 16, [60, 60, 60, 255]); // body: grey
+  rect(20, 20, 8, 12, [0, 255, 0, 255]); // chest: lime
+  rect(40, 16, 16, 16, [255, 140, 0, 255]); // right arm: orange
+  rect(32, 48, 16, 16, [255, 140, 0, 255]); // left arm: orange
+  rect(0, 16, 16, 16, [250, 250, 250, 255]); // right leg: white
+  rect(16, 48, 16, 16, [250, 250, 250, 255]); // left leg: white
+  rect(40, 0, 8, 8, [200, 0, 0, 255]); // hat top: red
+  return pngOfRgba(px);
+}

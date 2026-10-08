@@ -66,8 +66,8 @@ export class NetClient {
       ws.onopen = () => {
         const owner = room ? ownerToken(room) : undefined;
         const password = room ? roomPassword(room) : undefined;
-        // Realms profile (server-issued, per host): the server grants XP and shows the rank icon with it.
-        const profile = room ? profileToken(host) : undefined;
+        // Realms profile (server-issued, per host): the server grants XP, shows the rank icon and the custom skin with it.
+        const profile = profileToken(host);
         // `bin`: this client understands binary snap/ent frames, `binv` which formats (older servers ignore both).
         this.send({ t: 'hello', v: PROTOCOL_VERSION, name, key: identityKey(host, room), bin: true, binv: BINARY_VERSION, ...(owner ? { owner } : {}), ...(password ? { password } : {}), ...(profile ? { profile } : {}) });
       };

@@ -50,8 +50,8 @@ const OVERLAY_BOXES: SkinBox[] = [SKIN_BOXES.hat, SKIN_BOXES.jacket, SKIN_BOXES.
  */
 export const SOLID_STRIP = { x: 56, y: 16, w: 8, h: 16 } as const;
 
-/** The six faces of a box net as [x, y, w, h] relative to the box origin (Minecraft box UV). */
-function faceRects(b: SkinBox): [number, number, number, number][] {
+/** The six faces of a box net as [x, y, w, h] relative to the box origin (Minecraft box UV): top, bottom, right side, front, left side, back. */
+export function faceRects(b: SkinBox): [number, number, number, number][] {
   const { w, h, d } = b;
   return [
     [d, 0, w, d], // top

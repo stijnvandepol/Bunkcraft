@@ -144,6 +144,8 @@ export class Mob extends Entity implements DamageTarget {
   persistent = false;
   /** Remote arcade player with a gun in the hands (arms raised). */
   holding = false;
+  /** Players: the cell of the skin atlas this mob is drawn with; −1 = the default skin of its model type. */
+  skin = -1;
   /** Set each tick by the EntityManager: bright light keeps neutral-in-light mobs calm. */
   calm = false;
   /** Attacked: neutral mobs (spiders, wolves, endermen) stay hostile. */

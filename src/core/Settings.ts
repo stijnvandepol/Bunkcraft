@@ -53,6 +53,8 @@ export interface Settings {
   attackIndicator: 'crosshair' | 'hotbar' | 'off';
   /** Arcade: the damage of each confirmed hit floats up beside the crosshair. */
   damageNumbers: boolean;
+  /** Draw the custom skins other players uploaded (off: everybody wears the default skin). */
+  showCustomSkins: boolean;
   /** Raw (unaccelerated) mouse input where the browser supports it. */
   rawInput: boolean;
   /** Jump automatically onto one-block ledges while moving. */
@@ -146,6 +148,7 @@ export const DEFAULT_SETTINGS: Settings = {
   entityDistance: 100,
   attackIndicator: 'crosshair',
   damageNumbers: false,
+  showCustomSkins: true,
   rawInput: true,
   autoJump: false,
   chatOpacity: 100,
@@ -276,7 +279,7 @@ const ENUM_VALUES = {
 } as const satisfies Partial<Record<keyof Settings, readonly string[]>>;
 
 const BOOLEAN_KEYS = [
-  'dynamicResolution', 'viewBobbing', 'invertMouse', 'rawInput', 'autoJump', 'chatColors', 'chatSuggestions', 'damageNumbers', 'crosshairDynamic',
+  'dynamicResolution', 'viewBobbing', 'invertMouse', 'rawInput', 'autoJump', 'chatColors', 'chatSuggestions', 'damageNumbers', 'showCustomSkins', 'crosshairDynamic',
   'subtitles', 'reducedMotion', 'reduceFlashes', 'colorBlindSafe', 'highContrast',
   'toggleSneak', 'toggleSprint', 'toggleAttack', 'toggleUse',
   'touchAutoJump', 'touchGestures', 'touchLeftHanded', 'touchSprintPush',

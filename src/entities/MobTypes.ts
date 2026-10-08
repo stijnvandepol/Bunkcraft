@@ -1,4 +1,5 @@
 import { ITEM, type ItemStack, itemFromState, itemId } from '../items/ItemRegistry';
+import { SKIN_BOXES, type SkinBox } from '../skins/SkinFormat';
 import { BLOCK } from '../world/BlockRegistry';
 
 export type MobKind = 'pig' | 'cow' | 'sheep' | 'chicken' | 'zombie' | 'creeper' | 'skeleton' | 'spider' | 'player' | 'player_red' | 'player_blue'
@@ -17,6 +18,13 @@ export interface ModelBox {
   patches?: string;
   /** Optional detail painter for the front face (eyes, snout…), in texture pixels. */
   face?: (px: (x: number, y: number, c: string) => void, w: number, h: number) => void;
+  /**
+   * Skinned boxes (the player): where this box lives in a 64x64 classic skin (box UV origin and size). The box may be
+   * larger than its UV size (the overlay layer is inflated) and `colors` is unused.
+   */
+  skin?: SkinBox;
+  /** Skinned boxes: every face samples the solid strip of the skin (a team head band; the colour comes from the part's tint). */
+  solid?: boolean;
 }
 
 export interface ModelPart {
@@ -29,7 +37,11 @@ export interface ModelPart {
    * Per-mob colour multiplied into this part's (grey) texture: 'dye' = the colour in `variant & 15` (sheep wool, wolf
    * collar), 'coat' = a horse coat from `variant & 7`.
    */
-  tint?: 'dye' | 'coat';
+  tint?: 'dye' | 'coat' | 'fixed';
+  /** `tint: 'fixed'`: the colour (0..1) multiplied into this part, the same for every mob of the type (team head band). */
+  tintRGB?: [number, number, number];
+  /** Multiplied into this part when the mob wears a custom skin, so a team still reads from the colour of its torso. */
+  customTint?: [number, number, number];
   /** Only drawn on tamed (wolf collar) or saddled (horse saddle) mobs. */
   only?: 'tamed' | 'saddled';
   boxes: ModelBox[];
@@ -63,6 +75,11 @@ export interface MobType {
   flees?: boolean;
   /** Model scale (cave spider 0.7). */
   scale?: number;
+  /**
+   * The model is textured from the shared skin atlas (src/rendering/SkinAtlas.ts) instead of its own painted texture:
+   * `skinSlot` is the atlas cell of the default skin of this type, a mob's own `skin` overrides it.
+   */
+  skinSlot?: number;
   /** Ticks of Poison a hit inflicts (cave spider: 7 s on Normal). */
   poison?: number;
   /** Spawn category for the caps: monster, creature, ambient or water. Defaults from `hostile`. */
@@ -297,37 +314,42 @@ export const MOB_TYPES = {
   },
 } satisfies Omit<Record<MobKind, MobType>, 'player' | 'player_red' | 'player_blue' | ExtraKind> as unknown as Record<MobKind, MobType>;
 
-const SKIN = ['#c99a7a', '#bf8f6f', '#d1a585'];
-const SHIRT = ['#2d9fa6', '#268a90', '#33b0b8'];
-const PANTS = ['#3a3f9a', '#323688', '#4248aa'];
-
-/** The player model; arcade teams get a coloured shirt and a head band (so the team reads from afar). */
-function playerType(kind: MobKind, shirt: string[], band?: string[]): MobType {
-  const headBoxes: ModelBox[] = [{ from: [-4, 24, -4], to: [4, 32, 4], colors: SKIN, face: (px, w) => {
-    for (let x = 0; x < w; x++) px(x, 0, '#3b2414'), px(x, 1, '#4a2e1a');
-    px(0, 2, '#3b2414'); px(w - 1, 2, '#3b2414');
-    px(1, 4, '#ffffff'); px(2, 4, '#3a5bb0'); px(w - 3, 4, '#3a5bb0'); px(w - 2, 4, '#ffffff');
-    px(3, 6, '#8a5a40'); px(4, 6, '#8a5a40');
-  } }];
-  if (band) headBoxes.push({ from: [-4.5, 28, -4.5], to: [4.5, 30.5, 4.5], colors: band });
+/**
+ * The player model: the classic Minecraft layout (8x8x8 head, 8x12x4 body, 4x12x4 arms and legs, 16 px = 1 block), each
+ * box followed by its overlay layer (hat, jacket, sleeves, pants: 0.25 px larger, 0.5 for the hat) so classic 64x64
+ * skins fit as they are. Arcade teams add a coloured head band, tinted per part, and tint the torso of custom skins.
+ */
+function playerType(kind: MobKind, skinSlot: number, team?: { band: [number, number, number]; body: [number, number, number] }): MobType {
+  const box = (from: [number, number, number], to: [number, number, number], skin: SkinBox, grow = 0): ModelBox => ({
+    from: [from[0] - grow, from[1] - grow, from[2] - grow], to: [to[0] + grow, to[1] + grow, to[2] + grow], colors: ['#c99a7a'], skin,
+  });
+  const B = SKIN_BOXES;
+  const part = (anim: PartAnim, pivot: [number, number, number], boxes: ModelBox[], extra: Partial<ModelPart> = {}): ModelPart => ({ anim, pivot, boxes, ...extra });
+  const parts: ModelPart[] = [
+    part('head', [0, 24, 0], [box([-4, 24, -4], [4, 32, 4], B.head), box([-4, 24, -4], [4, 32, 4], B.hat, 0.5)]),
+    part('none', [0, 0, 0], [box([-4, 12, -2], [4, 24, 2], B.body), box([-4, 12, -2], [4, 24, 2], B.jacket, 0.25)], team ? { customTint: team.body } : {}),
+    // The player's left is −X (the model faces −Z): armL/legA are the left limbs.
+    part('armL', [-6, 22, 0], [box([-8, 12, -2], [-4, 24, 2], B.leftArm), box([-8, 12, -2], [-4, 24, 2], B.leftSleeve, 0.25)]),
+    part('armR', [6, 22, 0], [box([4, 12, -2], [8, 24, 2], B.rightArm), box([4, 12, -2], [8, 24, 2], B.rightSleeve, 0.25)]),
+    part('legA', [-2, 12, 0], [box([-4, 0, -2], [0, 12, 2], B.leftLeg), box([-4, 0, -2], [0, 12, 2], B.leftPants, 0.25)]),
+    part('legB', [2, 12, 0], [box([0, 0, -2], [4, 12, 2], B.rightLeg), box([0, 0, -2], [4, 12, 2], B.rightPants, 0.25)]),
+  ];
+  if (team) {
+    // Wider than the hat so the two never fight over the same pixels.
+    parts.push(part('head', [0, 24, 0], [{ from: [-4.75, 28, -4.75], to: [4.75, 30.5, 4.75], colors: ['#ffffff'], skin: B.head, solid: true }], { tint: 'fixed', tintRGB: team.band }));
+  }
   return {
     // Drawn at 0.9: the 32 px model is then exactly the 1.8 block player (Hitscan.PLAYER_MODEL_SCALE, the hitboxes follow it).
     kind, name: 'Player', health: 20, width: 0.6, height: 1.8, scale: 0.9, walkSpeed: 0, runSpeed: 0, hostile: false, attack: 0,
-    parts: [
-      { anim: 'head', pivot: [0, 24, 0], boxes: headBoxes },
-      { anim: 'none', pivot: [0, 0, 0], boxes: [{ from: [-4, 12, -2], to: [4, 24, 2], colors: shirt }] },
-      { anim: 'armL', pivot: [-6, 22, 0], boxes: [{ from: [-8, 12, -2], to: [-4, 24, 2], colors: SKIN }] },
-      { anim: 'armR', pivot: [6, 22, 0], boxes: [{ from: [4, 12, -2], to: [8, 24, 2], colors: SKIN }] },
-      { anim: 'legA', pivot: [-2, 12, 0], boxes: [{ from: [-4, 0, -2], to: [0, 12, 2], colors: PANTS }] },
-      { anim: 'legB', pivot: [2, 12, 0], boxes: [{ from: [0, 0, -2], to: [4, 12, 2], colors: PANTS }] },
-    ],
-    drops: () => [],
+    skinSlot, parts, drops: () => [],
   };
 }
 
-MOB_TYPES.player = playerType('player', SHIRT);
-MOB_TYPES.player_red = playerType('player_red', ['#c8372f', '#b32d26', '#d8443b'], ['#ff4a3d', '#e63a2e']);
-MOB_TYPES.player_blue = playerType('player_blue', ['#2f5fc8', '#2850b0', '#3a6fdc'], ['#4a8bff', '#3a77e8']);
+/** Atlas cells of the default skins (see rendering/SkinAtlas.ts: DEFAULT_SKIN_SHIRTS paints them). */
+export const SKIN_SLOT = { neutral: 0, red: 1, blue: 2, firstCustom: 3 } as const;
+MOB_TYPES.player = playerType('player', SKIN_SLOT.neutral);
+MOB_TYPES.player_red = playerType('player_red', SKIN_SLOT.red, { band: [1, 0.29, 0.24], body: [1, 0.55, 0.5] });
+MOB_TYPES.player_blue = playerType('player_blue', SKIN_SLOT.blue, { band: [0.29, 0.55, 1], body: [0.5, 0.68, 1] });
 
 export const PASSIVE_KINDS: MobKind[] = ['pig', 'cow', 'sheep', 'chicken'];
 // Minecraft overworld spawn weights are equal (100 each) for these four.

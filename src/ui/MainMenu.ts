@@ -12,6 +12,7 @@ import { RealmsMenu, realmsModeName } from './RealmsMenu';
 import { savePlayerName, savedPlayerName } from './playerName';
 import { installButton } from '../pwa/Pwa';
 import { button, dirtBackground, h, menuScreen, screen } from './dom';
+import { showSkinScreen } from './SkinScreen';
 import { emblemSvg, svgDataUrl } from './Brand';
 import { cheatsAllowed } from '../save/SaveSystem';
 import { TIP_COUNT, modeHint, modeName, t, tip } from './i18n';
@@ -151,6 +152,7 @@ export class MainMenu {
         h('div', { class: 'hint', text: t('build.text') }),
         button(t('title.singleplayer'), () => void this.showWorlds(), { cls: 'primary' }),
         button(t('title.multiplayer'), () => void this.showMultiplayer()),
+        button(t('skin.open'), () => showSkinScreen(this.stack)),
       ),
     ], [button(t('common.back'), () => this.stack.pop(), { cls: 'w150' })], { cls: 'bc build-screen' }));
   }
@@ -666,6 +668,8 @@ export function deathScreen(opts: {
 /** "Game Menu" laid out like Minecraft's pause screen. */
 export function pauseScreen(actions: {
   resume(): void; options(): void; quit(): void; multiplayer?: boolean; advancements?: () => void; statistics?: () => void; invite?: () => void; seed?: string;
+  /** Multiplayer: the player list with the hide and report buttons for custom skins. */
+  players?: () => void;
   /** The world's difficulty (read-only on a server and in Hardcore) and the Game Rules screen (singleplayer). */
   difficulty?: { get(): Difficulty; set(d: Difficulty): void; locked: boolean };
   gameRules?: () => void;
@@ -680,7 +684,9 @@ export function pauseScreen(actions: {
     h('div', { class: 'title-buttons', style: 'top: calc(25% + var(--s) * 8)' },
       button(t('pause.back'), actions.resume),
       h('div', { class: 'row' }, button(t('pause.advancements'), actions.advancements ?? off, { cls: 'half', disabled: !actions.advancements }), button(t('pause.statistics'), actions.statistics ?? off, { cls: 'half', disabled: !actions.statistics })),
-      h('div', { class: 'row' }, copySeed, button(t('pause.reportBugs'), off, { cls: 'half', disabled: true })),
+      h('div', { class: 'row' }, copySeed, actions.players
+        ? button(t('pause.players'), actions.players, { cls: 'half' })
+        : button(t('pause.reportBugs'), off, { cls: 'half', disabled: true })),
       h('div', { class: 'row' }, button(t('pause.options'), actions.options, { cls: 'half' }), actions.invite
         ? button(t('pause.invite'), actions.invite, { cls: 'half' })
         : button(t('pause.lan'), off, { cls: 'half', disabled: true })),

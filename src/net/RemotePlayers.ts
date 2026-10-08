@@ -4,8 +4,10 @@ import { MOB_TYPES } from '../entities/MobTypes';
 import { type Team, TEAM_COLORS } from '../modes/GameTypes';
 import { type OpticId, RESPAWN_SECONDS } from '../modes/Weapons';
 import { createWeaponMaterial, weaponGeometry } from '../rendering/WeaponModels';
+import { skinAtlas } from '../rendering/SkinAtlas';
 import { h } from '../ui/dom';
 import { type RayHit, createRayHit, raycast } from '../world/Raycast';
+import { skinPrefs } from './SkinPrefs';
 import { SNAP_FLAG_CROUCH, SNAP_FLAG_SLIDE, SNAP_FLAG_STALE, type SnapshotEntry } from './protocol';
 import { type InterpState, SnapshotClock, type Span, interpolate } from './SnapshotClock';
 
@@ -60,6 +62,9 @@ interface Remote {
   lastSeen: number;
   /** Hidden because it is out of view (model, weapon and tag). */
   culled: boolean;
+  /** Hash of the custom skin the server says this player wears ('' = none), and the one currently held in the atlas. */
+  skinHash: string;
+  skinHeld: string;
 }
 
 const tmp = new THREE.Vector3();
@@ -97,6 +102,9 @@ export class RemotePlayers {
   /** Steady stamps for the snapshots (see SnapshotClock) and the server tick they show (lag compensation). */
   readonly clock = new SnapshotClock();
   private readonly span: Span = { a: 0, c: 0, f: 1 };
+  /** The skin atlas and preference versions the players were last resolved against. */
+  private seenAtlas = -1;
+  private seenPrefs = -1;
 
   constructor() {
     this.el = h('div', { class: 'nametags' });
@@ -111,7 +119,7 @@ export class RemotePlayers {
     this.occluder = getBlock;
   }
 
-  add(id: number, name: string, team: Team | '' = ''): void {
+  add(id: number, name: string, team: Team | '' = '', skin = ''): void {
     if (this.players.has(id)) return;
     const mob = new Mob(MOB_TYPES.player);
     mob.persistent = true;
@@ -124,12 +132,39 @@ export class RemotePlayers {
     this.weapons.add(weapon);
     const r: Remote = {
       id, name, mob, buffer: [], tag, tagX: NaN, tagY: NaN, tagShown: true, team: '', weaponId: '', weapon, deadAt: -1, hidden: false,
-      los: true, losAt: -1, tagAlpha: 1, tagOpacity: 1, staleAt: -1, lastSeen: -1e9, culled: false,
+      los: true, losAt: -1, tagAlpha: 1, tagOpacity: 1, staleAt: -1, lastSeen: -1e9, culled: false, skinHash: skin, skinHeld: '',
     };
     this.players.set(id, r);
     this.list.push(r);
     this.mobs.push(mob);
     if (team) this.setTeam(id, team);
+    if (skin) this.resolveSkin(r);
+  }
+
+  /** A player's custom skin changed on the server ('' = back to the default). */
+  setSkin(id: number, hash: string): void {
+    const r = this.players.get(id);
+    if (!r || r.skinHash === hash) return;
+    r.skinHash = hash;
+    this.resolveSkin(r);
+  }
+
+  /** Who is here and what they wear (the player list with its hide and report buttons). */
+  entries(): { id: number; name: string; skin: string; team: Team | '' }[] {
+    return this.list.map((r) => ({ id: r.id, name: r.name, skin: r.skinHash, team: r.team }));
+  }
+
+  /**
+   * Decides which atlas cell this player is drawn with: their custom skin once it has loaded and the player wants
+   * to see it (setting on, skin not hidden), else the default skin of their team (−1).
+   */
+  private resolveSkin(r: Remote): void {
+    const want = r.skinHash !== '' && skinPrefs.visible(r.skinHash) ? r.skinHash : '';
+    if (r.skinHeld !== want) {
+      if (r.skinHeld) skinAtlas().release(r.skinHeld);
+      r.skinHeld = want && skinAtlas().acquire(want) ? want : '';
+    }
+    r.mob.skin = r.skinHeld ? skinAtlas().slotOf(r.skinHeld) : -1;
   }
 
   remove(id: number): void {
@@ -137,6 +172,7 @@ export class RemotePlayers {
     if (!r) return;
     r.tag.remove();
     r.weapon.removeFromParent();
+    if (r.skinHeld) skinAtlas().release(r.skinHeld);
     this.players.delete(id);
     this.list.splice(this.list.indexOf(r), 1);
     const i = this.mobs.indexOf(r.mob);
@@ -160,6 +196,7 @@ export class RemotePlayers {
     mob.limbAmount = old.limbAmount;
     mob.health = old.health;
     mob.deathTime = old.deathTime;
+    mob.skin = old.skin;
     r.mob = mob;
     const i = this.mobs.indexOf(old);
     if (i >= 0) this.mobs[i] = mob;
@@ -285,6 +322,15 @@ export class RemotePlayers {
   }
 
   update(now: number, camera: THREE.PerspectiveCamera, width: number, height: number): void {
+    // A skin finished loading, or the player changed what they want to see: pick each player's cell again.
+    let anyHeld = false;
+    for (let i = 0; i < this.list.length; i++) if (this.list[i].skinHeld) { anyHeld = true; break; }
+    const atlasVersion = anyHeld ? skinAtlas().version : -2;
+    if (atlasVersion !== this.seenAtlas || skinPrefs.version !== this.seenPrefs) {
+      this.seenAtlas = atlasVersion;
+      this.seenPrefs = skinPrefs.version;
+      for (const r of this.list) if (r.skinHash || r.skinHeld) this.resolveSkin(r);
+    }
     const renderTime = now - this.interpDelay;
     const dtTag = Math.min(0.25, Math.max(0, now - this.lastUpdate));
     this.lastUpdate = now;

@@ -402,10 +402,10 @@ export class ArcadeSession {
     return this.loadoutOpen;
   }
 
-  addPlayer(id: number, name: string, team: Team | ''): void {
+  addPlayer(id: number, name: string, team: Team | '', skin = ''): void {
     if (id === this.d.selfId) return;
     this.players.set(id, { name, team });
-    this.d.remote.add(id, name, team);
+    this.d.remote.add(id, name, team, skin);
     if (!this.gear.has(id)) this.gear.set(id, { x: 0, y: 0, z: 0, acc: 0, quiet: false, optic: 'iron', known: false });
   }
 
@@ -568,7 +568,7 @@ export class ArcadeSession {
     for (const p of players) {
       this.players.set(p.id, { name: p.name, team: p.team });
       if (p.id === this.d.selfId) this.setTeam(p.team);
-      else this.d.remote.setTeam(p.id, p.team);
+      else { this.d.remote.setTeam(p.id, p.team); this.d.remote.setSkin(p.id, p.sk ?? ''); }
     }
   }
 

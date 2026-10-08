@@ -788,3 +788,9 @@
   .bc-play::before { background: ButtonText; }
   .bc-play { color: ButtonFace; }
 }
+
+/* Player skin: the rotating preview (2D canvas) and the player list with hide and report buttons. */
+.bc .skin-preview { width: calc(var(--u) * 84); aspect-ratio: 24 / 38; height: auto; image-rendering: pixelated; }
+.bc .skin-status { min-height: 1.4em; }
+.bc .skin-status.bad { color: #ff7a6b; }
+.bc .players-row .row { display: flex; gap: calc(var(--u) * 2); }
