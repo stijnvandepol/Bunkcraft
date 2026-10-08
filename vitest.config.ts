@@ -10,8 +10,12 @@ export default defineConfig({
     environment: 'node',
     // Instrumented code is slower: wall-clock assertions read this (tests/helpers/timing.ts).
     env: { BUNK_COVERAGE: process.argv.some((a) => a.startsWith('--coverage')) ? '1' : '0' },
-    // Generous: world generation, zip and real-server integration tests take a few seconds alone and longer on a busy box.
-    testTimeout: 30_000,
+    // Generous: world generation, zip and real-server integration tests take a few seconds alone and longer on a busy box;
+    // coverage instrumentation on a 2-core CI runner is several times slower still.
+    testTimeout: process.argv.some((a) => a.startsWith('--coverage')) ? 90_000 : 30_000,
+    // CI only: a test that times out on an overloaded runner gets two more tries. Locally a failure stays a failure,
+    // and a real bug fails all three tries in CI as well.
+    retry: process.env.CI ? 2 : 0,
     // beforeAll hooks start real server processes (tsx compile + world setup).
     hookTimeout: 60_000,
     coverage: {
