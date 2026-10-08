@@ -95,7 +95,8 @@ galerijdak en hotelbalkon (Fountain Square), atrium naar de eerste verdieping (R
 gang naar de mezzanine (Galleria), bandenberg naar autostapel (Scrapyard). Een pad naast de liftrand op Flight Deck gaf
 onder netwerkachterstand een `fly`-correctie en is toen weggehaald. De oorzaak zat in de bewegingsvalidator (afzet van
 een pad die de rechte lijn tussen twee `pos` net mist, een muur die als grond gold) en is verholpen; de pads van de
-lift zijn als regressietest teruggelegd (`tests/anticheatMovement.test.ts`), de kaart zelf is niet veranderd.
+lift zijn als regressietest teruggelegd (`tests/anticheatMovement.test.ts`) en liggen sinds de validator-fix ook weer op
+de kaart zelf (`carrier.ts`, naast de liftrand).
 
 ## Wat nog beter kan
 
