@@ -41,6 +41,55 @@ server → `{ t: 'vote', options, counts, mine?, endsIn }`), additief op protoco
 ermee speelt, zodat een vreemde met dezelfde naam je niet uit de lobby duwt en jij er later met een andere browser weer in
 kunt.
 
+## Party's (samen in dezelfde lobby en hetzelfde team)
+
+Vrienden groeperen zich in een **party** (maximaal 6) en spelen samen. Op de home staat een paneel **Party**
+(`src/ui/PartyPanel.ts`, tussen Lobby's/Privéwedstrijd en "Speel met vrienden"):
+
+- **Maken en joinen:** *Party maken* geeft een code van 5 tekens (alfabet van de lobbycodes zonder I, L, O, 0, 1) en een
+  link (`/?party=CODE`, knop *Link kopiëren*). Iemand anders typt de code in het partyveld (of in het gewone codeveld op de home:
+  vijf tekens of een `?party=`-link betekent party, zes tekens een lobby) of opent de link. Een lobbycode en een partycode
+  zijn dus nooit te verwarren.
+- **Paneel:** per lid het rang-icoon (level of prestige, een gast heeft er geen), de naam, een kroon voor de leider en een
+  chip: *Klaar* / *Niet klaar* / *Offline* / *In een potje*. De leider heeft per lid twee knoppen: leider maken en
+  verwijderen. *Verlaten* staat in de kop. Een leesregel (`aria-live`) meldt wie er bijkomt of weggaat.
+- **Leider en leden:** de leider kiest de mode (de playlist van de leden volgt) en drukt op **PLAY**: dat is Snel spelen voor
+  de hele party. De PLAY-knop van een lid is **KLAAR** (aan/uit); klaar-vlaggen zijn informatief (de leider kan altijd
+  starten) en worden na elke start gewist. De leider kan ook een lobby uit *Lobby's* of een code kiezen, of een privélobby
+  starten: dat gaat ook voor de hele party (een lid dat zelf een lobby kiest krijgt "Alleen de leider kiest de lobby").
+- **Matchmaking voor een party** (`src/modes/Realms.ts`: `partyFits`, `pickLobby(..., partySize)`; server in
+  `Rooms.quickPlay`/`Rooms.joinLobby`): alleen een lobby waar de **hele party** past: genoeg plekken (mensen + vastgehouden
+  plekken van andere party's; bots geven plek op) en, in teammodi met mensen erin, een team dat ze allemaal kan nemen zonder
+  dat de lobby scheef gaat (kleinste team + partygrootte ≤ de helft van de plekken, naar boven afgerond). Past ze nergens, dan
+  opent de server een nieuwe openbare lobby; die vult met bots tot twee keer de partygrootte (maximaal de lobbygrootte).
+  Een party groter dan `ROOM_MAX_PLAYERS` krijgt "te klein". Vrije-voor-allen-modi en infected kennen geen teamlimiet.
+- **Plekken vasthouden:** de server houdt de plekken in de gekozen lobby **45 s** vast (`GameServer.reserve`). Vreemden
+  kunnen ze niet innemen, bots in een volle quick-play-lobby stappen op en blijven weg (`BotHost.reserved`,
+  `BotManager.makeRoom(team)`); lukt het niet binnen 45 s, dan komen de bots terug. Een lid verbindt met de sleutel van het
+  ticket in `hello.party`; de sleutel hoort bij die ene lobby en is voor niemand anders te raden (128 bit).
+- **Zelfde team:** bij het vasthouden kiest de server het kleinste team (vastgehouden plekken meegeteld); elk lid dat met de
+  sleutel binnenkomt gaat daarheen (`Match.join(..., { party, team })`). De balans (`planBalance`, `rebalance` na een potje)
+  verplaatst nooit iemand weg van zijn party: alleen spelers zonder partygenoot in de match komen in aanmerking.
+- **Na het potje** blijft de party bestaan; elke speler komt terug op de home met het paneel, de leider drukt opnieuw op PLAY.
+  Leden die nog in een ander potje zitten (status *In een potje*) of offline zijn worden niet meegeteld en krijgen geen plek.
+- **Server-autoritair, in het geheugen, met verloop** (`server/Parties.ts`, `src/modes/Party.ts`): clients pollen elke 1,5 s
+  (4 s tijdens een potje) `GET /api/party`; de server pusht niets. Een lid is *offline* na 12 s zonder poll, wordt na 5 min
+  verwijderd; een leider die 20 s weg is geeft de kroon aan het langst aanwezige online lid; een party zonder polls verdwijnt
+  na 10 min. **Leider weg of verlaat de party: nieuwe leider** (langst aanwezige online lid). Geen accounts en geen
+  persoonsgegevens: alleen een gamertag, het rang-icoon en een willekeurig lidtoken (alleen de hash staat op de server;
+  geen IP-adressen of profiel-id's in wat leden terugkrijgen of in logs).
+- **Herladen:** het lidtoken staat in `sessionStorage` (`bunkcraft.party.<host>`): een herlaadde pagina zit meteen weer in de
+  party. Een nieuw tabblad of een herstart van de browser vindt de party via het profieltoken (`POST /api/party/resume`; het
+  oude lidtoken vervalt). Een ticket dat deze browser al volgde (`bunkcraft.party.ticket.<host>`) speelt na een herlaad niet
+  opnieuw af.
+- **Limieten:** party's per adres per uur `PARTY_CREATE_LIMIT` (20), meedoen 30 per minuut per adres (code raden), poll 120 per
+  minuut per lid, acties 40 per minuut per lid, 900 verzoeken per minuut per adres in totaal, `MAX_PARTIES` (2000) tegelijk.
+  `PARTIES=off` zet het uit (`/api/server` meldt `features.party`).
+- **Tests:** `tests/party.test.ts` (logica met nepklok: vol, leider weg, kick, verloop, herstel, ticket), `tests/partyMatchmaking.test.ts`
+  (past de hele party, zelfde team, plekken vasthouden, bots maken plek, balans splitst nooit), `tests/partyServer.test.ts`
+  (drie clients vormen een party, de leider speelt, alles in één lobby en hetzelfde team; limieten),
+  `tests/partyClient.test.ts` en `tests/e2e/party.spec.ts` (twee browsers).
+
 ## De types
 
 | Type | Id | Regels |

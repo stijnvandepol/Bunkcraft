@@ -44,6 +44,8 @@ export interface BotHost {
   humans(): number;
   /** Seats in the lobby (people and bots). */
   capacity(): number;
+  /** Seats held for parties that are on their way in (bots keep clear of them). */
+  reserved?(): number;
   /** Lower-case names in use. */
   names(): Set<string>;
   /** Adds a bot player; `sink(id)` returns its message handler. Null when there is no seat. */
@@ -106,9 +108,14 @@ export class BotManager {
     const s = this.settings;
     const humans = this.host.humans();
     if (!s || humans === 0) return 0;
-    const seats = Math.max(0, this.host.capacity() - humans);
+    const seats = Math.max(0, this.host.capacity() - humans - (this.host.reserved?.() ?? 0));
     const want = s.fill ? s.fill - humans : s.count ?? 0;
     return Math.max(0, Math.min(seats, want));
+  }
+
+  /** The number of wanted bots changed (a party reserved seats): applied at the next adjustment. */
+  refresh(): void {
+    this.nextAdjust = 0;
   }
 
   /** Settings changed (host): applied at the next adjustment. */
@@ -117,9 +124,9 @@ export class BotManager {
     this.nextAdjust = 0;
   }
 
-  /** A person is about to join a full lobby: a bot leaves. Returns whether a seat was freed. */
-  makeRoom(): boolean {
-    const victim = this.pickLeaver();
+  /** A person is about to join a full lobby: a bot leaves (from `team` when given). Returns whether a seat was freed. */
+  makeRoom(team?: Team): boolean {
+    const victim = this.pickLeaver(team);
     if (victim === null) return false;
     this.remove(victim);
     return true;
