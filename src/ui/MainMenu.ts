@@ -44,7 +44,9 @@ export interface MenuActions {
   backgroundMap?(): string;
 }
 
-export const VERSION = 'BunkCraft 1.0';
+declare const __APP_VERSION__: string;
+/** "BunkCraft 1.1.42": MAJOR.MINOR from package.json plus the CI build number (vite.config.ts). */
+export const VERSION = `BunkCraft ${typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : 'dev'}`;
 /** The commit this build came from (the Docker image sets VITE_GIT_SHA), so the title screen shows what is live. */
 const BUILD_SHA = String(import.meta.env.VITE_GIT_SHA ?? '').slice(0, 7);
 
@@ -119,6 +121,11 @@ export class MainMenu {
   showRealms(): Promise<void> {
     this.showTitle();
     return Promise.resolve();
+  }
+
+  /** A party invite link (?party=CODE): join that party from the home screen. */
+  openPartyInvite(code: string): void {
+    this.realms.openPartyInvite(code);
   }
 
   /** An invite link (?join=CODE): a Realms lobby opens in Realms, anything else in Multiplayer with the code filled in. */

@@ -1,6 +1,7 @@
 import { BINARY_VERSION, decodeBinary } from './binary';
 import { type ClientMessage, type ContainerClientMessage, PROTOCOL_VERSION, type ServerMessage } from './protocol';
 import { forgetRoomPassword, identityKey, ownerToken, roomPassword } from './RoomApi';
+import { partyKey } from './PartyApi';
 import { profileToken } from './ProfileApi';
 import { clearTicket, saveTicket, ticketToken } from './Rejoin';
 
@@ -83,8 +84,10 @@ export class NetClient {
         const profile = room ? profileToken(host) : undefined;
         // The secret of the last visit to this lobby: after a dropped connection it takes the kept seat back.
         const rejoin = room ? ticketToken(host, room) : undefined;
+        // Party ticket: the seat held for this member, on the party's team (only valid for the lobby it was made for).
+        const party = partyKey(room);
         // `bin`: this client understands binary snap/ent frames, `binv` which formats (older servers ignore both).
-        this.send({ t: 'hello', v: PROTOCOL_VERSION, name, key: identityKey(host, room), bin: true, binv: BINARY_VERSION, ...(owner ? { owner } : {}), ...(password ? { password } : {}), ...(profile ? { profile } : {}), ...(rejoin ? { rejoin } : {}) });
+        this.send({ t: 'hello', v: PROTOCOL_VERSION, name, key: identityKey(host, room), bin: true, binv: BINARY_VERSION, ...(owner ? { owner } : {}), ...(password ? { password } : {}), ...(profile ? { profile } : {}), ...(rejoin ? { rejoin } : {}), ...(party ? { party } : {}) });
       };
       ws.onmessage = (e) => {
         let msg: ServerMessage;

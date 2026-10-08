@@ -7,7 +7,8 @@ import {
   type ClientMessage, type MatchPhase, NAME_PATTERN, PROTOCOL_VERSION, type PlayerRecord, SNAP_FLAG_CROUCH, SNAP_FLAG_SLIDE, SNAP_FLAG_STALE, type ServerMessage, type SnapshotEntry, sanitizeChat,
 } from '../src/net/protocol';
 import { ARENA_FLOOR_Y, DEFAULT_MAP, type MapId, type MapSetting, getMap, mapFor, nextMap, parseMapId, parseMapSetting, voteChoices } from '../src/modes/maps';
-import { type GameType, gameTypeDef } from '../src/modes/GameTypes';
+import { type GameType, type Team, gameTypeDef } from '../src/modes/GameTypes';
+import { partyTeamed } from '../src/modes/Party';
 import { GAME_MODES, type GameMode, hasSurvivalRules } from '../src/player/GameMode';
 import { BINARY_VERSION, BINARY_VERSION_SHOT, BINARY_VERSION_SNAP_Q, BINARY_VERSION_SNAP_TICK, encodeBinary, encodeShot, encodeSnap, encodeSnapQ } from '../src/net/binary';
 import { ARCADE_TICK_HZ, ARCADE_TICK_MAX, ARCADE_TICK_MIN, arcadeInterpDelay, arcadeMaxSpeed } from '../src/modes/ArcadeLogic';
@@ -280,6 +281,18 @@ export interface ServerOptions {
   rejoinGraceSec?: number;
 }
 
+/** Seats a party reserved in this lobby: its members connect with the ticket key and land on one team. */
+interface SeatHold {
+  /** Id of the party (kept on the match players so the team balance never splits it). */
+  party: string;
+  size: number;
+  /** The team all members join ('' = a mode without teams). */
+  team: Team | '';
+  /** Lower-case names that took a seat already. */
+  joined: Set<string>;
+  expires: number;
+}
+
 /**
  * Authoritative multiplayer server for one shared world: owns the edit list, the
  * time of day and saved player data, validates edits (reach, block id, rate) and
@@ -322,6 +335,8 @@ export class GameServer {
   private readonly visibility: Visibility | null = null;
   /** Arcade: server-side bots of this lobby. */
   private readonly bots: BotManager | null = null;
+  /** Seats held for parties on their way in, by ticket key (see reserve). */
+  private readonly holds = new Map<string, SeatHold>();
   private readonly viewers: Viewer[] = [];
   /** Steady snapshot clock (ms): the moment each Minecraft snapshot shows, one tick apart (see tick()). */
   private snapClock = 0;
@@ -575,8 +590,13 @@ export class GameServer {
   }
 
   /** Seats kept for players whose connection dropped (arcade): not playing, but not free either. */
-  get reservedSeats(): number {
+  get keptSeats(): number {
     return this.match?.parked.size ?? 0;
+  }
+
+  /** Every seat that is taken without a connection: kept for a rejoin plus held for a party. Matchmaking counts these as taken. */
+  get reservedSeats(): number {
+    return this.keptSeats + this.heldSeats;
   }
 
   /**
@@ -601,6 +621,66 @@ export class GameServer {
   /** Bots in the game right now. */
   get botCount(): number {
     return this.bots?.count ?? 0;
+  }
+
+  /** Seats held for parties that have not arrived yet (matchmaking and the bots keep clear of them). */
+  get heldSeats(): number {
+    this.pruneHolds();
+    let n = 0;
+    for (const h of this.holds.values()) n += Math.max(0, h.size - h.joined.size);
+    return n;
+  }
+
+  private pruneHolds(): void {
+    if (this.holds.size === 0) return;
+    const now = Date.now();
+    for (const [k, h] of this.holds) if (h.expires <= now) this.holds.delete(k);
+  }
+
+  /**
+   * People per team, seats held for parties included (bots yield and are not counted); null without teams.
+   * Quick play uses it to see whether a party fits one team, and `reserve` to pick that team.
+   */
+  teamLoad(): { red: number; blue: number } | null {
+    const m = this.match;
+    if (!m || !m.teams) return null;
+    const load = { red: 0, blue: 0 };
+    for (const p of m.players.values()) if (!p.bot && p.team) load[p.team]++;
+    // Kept seats (a dropped connection) will be taken back by the same player on the same team.
+    for (const p of m.parked.values()) if (p.team) load[p.team]++;
+    this.pruneHolds();
+    for (const h of this.holds.values()) if (h.team) load[h.team] += Math.max(0, h.size - h.joined.size);
+    return load;
+  }
+
+  /**
+   * Holds `size` seats for a party until `ttlMs` from now. Its members connect with `key` in `hello.party` and all
+   * join the team picked here (the smaller one, held seats counted). Bots step aside. Null when the seats are not there.
+   */
+  reserve(key: string, party: string, size: number, ttlMs: number): { team: Team | '' } | null {
+    const m = this.match;
+    if (!m || this.closed || size < 1) return null;
+    if (this.playerCount + this.reservedSeats + size > this.maxPlayers) return null;
+    let team: Team | '' = '';
+    if (partyTeamed(m.teams, m.info.type)) {
+      const load = this.teamLoad()!;
+      team = load.red !== load.blue ? (load.red < load.blue ? 'red' : 'blue') : m.scores.red <= m.scores.blue ? 'red' : 'blue';
+    }
+    this.holds.set(key, { party, size, team, joined: new Set(), expires: Date.now() + ttlMs });
+    this.bots?.refresh();
+    return { team };
+  }
+
+  /** Gives a reservation up (the party chose another lobby). */
+  release(key: string): void {
+    if (this.holds.delete(key)) this.bots?.refresh();
+  }
+
+  /** The unexpired reservation for a ticket key, if the key is one. */
+  private holdFor(key: unknown): SeatHold | undefined {
+    if (typeof key !== 'string' || key.length < 16 || key.length > 128) return undefined;
+    const h = this.holds.get(key);
+    return h && h.expires > Date.now() ? h : undefined;
   }
 
   /**
@@ -890,11 +970,23 @@ export class GameServer {
         s.ws.close();
       }
     }
-    // Kept seats count as taken, except the one this login is taking back.
-    const kept = (match?.parked.size ?? 0) - (seat ? 1 : 0);
-    // Bots never keep a person out: one leaves to make room.
-    if (this.sessions.size + kept >= this.maxPlayers && this.playerCount + kept < this.maxPlayers) this.bots?.makeRoom();
-    if (this.sessions.size + kept >= this.maxPlayers) {
+    // Seat accounting: kept seats (a dropped connection) and seats held for a party are both taken without a connection.
+    // This login's own seat (the one it takes back, or the one held for it) is not "somebody else's".
+    const hold = this.holdFor(hello.party);
+    const lname = name.toLowerCase();
+    const entitled = !!hold && (hold.joined.has(lname) || hold.joined.size < hold.size);
+    const heldForOthers = this.heldSeats - (entitled && !hold!.joined.has(lname) ? 1 : 0);
+    const keptForOthers = this.keptSeats - (seat ? 1 : 0);
+    if (this.match && this.playerCount + keptForOthers + heldForOthers >= this.maxPlayers) {
+      metrics.loginsFailed++;
+      ws.send(JSON.stringify({ t: 'kick', reason: 'The server is full', code: 'full' } satisfies ServerMessage));
+      ws.close(1008, 'The server is full');
+      return null;
+    }
+    // Bots never keep a person out: one leaves to make room (from the team the person joins).
+    const joinTeam = (seat?.team || (entitled ? hold!.team : '')) || undefined;
+    if (this.sessions.size + keptForOthers >= this.maxPlayers) this.bots?.makeRoom(joinTeam);
+    if (this.sessions.size + keptForOthers >= this.maxPlayers) {
       metrics.loginsFailed++;
       ws.send(JSON.stringify({ t: 'kick', reason: 'The server is full', code: 'full' } satisfies ServerMessage));
       ws.close(1008, 'The server is full');
@@ -925,7 +1017,12 @@ export class GameServer {
       bink: hello.bin === true && this.opts.binary !== false && !!this.match && Number(hello.binv) >= BINARY_VERSION_SNAP_TICK,
       guard: new InventoryGuard(initial.error ? [] : initial.slots),
     }, seat?.id);
-    const joined = this.match?.join(session.id, name, false, seat) ?? null;
+    // A returning player goes back to their team (and party); a party member with a ticket joins the party's team.
+    const joined = this.match?.join(session.id, name, false, {
+      ...(entitled ? { party: hold!.party, ...(hold!.team ? { team: hold!.team } : {}) } : {}),
+      ...(seat ? { restore: seat } : {}),
+    }) ?? null;
+    if (entitled) hold!.joined.add(lname);
     // A fresh secret for the next drop (single use: the one this login showed is spent).
     const rejoin = joined && this.rejoinGraceSec > 0 ? newToken() : undefined;
     if (rejoin) session.rejoinHash = hashToken(rejoin);
@@ -1008,7 +1105,7 @@ export class GameServer {
    */
   private addBot(name: string, sink: (id: number) => (msg: ServerMessage) => void): number | null {
     const match = this.match;
-    if (!match || this.closed || this.sessions.size + match.parked.size >= this.maxPlayers) return null;
+    if (!match || this.closed || this.sessions.size + this.reservedSeats >= this.maxPlayers) return null;
     const session = this.newSession(name, BOT_SOCKET, 'bot', this.world.spawn, {
       op: false, owner: false, verified: false, bin: false, binq: false, binShot: false, binVersion: 0, bink: false, guard: new InventoryGuard([]),
     });
@@ -1039,9 +1136,11 @@ export class GameServer {
       getBlock: (x: number, y: number, z: number) => gs.arena!.getBlock(x, y, z),
       getMeta: (x: number, y: number, z: number) => gs.arena!.getMeta(x, y, z),
       // A kept seat is somebody's: bots neither take it nor leave the lobby empty of people while it is kept.
-      humans: () => gs.playerCount + gs.reservedSeats,
+      humans: () => gs.playerCount + gs.keptSeats,
       connected: () => gs.playerCount,
       capacity: () => gs.maxPlayers,
+      // Seats held for parties on their way in (kept seats are already in `humans`).
+      reserved: () => gs.heldSeats,
       names: () => new Set([...gs.sessions.values()].map((s) => s.name.toLowerCase())),
       addBot: (name: string, sink: (id: number) => (msg: ServerMessage) => void) => gs.addBot(name, sink),
       removeBot: (id: number) => { const s = gs.sessions.get(id); if (s?.sink) gs.logout(s); },

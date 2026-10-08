@@ -151,7 +151,9 @@ jobs:
           platforms: linux/amd64
           load: true
           tags: bunkcraft:smoke
-          build-args: GIT_SHA=${{ github.sha }}
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+            BUILD_NUMBER=${{ github.run_number }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Smoke test (compose hardening, /health, the game page, the API and a throw-away game)
@@ -183,7 +185,9 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           # /health and the title screen show the commit, so you can see what is live.
-          build-args: GIT_SHA=${{ github.sha }}
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+            BUILD_NUMBER=${{ github.run_number }}
           labels: ${{ steps.meta.outputs.labels }}
           annotations: ${{ steps.meta.outputs.annotations }}
           cache-from: type=gha

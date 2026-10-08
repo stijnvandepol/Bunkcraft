@@ -40,7 +40,7 @@ describe('a match keeps the seat of a player whose connection dropped', () => {
     // The seat is somebody's: the team still counts it when it picks a side for a newcomer or balances.
     expect(s.match.seatedTeamSize(team)).toBe(s.match.teamSize(team) + 1);
 
-    const back = s.match.join(1, 'p1', false, s.match.parked.get(1));
+    const back = s.match.join(1, 'p1', false, { restore: s.match.parked.get(1) });
     expect(s.match.parked.size).toBe(0);
     expect(back).toMatchObject({ id: 1, team, kills: 2, deaths, streak });
     expect(back.next).toEqual(next);
@@ -51,7 +51,7 @@ describe('a match keeps the seat of a player whose connection dropped', () => {
     const s = live('tdm');
     s.match.leave(1, keep('t'));
     s.advance(10);
-    const back = s.match.join(1, 'p1', false, s.match.parked.get(1));
+    const back = s.match.join(1, 'p1', false, { restore: s.match.parked.get(1) });
     s.match.ready(1);
     expect(back.alive).toBe(false);
     s.advance(REJOIN_RESPAWN_SECONDS - 0.5);
@@ -70,7 +70,7 @@ describe('a match keeps the seat of a player whose connection dropped', () => {
     bob.health = 20;
     bob.lastDamageAt = s.host.t - 1;
     s.match.leave(2, keep('t'));
-    const back = s.match.join(2, 'p2', false, s.match.parked.get(2));
+    const back = s.match.join(2, 'p2', false, { restore: s.match.parked.get(2) });
     expect(back.deaths).toBe(1);
     expect(back.streak).toBe(0);
   });
@@ -79,7 +79,7 @@ describe('a match keeps the seat of a player whose connection dropped', () => {
     const s = live('ffa');
     s.advance(COMBAT_LOG_SECONDS + 1);
     s.match.leave(2, keep('t'));
-    expect(s.match.join(2, 'p2', false, s.match.parked.get(2)).deaths).toBe(0);
+    expect(s.match.join(2, 'p2', false, { restore: s.match.parked.get(2) }).deaths).toBe(0);
   });
 
   it('keeps the respawn a dead player was waiting for', () => {
@@ -88,7 +88,7 @@ describe('a match keeps the seat of a player whose connection dropped', () => {
     const left = s.match.players.get(2)!.respawnAt - s.host.t;
     expect(left).toBeGreaterThan(0);
     s.match.leave(2, keep('t'));
-    const back = s.match.join(2, 'p2', false, s.match.parked.get(2));
+    const back = s.match.join(2, 'p2', false, { restore: s.match.parked.get(2) });
     expect(back.deaths).toBe(1);
     expect(back.alive).toBe(false);
     expect(back.respawnAt - s.host.t).toBeGreaterThanOrEqual(Math.max(left, REJOIN_RESPAWN_SECONDS) - 0.01);
@@ -100,7 +100,7 @@ describe('a match keeps the seat of a player whose connection dropped', () => {
     const level = s.match.players.get(1)!.pts;
     expect(level).toBeGreaterThanOrEqual(2);
     s.match.leave(1, keep('t'));
-    const back = s.match.join(1, 'p1', false, s.match.parked.get(1));
+    const back = s.match.join(1, 'p1', false, { restore: s.match.parked.get(1) });
     expect(back.pts).toBe(level);
     expect(s.match.logic.loadoutFor?.(s.match, back)?.primary).toBe(back.primary);
   });
@@ -145,7 +145,7 @@ describe('a match keeps the seat of a player whose connection dropped', () => {
     const b = s.match.join(21, 'newB');
     expect(new Set([a.team, b.team]).size).toBe(2);
     // The two who were away still fit their side.
-    s.match.join(red[0].id, 'x', false, s.match.parked.get(red[0].id));
+    s.match.join(red[0].id, 'x', false, { restore: s.match.parked.get(red[0].id) });
     expect(s.match.players.get(red[0].id)!.team).toBe('red');
   });
 
@@ -173,7 +173,7 @@ describe('a match keeps the seat of a player whose connection dropped', () => {
     expect(s.match.phase).toBe('warmup');
     const seat = s.match.parked.get(1)!;
     expect(seat).toMatchObject({ kills: 0, deaths: 0, pts: 0, streak: 0, team: '' });
-    const back = s.match.join(1, 'p1', false, seat);
+    const back = s.match.join(1, 'p1', false, { restore: seat });
     expect(back.kills).toBe(0);
     expect(back.next).toEqual(killer.next);
     expect(['red', 'blue']).toContain(back.team);
@@ -202,7 +202,7 @@ describe('a match keeps the seat of a player whose connection dropped', () => {
     const alice = s.match.players.get(1)!;
     expect(alice.alive).toBe(true);
     s.match.leave(1, keep('t'));
-    const back = s.match.join(1, 'p1', false, s.match.parked.get(1));
+    const back = s.match.join(1, 'p1', false, { restore: s.match.parked.get(1) });
     expect(back.alive).toBe(false);
     expect(back.respawnAt).toBe(Infinity);
   });
@@ -215,7 +215,7 @@ describe('a match keeps the seat of a player whose connection dropped', () => {
     s.match.leave(2, keep('t'));
     s.advance(WARMUP_SECONDS);
     expect(s.match.phase).toBe('warmup');
-    s.match.join(2, 'b', false, s.match.parked.get(2));
+    s.match.join(2, 'b', false, { restore: s.match.parked.get(2) });
     s.match.ready(2);
     s.advance(WARMUP_SECONDS + 0.5);
     expect(s.match.phase).toBe('live');

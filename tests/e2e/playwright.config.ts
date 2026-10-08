@@ -65,7 +65,7 @@ export default defineConfig({
       reuseExistingServer: false,
       timeout: 60_000,
       env: {
-        PORT: String(GAME_PORT), DATA_DIR, ROOM_CREATE_LIMIT: '1000', MAX_CONN_PER_IP: '1000', BACKUP_KEEP: '0',
+        PORT: String(GAME_PORT), DATA_DIR, ROOM_CREATE_LIMIT: '1000', PROFILE_CREATE_LIMIT: '1000', PARTY_CREATE_LIMIT: '1000', MAX_CONN_PER_IP: '1000', BACKUP_KEEP: '0',
         STATIC_DIR: 'tests/e2e', LOG_LEVEL: 'warn',
         // Quick play lobbies stay human-only: the flows count players and wait in the warm-up (server bots are tested apart).
         QUICKPLAY_BOTS: '0',

@@ -19,6 +19,8 @@ import { RateLimiter, bearer, hashPassword, hashToken, newToken, safeEqual } fro
 import { ChunkGenPool } from './chunkgen/ChunkGenPool';
 import { prewarmNavGraphs } from './bots/BotWorld';
 import { ProfileService } from './progression/ProfileService';
+import { PartyService } from './Parties';
+import type { PartyError } from '../src/modes/Party';
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -39,7 +41,11 @@ const round2 = (v: number): number => Math.round(v * 100) / 100;
 export function serverVersion(): string {
   try {
     const pkg = JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8')) as { version?: string };
-    return `${pkg.version ?? '0.0.0'}${process.env.GIT_SHA ? `+${process.env.GIT_SHA.slice(0, 7)}` : ''}`;
+    // MAJOR.MINOR from package.json plus the CI build number (BUILD_NUMBER), like the title screen: 1.1.42+abc1234.
+    const [major = '0', minor = '0'] = (pkg.version ?? '0.0.0').split('.');
+    const build = (process.env.BUILD_NUMBER ?? '').replace(/[^0-9]/g, '');
+    const base = build ? `${major}.${minor}.${build}` : (pkg.version ?? '0.0.0');
+    return `${base}${process.env.GIT_SHA ? `+${process.env.GIT_SHA.slice(0, 7)}` : ''}`;
   } catch {
     return '0.0.0';
   }
@@ -70,6 +76,8 @@ export interface RunningServer {
   rooms: Rooms | null;
   /** Realms profiles (null when switched off or without games). */
   profiles: ProfileService | null;
+  /** Parties (null when switched off or without games). */
+  parties: PartyService | null;
   /** Saves everything, tells clients to reconnect after `reconnectMs` (when given), and stops listening. */
   close(reconnectMs?: number): Promise<void>;
 }
@@ -127,6 +135,15 @@ export async function startServer(config: Config): Promise<RunningServer> {
     })
     : null;
 
+  // Parties: friends queue together. Server memory only; expires by itself (server/Parties.ts).
+  const parties = rooms && config.parties
+    ? new PartyService({
+      maxParties: config.maxParties,
+      rank: (id) => profiles?.rank(id) ?? 0,
+      release: (code, key) => rooms.release(code, key),
+    })
+    : null;
+
   // Per client address: creating rooms and looking up codes (stops code guessing).
   const createLimit = new RateLimiter(config.roomCreateLimit, 3_600_000);
   const lookupLimit = new RateLimiter(40, 60_000);
@@ -138,12 +155,20 @@ export async function startServer(config: Config): Promise<RunningServer> {
   // Profiles: reading and changing one is cheap; creating one writes a file, so it has its own hourly limit.
   const profileLimit = new RateLimiter(60, 60_000);
   const profileCreateLimit = new RateLimiter(config.profileCreateLimit, 3_600_000);
+  // Parties: a party code is 5 characters, so guessing is limited per address; polling is limited per member (a
+  // household shares an address, so the per-address limit for polls is generous) and so are the leader's actions.
+  const partyCreateLimit = new RateLimiter(config.partyCreateLimit, 3_600_000);
+  const partyJoinLimit = new RateLimiter(30, 60_000);
+  const partyPollLimit = new RateLimiter(120, 60_000);
+  const partyIpLimit = new RateLimiter(900, 60_000);
+  const partyActLimit = new RateLimiter(40, 60_000);
   const ipBans = new IpBans(config.dataDir);
   const adminFailures = newAuthLimiter();
   const timers: NodeJS.Timeout[] = [];
   const every = (ms: number, fn: () => void) => { const t = setInterval(fn, ms); t.unref(); timers.push(t); };
-  every(600_000, () => { createLimit.prune(); lookupLimit.prune(); listLimit.prune(); quickLimit.prune(); profileLimit.prune(); profileCreateLimit.prune(); failLimiter.prune(); adminFailures.prune(); });
+  every(600_000, () => { createLimit.prune(); lookupLimit.prune(); listLimit.prune(); quickLimit.prune(); profileLimit.prune(); profileCreateLimit.prune(); partyCreateLimit.prune(); partyJoinLimit.prune(); partyPollLimit.prune(); partyIpLimit.prune(); partyActLimit.prune(); failLimiter.prune(); adminFailures.prune(); });
   every(5000, () => metrics.rollWindow());
+  every(30_000, () => { parties?.sweep(); });
   // Bot navigation for every arena, built in the background before the first lobby needs it.
   if (rooms && config.botPrewarm) prewarmNavGraphs((ms, n) => log.info('bot nav graphs ready', { graphs: n, ms: Math.round(ms) }));
   if (config.backupKeep > 0) {
@@ -208,11 +233,12 @@ export async function startServer(config: Config): Promise<RunningServer> {
         // Largest lobby a game may have (ROOM_MAX_PLAYERS): Realms only offers sizes up to it.
         ...(rooms ? { roomMaxPlayers: config.roomMaxPlayers } : {}),
         // What this server can do beyond the basics; clients hide features an older server lacks.
-        features: { passwords: true, browse: !!rooms, binary: config.binary, realms: !!rooms, profiles: !!profiles },
+        features: { passwords: true, browse: !!rooms, binary: config.binary, realms: !!rooms, profiles: !!profiles, party: !!parties },
       });
     }
     if (path === '/api/profile' || path.startsWith('/api/profile/')) return profileApi(req, res, path, ip);
     if (!rooms) return json(res, 404, { error: 'Games are disabled on this server' });
+    if (path === '/api/party' || path.startsWith('/api/party/')) return partyApi(req, res, url, path, ip);
     if (path === '/api/rooms' && req.method === 'POST') {
       if (!createLimit.take(ip)) {
         metrics.rateLimited('room_create');
@@ -303,6 +329,119 @@ export async function startServer(config: Config): Promise<RunningServer> {
       }
       const info = rooms.info(m[1]);
       return info ? json(res, 200, info) : json(res, 404, { error: 'Game not found. Check the code.' });
+    }
+    return json(res, 404, { error: 'Not found' });
+  }
+
+  const PARTY_STATUS: Record<PartyError, number> = {
+    no_party: 404, full: 409, name: 400, forbidden: 403, no_room: 409, locked: 409, not_found: 404, bad_request: 400, unavailable: 503,
+  };
+
+  /**
+   * Parties (server/Parties.ts). Tokens travel in the Authorization header, never in a URL:
+   *   POST /api/party          create (the profile token, when there is one, gives the rank icon and finds the party again)
+   *   POST /api/party/join     { code } join; POST /api/party/resume   find the party of the profile token again
+   *   GET  /api/party          the party of the party token (?status=menu|game says where the member is)
+   *   POST /api/party/ready    { ready }; /mode { gameType }; /kick { member }; /promote { member }; /leave
+   *   POST /api/party/play     { gameType } quick play for everybody, or { code } to take them into one lobby
+   * The leader's play answers with a ticket: its key goes into the `hello` of every member's connection.
+   */
+  async function partyApi(req: IncomingMessage, res: ServerResponse, url: URL, path: string, ip: string): Promise<void> {
+    if (!parties) return json(res, 404, { error: 'Parties are disabled on this server' });
+    const fail = (error: PartyError, message: string) => json(res, PARTY_STATUS[error] ?? 400, { error: message, code: error });
+    const limited = (name: string) => { metrics.rateLimited(name); return json(res, 429, { error: 'Too many requests, slow down a little', code: 'rate' }); };
+    const sub = path.slice('/api/party'.length).replace(/^\//, '');
+    const bearerToken = bearer(req.headers.authorization);
+    if (!partyIpLimit.take(ip)) return limited('party');
+    if (req.method === 'GET' && sub === '') {
+      if (!bearerToken || !partyPollLimit.take(bearerToken)) return bearerToken ? limited('party_poll') : fail('no_party', 'You are not in a party');
+      const status = url.searchParams.get('status') === 'game' ? 'game' : 'menu';
+      const r = parties.view(bearerToken, status);
+      return r.ok ? json(res, 200, { party: r.view }) : fail(r.error, r.message);
+    }
+    if (req.method !== 'POST') return json(res, 404, { error: 'Not found' });
+    let body: Record<string, unknown>;
+    try {
+      const raw = await readBody(req);
+      body = raw ? JSON.parse(raw) as Record<string, unknown> : {};
+      if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('bad');
+    } catch {
+      return json(res, 400, { error: 'Bad request' });
+    }
+    /** The profile id behind the bearer token on the calls that start or find a party (a token that does not exist counts as none). */
+    const profileId = (): string | undefined => {
+      const id = profiles?.verify(bearerToken);
+      return id && profiles!.get(id) ? id : undefined;
+    };
+    if (sub === 'create' || sub === '') {
+      if (!partyCreateLimit.take(ip)) return limited('party_create');
+      const r = parties.create(body.name, parseGameType(body.gameType), profileId());
+      return r.ok ? json(res, 201, { token: r.token, party: r.view }) : fail(r.error, r.message);
+    }
+    if (sub === 'join') {
+      if (!partyJoinLimit.take(ip)) return limited('party_join');
+      const r = parties.join(String(body.code ?? ''), body.name, profileId());
+      return r.ok ? json(res, 200, { token: r.token, party: r.view }) : fail(r.error, r.message);
+    }
+    if (sub === 'resume') {
+      const id = profileId();
+      if (!id) return fail('no_party', 'You are not in a party');
+      if (!partyPollLimit.take(`profile|${id}`)) return limited('party_poll');
+      const r = parties.resume(id, body.name);
+      return r.ok ? json(res, 200, { token: r.token, party: r.view }) : fail(r.error, r.message);
+    }
+    if (!bearerToken) return fail('no_party', 'You are not in a party');
+    if (!partyActLimit.take(bearerToken)) return limited('party_act');
+    if (sub === 'leave') {
+      const r = parties.leave(bearerToken);
+      return r.ok ? json(res, 200, { ok: true }) : fail(r.error, r.message);
+    }
+    if (sub === 'ready') {
+      const r = parties.setReady(bearerToken, body.ready === true);
+      return r.ok ? json(res, 200, { party: r.view }) : fail(r.error, r.message);
+    }
+    if (sub === 'mode') {
+      const mode = parseGameType(body.gameType);
+      if (!gameTypeDef(mode).arcade) return fail('bad_request', 'Parties play the arena game modes');
+      const r = parties.setMode(bearerToken, mode);
+      return r.ok ? json(res, 200, { party: r.view }) : fail(r.error, r.message);
+    }
+    if (sub === 'kick' || sub === 'promote') {
+      const id = String(body.member ?? '');
+      const r = sub === 'kick' ? parties.kick(bearerToken, id) : parties.promote(bearerToken, id);
+      return r.ok ? json(res, 200, { ok: true }) : fail(r.error, r.message);
+    }
+    if (sub === 'play') {
+      const toLobby = typeof body.code === 'string' && body.code !== '';
+      const mode = parseGameType(body.gameType);
+      if (!toLobby && !gameTypeDef(mode).arcade) return fail('bad_request', 'Parties play the arena game modes');
+      if (!quickLimit.take(ip)) return limited('quickplay');
+      let limitedCreate = false;
+      const r = parties.play(bearerToken, (seats) => {
+        if (toLobby) {
+          const j = rooms!.joinLobby(String(body.code), seats);
+          if ('error' in j) {
+            const why = { not_found: ['not_found', 'Game not found. Check the code.'], locked: ['locked', 'That lobby has a password, parties cannot join it'],
+              mode: ['bad_request', 'Parties play the arena game modes'], no_room: ['no_room', 'That lobby has no room for the whole party'] } as const;
+            const [error, message] = why[j.error];
+            return { error, message };
+          }
+          return { code: j.code, gameType: rooms!.info(j.code)!.gameType };
+        }
+        const q = rooms!.quickPlay(mode, () => {
+          if (createLimit.take(ip)) return true;
+          metrics.rateLimited('room_create');
+          limitedCreate = true;
+          return false;
+        }, seats);
+        if ('error' in q) {
+          return q.error === 'toobig' ? { error: 'no_room' as const, message: 'Lobbies on this server are too small for the whole party' }
+            : { error: 'unavailable' as const, message: limitedCreate ? 'Too many games created, try again later' : 'This server has reached its game limit' };
+        }
+        return { code: q.code, gameType: mode };
+      });
+      if (!r.ok) return limitedCreate ? json(res, 429, { error: r.message, code: 'rate' }) : fail(r.error, r.message);
+      return json(res, 200, { party: r.view, ticket: r.ticket });
     }
     return json(res, 404, { error: 'Not found' });
   }
@@ -562,7 +701,7 @@ export async function startServer(config: Config): Promise<RunningServer> {
 
   let closing: Promise<void> | null = null;
   return {
-    port, main, rooms, profiles,
+    port, main, rooms, profiles, parties,
     close(reconnectMs) {
       closing ??= (async () => {
         draining = true;
@@ -570,6 +709,7 @@ export async function startServer(config: Config): Promise<RunningServer> {
         // Saves every world and sends clients a kick with the reconnect hint.
         main?.shutdown(reconnectMs);
         rooms?.shutdown(reconnectMs);
+        parties?.close();
         // After the games: a match that ended during shutdown has granted its XP.
         profiles?.close();
         await new Promise((r) => setTimeout(r, reconnectMs ? 300 : 20)); // let the close frames flush

@@ -19,7 +19,7 @@ Standaard, aanpasbaar via Options > Controls > Key Binds.
 | Inventaris / droppen | E / Q |
 | Chat / commando | T / / |
 | Arcade: herladen, scoreboard, loadout | R, Tab (vasthouden), B |
-| Arcade: wapens | 1, 2, 3, Q (snel wisselen) |
+| Arcade: wapens | 1, 2, 3, Q (snel wisselen); muiswiel zoomt door een sniper-scope |
 | Menu | Pijltjestoetsen verplaatsen de focus, Tab, Enter |
 | Debug / HUD verbergen | F3 / F1 |
 

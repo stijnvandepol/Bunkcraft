@@ -241,8 +241,9 @@ export type ClientMessage =
    * `rejoin`: the secret an arcade game handed out in its last `welcome` (see `welcome.rejoin`). After a dropped
    * connection it claims the seat that was kept for this player (team, score, class, match XP); no other proof
    * works against another player's seat, and a token only ever applies to the lobby that issued it.
+   * `party`: the ticket key a party member got from POST /api/party/play: the seat held for them, on the party's team; optional.
    */
-  | { t: 'hello'; v: number; name: string; key?: string; owner?: string; password?: string; bin?: boolean; binv?: number; profile?: string; rejoin?: string }
+  | { t: 'hello'; v: number; name: string; key?: string; owner?: string; password?: string; bin?: boolean; binv?: number; profile?: string; rejoin?: string; party?: string }
   /** The player leaves on purpose (quit to title): the seat is freed at once instead of being kept for a rejoin. */
   | { t: 'bye' }
   /**

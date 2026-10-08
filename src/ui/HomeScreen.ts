@@ -1,6 +1,7 @@
 import type { GameType } from '../modes/GameTypes';
 import { currentState, periodKey, resolveChallenges } from '../modes/progression/Challenges';
 import { levelFromXp } from '../modes/progression/Levels';
+import type { PartyView } from '../modes/Party';
 import { type ProfileData, rankOf } from '../modes/progression/Profile';
 import { type ModeStats, REALMS_MODES } from '../modes/Realms';
 import { type RejoinOffer, formatLeft } from '../net/Rejoin';
@@ -9,6 +10,7 @@ import { emblemSvg, svgDataUrl, wordmarkSvg } from './Brand';
 import { h } from './dom';
 import { type I18nKey, t } from './i18n';
 import { challengeText } from './ProgressText';
+import { PartyPanel, type PartyUi } from './PartyPanel';
 import { cardBackground, rankBadge } from './RankBadge';
 import { realmsIcon } from './RealmsIcons';
 import { type ShellIcon, iconEl } from './shellIcons';
@@ -36,6 +38,8 @@ export interface HomeHost {
   survival(): void;
   /** The "Rejoin your match" button: back into the lobby whose seat the server keeps. */
   rejoin(offer: RejoinOffer): void;
+  /** The party panel's buttons. */
+  party: PartyUi;
 }
 
 export type ServerState = 'connecting' | 'online' | 'offline';
@@ -60,6 +64,9 @@ export class HomeScreen {
   private mode: GameType;
   private readonly playBtn: HTMLButtonElement;
   private readonly playMode: HTMLSpanElement;
+  private readonly playLabel: HTMLSpanElement;
+  readonly partyPanel: PartyPanel;
+  private partyView: PartyView | null = null;
   private readonly playSub: HTMLSpanElement;
   private readonly status: HTMLDivElement;
   private readonly cards = new Map<GameType, { el: HTMLButtonElement; count: HTMLSpanElement }>();
@@ -88,9 +95,12 @@ export class HomeScreen {
     // PLAY: the first focusable control (keyboard and controller land here).
     this.playMode = h('span', { class: 'bc-play-mode' });
     this.playSub = h('span', { class: 'bc-play-sub' });
+    this.playLabel = h('span', { text: t('home.play') });
     this.playBtn = h('button', { class: 'bc-play', type: 'button', onclick: () => this.host.play(this.mode) },
-      h('span', { class: 'bc-play-label' }, iconEl('play'), h('span', { text: t('home.play') })),
+      h('span', { class: 'bc-play-label' }, iconEl('play'), this.playLabel),
       this.playMode, this.playSub);
+    this.partyPanel = new PartyPanel(host.party);
+    this.partyPanel.setAvailable(false);
     this.status = h('div', { class: 'home-status', role: 'status', 'aria-live': 'polite' });
     this.rejoinEl = h('section', { class: 'bc-panel home-rejoin', 'aria-label': t('rejoin.title'), hidden: true });
 
@@ -116,6 +126,7 @@ export class HomeScreen {
       this.rejoinEl,
       this.playBtn,
       h('div', { class: 'home-row' }, lobbies, priv),
+      this.partyPanel.el,
       friends,
       nav,
       this.status,
@@ -130,13 +141,15 @@ export class HomeScreen {
         h('span', { class: 'mode-text' }, h('span', { class: 'mode-name', text: modeName(mode) }), count));
       el.title = t(`realms.desc.${mode}` as I18nKey);
       el.addEventListener('click', () => {
+        // In a party the leader picks the mode.
+        if (this.partyRole() === 'member') return;
         // A second press on the selected mode plays it (Enter twice from the keyboard, a double click).
         if (this.mode === mode && el.dataset.armed === '1') { this.host.play(mode); return; }
         this.select(mode);
         el.dataset.armed = '1';
         window.setTimeout(() => { delete el.dataset.armed; }, 600);
       });
-      el.addEventListener('dblclick', () => this.host.play(mode));
+      el.addEventListener('dblclick', () => { if (this.partyRole() !== 'member') this.host.play(mode); });
       this.cards.set(mode, { el, count });
       grid.append(el);
     }
@@ -204,8 +217,36 @@ export class HomeScreen {
     if (notify) this.host.selectMode(mode);
   }
 
+  /** What the party makes of the big button: the leader plays for everybody, the others toggle READY. */
+  private partyRole(): 'none' | 'leader' | 'member' {
+    const v = this.partyView;
+    return !v ? 'none' : v.me === v.leader ? 'leader' : 'member';
+  }
+
+  /** The party changed (null = no party): the party panel, the PLAY button, and the playlist that follows the leader. */
+  setParty(view: PartyView | null): void {
+    this.partyView = view;
+    this.partyPanel.setView(view);
+    const role = this.partyRole();
+    const me = view?.members.find((m) => m.id === view.me);
+    const on = role === 'member' && !!me?.ready;
+    this.playBtn.classList.toggle('member', role === 'member');
+    this.playBtn.classList.toggle('on', on);
+    if (role === 'member') this.playBtn.setAttribute('aria-pressed', String(on)); else this.playBtn.removeAttribute('aria-pressed');
+    this.playLabel.textContent = role === 'member' ? (on ? t('party.readyOn') : t('party.readyUp')) : t('home.play');
+    if (role === 'member' && view && view.mode !== this.mode && REALMS_MODES.includes(view.mode)) this.select(view.mode, false);
+    for (const c of this.cards.values()) {
+      c.el.classList.toggle('party-locked', role === 'member');
+      c.el.setAttribute('aria-disabled', String(role === 'member'));
+    }
+    this.renderPlaySub();
+  }
+
   private renderPlaySub(): void {
+    const role = this.partyRole();
+    if (role === 'member') { this.playSub.textContent = this.partyView!.members.find((m) => m.id === this.partyView!.me)?.ready ? t('party.readyCancel') : t('party.readyHint'); return; }
     if (this.server === 'connecting') { this.playSub.textContent = t('home.connecting'); return; }
+    if (role === 'leader') { this.playSub.textContent = t('party.leaderSub', this.partyView!.members.length); return; }
     if (this.server === 'offline') { this.playSub.textContent = t('home.quickPlay'); return; }
     const s = this.stats.find((x) => x.gameType === this.mode);
     this.playSub.textContent = `${t('home.quickPlay')} · ${s && s.players > 0 ? t('home.online', s.players) : t('home.nobody')}`;
@@ -215,6 +256,7 @@ export class HomeScreen {
     this.server = state;
     const off = state !== 'online';
     this.playBtn.disabled = off;
+    if (off) this.partyPanel.setAvailable(false);
     for (const el of this.onlineEls) (el as HTMLButtonElement | HTMLInputElement).disabled = off;
     for (const c of this.cards.values()) c.el.classList.toggle('offline', state === 'offline');
     this.el.classList.toggle('offline', state === 'offline');

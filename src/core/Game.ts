@@ -23,6 +23,7 @@ import { backoffMs, clearTicket, ticketToken } from '../net/Rejoin';
 import { NetEntities } from '../net/NetEntities';
 import { useBoneMeal } from '../world/Growth';
 import { farmStateText, trample } from '../world/Farming';
+import { normalizePartyCode } from '../modes/Party';
 import { type ClientMessage, SNAP_FLAG_CROUCH, SNAP_FLAG_SLIDE, type ServerMessage, formatCode, normalizeCode } from '../net/protocol';
 import { type GameType, TEAM_COLORS, gameTypeDef } from '../modes/GameTypes';
 import { ARCADE_POS_HZ, arcadeInterpDelay } from '../modes/ArcadeLogic';
@@ -496,7 +497,9 @@ export class Game {
     this.precompileShaders();
     // An invite link (?join=CODE) goes straight to the join screen with the code filled in.
     const invited = normalizeCode(new URLSearchParams(location.search).get('join') ?? '');
+    const partyInvite = normalizePartyCode(new URLSearchParams(location.search).get('party') ?? '');
     if (invited) void this.menu.openInvite(invited);
+    else if (partyInvite) this.menu.openPartyInvite(partyInvite);
     // A share link (?seed=…&mode=…) opens Create World prefilled.
     else {
       const share = parseShareParams(location.search);
@@ -2258,7 +2261,7 @@ export class Game {
     }
     if (this.net || this.previewServer) this.remote.update(performance.now() / 1000, this.cam.camera, window.innerWidth, window.innerHeight);
     // Arcade: after dying the camera follows another player (with fresh interpolated poses).
-    this.arcade?.applySpectateCamera(this.cam.camera);
+    const spectating = this.arcade?.applySpectateCamera(this.cam.camera) ?? false;
     this.previewServer?.update(dt, p);
     this.interaction!.update(dt, active, input, this.mode);
     const light = world.getLight(Math.floor(p.x), Math.floor(p.eyeY), Math.floor(p.z));
@@ -2276,6 +2279,8 @@ export class Game {
       f.lookX = input.mouseDX * sway;
       f.lookY = input.mouseDY * sway;
       this.arcade.update(f, input);
+      // Sway, recoil and the aim zoom the session applied this frame show in this frame (not one frame late).
+      if (!spectating) this.cam.syncAim(p);
     } else {
       this.hand.update(dt, this.hotbar.selectedBlock, this.cam.bobPhase, this.cam.bobStrength, light,
         this.interaction!.eating, window.innerWidth / Math.max(1, window.innerHeight), hasEnchants(this.hotbar.selectedStack.data), this.time);
