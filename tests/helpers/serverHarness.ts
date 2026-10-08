@@ -6,6 +6,8 @@ import { type RunningServer, startServer } from '../../server/App';
 import { type Config, loadConfig } from '../../server/Config';
 import { PROTOCOL_VERSION, type ClientMessage, type ServerMessage } from '../../src/net/protocol';
 import { decodeBinary } from '../../src/net/binary';
+import { BLOCK } from '../../src/world/BlockRegistry';
+import type { ServerWorld } from '../../server/ServerWorld';
 
 /** A started server on a random port with its own temp DATA_DIR. */
 export interface TestServer {
@@ -128,4 +130,26 @@ export async function joinGame(
     throw err;
   }
   return { client, welcome: first };
+}
+
+/**
+ * Resolves once the server has loaded the chunks within `radius` chunks of (x, z) in the room's world. The server loads
+ * a few chunks per tick, so how long that takes depends on the machine: a fixed sleep either wastes time or lets the
+ * test run against unloaded terrain on a slow one. Polls the room in this process; rejects after `timeoutMs`.
+ */
+export async function waitForChunks(t: TestServer, code: string, x: number, z: number, radius = 2, timeoutMs = 60_000): Promise<void> {
+  const room = t.server.rooms?.get(code)?.server as unknown as { entities: { world: ServerWorld } | null } | undefined;
+  const world = room?.entities?.world;
+  if (!world) throw new Error(`room ${code} has no terrain world`);
+  const cx = Math.floor(x) >> 4, cz = Math.floor(z) >> 4;
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    let missing = 0;
+    for (let dz = -radius; dz <= radius; dz++) {
+      for (let dx = -radius; dx <= radius; dx++) if (world.getBlock((cx + dx) * 16 + 8, 64, (cz + dz) * 16 + 8) === BLOCK.UNLOADED) missing++;
+    }
+    if (missing === 0) return;
+    if (Date.now() > deadline) throw new Error(`${missing} chunks around ${x},${z} still not loaded after ${timeoutMs} ms`);
+    await new Promise((r) => setTimeout(r, 25));
+  }
 }

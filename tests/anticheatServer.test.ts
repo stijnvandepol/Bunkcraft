@@ -10,6 +10,7 @@ import { arcadeMaxSpeed } from '../src/modes/ArcadeLogic';
 import { GameServer } from '../server/GameServer';
 import { metrics } from '../server/Metrics';
 import { STRIKES } from '../server/anticheat/ArcadeGuard';
+import { arenaPath, follow } from '../scripts/lib/arenaPath';
 
 class FakeSocket extends EventEmitter {
   OPEN = 1;
@@ -72,21 +73,37 @@ function solidNear(x: number, z: number): [number, number] {
 
 describe('arcade movement enforcement on the server', () => {
   it('a legal walk produces no corrections', () => {
-    const server = room();
-    const { ws, me, pos } = enter(server, 'walker');
-    const speed = arcadeMaxSpeed(1) * 0.95;
-    // Walk towards the centre for 2 s at 20 Hz, stopping at the first obstacle (the route is not planned).
     const map = getMap('classic');
     const v = map.variantFor(7);
-    const len = Math.hypot(me.x, me.z), dx = -me.x / len, dz = -me.z / len;
-    for (let i = 0; i < 40; i++) {
-      clock += 50;
-      const nx = me.x + dx * speed * 0.05, nz = me.z + dz * speed * 0.05;
-      if (map.blockAt(v, Math.floor(nx + dx * 0.4), ARENA_FLOOR_Y + 1, Math.floor(nz + dz * 0.4)) !== 0) break;
-      me.x = nx; me.z = nz;
-      pos(me.x, me.y, me.z);
+    const speed = arcadeMaxSpeed(1) * 0.95;
+    // Spawn points are random: walk from several of them. The route is planned over cells the player box fits through
+    // (the same path finder the bots use), so no spawn can put the walker against a corner it would clip.
+    const routeTowardsCentre = (from: { x: number; y: number; z: number }) => {
+      // The first reachable cell near the point 14 blocks from the spawn on the line to the centre.
+      const len = Math.hypot(from.x, from.z), tx = from.x - (from.x / len) * 14, tz = from.z - (from.z / len) * 14;
+      for (let r = 0; r < 8; r++) {
+        for (let dz = -r; dz <= r; dz++) for (let dx = -r; dx <= r; dx++) {
+          if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue;
+          const route = arenaPath(map, v, [from.x, from.z, from.y], [Math.floor(tx) + dx + 0.5, Math.floor(tz) + dz + 0.5]);
+          if (route && route.length > 3) return route;
+        }
+      }
+      return null;
+    };
+    for (let round = 0; round < 8; round++) {
+      const server = room();
+      const { ws, me, pos } = enter(server, `walker${round}`);
+      const route = routeTowardsCentre(me);
+      expect(route, `a walking path from the spawn ${me.x},${me.z}`).not.toBeNull();
+      // Walk towards the centre for 2 s at 20 Hz on the (mocked) server clock.
+      for (let i = 0; i < 40 && route!.length; i++) {
+        clock += 50;
+        follow(me, route!, speed * 0.05);
+        pos(me.x, me.y, me.z);
+      }
+      expect(ws.of('teleport'), `walk from the spawn ${round}`).toEqual([]);
+      expect(ws.of('kick')).toEqual([]);
     }
-    expect(ws.of('teleport')).toEqual([]);
   });
 
   it('noclip into cover is rubber-banded to the last valid position and counted', () => {

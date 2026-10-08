@@ -3,7 +3,7 @@ import { ServerWorld } from '../server/ServerWorld';
 import { itemId } from '../src/items/ItemRegistry';
 import { BLOCK, SAPLING_STAGE_BIT } from '../src/world/BlockRegistry';
 import { isLog } from '../src/world/PlantRules';
-import { KEY_A, KEY_B, type TestServer, cleanup, createRoom, joinGame, startTestServer } from './helpers/serverHarness';
+import { KEY_A, KEY_B, type TestServer, cleanup, createRoom, joinGame, startTestServer, waitForChunks } from './helpers/serverHarness';
 import { TIME_SLACK } from './helpers/timing';
 
 describe('ServerWorld random ticks', () => {
@@ -58,6 +58,9 @@ describe('ServerWorld random ticks', () => {
   });
 });
 
+/** Condition waits are generous: the simulation answers on the server tick, which a loaded CI runner stretches. */
+const WAIT = 30_000;
+
 describe('multiplayer sync of growth and falling blocks', () => {
   let t: TestServer;
   beforeAll(async () => { t = await startTestServer(); });
@@ -72,50 +75,51 @@ describe('multiplayer sync of growth and falling blocks', () => {
     const pos = (held: number) => a.client.send({ t: 'pos', x: sp.x, y: sp.y, z: sp.z, yaw: 0, pitch: 0, flags: 0, held });
     pos(0);
     b.client.send({ t: 'pos', x: sp.x, y: sp.y, z: sp.z, yaw: 0, pitch: 0, flags: 0, held: 0 });
-    // The chunks around the players load at two per tick.
-    await new Promise((r) => setTimeout(r, 2500));
+    // The chunks around the players load at a few per tick: wait until they are there (not a fixed sleep).
+    await waitForChunks(t, code, sp.x, sp.z);
     const x = Math.floor(sp.x), z = Math.floor(sp.z), y = Math.floor(sp.y);
 
     // Sand placed in the air (the column is cleared first: there may be a tree): Bobby sees it, then the falling
     // entity, then the sand leaving and landing.
     for (let k = 0; k <= 3; k++) a.client.send({ t: 'block', seq: 100 + k, x: x + 2, y: y + k, z, id: BLOCK.AIR });
     a.client.send({ t: 'block', seq: 1, x: x + 2, y: y + 4, z, id: BLOCK.SAND });
-    await b.client.waitFor('block', (m) => m.id === BLOCK.SAND && m.x === x + 2);
-    const fall = await b.client.waitFor('fall', (m) => m.f.length > 0);
+    await b.client.waitFor('block', (m) => m.id === BLOCK.SAND && m.x === x + 2, WAIT);
+    const fall = await b.client.waitFor('fall', (m) => m.f.length > 0, WAIT);
     expect(fall.f[0][1]).toBe(BLOCK.SAND);
     await b.client.waitFor('blocks', (m) => {
       for (let i = 0; i < m.edits.length; i += 5) if (m.edits[i] === x + 2 && m.edits[i + 1] === y + 4 && m.edits[i + 3] === BLOCK.AIR) return true;
       return false;
-    });
+    }, WAIT);
     await b.client.waitFor('blocks', (m) => {
       for (let i = 0; i < m.edits.length; i += 5) if (m.edits[i] === x + 2 && m.edits[i + 1] < y + 4 && m.edits[i + 3] === BLOCK.SAND) return true;
       return false;
-    });
+    }, WAIT);
     // When nothing falls any more an empty list clears it on the clients.
-    await b.client.waitFor('fall', (m) => m.f.length === 0);
+    await b.client.waitFor('fall', (m) => m.f.length === 0, WAIT);
 
     // A sapling on stone is refused; on a grass block it stays.
     a.client.send({ t: 'block', seq: 2, x: x - 2, y: y + 4, z, id: BLOCK.STONE });
     a.client.send({ t: 'block', seq: 3, x: x - 2, y: y + 5, z, id: BLOCK.SAPLING });
-    await a.client.waitFor('reject', (m) => m.seq === 3);
+    await a.client.waitFor('reject', (m) => m.seq === 3, WAIT);
     a.client.send({ t: 'block', seq: 4, x: x - 2, y: y + 4, z, id: BLOCK.GRASS });
     a.client.send({ t: 'block', seq: 5, x: x - 2, y: y + 5, z, id: BLOCK.SAPLING });
-    await b.client.waitFor('block', (m) => m.id === BLOCK.SAPLING);
+    await b.client.waitFor('block', (m) => m.id === BLOCK.SAPLING, WAIT);
 
     // Bone meal needs it in hand; then a few uses grow the tree, which reaches Bobby as a batch of logs and leaves.
     a.client.send({ t: 'bonemeal', x: x - 2, y: y + 5, z });
     pos(bone);
-    await new Promise((r) => setTimeout(r, 120));
-    for (let i = 0; i < 40; i++) {
+    // Each use is a chance to advance the sapling; keep using bone meal until the tree reaches Bobby (bounded by time,
+    // not by a count that a slow machine could use up before the first tick came out).
+    const grew = () => b.client.messages.some((m) => m.t === 'blocks' && m.edits.some((v, k) => k % 5 === 3 && isLog(v)));
+    for (const deadline = Date.now() + WAIT; !grew() && Date.now() < deadline;) {
       a.client.send({ t: 'bonemeal', x: x - 2, y: y + 5, z });
       await new Promise((r) => setTimeout(r, 60));
-      if (b.client.messages.some((m) => m.t === 'blocks' && m.edits.some((v, k) => k % 5 === 3 && isLog(v)))) break;
     }
     await b.client.waitFor('blocks', (m) => {
       for (let i = 0; i < m.edits.length; i += 5) if (m.edits[i] === x - 2 && m.edits[i + 1] === y + 5 && isLog(m.edits[i + 3])) return true;
       return false;
-    });
+    }, WAIT);
     a.client.close();
     b.client.close();
-  });
+  }, 120_000);
 });
