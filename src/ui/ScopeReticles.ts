@@ -79,7 +79,7 @@ function sniperSvg(): string {
     }
   }
   // The lit centre: a small red dot in the clear middle, the aim point.
-  parts.push(`<circle cx="0" cy="0" r="12" fill="rgba(255,60,40,0.35)"/>`, `<circle cx="0" cy="0" r="5.5" fill="#ff3b26"/>`);
+  parts.push(`<circle cx="0" cy="0" r="15" fill="rgba(255,60,40,0.3)"/>`, `<circle cx="0" cy="0" r="7.5" fill="#ff3b26"/>`);
   return parts.join('');
 }
 

@@ -82,7 +82,7 @@ function reticleTexture(kind: 'reddot' | 'holo'): THREE.CanvasTexture {
 }
 
 /** Size of the reticle planes in screen pixels on a 720 px tall screen (scaled with the height): dot in its ring, holographic ring. */
-const RETICLE_PX = { reddot: 40, holo: 76 } as const;
+const RETICLE_PX = { reddot: 30, holo: 76 } as const;
 
 /** Distance in front of the camera (view space z) of the weapon origin while aiming. */
 const ADS_Z = -0.5;

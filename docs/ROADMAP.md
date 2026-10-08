@@ -290,6 +290,13 @@ regenereert, respawns en een scoreboard. Beschrijving, besturing en wapentabel: 
   meer zichtbaar vanaf de vijandelijke helft (ook Classic, sinds de compacte versie). Analyse en metingen: [`research/MAPS.md`](research/MAPS.md),
   meetscripts `scripts/qa/map-flow.ts` en `scripts/map-metrics.ts`. **Volgende stap:** Classic uit de rotatie of compacter,
   Villa/Terminus/Harbor Yard inkorten of jump pads op de lange routes, playtest per kaart.
+- **Richtgevoel en scopes: Gedaan (oktober 2026).** Gemeten met `scripts/qa/aim-feel.py` (M1 Pro, 120 fps): muis → beeld was
+  al hetzelfde frame (~6 ms), maar de ADS-zoom liep ~50 ms achter, open vizieren dreven 0,13° en terugslag zakte pas na
+  ~0,75 s terug. Nu: zoom en sway in hetzelfde frame, ADS ~20% sneller (rifle 99% zoom 285 → 167 ms), geen sway buiten de
+  sniper-scope, ADS-spreiding ~40% kleiner (gedeeld met de server), lichtere terugslag die in ~0,2 s terugzakt, sniper-scopes
+  met twee zoomstanden (scrolwiel), afstandsmeter en SVG-richtkruizen per optiek. Geen aim assist. **Volgende stap:**
+  playtest; eventueel standaardgevoeligheid voor arcade lager (100% = 0,126°/count is snel met raw input en een 1600-DPI-muis)
+  en de ADS-vlag server-side valideren (de server vertrouwt `ads` nu, dus een cheat kan altijd de ADS-spreiding claimen).
 - **BunkCraft Realms: Gedaan.** Multiplayer is alleen Minecraft; de arcade-modes zitten onder *BunkCraft Realms*: playlist
   met live spelersaantallen, **Snel spelen** (server-side matchmaking `POST /api/quickplay`: volste open lobby die niet bijna
   klaar is, anders een nieuwe), *Lobby's bekijken* (fase, tijd, kaart), *Privélobby* (mode, kaart, limieten, max. spelers,
