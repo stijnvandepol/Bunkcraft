@@ -1,3 +1,4 @@
+import { t } from '../ui/i18n';
 import { type GameType, parseGameType } from '../modes/GameTypes';
 import { type MapSetting } from '../modes/maps';
 import { type MatchPhase, formatCode } from './protocol';
@@ -64,10 +65,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   try {
     res = await fetch(path, init);
   } catch {
-    throw new Error('Could not reach the server');
+    throw new Error(t('mp.unreachable'));
   }
   const body = (await res.json().catch(() => ({}))) as { error?: string } & T;
-  if (!res.ok) throw new Error(body.error ?? `Server error (${res.status})`);
+  if (!res.ok) throw new Error(body.error ?? t('mp.serverError', res.status));
   return body;
 }
 
