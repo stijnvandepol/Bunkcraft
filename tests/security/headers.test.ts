@@ -35,4 +35,28 @@ describe('clientAddress', () => {
     expect(clientAddress('1.2.3.4', '10.0.0.2', true)).toBe('1.2.3.4');
     expect(clientAddress(undefined, '10.0.0.2', true)).toBe('10.0.0.2');
   });
+
+  describe('Cloudflare Tunnel (CF-Connecting-IP)', () => {
+    it('ignores the header unless TRUST_CLOUDFLARE is on, so a direct client cannot pick its address', () => {
+      expect(clientAddress(undefined, '1.2.3.4', false, '6.6.6.6')).toBe('1.2.3.4');
+      expect(clientAddress(undefined, '1.2.3.4', false, '6.6.6.6', false)).toBe('1.2.3.4');
+      // also behind a trusted proxy: the header does not override X-Forwarded-For
+      expect(clientAddress('5.5.5.5', '10.0.0.2', true, '6.6.6.6', false)).toBe('5.5.5.5');
+    });
+
+    it('uses the header when TRUST_CLOUDFLARE is on', () => {
+      expect(clientAddress(undefined, '172.18.0.1', false, '203.0.113.7', true)).toBe('203.0.113.7');
+      expect(clientAddress(undefined, '172.18.0.1', false, ' 2001:db8::1 ', true)).toBe('2001:db8::1');
+      expect(clientAddress(undefined, '172.18.0.1', false, ['203.0.113.7', '6.6.6.6'], true)).toBe('203.0.113.7');
+      // it wins over X-Forwarded-For
+      expect(clientAddress('9.9.9.9', '172.18.0.1', true, '203.0.113.7', true)).toBe('203.0.113.7');
+    });
+
+    it('falls back when the header is missing or not an address', () => {
+      expect(clientAddress(undefined, '172.18.0.1', false, undefined, true)).toBe('172.18.0.1');
+      expect(clientAddress(undefined, '172.18.0.1', false, '', true)).toBe('172.18.0.1');
+      expect(clientAddress(undefined, '172.18.0.1', false, 'not-an-ip, 1.1.1.1', true)).toBe('172.18.0.1');
+      expect(clientAddress('9.9.9.9', '172.18.0.1', true, 'junk', true)).toBe('9.9.9.9');
+    });
+  });
 });

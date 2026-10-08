@@ -53,6 +53,7 @@ main() {
   if [ "$dry" = 0 ]; then
     take_lock 0 || die "another update is running (an auto-update may be waiting for players to finish a match); see 'bunkcraft autoupdate status'."
   fi
+  migrate_proxy_env || true
   if [ "$rollback" = 1 ]; then manual_rollback; return; fi
 
   # ---- persistent choices in .env (compose reads COMPOSE_FILE and BUNKCRAFT_TAG from it)
@@ -61,9 +62,10 @@ main() {
   old_tag="$(env_get BUNKCRAFT_TAG)"
   old_compose_file="$(env_get COMPOSE_FILE)"
   [ -n "$tag" ] && env_set BUNKCRAFT_TAG "$tag"
+  # COMPOSE_FILE = base file + build override (--build) + direct-port override (PROXY=none in .env).
   case "$mode" in
-    build) env_set COMPOSE_FILE docker-compose.yml:docker-compose.build.yml ;;
-    pull) env_unset COMPOSE_FILE ;;
+    build) env_set COMPOSE_FILE "$(compose_file_value build)" ;;
+    pull) if [ -n "$(compose_file_value pull)" ]; then env_set COMPOSE_FILE "$(compose_file_value pull)"; else env_unset COMPOSE_FILE; fi ;;
   esac
   local building=0
   case "$(env_get COMPOSE_FILE)" in *docker-compose.build.yml*) building=1 ;; esac
@@ -96,7 +98,7 @@ main() {
     # The commit goes into the image: /health and the title screen show it (docker-compose.build.yml).
     GIT_SHA="$(git rev-parse HEAD 2>/dev/null || true)"; export GIT_SHA
     say "building $ref from this checkout (the old server keeps running)"
-    { run docker compose build --pull bunkcraft && run docker compose pull --quiet caddy; } || fetched=0
+    { run docker compose build --pull bunkcraft && { [ "$(proxy_mode)" = none ] || run docker compose pull --quiet caddy; }; } || fetched=0
   else
     say "pulling $ref (the old server keeps running)"
     run docker compose pull --quiet || fetched=0
@@ -205,7 +207,7 @@ running_image_id() {
   local cid; cid="$(docker compose ps -q bunkcraft 2>/dev/null | head -n1)"
   [ -n "$cid" ] && docker inspect --format '{{.Image}}' "$cid" 2>/dev/null || true
 }
-# Caddy waits for a healthy game server, so 'up' itself fails when the new one is unhealthy: wait_healthy decides.
+# With Caddy: it waits for a healthy game server, so 'up' itself fails when the new one is unhealthy: wait_healthy decides.
 recreate() { docker compose up -d --remove-orphans || true; }
 health() { docker compose exec -T bunkcraft wget -qO- http://127.0.0.1:3000/health 2>/dev/null; }
 # After a healthy start: the game page, its script, the API and a throw-away game (scripts/server-check.mjs).

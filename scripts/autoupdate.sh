@@ -60,6 +60,8 @@ main() {
     fi
   fi
 
+  migrate_proxy_env || true
+
   # ---- 2. something new?
   local ref key building=0
   ref="$(docker compose config --images bunkcraft)"

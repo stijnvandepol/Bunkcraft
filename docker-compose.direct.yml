@@ -1,0 +1,11 @@
+# Publish the game server on the host, for a proxy you run yourself (Cloudflare Tunnel, nginx, ...). No Caddy.
+#
+#   sudo ./scripts/install.sh --proxy none [--domain play.example.com] [--bind 0.0.0.0] [--port 3000]
+#   or once in .env:  COMPOSE_FILE=docker-compose.yml:docker-compose.direct.yml   (install.sh --proxy none does this)
+#
+# BIND_ADDR is 127.0.0.1 (the proxy runs on this machine) or 0.0.0.0 (it runs elsewhere: restrict the port with a
+# firewall to that machine). The container always listens on 3000; BUNKCRAFT_PORT is the port on the host.
+services:
+  bunkcraft:
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${BUNKCRAFT_PORT:-3000}:3000"

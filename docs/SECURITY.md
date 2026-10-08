@@ -211,7 +211,7 @@ op de `null`-test, en faalden de header- en slowloris-checks).
 
 ## Hardening-checklist voor hosten op een domein
 
-- [ ] `DOMAIN=play.example.com docker compose up -d` (Caddy regelt HTTPS en HSTS); poort 3000 niet publiek (compose publiceert hem niet).
+- [ ] `DOMAIN=play.example.com COMPOSE_PROFILES=caddy docker compose up -d` (Caddy regelt HTTPS en HSTS); poort 3000 niet publiek (compose publiceert hem niet; alleen `install.sh --proxy none` doet dat, zie SERVER.md "Achter een Cloudflare Tunnel").
 - [ ] `TRUST_PROXY=1` alleen achter een proxy die `X-Forwarded-For` overschrijft (Caddyfile doet dat; nginx: `proxy_set_header X-Forwarded-For $remote_addr;`). Staat er nog een CDN (Cloudflare) voor Caddy, gebruik dan de header van de CDN en stel Caddy's `trusted_proxies` in.
 - [ ] Bestaand volume uit een oudere versie? De container draait nu als `node` (uid 1000): `docker run --rm -v bunkcraft-data:/d alpine chown -R 1000:1000 /d`.
 - [ ] Basisimage vastzetten op een digest (`FROM node:22-alpine@sha256:...` via `docker buildx imagetools inspect node:22-alpine`) en `caddy:2-alpine` idem; Dependabot of Renovate aanzetten voor npm, Docker en Actions.

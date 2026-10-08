@@ -1,3 +1,5 @@
+import { isIP } from 'node:net';
+
 /**
  * Security response headers for the static server. Keep the Caddyfile in sync (docs/SECURITY.md).
  *
@@ -36,11 +38,28 @@ export const SECURITY_HEADERS: Readonly<Record<string, string>> = {
 };
 
 /**
- * The address used for rate limits. X-Forwarded-For is only read behind a trusted proxy (TRUST_PROXY=1), and then
- * its LAST entry: that is the one the proxy appended itself. Earlier entries are whatever the client sent, so a
- * proxy that appends (nginx's $proxy_add_x_forwarded_for) would otherwise let anyone pick their own address.
+ * The address used for rate limits.
+ *
+ * - Cloudflare Tunnel (TRUST_CLOUDFLARE=1): the `CF-Connecting-IP` header, set by Cloudflare's edge (a client cannot
+ *   forge it through the tunnel). Only enable it when the server is reachable through Cloudflare alone: anyone who
+ *   can reach the port directly could send the header themselves. Without the option the header is ignored.
+ *   A missing or malformed header falls through to the rules below.
+ * - Reverse proxy (TRUST_PROXY=1): X-Forwarded-For, and then its LAST entry: that is the one the proxy appended
+ *   itself. Earlier entries are whatever the client sent, so a proxy that appends (nginx's
+ *   $proxy_add_x_forwarded_for) would otherwise let anyone pick their own address.
+ * - Otherwise the socket address.
  */
-export function clientAddress(forwarded: string | string[] | undefined, remote: string | undefined, trustProxy: boolean): string {
+export function clientAddress(
+  forwarded: string | string[] | undefined,
+  remote: string | undefined,
+  trustProxy: boolean,
+  cfConnectingIp?: string | string[] | undefined,
+  trustCloudflare = false,
+): string {
+  if (trustCloudflare) {
+    const cf = (Array.isArray(cfConnectingIp) ? cfConnectingIp[0] : cfConnectingIp)?.trim();
+    if (cf && isIP(cf)) return cf;
+  }
   if (trustProxy) {
     const header = Array.isArray(forwarded) ? forwarded.join(',') : forwarded;
     const last = header?.split(',').pop()?.trim();
