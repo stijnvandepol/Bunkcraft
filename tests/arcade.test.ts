@@ -63,6 +63,49 @@ describe('fire control', () => {
     expect(fc.tryFire(1.9, 0.8, false, true, true)).toBe(true);
   });
 
+  it('never lets two clicks of a semi-automatic go out closer than its interval, however the clicks are paced (no rhythm debt)', () => {
+    // Clicking a little slower than the fire rate used to build a debt that let a fast click follow only ~0.1 s after a shot;
+    // the server holds the cadence strictly and dropped that shot (sound and kick here, nothing there).
+    for (const [interval, pace] of [[0.25, 0.28], [0.25, 0.31], [0.15, 0.17], [0.5, 0.57], [1.33, 1.5]]) {
+      const fc = new FireControl();
+      let t = 1, last = -1e9, shotsOut = 0;
+      for (let i = 0; i < 40; i++) {
+        // Every few clicks a quick double click (the debt would have paid out here).
+        for (const dt of i % 5 === 4 ? [0, 0.07, 0.1] : [0]) {
+          if (fc.tryFire(t + dt, interval, false, true, true)) {
+            expect(t + dt - last, `interval ${interval} pace ${pace} click ${i}`).toBeGreaterThanOrEqual(interval - 1e-9);
+            last = t + dt;
+            shotsOut++;
+          }
+        }
+        t += pace;
+      }
+      expect(shotsOut).toBeGreaterThan(30);
+    }
+  });
+
+  it('a rested trigger never makes two shots follow each other faster than the server accepts (taps and pauses of every length)', () => {
+    // Every shot the client lets out must be one the server accepts (zero latency).
+    for (const [interval, auto] of [[0.1, true], [0.0667, true], [0.5, false], [2, false], [1.33, false]] as const) {
+      const fc = new FireControl();
+      // The server's cadence (Match.fire: FIRE_SLACK = 0.04): a message earlier than nextFire - slack is dropped.
+      let serverNext = 0, shotsOut = 0, seed = 7;
+      const rnd = () => ((seed = (seed * 1103515245 + 12345) >>> 0) / 4294967296);
+      let held = false, holdUntil = 0;
+      for (let f = 0; f < 60 * 120; f++) {
+        const now = 1 + f / 60;
+        if (now >= holdUntil) { held = !held; holdUntil = now + (held ? 0.05 + rnd() * 1.5 : rnd() * interval * 2.2); }
+        const click = held && holdUntil - now > 0 && now - (holdUntil - 0) < 0 && f % 7 === 0;
+        if (fc.tryFire(now, interval, auto, held, auto ? held : click)) {
+          expect(now, `${interval} ${auto} shot ${shotsOut}`).toBeGreaterThanOrEqual(serverNext - 0.04 - 1e-9);
+          serverNext = Math.max(serverNext, now - 0.04) + interval;
+          shotsOut++;
+        }
+      }
+      expect(shotsOut).toBeGreaterThan(20);
+    }
+  });
+
   it('does not fire without the trigger, and does not burst after a pause', () => {
     const fc = new FireControl();
     expect(fc.tryFire(5, 0.1, true, false, false)).toBe(false);

@@ -383,6 +383,7 @@ export function buildBoxGeometry(boxes: readonly Box[]): THREE.BufferGeometry {
 
 const geometries = new Map<string, THREE.BufferGeometry>();
 const frontGeometries = new Map<string, THREE.BufferGeometry>();
+const rearGeometries = new Map<string, THREE.BufferGeometry | null>();
 
 /** Boxes starting behind this z are the stock: hidden while aiming, so the sights are not blocked. */
 const STOCK_FROM_Z = 0.085;
@@ -425,6 +426,27 @@ export function weaponFrontGeometry(id: string, optic: OpticId = 'iron', sup = f
     g = buildBoxGeometry(boxes);
     frontGeometries.set(key, g);
   }
+  return g;
+}
+
+/**
+ * What `weaponFrontGeometry` cuts off: the stock and the receiver behind the cut (a red dot's or holo's housing is split at the
+ * cut). Front + rear is the whole weapon. The first-person view keeps them as two meshes so the rear can shrink away while the
+ * sights come up, instead of the model swapping between two cuts in one frame. Null when nothing lies behind the cut.
+ */
+export function weaponRearGeometry(id: string, optic: OpticId = 'iron', sup = false, camo = 'none'): THREE.BufferGeometry | null {
+  if (!WEAPON_MODELS[id]) return null;
+  const key = `${id}|${optic}|${sup ? 1 : 0}${camo === 'none' ? '' : `|${camo}`}`;
+  if (rearGeometries.has(key)) return rearGeometries.get(key) ?? null;
+  const cut = adsCutZ(id, optic);
+  const clip = optic === 'reddot' || optic === 'holo';
+  const boxes: Box[] = [];
+  for (const b of assemble(id, optic, sup, camo)) {
+    if (b[2] >= cut) boxes.push(b);
+    else if (clip && b[5] > cut) boxes.push([b[0], b[1], cut, b[3], b[4], b[5], b[6]]);
+  }
+  const g = boxes.length > 0 ? buildBoxGeometry(boxes) : null;
+  rearGeometries.set(key, g);
   return g;
 }
 

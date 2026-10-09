@@ -447,20 +447,20 @@ Schade is uit 100 health. Zoom per optiek in de volgorde van de kolom *Optieken*
 
 | Wapen | Slot | Modus | Schade | Headshot | Schoten/min | Magazijn | Herladen leeg (tactisch) | Spreiding heup / ADS | Volle schade tot / val-af tot | ADS-tijd | Zoom (per optiek) | Snelheid | Optieken |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| Assault Rifle | primair | auto | 20 | ×2 | 600 | 30 | 1,3 s (0,98 s) | 2,2° / 0,25° | 32 / 80 m (min. 55%) | 0,19 s | 1,3× / 1,3× / 1,4× / 2,2× | ×1 | iron, reddot, holo, combat |
-| SMG | primair | auto | 15 | ×1,8 | 900 | 25 | 1,1 s (0,83 s) | 2,6° / 1° | 16 / 50 m (min. 50%) | 0,14 s | 1,2× / 1,2× / 1,3× | ×1,08 | iron, reddot, holo |
-| Shotgun | primair | semi | 8 × 18 | ×1,5 | 80 | 6 | 1,9 s (1,42 s) | 3,2° / 2,6° | 9 / 24 m (min. 20%) | 0,16 s | 1,1× / 1,2× | ×0,97 | iron, reddot |
-| LMG | primair | auto | 19 | ×1,7 | 720 | 75 | 3,4 s (2,55 s) | 3,2° / 0,35° | 38 / 95 m (min. 62%) | 0,34 s | 1,3× / 1,3× / 1,4× / 2× | ×0,88 | iron, reddot, holo, combat |
-| Burst Rifle | primair | burst (3) | 22 | ×1,6 | 900 (cyclus 0,34 s) | 30 | 1,35 s (1,01 s) | 2° / 0,15° | 45 / 85 m (min. 55%) | 0,2 s | 1,3× / 1,3× / 1,4× / 2,2× | ×1 | iron, reddot, holo, combat |
-| DMR | primair | semi | 34 | ×2 | 270 | 12 | 1,6 s (1,2 s) | 3,5° / 0,06° | 90 / 160 m (min. 70%) | 0,22 s | 1,4× / 1,5× / 1,6× / 2× / 2,2× (+4×) | ×0,96 | iron, reddot, holo, combat, scope |
-| Semi-Auto Sniper | primair | semi | 55 | ×1,85 | 125 | 6 | 1,9 s (1,42 s) | 7° / 0,03° | 70 / 160 m (min. 80%) | 0,29 s | 3× (+5,5×) / 2,4× | ×0,93 | scope, combat |
-| Bolt-Action Sniper | primair | grendel | 100 | ×1,5 | 45 | 4 | 2,1 s (1,58 s) | 9° / 0° | 70 / 160 m (min. 85%) | 0,24 s | 4,5× (+8,3×) | ×0,92 | scope |
-| Battle Rifle | primair | auto | 30 | ×1,6 | 420 | 20 | 1,6 s (1,2 s) | 2,8° / 0,22° | 45 / 100 m (min. 60%) | 0,26 s | 2,3× / 1,3× / 1,4× / 1,5× | ×0,95 | combat, iron, reddot, holo |
-| Lever-Action Carbine | primair | hendel | 50 | ×2,1 | 120 | 8 | 1,9 s (1,42 s) | 2,4° / 0,06° | 40 / 90 m (min. 70%) | 0,19 s | 1,4× / 1,5× / 2,2× | ×1 | iron, reddot, combat |
-| Anti-Materiel Rifle | primair | grendel | 150 | ×1,2 | 30 | 3 | 2,4 s (1,8 s) | 12° / 0° | 120 / 300 m (min. 80%) | 0,4 s | 6,3× (+11,4×) | ×0,85 | scope |
+| Assault Rifle | primair | auto | 20 | ×1,5 | 560 | 30 | 1,3 s (0,98 s) | 2,2° / 0,25° | 32 / 80 m (min. 55%) | 0,16 s | 1,3× / 1,3× / 1,4× / 2,2× | ×1 | iron, reddot, holo, combat |
+| SMG | primair | auto | 13 | ×1,4 | 950 | 25 | 1,1 s (0,83 s) | 2,6° / 1° | 14 / 50 m (min. 45%) | 0,13 s | 1,2× / 1,2× / 1,3× | ×1,08 | iron, reddot, holo |
+| Shotgun | primair | semi | 8 × 16 | ×1,5 | 80 | 6 | 1,9 s (1,42 s) | 3,2° / 2,6° | 9 / 24 m (min. 20%) | 0,14 s | 1,1× / 1,2× | ×0,97 | iron, reddot |
+| LMG | primair | auto | 17 | ×1,5 | 660 | 75 | 3,4 s (2,55 s) | 3,2° / 0,35° | 38 / 95 m (min. 62%) | 0,27 s | 1,3× / 1,3× / 1,4× / 2× | ×0,88 | iron, reddot, holo, combat |
+| Burst Rifle | primair | burst (3) | 20 | ×1,4 | 900 (cyclus 0,36 s) | 30 | 1,35 s (1,01 s) | 2° / 0,15° | 45 / 85 m (min. 55%) | 0,17 s | 1,3× / 1,3× / 1,4× / 2,2× | ×1 | iron, reddot, holo, combat |
+| DMR | primair | semi | 34 | ×1,5 | 240 | 12 | 1,6 s (1,2 s) | 3,5° / 0,06° | 90 / 160 m (min. 70%) | 0,18 s | 1,4× / 1,5× / 1,6× / 2× / 2,2× (+4×) | ×0,96 | iron, reddot, holo, combat, scope |
+| Semi-Auto Sniper | primair | semi | 55 | ×1,85 | 125 | 6 | 1,9 s (1,42 s) | 7° / 0,03° | 70 / 160 m (min. 80%) | 0,23 s | 3× (+5,5×) / 2,4× | ×0,93 | scope, combat |
+| Bolt-Action Sniper | primair | grendel | 100 | ×1,5 | 45 | 4 | 2,1 s (1,58 s) | 9° / 0° | 70 / 160 m (min. 85%) | 0,19 s | 4,5× (+8,3×) | ×0,92 | scope |
+| Battle Rifle | primair | auto | 30 | ×1,5 | 400 | 20 | 1,6 s (1,2 s) | 2,8° / 0,22° | 45 / 100 m (min. 60%) | 0,2 s | 2,3× / 1,3× / 1,4× / 1,5× | ×0,95 | combat, iron, reddot, holo |
+| Lever-Action Carbine | primair | hendel | 50 | ×2,1 | 120 | 8 | 1,9 s (1,42 s) | 2,4° / 0,06° | 40 / 90 m (min. 70%) | 0,16 s | 1,4× / 1,5× / 2,2× | ×1 | iron, reddot, combat |
+| Anti-Materiel Rifle | primair | grendel | 150 | ×1,2 | 30 | 3 | 2,4 s (1,8 s) | 12° / 0° | 120 / 300 m (min. 80%) | 0,32 s | 6,3× (+11,4×) | ×0,85 | scope |
 | Pistol | secundair | semi | 18 | ×2 | 400 | 12 | 0,95 s (0,71 s) | 1,8° / 0,3° | 25 / 60 m (min. 50%) | 0,12 s | 1,1× | ×1,04 | iron |
 | Machine Pistol | secundair | auto | 12 | ×1,6 | 1000 | 20 | 1,2 s (0,9 s) | 3,2° / 1,2° | 9 / 30 m (min. 45%) | 0,11 s | 1,1× | ×1,05 | iron |
-| Revolver | secundair | semi | 52 | ×2 | 150 | 6 | 1,8 s (1,35 s) | 2,5° / 0,09° | 30 / 70 m (min. 60%) | 0,16 s | 1,2× | ×1 | iron |
+| Revolver | secundair | semi | 52 | ×2 | 150 | 6 | 1,8 s (1,35 s) | 2,5° / 0,09° | 30 / 70 m (min. 60%) | 0,14 s | 1,2× | ×1 | iron |
 | Knife | melee | semi | 100 | ×1 | 120 | – | – | – | 2,6 / 2,6 m | – | – | ×1,08 | – |
 
 De spreiding is de halve openingshoek van de kegel waarin een kogel kan landen. Een scope op een wapen dat er niet voor gebouwd
@@ -474,7 +474,7 @@ animatie en geluid op die tijd en is klaar zodra de animatie klaar is; de server
 timer aan (het schot reist dezelfde halve ronde als het verzoek), dus na de animatie wacht je nergens op.
 
 **Richten (ADS):** `src/modes/AimMath.ts` (puur, getest in `tests/aimMath.test.ts`).
-- *Curves per wapenklasse* (op `adsTime`: tot 0,16 s licht, tot 0,26 s middel, daarboven zwaar): het beeld komt voorop geladen
+- *Curves per wapenklasse* (op `adsTime`: tot 0,14 s licht, tot 0,21 s middel, daarboven zwaar): het beeld komt voorop geladen
   omhoog (begint meteen te bewegen, geen smoothstep vanuit stilstand) en laat de vizieren 1,4 tot 1,9× sneller los. De
   gameplay-waarde (`ads`, lineair in de ADS-tijd van wapen, optiek en perk) blijft apart van de beeldwaarde (`adsEased`);
   omkeren halverwege geeft geen sprong (`AdsBlend`). De camera zet de zoom zonder eigen smoothing (`Camera.zoom`; ervoor
@@ -540,23 +540,30 @@ TTK in ms (body, richtfactor 0,75, kans dat een kogel binnen de hitbox valt door
 
 | Wapen | 4 m | 10 m | 20 m | 35 m | 60 m | 90 m | Rol |
 |---|---|---|---|---|---|---|---|
-| Assault Rifle | 567 | 757 | **757** | 890 | 1023 | 1423 | Allrounder: wint op middenafstand, redt zich dichtbij en ver |
-| SMG | 556 | 696 | 784 | 1170 | >5 s | >5 s | Snelst te voet; sloopt alles dichtbij, zakt weg na 20 m |
-| Shotgun | **250** | **410** | >5 s | >5 s | – | – | Eén pomp doodt tot ~8 m; nutteloos voorbij 15 m |
-| LMG | 583 | 923 | 923 | 923 | 1034 | 1257 | Groot magazijn (9,4 kills per magazijn op 20 m, de rest ≤ 4,3): houdt een lane en wint multikills; traag richten en herladen |
-| Burst Rifle | 611 | 811 | 811 | **811** | 947 | 1353 | Strakke bursts van drie: beloont precisie op 30–40 m |
-| DMR | 667 | 887 | 887 | 887 | 887 | **887** | Drie schoten tot 90 m; met scope voor lange lijnen |
-| Semi-Auto Sniper | 800 | 1090 | 1090 | 1090 | 1090 | 1090 | Twee snelle bodyshots of één headshot (55 × 1,85 = 102) op elke afstand |
-| Bolt-Action Sniper | 2023 | 1446 | 1446 | 1446 | 1446 | 3986 | Eén bodyshot doodt tot 70 m; quickscope (0,24 s), trage grendel, geen heupvuur |
-| Battle Rifle | 619 | 879 | 879 | 879 | **879** | 1070 | Zware automaat met combat scope: vier treffers tot 45 m, hard te beheersen, klein magazijn |
+| Assault Rifle | 607 | 767 | **767** | 910 | 1053 | 1481 | Allrounder: wint op middenafstand, redt zich dichtbij en ver |
+| SMG | 611 | 741 | 825 | 1314 | >5 s | >5 s | Snelst te voet; sloopt alles dichtbij, zakt weg na 20 m |
+| Shotgun | **250** | **390** | >5 s | >5 s | – | – | Eén pomp doodt tot ~8 m; nutteloos voorbij 15 m |
+| LMG | 636 | 906 | 906 | 906 | 1028 | 1391 | Groot magazijn (9,4 kills per magazijn op 20 m, de rest ≤ 4,3): houdt een lane en wint multikills; traag richten en herladen |
+| Burst Rifle | 644 | 814 | 814 | **814** | 1099 | 1632 | Strakke bursts van drie: beloont precisie op 30–40 m |
+| DMR | 750 | 930 | 930 | 930 | 930 | **930** | Drie schoten tot 90 m; met scope voor lange lijnen |
+| Semi-Auto Sniper | 800 | 1030 | 1030 | 1030 | 1030 | 1030 | Twee snelle bodyshots of één headshot (55 × 1,85 = 102) op elke afstand |
+| Bolt-Action Sniper | 2023 | 1396 | 1396 | 1396 | 1396 | 3936 | Eén bodyshot doodt tot 70 m; quickscope (0,24 s), trage grendel, geen heupvuur |
+| Battle Rifle | 650 | 850 | 850 | 850 | **850** | 1050 | Zware automaat met combat scope: vier treffers tot 45 m, hard te beheersen, klein magazijn |
 | Lever-Action Carbine | – | – | – | – | – | – | Eén headshot doodt tot ~45 m, twee bodyshots; snel richten, trage hendel |
-| Anti-Materiel Rifle | 9350 | 2210 | 2210 | 2210 | 2210 | 2210 | Eén treffer doodt op elke afstand; het traagst met richten, lopen en doorladen |
+| Anti-Materiel Rifle | 9350 | 2130 | 2130 | 2130 | 2130 | 2130 | Eén treffer doodt op elke afstand; het traagst met richten, lopen en doorladen |
 | Pistol | 1050 | 1170 | 1170 | 1370 | 3320 | 3320 | Snelle, precieze backup |
 | Machine Pistol | 660 | 770 | 1010 | >5 s | >5 s | – | Volautomatische paniekknop voor dichtbij |
-| Revolver | 667 | 827 | 827 | 1360 | 1360 | 1893 | Eén headshot tot 30 m, twee bodyshots; traag herladen |
+| Revolver | 667 | 807 | 807 | 1340 | 1340 | 1873 | Eén headshot tot 30 m, twee bodyshots; traag herladen |
 
 (De Lever-Action Carbine staat in het model op 1,6–2,6 s: het rekent een grendelwapen met 70% van de richtfactor, `BOLT_PRECISION`,
 en ziet alleen bodyshots. Zijn rol is de headshot.)
+
+**Tempo:** de tabel hierboven is het ontwerpmodel; wat een speler voelt meet `npx tsx scripts/ttk-sim.ts` met de echte
+`Match`-gevechten en mensachtige duelbots (TTK van de eerste treffer tot de dood, alleen kills in één salvo), en
+`npx tsx scripts/bot-pace.ts` (kills per minuut en levensduur in botwedstrijden). Na de headshot-vermenigvuldigers van ×1,4-1,5
+(was ×1,6-2) en de lichtere automaten dood je met een automaat in 400-550 ms (mediaan, `ttk-sim`) en kost een headshot-spree
+minstens 250 ms; de gemiddelde levensduur in botwedstrijden steeg van 14,6 naar 18,3 s. De ADS-tijden zijn korter (rifle 0,16 s,
+LMG 0,27 s, snipers 0,19 / 0,23 s, battle rifle 0,2 s, DMR 0,18 s, anti-materiel 0,32 s) met dezelfde onderlinge volgorde.
 
 Bewaakt door `tests/arcadeBalance.test.ts`: elk primair wapen heeft een niche (snelste op een afstand, meeste kills per
 magazijn, one-shot bodyshot op 60 m of headshot op 35 m, of snelst te voet), geen wapen is op meer dan twee van de zes afstanden

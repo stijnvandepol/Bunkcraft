@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { type OpticId, type WeaponDef, isMagnified } from '../modes/Weapons';
 import {
-  type Box, OPTIC_MODELS, WEAPON_MODELS, buildBoxGeometry, createWeaponMaterial, muzzleFor, sightYFor, sightZFor, weaponFrontGeometry, weaponGeometry,
+  type Box, OPTIC_MODELS, WEAPON_MODELS, adsCutZ, buildBoxGeometry, createWeaponMaterial, muzzleFor, sightYFor, sightZFor, weaponFrontGeometry, weaponGeometry, weaponRearGeometry,
 } from './WeaponModels';
 
 const SKIN = '#c99a7a';
@@ -89,6 +89,9 @@ const ADS_Z = -0.5;
 const FLASH_TIME = 0.055;
 const SWING_TIME = 0.28;
 const EQUIP_TIME = 0.28;
+/** The weapon in hand goes down this fast (seconds) before another comes up; it counts as raised above this equip progress. */
+const LOWER_TIME = 0.07;
+const RAISED = 0.3;
 
 function approach(current: number, target: number, rate: number, dt: number): number {
   return target + (current - target) * Math.exp(-rate * dt);
@@ -125,12 +128,13 @@ export class WeaponViewmodel {
   private readonly root = new THREE.Group();
   private readonly weaponMesh = new THREE.Mesh(undefined, createWeaponMaterial());
   private readonly armsMesh: THREE.Mesh;
+  /** The stock and the receiver behind the aim cut: shrinks away towards the cut while the sights come up (see update). */
+  private readonly rearMesh: THREE.Mesh;
   private readonly flash: THREE.Mesh;
   private readonly material: THREE.MeshBasicMaterial;
   private readonly armGeometries = new Map<string, THREE.BufferGeometry>();
-  /** The weapon in hand from the hip and cut for aiming (see weaponFrontGeometry); set in apply(). */
-  private hipGeometry: THREE.BufferGeometry | null = null;
-  private frontGeometry: THREE.BufferGeometry | null = null;
+  /** z of the aim cut of the weapon in hand (see adsCutZ): the rear mesh shrinks towards it. */
+  private cutZ = 0;
   private weaponId = '';
   private optic: OpticId = 'iron';
   private sup = false;
@@ -156,6 +160,9 @@ export class WeaponViewmodel {
   /** Bolt-action cycle 0..1 (1 = idle) and how long a weapon takes to come up (Quickdraw). */
   private bolt = 1;
   private equipTime = EQUIP_TIME;
+  /** A weapon waiting for the one in hand to be lowered, and whether the weapon on its way up came after a lowering. */
+  private pending: { id: string; optic: OpticId; sup: boolean } | null = null;
+  private lowered = false;
   /** Visual kick 0..1+ (position back and rotation up), decays quickly. */
   private kick = 0;
   private flashLeft = 0;
@@ -171,6 +178,7 @@ export class WeaponViewmodel {
   constructor() {
     this.material = this.weaponMesh.material as THREE.MeshBasicMaterial;
     this.armsMesh = new THREE.Mesh(undefined, this.material);
+    this.rearMesh = new THREE.Mesh(undefined, this.material);
     this.flash = new THREE.Mesh(new THREE.PlaneGeometry(0.2, 0.2), new THREE.MeshBasicMaterial({
       map: flashTexture(), transparent: true, blending: THREE.AdditiveBlending, depthTest: false, depthWrite: false, side: THREE.DoubleSide,
       // One pass: three draws transparent double-sided materials twice (back, then front) and flips needsUpdate both
@@ -188,7 +196,7 @@ export class WeaponViewmodel {
       return m;
     };
     this.reticles = { reddot: reticle('reddot'), holo: reticle('holo') };
-    this.root.add(this.weaponMesh, this.armsMesh, this.flash);
+    this.root.add(this.weaponMesh, this.rearMesh, this.armsMesh, this.flash);
     this.scene.add(this.root);
     this.scene.matrixAutoUpdate = false; // see Renderer: only the moving root updates its subtree
   }
@@ -232,27 +240,49 @@ export class WeaponViewmodel {
     if (this.weaponId && (camos[this.weaponId] ?? 'none') !== this.camo) this.apply(this.weaponId);
   }
 
-  /** The weapon in hand with its optic and suppressor (the optic only counts for primaries). */
+  /**
+   * The weapon in hand with its optic and suppressor (the optic only counts for primaries). Switching to another weapon
+   * lowers the one in hand first (`LOWER_TIME`), then the new one comes up; a weapon that is itself still on its way up
+   * (rapid switching) is replaced at once.
+   */
   setWeapon(def: WeaponDef, optic: OpticId = 'iron', sup = false): void {
     this.def = def;
     const o: OpticId = def.optics.includes(optic) ? optic : def.optics[0];
     const s = sup && def.slot !== 'melee';
-    if (def.id === this.weaponId && o === this.optic && s === this.sup) return;
-    if (def.id !== this.weaponId) this.equip = 0;
-    this.weaponId = def.id;
-    this.optic = o;
-    this.sup = s;
+    const target = this.pending ?? { id: this.weaponId, optic: this.optic, sup: this.sup };
+    if (def.id === target.id && o === target.optic && s === target.sup) return;
+    if (def.id !== target.id && this.weaponId !== '' && this.equip > RAISED) {
+      // Back to the weapon still shown: just let it come up again.
+      if (def.id === this.weaponId && o === this.optic && s === this.sup) { this.pending = null; return; }
+      this.pending = { id: def.id, optic: o, sup: s };
+      return;
+    }
+    this.pending = null;
+    this.commit(def.id, o, s, def.id !== this.weaponId, false);
+  }
+
+  /** The new weapon replaces the one in hand (after it was lowered, or at once when it was down already). */
+  private commit(id: string, optic: OpticId, sup: boolean, changed: boolean, lowered: boolean): void {
+    if (changed) this.equip = 0;
+    this.lowered = lowered;
+    this.weaponId = id;
+    this.optic = optic;
+    this.sup = sup;
     this.bolt = 1;
-    this.apply(def.id);
+    this.apply(id);
   }
 
   private apply(id: string): void {
     this.camo = this.camos[id] ?? 'none';
-    const geo = weaponGeometry(id, this.optic, this.sup, this.camo);
-    if (!geo) return;
-    this.weaponMesh.geometry = geo;
-    this.hipGeometry = geo;
-    this.frontGeometry = weaponFrontGeometry(id, this.optic, this.sup, this.camo) ?? geo;
+    const whole = weaponGeometry(id, this.optic, this.sup, this.camo);
+    if (!whole) return;
+    // The weapon is its front (what stays in view when aiming) plus its rear, two meshes drawn as one.
+    const front = weaponFrontGeometry(id, this.optic, this.sup, this.camo);
+    const rear = front ? weaponRearGeometry(id, this.optic, this.sup, this.camo) : null;
+    this.weaponMesh.geometry = front ?? whole;
+    this.rearMesh.geometry = rear ?? this.rearMesh.geometry;
+    this.rearMesh.userData.has = rear !== null;
+    this.cutZ = adsCutZ(id, this.optic);
     let arms = this.armGeometries.get(id);
     if (!arms) {
       const left = LEFT_HAND_Z[id];
@@ -311,10 +341,20 @@ export class WeaponViewmodel {
     this.time += dt;
     this.kick = approach(this.kick, 0, 16, dt);
     this.swing = Math.min(1, this.swing + dt / SWING_TIME);
-    this.equip = Math.min(1, this.equip + dt / this.equipTime);
+    if (this.pending) {
+      this.equip = Math.max(0, this.equip - dt / LOWER_TIME);
+      if (this.equip <= 0) {
+        const p = this.pending;
+        this.pending = null;
+        this.commit(p.id, p.optic, p.sup, true, true);
+      }
+    } else {
+      this.equip = Math.min(1, this.equip + dt / (this.lowered ? Math.max(0.06, this.equipTime - LOWER_TIME) : this.equipTime));
+    }
     this.bolt = Math.min(1, this.bolt + dt / BOLT_TIME);
-    this.flashLeft = Math.max(0, this.flashLeft - dt);
+    // Visible for at least the frame after the shot, however long it took (a frame over 55 ms used to skip the flash).
     this.flash.visible = this.flashLeft > 0;
+    this.flashLeft = Math.max(0, this.flashLeft - dt);
     if (Math.abs(this.camera.aspect - aspect) > 1e-3) {
       this.camera.aspect = aspect;
       this.camera.updateProjectionMatrix();
@@ -363,15 +403,20 @@ export class WeaponViewmodel {
     // The reticle hangs at the window's depth on the view axis.
     this.reticleDepth = Math.max(0.2, -(r.position.z + this.pivotZ * 0.85));
     void model;
-    this.material.color.setScalar(light * (this.flashLeft > 0 ? 1.5 : 1));
+    this.material.color.setScalar(light * (this.flash.visible ? 1.5 : 1));
     // A scoped weapon disappears behind the scope overlay when fully aimed.
     this.weaponMesh.visible = !(isMagnified(this.optic) && ads > 0.92);
-    // Aiming: no stock and no hands in the way of the sights.
-    // (Both picked in apply(): looking them up here built a string key every frame.)
-    const front = e > 0.55;
-    const geo = (front ? this.frontGeometry : this.hipGeometry) ?? this.weaponMesh.geometry;
-    if (this.weaponMesh.geometry !== geo) this.weaponMesh.geometry = geo;
-    this.armsMesh.visible = this.weaponMesh.visible && !front;
+    // Aiming: no stock and no hands in the way of the sights. They do not vanish in one frame: the hands and the rear of the
+    // weapon shrink away (the rear towards the aim cut, the hands towards the grip) between 25% and 55% of the aim blend.
+    const t = Math.min(1, Math.max(0, (0.55 - e) / 0.3));
+    const keep = t * t * (3 - 2 * t);
+    const rear = this.rearMesh;
+    rear.visible = this.weaponMesh.visible && keep > 0.01 && this.rearMesh.userData.has === true;
+    rear.scale.z = Math.max(0.01, keep);
+    rear.position.z = this.cutZ * (1 - rear.scale.z);
+    const arms = this.armsMesh;
+    arms.visible = this.weaponMesh.visible && keep > 0.01;
+    arms.scale.setScalar(Math.max(0.01, keep));
     const ret = this.reticle;
     if (ret) {
       ret.visible = e > 0.5;

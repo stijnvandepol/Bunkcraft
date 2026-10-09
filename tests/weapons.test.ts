@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { FireControl } from '../src/modes/ArcadeLogic';
 import { LOADOUT_PRESETS, presetsValid } from '../src/modes/Loadouts';
 import { PRIMARY_WEAPONS, SECONDARY_WEAPONS, WEAPONS, fireInterval, weaponDef } from '../src/modes/Weapons';
-import { WEAPON_MODELS } from '../src/rendering/WeaponModels';
+import type * as THREE from 'three';
+import { WEAPON_MODELS, adsCutZ, weaponFrontGeometry, weaponGeometry, weaponRearGeometry } from '../src/rendering/WeaponModels';
 import type { ClientMessage, MatchInfo, ServerMessage } from '../src/net/protocol';
 import { BLOCK } from '../src/world/BlockRegistry';
 import { Match, type MatchHost, SPAWN_PROTECTION, WARMUP_SECONDS } from '../server/Match';
@@ -103,5 +104,30 @@ describe('loadout presets and new weapons', () => {
 
   it('every weapon has a model', () => {
     for (const w of WEAPONS) expect(WEAPON_MODELS[w.id], w.id).toBeDefined();
+  });
+});
+
+describe('first-person weapon geometry', () => {
+  const bounds = (g: THREE.BufferGeometry | null) => {
+    g!.computeBoundingBox();
+    return g!.boundingBox!;
+  };
+
+  it('front and rear together are the whole weapon: the viewmodel shrinks the rear away instead of swapping models', () => {
+    for (const w of WEAPONS) {
+      for (const optic of w.optics) {
+        const whole = bounds(weaponGeometry(w.id, optic));
+        const front = bounds(weaponFrontGeometry(w.id, optic));
+        const rear = weaponRearGeometry(w.id, optic);
+        const union = front.clone();
+        if (rear) union.union(bounds(rear));
+        for (const k of ['x', 'y', 'z'] as const) {
+          expect(union.min[k], `${w.id}/${optic} min ${k}`).toBeCloseTo(whole.min[k], 5);
+          expect(union.max[k], `${w.id}/${optic} max ${k}`).toBeCloseTo(whole.max[k], 5);
+        }
+        // Nothing of the rear lies in front of the cut the front is made at.
+        if (rear) expect(bounds(rear).min.z, `${w.id}/${optic}`).toBeGreaterThanOrEqual(adsCutZ(w.id, optic) - 1e-6);
+      }
+    }
   });
 });
