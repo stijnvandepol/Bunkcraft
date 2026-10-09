@@ -144,7 +144,23 @@ Daarom staat de kleine tekst op de PLAY-knop in volledig wit (geen 70% dekking) 
 
 Bewust niet overgenomen: de 4 px optilbeweging van `card-glow` (in menu's met toetsenbord- en controllernavigatie springt de lay-out anders) en de zwevende/pulserende animaties. Hover is een kleur- en gloedwissel. Hoog contrast en `forced-colors` hebben eigen regels onderaan `shell.css`: PLAY en primaire knoppen worden zwart met witte tekst en cyaan rand, de gradient-tekst valt terug op een effen kleur. Toetsenbord, controller, NL/EN en de GUI-schaal werken zoals voorheen.
 
-Niet aangepast: de survival-menu's, inventories, de in-game HUD (scorebalk, killfeed, hotbar, chat), de rangbadges en de calling cards van het profiel (spelinhoud, eigen kleuren).
+Niet aangepast: de survival-menu's, inventories, de survival-HUD, de rangbadges en de calling cards van het profiel (spelinhoud, eigen kleuren). In de arena-HUD blijven de scorebalk, gezondheid, munitie, killfeed en wapenslots in het pixelfont; alles wat iets aankondigt (zie hieronder) is wel omgezet.
+
+### Logo's en banners
+
+Dezelfde typografie als de menu's, op alles wat een naam of aankondiging draagt. De tokens staan op één plek: het `:root`-blok bovenaan `shell.css` (`--bc-banner-xl/l/m/s`, `--bc-hud-t/xs`, `--bc-halo`, `--bc-plate`) en `BRAND` in `Brand.ts`.
+
+| Soort | Stijl |
+|---|---|
+| Logo's (home, laadscherm, favicon, PWA-iconen, social preview, startfoutscherm) | Embleem plus woordmerk in Manrope 800 hoofdletters, `-0.05em`; BUNK wit, CRAFT blauw naar cyaan. De iconen bevatten alleen het embleem, de social preview bevat tekst en stond al in Manrope. Het startfoutscherm (`fail()` in `main.ts`) gebruikt nu hetzelfde woordmerk. |
+| Tekst direct op de wereld (fasebanner "Ronde 3 begint over 5", 3-2-1, "Fight!", medailles, doodscherm, wereldmarkeringen) | Manrope 800 met een donkere halo (`--bc-halo`), geen vlak erachter. Korte banners (cijfers, "Fight!") krijgen het grote formaat in de accentkleur. Medailles houden hun speleigen kleur (goud voor reeksen, oranje voor killstreaks). |
+| Aankondigingen met een zin of teamkleur (vlag genomen, zone veroverd, bomhandelingen, level-up van gun game, kill confirmed) | Plaat (`--bc-plate`, 82% inkt plus blur), 1 px rand, 4 px radius, Manrope 800. De teamkleur (of het accent bij neutrale events) is de linkerrand en een lichte tint in de plaat; de tekst blijft `--bc-text`, dus ook rood en blauw blijven leesbaar. |
+| Objectivepaneel (rondepips, rol, bomlont, gun game-ladder, besmet) | Dezelfde platen met Inter 700 en Manrope 800 voor de getallen. |
+| Tab-scoreboard, einde wedstrijd, XP-rapport (level-up, unlocks), kaartstem | Het paneel en de rijen van de shell: kolomkoppen in kleine hoofdletters, "ROOD 13 - 2 BLAUW" in Manrope 800. |
+| Create-a-Class in de wedstrijd | Shell-look (chips, kolommen, statistiekbalken in de gradient), titel in Manrope. |
+| Systeemmeldingen ("Screenshot saved", update-toast, controller verbonden) | Paneel met Inter 700 en shell-knoppen. |
+
+Leesbaarheid: de kleinste banner (event-plaat) is 30 px op 720p (GUI-schaal 3), de regels in het objectivepaneel 19,5 px, op een telefoon minstens 16 en 13 px; alles schaalt mee met de GUI-schaal en de tekstgrootte (`--u`, `--ts`); ze staan absoluut gepositioneerd, dus een andere tekst verschuift niets. Hoog contrast geeft de platen zwart met witte rand. Screenshots voor en na staan in [`docs/screenshots/bunkhosting/banners/`](../screenshots/bunkhosting/banners/) (`before/`, `after/`, `after/nl/`, `after/ui/`), gemaakt met `scripts/banner-shots.py`.
 
 ## Wat er verandert in de front-end
 

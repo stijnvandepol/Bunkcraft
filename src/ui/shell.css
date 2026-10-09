@@ -80,10 +80,10 @@
   --bc-banner-xl: calc(var(--u) * 30 * var(--ts, 1));
   --bc-banner-l: calc(var(--u) * 16 * var(--ts, 1));
   --bc-banner-m: calc(var(--u) * 13 * var(--ts, 1));
-  --bc-banner-s: calc(var(--u) * 10 * var(--ts, 1));
+  --bc-banner-s: max(16px, calc(var(--u) * 10 * var(--ts, 1)));
   /* Lines of text on the HUD (objective panel, hints, captions) and their small print. */
-  --bc-hud-t: calc(var(--u) * 6.5 * var(--ts, 1));
-  --bc-hud-xs: calc(var(--u) * 5.2 * var(--ts, 1));
+  --bc-hud-t: max(13px, calc(var(--u) * 6.5 * var(--ts, 1)));
+  --bc-hud-xs: max(11px, calc(var(--u) * 5.2 * var(--ts, 1)));
   --bc-halo: 0 0 1px rgba(0, 0, 0, 0.9), 0 1px 2px rgba(0, 0, 0, 0.75), 0 2px 16px rgba(0, 0, 0, 0.7);
   /* The plate behind banners that carry a sentence or a team colour. */
   --bc-plate: rgba(17, 19, 24, 0.82);
@@ -947,12 +947,16 @@
 }
 
 /* Phase banner under the timer ("Round 3 starts in 5", the 3-2-1, "Fight!"). Short texts get the big size. */
-.arc-hud .arc-banner { top: calc(var(--u) * 44); font: 800 var(--bc-banner-l) / 1.1 var(--bc-font-head); letter-spacing: -0.03em; color: var(--bc-text); text-shadow: var(--bc-halo); }
+.arc-hud .arc-banner { top: calc(var(--u) * 44); font: 800 var(--bc-banner-l) / 1.1 var(--bc-font-head); letter-spacing: -0.03em; color: var(--bc-text); text-shadow: var(--bc-halo); width: max-content; max-width: 94vw; white-space: normal; text-align: center; }
 .arc-hud .arc-banner.big { top: calc(var(--u) * 42); font-size: var(--bc-banner-xl); line-height: 1; letter-spacing: -0.04em; color: var(--bc-accent); font-variant-numeric: tabular-nums; }
 
 /* Mode events (flag taken, zone captured, bomb planted, level up ...): a plate with the team colour as its edge. */
 .arc-hud .mode-toast {
   top: calc(var(--u) * 72);
+  width: max-content;
+  max-width: min(92vw, 60em);
+  white-space: normal;
+  text-align: center;
   padding: calc(var(--u) * 2.5) calc(var(--u) * 6) calc(var(--u) * 2.5) calc(var(--u) * 5);
   font: 800 var(--bc-banner-s) / 1.15 var(--bc-font-head);
   letter-spacing: -0.015em;
