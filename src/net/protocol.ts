@@ -297,6 +297,12 @@ export type ClientMessage =
    * (spread penalty, see shotSpread).
    */
   | { t: 'fire'; slot: 0 | 1 | 2; ox: number; oy: number; oz: number; dx: number; dy: number; dz: number; ads: boolean; rk?: number; seq?: number; mv?: boolean; air?: boolean }
+  /**
+   * Arcade: the sights go up (`on`) or down. The server tracks the aim blend itself from these messages (the weapon's aim time,
+   * the optic and the perk set the pace) and takes the spread of a shot from that, not from the `ads` flag of `fire`. Not
+   * honoured while reloading, switching, sliding or with a weapon without sights. Clients that never send it shoot with hip spread.
+   */
+  | { t: 'ads'; on: boolean }
   /** Arcade: start reloading the weapon in a slot. */
   | { t: 'reload'; slot: 0 | 1 | 2 }
   /** Arcade: switch weapon slot (so everyone sees what you hold). */

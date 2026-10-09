@@ -51,6 +51,19 @@ export function adsOutSpeed(cls: AdsClass): number {
   return ADS_SHAPE[cls].outSpeed;
 }
 
+/** Shortest aim time the blend model assumes (seconds). */
+export const ADS_MIN_SECONDS = 0.05;
+
+/**
+ * One step of the linear aim progress (0 = hip, 1 = fully aimed): rises in `seconds` while aiming, falls `adsOutSpeed` times
+ * faster when the sights go down. Closed form for a stretch of constant intent, so the server can evaluate a whole
+ * interval in one call and land exactly where the client's frame-by-frame blend (`AdsBlend`) is.
+ */
+export function adsStep(t: number, dt: number, want: boolean, seconds: number, cls: AdsClass): number {
+  const sec = Math.max(ADS_MIN_SECONDS, seconds);
+  return want ? Math.min(1, t + dt / sec) : Math.max(0, t - (dt * adsOutSpeed(cls)) / sec);
+}
+
 /**
  * The aim blend over time. `t` is linear in the weapon's aim time (what the gameplay uses: movement speed, the
  * accuracy the server is told), `eased` is what the eye sees. Reversing mid-way keeps the picture continuous: the gap
@@ -67,8 +80,7 @@ export class AdsBlend {
   private turnAt = 0;
 
   update(dt: number, want: boolean, seconds: number, cls: AdsClass): void {
-    const sec = Math.max(0.05, seconds);
-    this.t = want ? Math.min(1, this.t + dt / sec) : Math.max(0, this.t - (dt * adsOutSpeed(cls)) / sec);
+    this.t = adsStep(this.t, dt, want, seconds, cls);
     const raw = want ? adsEaseIn(this.t, cls) : adsEaseOut(this.t, cls);
     if (want !== this.rising) {
       this.rising = want;

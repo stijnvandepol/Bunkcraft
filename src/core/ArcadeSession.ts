@@ -229,6 +229,7 @@ export class ArcadeSession {
   private adsMode: AdsMode = 'hold';
   private crosshairDynamic = true;
   private wantAds = false;
+  private adsSentAt = 0;
   /** Field of view multiplier of the optic in hand when fully aimed. */
   private optZoom = 1;
   private kick = 0;
@@ -1031,7 +1032,8 @@ export class ArcadeSession {
     const sx = tmpV.x, sy = tmpV.y, sz = tmpV.z;
     // The same pellets the server will test (seeded spread), each traced through the same blocks and against the
     // other players as drawn: the tracer ends where the bullet does.
-    const spread = shotSpread(w, ads, mv, air);
+    // The aim blend (not the boolean claim): the server weighs the same blend from the aim time it saw.
+    const spread = shotSpread(w, this.ads, mv, air);
     const every = Math.max(1, Math.ceil(w.pellets / MAX_TRACERS));
     let claimed = -1, claimedHead = false;
     for (let i = 0; i < w.pellets; i++) {
@@ -1160,16 +1162,24 @@ export class ArcadeSession {
     // Aim down the sights: linear in the weapon's aim time (optic and perk), eased per weapon class for the view.
     const optic = this.optic;
     const cls = adsClassOf(w);
-    const adsOk = canAct && w.zoom < 1 && !ammo.reloading;
-    // Hold the button, or press once (toggle); reloading, switching and dying put the sights down.
+    // The server enforces the same rules (Match.setAds): no sights while reloading, switching (equip time) or sliding.
+    const adsOk = canAct && w.zoom < 1 && !ammo.reloading && now >= this.equipUntil && !this.d.player.sliding;
+    // Hold the button, or press once (toggle); reloading, switching, sliding and dying put the sights down.
     const wantAds = this.adsInput.update(this.adsMode, input.rightDown, adsOk && input.rightClicked, !adsOk) && adsOk;
     if (wantAds !== this.wantAds) {
       this.wantAds = wantAds;
+      // The server times the aim itself from these messages (its spread follows the aim time it saw, not our claim).
+      this.d.send({ t: 'ads', on: wantAds });
+      this.adsSentAt = now;
       // Flicking the aim button must not stutter: at most one sight sound per 0.12 s.
       if (now - this.adsSoundAt >= 0.12) {
         this.adsSoundAt = now;
         this.d.audio.playMech(wantAds ? 'adsin' : 'adsout');
       }
+    } else if (wantAds && now - this.adsSentAt > 0.5) {
+      // Still aiming: say so again (the server ignores it when it already has the sights up; it helps when a message was dropped).
+      this.d.send({ t: 'ads', on: true });
+      this.adsSentAt = now;
     }
     this.adsBlend.update(dt, wantAds, adsTimeFor(w, optic, this.cls.perk), cls);
     this.ads = this.adsBlend.t;

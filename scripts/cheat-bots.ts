@@ -12,6 +12,8 @@ import { WebSocket } from 'ws';
 import { ARENA_FLOOR_Y, type ArenaMap, getMap } from '../src/modes/maps';
 import { PROTOCOL_VERSION, SNAP_FLAG_SLIDE, type ClientMessage, type ServerMessage } from '../src/net/protocol';
 import { arcadeMaxSpeed } from '../src/modes/ArcadeLogic';
+import { createBulletTrace, shotSpread, spreadDirection, spreadRandom, traceBullet } from '../src/modes/Hitscan';
+import { adsTimeFor, opticFor, weaponDef } from '../src/modes/Weapons';
 import { traceBlocks } from '../server/Combat';
 import { BOT_SPEED, type RoutePoint, aimAt, arenaPath, follow } from './lib/arenaPath';
 
@@ -362,6 +364,77 @@ async function shotCheats(): Promise<void> {
   s.close(); v1.close(); v2.close();
 }
 
+/**
+ * ADS is server-validated: a bot that claims `ads: true` on every shot, without ever sending the sights up, must get hip
+ * spread. The bot knows its spread seed and shot index, so it predicts the exact bullet of each spread and checks which one
+ * the server shot. A control bot that aims honestly (message, the weapon's aim time, then shots) gets the aimed bullet.
+ */
+async function adsCheats(): Promise<void> {
+  const code = await room('ffa');
+  const s = await join(code, 'adsliar'), other = await join(code, 'adsvictim');
+  s.auto = other.auto = false;
+  for (let i = 0; i < 150 && s.of('match').at(-1)?.phase !== 'live'; i++) await sleep(100);
+  await sleep(1500);
+  const sp = s.of('spawn').at(-1);
+  const w = weaponDef(sp?.primary ?? '');
+  if (!sp || !w || !sp.ss) { check('ads: the shooter has a spawn with a spread seed', false); s.close(); other.close(); return; }
+  const optic = opticFor(w, sp.optic);
+  // The longest straight line of fire from where the bot stands (long, so the spread difference is visible).
+  const ox = s.x, oy = s.y + 1.62, oz = s.z;
+  let best = { dx: 0, dy: 0, dz: 1 }, bestD = 0;
+  for (let k = 0; k < 16; k++) {
+    const yaw = (k / 16) * Math.PI * 2, dx = Math.sin(yaw), dz = Math.cos(yaw);
+    const d = traceBlocks(s.blocks(), ox, oy, oz, dx, 0, dz, w.maxRange);
+    if (d > bestD) { bestD = d; best = { dx, dy: 0, dz }; }
+  }
+  const predict = (n: number, blend: number): number[] => {
+    const rand: [number, number] = [0, 0];
+    const dir: [number, number, number] = [0, 0, 0];
+    spreadRandom(sp.ss!, n, 0, rand);
+    spreadDirection(best.dx, best.dy, best.dz, shotSpread(w, blend, false, false), rand[0], rand[1], dir);
+    const tr = traceBullet(s.blocks(), ox, oy, oz, dir[0], dir[1], dir[2], w.maxRange, createBulletTrace());
+    return [ox + dir[0] * tr.t, oy + dir[1] * tr.t, oz + dir[2] * tr.t];
+  };
+  const dist = (a: number[], b: number[]) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+  /** Fires once (claiming ADS) and returns the shot index the server used and where its bullet ended. */
+  const fire = async (): Promise<{ n: number; end: number[] } | null> => {
+    s.pos();
+    const shots = s.of('shot').length, ammo = s.of('ammo').length;
+    s.send({ t: 'fire', slot: 0, ox, oy, oz, ...best, ads: true });
+    for (let t = 0; t < 1000 && (s.of('shot').length === shots || s.of('ammo').length === ammo); t += 20) await sleep(20);
+    const shot = s.of('shot').slice(shots).find((m) => m.id === s.id), am = s.of('ammo').slice(ammo).find((m) => m.sn !== undefined);
+    if (!shot || !am) return null;
+    return { n: am.sn! - 1, end: [shot.ex, shot.ey, shot.ez] };
+  };
+  /** Shots the two predictions tell apart (more than 0.12 blocks between the ends) and which of them the server's bullet matches. */
+  const tally = { hip: 0, full: 0, neither: 0, same: 0 };
+  const run = async (count: number): Promise<void> => {
+    for (let i = 0; i < count; i++) {
+      await sleep(350);
+      const r = await fire();
+      if (!r) { tally.neither++; continue; }
+      const hip = predict(r.n, 0), full = predict(r.n, 1);
+      if (dist(hip, full) < 0.12) tally.same++;
+      else if (dist(r.end, hip) < 0.06) tally.hip++;
+      else if (dist(r.end, full) < 0.06) tally.full++;
+      else tally.neither++;
+    }
+  };
+  // 1. The liar: claims ADS on every shot, never sends the sights up.
+  await run(16);
+  console.log(`      ads liar (no message): ${tally.hip} hip, ${tally.full} aimed, ${tally.neither} neither, ${tally.same} indistinguishable`);
+  check('a bot that claims ADS on every shot without ADS time gets hip spread', tally.hip >= 8 && tally.full === 0 && tally.neither === 0);
+  // 2. The honest player: sights up, the weapon's aim time, then the shots: the aimed bullet.
+  Object.assign(tally, { hip: 0, full: 0, neither: 0, same: 0 });
+  s.send({ t: 'ads', on: true });
+  await sleep(adsTimeFor(w, optic, 'none') * 1000 + 300);
+  await run(12);
+  s.send({ t: 'ads', on: false });
+  console.log(`      honest aimed shots: ${tally.hip} hip, ${tally.full} aimed, ${tally.neither} neither, ${tally.same} indistinguishable`);
+  check("an honest bot that aims for the weapon's aim time gets the aimed spread", tally.full >= 6 && tally.hip === 0 && tally.neither === 0);
+  s.close(); other.close();
+}
+
 /** Two open cells 6-10 blocks from the shooter, in plain sight, more than 90 degrees apart. */
 function aimbotSpots(s: Bot): [[number, number], [number, number]] | null {
   const m = s.map, v = s.variant;
@@ -387,7 +460,7 @@ function aimbotSpots(s: Bot): [[number, number], [number, number]] | null {
 
 async function main(): Promise<void> {
   console.log(`honest bots for ${LEGIT_SECONDS} s in parallel with the cheaters...`);
-  await Promise.all([legit(), (async () => { await movementCheats(); await shotCheats(); })()]);
+  await Promise.all([legit(), (async () => { await movementCheats(); await shotCheats(); await adsCheats(); })()]);
 }
 
 main()

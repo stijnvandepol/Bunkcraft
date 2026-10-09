@@ -126,6 +126,9 @@ export async function playArcadeMatch(srv: TestServer, type: 'tdm' | 'ffa', mapI
       const dir = { dx: (head.x - eye.x) / len, dy: (head.y - eye.y) / len, dz: (head.z - eye.z) / len };
       // Spawn protection lasts 2 s; the first life started a while ago, later ones just now.
       await sleep(kills === 1 ? 600 : 2300);
+      // The server weighs the spread by the aim time it saw: sights up, then the rifle's aim time, before the head shots.
+      shooter.send({ t: 'ads', on: true });
+      await sleep(350);
       const mark = shooter.mark();
       let killed = false;
       let shots = 0;

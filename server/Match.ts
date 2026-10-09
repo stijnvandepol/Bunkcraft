@@ -2,8 +2,10 @@ import { type ArenaMap, DEFAULT_MAP, type Spawn, getMap, mapFor, parseMapId } fr
 import { type GameTypeDef, type MapFeature, type Team, gameTypeDef } from '../src/modes/GameTypes';
 import {
   DEFAULT_PRIMARY, DEFAULT_SECONDARY, type OpticId, PLAYER_MAX_HEALTH, type PerkId, REGEN_DELAY, REGEN_PER_SECOND,
-  HITBOX, type WeaponDef, damageAt, fireInterval, magazineFor, opticFor, rangeMulFor, reloadTimeFor, switchDelayFor, weaponDef,
+  HITBOX, type WeaponDef, adsTimeFor, damageAt, fireInterval, magazineFor, opticFor, rangeMulFor, reloadTimeFor, switchDelayFor, weaponDef,
 } from '../src/modes/Weapons';
+import { adsClassOf, adsStep } from '../src/modes/AimMath';
+import { POSE } from '../src/player/ArcadeMove';
 import { CLASS_SWAP_WINDOW, type ClassSpec, DEFAULT_CLASS, calmPhase, validateClass } from '../src/modes/Loadouts';
 import type {
   ClientMessage, MatchInfo, MatchPhase, ModeEventKind, RosterEntry, ServerMessage,
@@ -43,6 +45,12 @@ const FIRE_SLACK = 0.04;
  * arrives about when the server's reload is done. The slack covers the jitter, so no shot is lost after the animation.
  */
 const RELOAD_SLACK = 0.1;
+/**
+ * Aim-down-sights timing: the `ads` message and the `fire` that follows it travel the same way, but not at the same jitter. A shot
+ * counts the sights as this much further up than the server's own clock says (and a message may arrive this much before the
+ * switch delay is over), so an honest player is never short-changed. A cheater gains at most this much aim time per shot.
+ */
+export const ADS_SLACK = 0.04;
 const HISTORY_SIZE = 24;
 /** Server ticks whose time is remembered, so a shot's render tick (`rk`) maps back to a moment. */
 const TICK_RING = 64;
@@ -182,6 +190,13 @@ export interface MatchPlayer {
   /** Hash of the custom skin for the roster ('' or absent = default). */
   skin?: string;
   switchReadyAt: number;
+  /**
+   * Aim down the sights, as the server tracks it (never the `ads` flag of a `fire`): the sights are going up (`adsOn`) or down,
+   * `adsT` was the aim progress 0..1 at `adsAt`. Evaluated lazily with `adsStep` (see Match.adsBlend).
+   */
+  adsOn: boolean;
+  adsT: number;
+  adsAt: number;
   history: Sample[];
   historyHead: number;
   historyCount: number;
@@ -334,7 +349,7 @@ export class Match {
       primary: DEFAULT_PRIMARY, secondary: DEFAULT_SECONDARY, optic: 'iron', perk: 'none', next: restore ? { ...restore.next } : { ...DEFAULT_CLASS },
       spawnedAt: now, firedThisLife: false, streak: restore?.streak ?? 0,
       slots: [newSlot(DEFAULT_PRIMARY, 'none'), newSlot(DEFAULT_SECONDARY, 'none'), newSlot('knife', 'none')], slot: 0,
-      switchReadyAt: 0, history: Array.from({ length: HISTORY_SIZE }, () => ({ t: 0, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, h: HITBOX.height })), historyHead: 0, historyCount: 0,
+      switchReadyAt: 0, adsOn: false, adsT: 0, adsAt: 0, history: Array.from({ length: HISTORY_SIZE }, () => ({ t: 0, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, h: HITBOX.height })), historyHead: 0, historyCount: 0,
       spreadSeed: Math.floor(this.host.random() * 0x100000000) >>> 0, shotN: 0,
       height: HITBOX.height,
       ...(bot ? { bot: true } : {}),
@@ -521,6 +536,7 @@ export class Match {
     p.perk = perk;
     p.slots = [newSlot(primary, perk), newSlot(secondary, perk), newSlot(melee, perk)];
     p.slot = 0;
+    this.adsReset(p);
   }
 
   /** Tells the player and everyone else about new gear mid-life. */
@@ -546,7 +562,57 @@ export class Match {
     }
     p.slot = slot;
     p.switchReadyAt = now + switchDelayFor(p.perk, SWITCH_DELAY);
+    this.adsReset(p); // the sights go down at once with a new weapon in the hands
     this.host.broadcast(this.holds(p));
+  }
+
+  // ---------------------------------------------------------------- aim down the sights
+
+  private adsReset(p: MatchPlayer): void {
+    p.adsOn = false;
+    p.adsT = 0;
+    p.adsAt = 0;
+  }
+
+  /**
+   * The aim progress 0..1 of a player at `now`, from the server's own record of when the sights went up or down: the
+   * weapon's aim time (optic and perk included) is the same one the client's blend uses (`adsStep`). `slack` is
+   * credited to a rising blend (jitter between the `ads` message and the `fire`).
+   */
+  adsBlend(p: MatchPlayer, now: number, slack = 0): number {
+    if (!p.adsOn && p.adsT <= 0) return 0;
+    const w = p.slots[p.slot].def;
+    const optic = p.slot === 0 ? p.optic : w.optics[0];
+    const dt = Math.max(0, now - p.adsAt) + (p.adsOn ? slack : 0);
+    return adsStep(p.adsT, dt, p.adsOn, adsTimeFor(w, optic, p.perk), adsClassOf(w));
+  }
+
+  /** Puts the sights up or down at `now` (the progress so far is kept, so a flick up and down gains nothing). */
+  private adsSet(p: MatchPlayer, on: boolean, now: number): void {
+    if (p.adsOn === on) return;
+    p.adsT = this.adsBlend(p, now);
+    p.adsOn = on;
+    p.adsAt = now;
+  }
+
+  /** Sliding hitbox, as the connection layer accepted the pose. */
+  private sliding(p: MatchPlayer): boolean {
+    return p.height <= POSE.SLIDE_HEIGHT + 1e-3;
+  }
+
+  /**
+   * An `ads` message. The sights go up only where the client's own rules allow it: a weapon with sights, not while
+   * reloading, switching or sliding, alive. Otherwise the request is ignored (the shots stay hip fire).
+   */
+  setAds(id: number, on: boolean): void {
+    const p = this.players.get(id);
+    if (!p || !p.alive || this.phase === 'ended') return;
+    const now = this.host.now();
+    if (!on) return this.adsSet(p, false, now);
+    if (p.adsOn) return;
+    const s = p.slots[p.slot], w = s.def;
+    if (w.slot === 'melee' || w.zoom >= 1 || s.reloadDoneAt > 0 || this.sliding(p) || now < p.switchReadyAt - ADS_SLACK) return;
+    this.adsSet(p, true, Math.max(now, p.switchReadyAt));
   }
 
   reload(id: number, slot: number): void {
@@ -568,6 +634,7 @@ export class Match {
     const s = p.slots[p.slot];
     if (s.cap <= 0 || s.mag >= s.cap || s.reloadDoneAt > 0 || now < p.switchReadyAt) return;
     s.reloadDoneAt = now + reloadTimeFor(s.def, s.mag);
+    this.adsSet(p, false, now); // reloading lowers the sights
     this.host.send(p.id, { t: 'ammo', slot: p.slot, mag: s.mag, reloading: true });
   }
 
@@ -626,7 +693,9 @@ export class Match {
     const trusted = Math.hypot(m.ox - ex, m.oy - ey, m.oz - ez) <= MAX_ORIGIN_DRIFT;
     const ox = trusted ? m.ox : ex, oy = trusted ? m.oy : ey, oz = trusted ? m.oz : ez;
     const dx = m.dx / len, dy = m.dy / len, dz = m.dz / len;
-    const spread = shotSpread(w, m.ads === true, m.mv === true, m.air === true);
+    // Aimed spread comes from the aim time the server saw (see setAds), not from the `ads` claim of the message.
+    if (this.sliding(p)) this.adsReset(p);
+    const spread = shotSpread(w, this.adsBlend(p, now, ADS_SLACK), m.mv === true, m.air === true);
 
     // Lag compensation: targets are tested where this shooter saw them. The client says which server tick its
     // screen showed (`rk`); without it (older clients) the round trip plus the interpolation delay estimates it.

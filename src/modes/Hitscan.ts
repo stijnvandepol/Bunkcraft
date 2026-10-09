@@ -341,12 +341,13 @@ export function traceBlocks(world: BlockQuery, ox: number, oy: number, oz: numbe
 // ---------------------------------------------------------------- spread
 
 /**
- * The spread cone (half-angle, degrees) of a shot: aimed (`ads`) or from the hip, with the penalties for
- * moving and for being in the air. One function for the client's tracer and the server's verdict.
+ * The spread cone (half-angle, degrees) of a shot: aimed (`ads`: true, or the aim blend 0..1) or from the hip, with the
+ * penalties for moving and for being in the air. One function for the client's tracer and the server's verdict; the
+ * server feeds it the blend it tracked itself (Match.adsBlend), never what the client claims.
  */
-export function shotSpread(w: WeaponDef, ads: boolean, moving: boolean, airborne: boolean): number {
+export function shotSpread(w: WeaponDef, ads: boolean | number, moving: boolean, airborne: boolean): number {
   if (w.slot === 'melee') return 0;
-  return currentSpread(w, ads ? 1 : 0, moving, airborne);
+  return currentSpread(w, ads === true ? 1 : ads === false ? 0 : ads, moving, airborne);
 }
 
 /** A well-mixed 32-bit hash of four integers (spread seeds). */

@@ -15,9 +15,8 @@ volgt de Bunkhosting-huisstijl. Live op https://craft.bunkhosting.nl (Cloudflare
 
 **Nu (afmaken)**
 
-1. **ADS server-side valideren (S-M, bezig).** De server vertrouwt de `ads`-vlag van de client voor de kleinere spreiding
-   (SECURITY O-09). Toestaan alleen na een zoomtijd of bij stilstaan, gedeeld met de clientregels; `scripts/cheat-bots.ts`
-   uitbreiden met een ADS-claimende bot.
+1. **Resterende schotclaims (S).** ADS is nu server-gevalideerd (bericht `ads`, richttijd per wapen, gedeelde spreidingscurve;
+   cheat-bot `adsCheats`). Nog clientclaims in `fire`: `mv` (de server overrulet met zijn snelheidsschatting) en `air`.
 2. **Playtest met echte spelers (S, geen code).** Time-to-kill na de balans-pass (`ttk-sim.ts`, GAMEMODES §Rollen en balans),
    richtgevoel (standaardgevoeligheid 100 % = 0,126°/count is snel met raw input), de weapon-glitch-fixes
    (`scripts/qa/weapon-glitch.py`) en per kaart de looplijnen. Uitkomst: balanswijzigingen in `Balance.ts`, Classic compacter

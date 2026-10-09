@@ -859,7 +859,7 @@ puntwijziging direct als `match`. Kaarten zonder de benodigde `objectives` worde
   (`loadout`) geldt vanaf de volgende spawn. De server houdt per slot het magazijn bij, begrenst het vuurtempo
   (`rpm`), de herlaadtijd en de wisselvertraging (0,25 s).
 - Schot: de server controleert dat de oorsprong dicht bij het oog staat (anders gebruikt hij zijn eigen oog),
-  rolt de kogels binnen de spreiding (kleiner bij `ads`), volgt de straal door de blokken (muren en glas
+  rolt de kogels binnen de spreiding (kleiner naarmate het vizier langer omhoog is: de server meet de richttijd zelf uit de `ads`-berichten, de `ads`-vlag van `fire` telt niet), volgt de straal door de blokken (muren en glas
   stoppen hem) en toetst hem aan de hitbox van levende spelers (0,6 × 1,8; de bovenste 0,4 is het hoofd).
   Schade volgt de afstand (`damageAt`) × headshot-factor. Geen friendly fire in tdm.
 - Lag compensation: de server bewaart 1 seconde positiegeschiedenis per speler en toetst tegenstanders op de
