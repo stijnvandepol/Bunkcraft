@@ -594,6 +594,7 @@ export class ArcadeSession {
   private setTeam(team: Team | ''): void {
     if (team === this.team) return;
     this.team = team;
+    this.d.remote.localTeam = team;
     this.viewmodel.setSleeve(team ? (team === 'red' ? '#8e2a24' : '#244a8e') : '#4f5a3a');
   }
 

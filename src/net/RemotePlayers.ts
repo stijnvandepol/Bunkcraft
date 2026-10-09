@@ -19,7 +19,9 @@ const STALE_HIDE = 0.3;
 const ABSENT_HIDE = 0.5;
 /** Arcade name tags need a clear line from the camera to the head, re-checked this often per player (s), within this range. */
 const LOS_INTERVAL = 0.1;
-const ARCADE_TAG_RANGE = 60;
+/** Arcade: enemy names only up close (no long-range spotting); teammates further so you find your team. */
+const ARCADE_ENEMY_TAG_RANGE = 10;
+const ARCADE_TEAM_TAG_RANGE = 40;
 const TAG_RANGE = 64;
 /** Seconds for a tag to fade fully in or out. */
 const TAG_FADE = 0.18;
@@ -82,6 +84,8 @@ const ARM_PIVOT = new THREE.Vector3(6 / 16, 22 / 16, 0);
  * mob renderer (player model, limb swing from movement) plus HTML name tags.
  */
 export class RemotePlayers {
+  /** Arcade: the local player's team ('' in FFA): teammates' name tags show from further away. */
+  localTeam: Team | '' = '';
   private readonly players = new Map<number, Remote>();
   /** Same players as a flat array: iterating the map every frame would allocate an iterator. */
   private readonly list: Remote[] = [];
@@ -390,7 +394,8 @@ export class RemotePlayers {
       const dx = camera.position.x - m.x, dy = camera.position.y - m.y, dz = camera.position.z - m.z;
       const d2 = dx * dx + dy * dy + dz * dz;
       const arcade = this.occluder !== null;
-      const range = arcade ? ARCADE_TAG_RANGE : TAG_RANGE;
+      const mate = this.localTeam !== '' && r.team === this.localTeam;
+      const range = arcade ? (mate ? ARCADE_TEAM_TAG_RANGE : ARCADE_ENEMY_TAG_RANGE) : TAG_RANGE;
       let visible = !r.hidden && !r.culled && r.staleAt < 0 && r.id !== this.spectated && tmp.z < 1 && Math.abs(tmp.x) < 1.2 && Math.abs(tmp.y) < 1.2 && d2 < range * range;
       if (arcade) {
         // Throttled line of sight, then a fade towards the result.
