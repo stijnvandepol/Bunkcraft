@@ -15,12 +15,13 @@ BunkCraft is geen Minecraft-kloon meer, maar een online arenashooter. De shooter
   loadouts, wapenkamer, statistieken, instellingen en taal, boven een vlucht over een arenamap. Lobby, einde wedstrijd,
   instellingen en alle arenamenu's in de nieuwe look; "Realms" is uit de UI verdwenen (intern en in het protocol blijft
   de naam). Embleem, woordmerk, favicon, PWA-iconen en social preview komen uit `src/ui/Brand.ts`.
+- **Bunkhosting-stijl: Gedaan** (oktober 2026). Kleuren, lettertypes, knoppen en kaarten van bunkhosting.nl voor de hele shell, via tokens in `shell.css` en `Brand.ts`; screenshots in [`screenshots/bunkhosting/`](screenshots/bunkhosting/).
 - **Eigen spelersskins: Gedaan.** Klassieke 64×64 (en oude 64×32) PNG-skins, geüpload in het profiel en in Bouwen & Survival,
   strikt gevalideerd en opnieuw gecodeerd op de server, content-addressed opgeslagen, met meld-/verbied-flow in `/admin`
   (zie docs/SERVER.md §Spelersskins). Nog niet: de eerste-persoonshand met je eigen skin, skins van andere servers
   (Direct Connect) en het opruimen van skins zonder eigenaar.
 - **Volgende stappen, op volgorde:**
-  1. Een eigen display-font (OFL, lokaal gebundeld) voor titels en de PLAY-knop, als Stijn er een kiest (S).
+  1. Een eigen display-font: **Gedaan** (oktober 2026): de shell volgt de Bunkhosting-stijl met Manrope en Inter, lokaal gebundeld (zie [`research/IDENTITY.md`](research/IDENTITY.md#bunkhosting-stijl)).
   2. Create-a-Class ook vanaf de home: de editor loskoppelen van de match-HUD (M).
   3. Party's: **Gedaan** (oktober 2026, zie [`GAMEMODES.md`](GAMEMODES.md#partys-samen-in-dezelfde-lobby-en-hetzelfde-team)): tot 6 vrienden met een code of link, de leider drukt op PLAY en de hele party gaat in één lobby op hetzelfde team. Vervolg: zie §7b punt 9b.
   4. De in-game HUD (scorebalk, killfeed, doodscherm) naar de shell-typografie; nu nog het pixelfont (M).

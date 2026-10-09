@@ -942,7 +942,7 @@
 
 @media (forced-colors: active) {
   .bc-btn, .mode-card, .home-profile, .home-build, .loadout-card, .bc-input, .bc .mc-btn { border: 2px solid ButtonText; }
-  .bc-play, .bc .mc-btn.primary { background: ButtonText; color: ButtonFace; box-shadow: none; forced-color-adjust: none; }
+  .bc-play, .bc .mc-btn.primary { background: ButtonText; color: ButtonFace; border: 2px solid ButtonText; box-shadow: none; }
   .bc-play::after { display: none; }
   .home-wordmark .craft { background: none; -webkit-text-fill-color: currentColor; color: CanvasText; }
 }
