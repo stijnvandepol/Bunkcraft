@@ -166,4 +166,4 @@ Wat bewust hetzelfde blijft: de survival-menu's (wereldlijst, wereld maken, pauz
 
 - **Multiplayer-sandboxmenu's** (Create Game, Direct Connect, Browse Games) zijn nog alleen Engels. Ze vallen onder survival, dus die laten we tot de survival-ronde.
 - **Loadouts aanpassen buiten een wedstrijd.** Het Loadouts-scherm kiest de klasse voor de volgende wedstrijd. Een eigen klasse bouwen kan alleen in de wedstrijd (Create-a-Class), omdat die editor nu aan de HUD vastzit.
-- **Survival-twist.** Ideeën staan in `docs/ROADMAP.md`.
+- **Survival-twist.** Geparkeerd, zie `docs/ROADMAP.md` (§2, geparkeerd of gestopt).

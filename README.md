@@ -9,6 +9,8 @@ Druk op Play en je zit in een wedstrijd: 12 modi (Team Deathmatch, Search & Dest
 Gebouwd op een eigen voxel-engine in TypeScript met WebGL2 en Three.js. Geen installatie nodig.
 De voxel-sandbox waar het mee begon zit er nog in, onder **Bouwen & Survival (bèta)**.
 
+Live: **https://craft.bunkhosting.nl**
+
 ![BunkCraft home](docs/screenshots/identity/home-chromium.jpg)
 
 </div>
@@ -21,6 +23,7 @@ De voxel-sandbox waar het mee begon zit er nog in, onder **Bouwen & Survival (b�
 - [Snel starten](#snel-starten)
 - [Besturing](#besturing)
 - [Features](#features)
+- [Multiplayer](#multiplayer)
 - [Installeren, delen en hosten](#installeren-delen-en-hosten)
 - [Grafische kwaliteit](#grafische-kwaliteit)
 - [Originele Minecraft-textures gebruiken](#originele-minecraft-textures-gebruiken)
@@ -77,8 +80,33 @@ Overige scripts:
 | `npm run server` | Alleen de multiplayer-server, voor ontwikkeling (Vite stuurt `/ws` door) |
 | `npm run preview` | De productiebuild lokaal serveren |
 | `npm run typecheck` | Alleen TypeScript controleren |
+| `npm test` | Vitest: unit-, property-, fuzz- en server-integratietests |
+| `npm run test:e2e` | Playwright-flows in Chromium en WebKit |
+| `npm run test:perf`, `npm run size:check` | Prestatie- en bundelbudgetten |
+| `npm run build:static` | Statische build voor itch.io of een submap (`dist-static/`) |
+
+Alle testlagen en hun valkuilen staan in [`docs/TESTING.md`](docs/TESTING.md), een actuele overdracht in
+[`docs/HANDOFF.md`](docs/HANDOFF.md).
 
 ## Besturing
+
+**Shooter**
+
+| Toets | Actie |
+|---|---|
+| <kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd>, <kbd>Spatie</kbd> | Lopen, springen (bunny hop) |
+| <kbd>C</kbd> | Crouch; tijdens rennen een slide |
+| Linkermuisknop | Schieten |
+| Rechtermuisknop | Richten (ADS) |
+| <kbd>R</kbd> | Herladen |
+| <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd>, <kbd>Q</kbd>, muiswiel | Primair, secundair, melee; snel wisselen |
+| <kbd>Tab</kbd> (vasthouden) | Scoreboard |
+| <kbd>B</kbd> | Create-a-Class |
+| <kbd>T</kbd> | Chat |
+
+Gamepad en touch werken ook, zie [`docs/CONTROLS.md`](docs/CONTROLS.md).
+
+**Bouwen & Survival (bèta)**
 
 | Toets | Actie |
 |---|---|
@@ -102,20 +130,32 @@ Overige scripts:
 | <kbd>F11</kbd> | Volledig scherm |
 | <kbd>Esc</kbd> | Muis vrijgeven / pauzemenu |
 
-Alle toetsen behalve <kbd>F1</kbd>, <kbd>F2</kbd>, <kbd>F3</kbd> en <kbd>Esc</kbd> zijn aan te passen via
+Alle toetsen (in de shooter en de sandbox) behalve <kbd>F1</kbd>, <kbd>F2</kbd>, <kbd>F3</kbd> en <kbd>Esc</kbd> zijn aan te passen via
 Options → Controls → Key Binds, ook naar muisknoppen (zoals in Minecraft).
 
 ## Features
 
-**Wereld**
-- Oneindige, seed-gebaseerde wereld met 8 biomes: oceaan, strand, vlakte, bos, woestijn, taiga, sneeuwvlakte en bergen.
-- Grotten (spaghetti-tunnels en grote grotten), ertsaders, eiken, berken, sparren, cactussen, bloemen en hoog gras.
+**Shooter**
+- **12 modi:** Team Deathmatch, Free For All, Gun Game, Team Elimination, Hardpoint, Domination, Capture the Flag, Kill Confirmed,
+  Search & Destroy, Infected, Sharpshooter en King of the Hill, op **17 maps** met zones, vlaggen en bomsites ([`docs/GAMEMODES.md`](docs/GAMEMODES.md)).
+- **Snel spelen, lobby's en privéwedstrijden** met code of link; **party's** tot 6 vrienden; **server-bots** vullen lege plekken;
+  terugkeren in je match na een weggevallen verbinding; kaartstemming na elk potje.
+- **Krunker-achtige beweging:** slide, slide-hop, bunny hop met momentum, air strafe, jump pads.
+- **Wapens en richten:** Create-a-Class met primair, optiek, secundair en perk; red dot, holo en scopes; terugslagpatronen;
+  gebalanceerd time-to-kill; geen aim assist. Alle geluid is procedureel.
+- **Server-autoritair:** exacte hitregistratie met lag-compensatie, bewegings- en schotcontrole tegen valsspelen ([`docs/SECURITY.md`](docs/SECURITY.md)).
+- **Voortgang:** XP, levels 1-55 met prestige, ontgrendelingen, camo's, dagelijkse en wekelijkse uitdagingen, rangen en eigen spelersskins. Zonder account:
+  je profiel is een ondertekend token in je browser.
+- Nederlands en Engels.
+
+**Bouwen & Survival (bèta): wereld**
+- Oneindige, seed-gebaseerde wereld met 27 biomes (generator v3), rivieren, grotten met ingangen, ravijnen, ertsaders en meer bomen en planten.
 - Biome-tinting van gras en bladeren met vloeiende overgangen tussen biomes, zoals in Minecraft.
 
-**Gameplay**
+**Bouwen & Survival (bèta): gameplay**
 - Vier game modes: **Survival**, **Creative**, **Hardcore** en **Spectator**.
 - Survival met health, honger, adem, valschade, lava, cactus, de void, een doodscherm en respawnen.
-- Mobs: varken, koe, schaap, kip, zombie en creeper (met explosies), met Minecraft-loopanimaties, AI, spawnen in het donker en gevechten met knockback.
+- Mobs met goal-AI en pathfinding: dieren (fokken, temmen), zombie, creeper, skeleton, spin, enderman, slime en meer, met knockback en drops.
 - Items en tools (hout, steen, ijzer, diamant), drops die je oppakt, eten en crafting via werkbank en oven.
 - Advancements met toast-meldingen en een Advancements-scherm (tabs Minecraft en Adventure, zoals in Minecraft 1.21); alleen in survival, per wereld opgeslagen.
 - First-person hand met swing-, equip- en eet-animaties; hurt cam.
@@ -129,13 +169,13 @@ Options → Controls → Key Binds, ook naar muisknoppen (zoals in Minecraft).
 - 180 bloktypes en ruim 480 items; een creative inventory met tabs (Building Blocks, Colored Blocks, Natural Blocks, Functional Blocks, Redstone, Tools, Combat, Food, Ingredients), scrollen en zoeken, en een hotbar.
 - Werelden en je bouwwerken worden automatisch opgeslagen (IndexedDB).
 
-**Graphics**
+**Graphics (sandbox en arena)**
 - Per-vertex ambient occlusion en smooth lighting met sky light en block light (glowstone verlicht zijn omgeving).
 - Zonschaduwen, distance fog, een luchtkoepel met vierkante zon en maan, sterren en een dag/nachtcyclus.
 - Blokwolken, geanimeerd water met reflecties en golfjes, onderwatereffect, view bobbing en sprint-FOV.
 
 **Menu's**
-- De home is de voordeur van de shooter (eigen look: inkt, één volt accent, een strakke sans; zie [`docs/research/IDENTITY.md`](docs/research/IDENTITY.md)), met een live vlucht over een arenamap op de achtergrond.
+- De home is de voordeur van de shooter, in de huisstijl van [Bunkhosting](https://bunkhosting.nl) (Manrope en Inter; zie [`docs/research/IDENTITY.md`](docs/research/IDENTITY.md)), met een live vlucht over een arenamap op de achtergrond.
 - De survival-menu's achter Bouwen & Survival zijn nog opgebouwd zoals Minecraft 1.21: wereldselectie met screenshots, pauzemenu met Statistics en een F3-scherm. Zie [`docs/UI.md`](docs/UI.md).
 - In het Engels en Nederlands (Options → Language), met toetsenbordnavigatie (pijltjes, Tab, Enter, Esc).
 - In de inventory: <kbd>1</kbd>–<kbd>9</kbd> boven een slot wisselt met de hotbar, <kbd>Q</kbd> gooit een item weg, dubbelklik verzamelt.
@@ -154,12 +194,15 @@ npm start                     # http://localhost:3000 → Play, of Bouwen & Surv
 sudo ./scripts/install.sh --domain play.example.com
 ```
 
-- **Gedeelde wereld:** iedereen bouwt mee in dezelfde wereld. Alleen blokwijzigingen gaan over het netwerk, want het terrein komt uit de seed.
-- **Spelers en chat:** je ziet andere spelers met naamkaartje en loopanimatie, er is chat met commando's (`/help`, `/time set`, `/spawn`), en de dag/nachtcyclus is gedeeld.
-- **Validatie op de server:** de server controleert bereik, blok-id's, snelheid en rate limits, en bewaart positie, inventory en health per speler.
-- **Configuratie:** via omgevingsvariabelen (`SEED`, `GAMEMODE`, `WORLD_NAME`, …). Zie [`docs/SERVER.md`](docs/SERVER.md) voor HTTPS via nginx of Caddy.
+- **Shooter:** de server bepaalt alles (matchregels, schade, respawns, XP) en controleert beweging en schoten; bots, party's,
+  rejoin en skins staan in [`docs/GAMEMODES.md`](docs/GAMEMODES.md) en [`docs/SERVER.md`](docs/SERVER.md).
+- **Sandbox:** iedereen bouwt mee in dezelfde wereld; alleen blokwijzigingen gaan over het netwerk, want het terrein komt uit de seed.
+  Mobs, drops, kisten, ovens en vloeistoffen draaien op de server; chat met commando's, ops en wachtwoorden.
+- **Configuratie:** via omgevingsvariabelen (`PORT`, `DATA_DIR`, `SEED`, `GAMEMODE`, `WORLD_NAME`, `MAX_PLAYERS`, …), zie [`docs/SERVER.md`](docs/SERVER.md).
+- **Hosten:** `install.sh` zet Docker + Caddy met automatische HTTPS neer, of met `--proxy none` alleen de game-server achter een
+  Cloudflare Tunnel (zo draait de live server). Images komen kant-en-klaar van GHCR en updaten zichzelf. `GET /health` toont de versie (`1.1.<build>+<commit>`).
 
-Multiplayer v1 is vredig (geen mobs). Zie [`docs/ROADMAP.md`](docs/ROADMAP.md) voor de volgende stappen.
+Volgende stappen: [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## Installeren, delen en hosten
 
@@ -196,7 +239,7 @@ Daarnaast zijn er instellingen voor Brightness (Moody → Bright), Clouds, Parti
 
 ## Originele Minecraft-textures gebruiken
 
-Standaard gebruikt BunkCraft het gratis texture pack **Pixel Perfection**. Je kunt ook je **eigen**
+In Bouwen & Survival gebruikt BunkCraft standaard het gratis texture pack **Pixel Perfection**. Je kunt ook je **eigen**
 Minecraft-installatie laden:
 
 1. Ga naar **Options → Resource Packs → Open Pack File...**
@@ -255,7 +298,7 @@ het multiplayer-plan in [`docs/MULTIPLAYER.md`](docs/MULTIPLAYER.md). De oorspro
 
 ## Performance
 
-Gemeten op een **geïntegreerde AMD Radeon (Ryzen APU)** in Chrome, op 1280×720:
+Sandbox, gemeten op een **geïntegreerde AMD Radeon (Ryzen APU)** in Chrome, op 1280×720:
 
 | Preset | FPS |
 |---|---|
@@ -265,35 +308,40 @@ Gemeten op een **geïntegreerde AMD Radeon (Ryzen APU)** in Chrome, op 1280×720
 | Ultra | 66–70 |
 | Extreme | ~43 (bedoeld voor een losse videokaart) |
 
-Druk op <kbd>F3</kbd> voor live FPS, frametijd, draw calls, driehoeken, chunks en workerstatistieken.
+Een arenamatch met 16 spelers haalt op een MacBook M1 Pro 120 FPS (vsync) met een frametijd p99 van ~10 ms; de server gebruikt
+daarvoor minder dan 1% van een core. Druk op <kbd>F3</kbd> voor live FPS, frametijd, draw calls, driehoeken, chunks en workerstatistieken.
 
 ## Projectstructuur
 
 ```
 src/
-├── core/        Game loop, renderer, input, camera, audio, settings
+├── core/        Game loop, renderer, input, camera, audio (procedureel), settings
 ├── world/       Blokregistry, chunks, ChunkManager, terreingenerator, biomes, raycast
 ├── entities/    Mobs (AI, modellen, rendering), item-drops, EntityManager
 ├── items/       Items, tools, inventory, recepten
-├── rendering/   Mesher, lighting, shaders, textures, texture packs, lucht, wolken, deeltjes, schaduwen
+├── rendering/   Mesher, lighting, shaders, textures, texture packs, lucht, wolken, deeltjes, schaduwen, skin-atlas
 ├── player/      Speler, physics, collision, game modes, health/honger
-├── ui/          Titelscherm, menu's, HUD, hotbar, inventory, F3, logo, GUI-schaal
+├── modes/       Shooter: wapens, balans, hitscan, loadouts, maps (maps/), voortgangsregels (progression/), party-regels
+├── ui/          Home, Realms-menu, arena-HUD, party-paneel, menu's, inventory, F3, merkstijl (Brand.ts, shell.css), i18n NL/EN
+├── skins/       Skinformaat (gedeeld door client en server)
 ├── workers/     Worker pool en chunk worker
-├── net/         Multiplayer-protocol, NetClient, andere spelers
+├── net/         Protocol, NetClient, binaire frames, rejoin, party-, profiel- en skin-API's
 └── save/        IndexedDB-opslag
-server/          Node-server: statische bestanden + WebSocket-gameserver
+server/          Node-server: statische bestanden, WebSocket-gameserver, matches (modes/), bots/, anticheat/,
+                 progression/ (profielen en XP), skins/, Parties.ts, chunkgen/ (workerthreads)
+scripts/         install.sh en update.sh/autoupdate.sh (deploy), benchmarks, QA-scripts (qa/), laadtest (load/)
+deploy/          systemd-unit voor een installatie zonder Docker
+tests/           Vitest (unit, integration/) en Playwright (e2e/)
 public/
-├── fonts/                        Pixel-font (OFL)
+├── fonts/                        Pixel-font, Manrope en Inter (OFL)
 └── texturepacks/pixel-perfection Standaard texture pack (CC BY-SA 4.0)
-docs/
-├── RESEARCH.md                   Onderzoek: Minecraft-look, performance, technologiekeuze
-└── screenshots/
+docs/            HANDOFF, ROADMAP, GAMEMODES, SERVER, SECURITY, TESTING, UI, CONTROLS, GAMEPLAY, research/, qa/, screenshots/
 ```
 
 ## Credits en licenties
 
 - **Textures:** [Pixel Perfection](https://github.com/minetest-texture-packs/Pixel-Perfection) van Hugh "XSSheep" Rutland en bijdragers (Toby109tt, tacotexmex, devurandom), licentie [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). Gras- en bladtextures worden tijdens het laden grijs gemaakt voor biome-tinting. Zie `public/texturepacks/pixel-perfection/`.
-- **Font:** [Minecraft-Font](https://github.com/IdreesInc/Minecraft-Font) van Idrees Hassan, licentie SIL Open Font License 1.1 (`public/fonts/LICENSE-OFL.txt`). Het is met de hand nagetekend en bevat geen Mojang-bestanden.
+- **Fonts:** [Manrope](https://github.com/sharanda/manrope) en [Inter](https://rsms.me/inter/) voor de menu's (SIL OFL 1.1, `public/fonts/LICENSE-OFL-inter-manrope.txt`). Pixelfont voor de HUD: [Minecraft-Font](https://github.com/IdreesInc/Minecraft-Font) van Idrees Hassan, licentie SIL Open Font License 1.1 (`public/fonts/LICENSE-OFL.txt`). Het is met de hand nagetekend en bevat geen Mojang-bestanden.
 - **Rendering:** [three.js](https://threejs.org/) (MIT). Zip-import via [fflate](https://github.com/101arrowz/fflate) (MIT). Server: [ws](https://github.com/websockets/ws) (MIT).
 - **Zelf gemaakt:** het terrein, de procedurele textures, het logo, de geluiden en de muziek worden in code gegenereerd.
 

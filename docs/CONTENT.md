@@ -167,7 +167,7 @@ metaalblokken, rood zand, ijs, ladder, suikerriet, hooi, paddenstoelen, tulp en 
 
 ### Redstone
 
-Zie `ROADMAP.md` 4d voor gedrag en vereenvoudigingen. Blok-ids: stof 87, hendel 88, knop 89 (de vrije ids na `LIT_FURNACE`), repeater 241,
+Zie `GAMEPLAY.md` (Redstone) voor gedrag en vereenvoudigingen, en `ROADMAP.md` voor wat nog ontbreekt. Blok-ids: stof 87, hendel 88, knop 89 (de vrije ids na `LIT_FURNACE`), repeater 241,
 drukplaat 242, onderdeel 243–249 (zuigerkop 243, sticky zuiger 244, zuiger 245, nootblok 246, lamp aan 247, lamp 248, fakkel 249).
 Box-vormen 12–19 (`RedstoneShapes.ts`). State bytes:
 

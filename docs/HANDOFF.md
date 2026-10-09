@@ -1,67 +1,152 @@
-# Overdracht: verder op de MacBook
+# Overdracht (stand 9 oktober 2026)
 
-## Stap 1: code ophalen (op de Mac)
+Korte, actuele overdracht voor een nieuwe sessie of een nieuwe ontwikkelaar. Lees daarna `CLAUDE.md` (commando's,
+architectuur, valkuilen) en `docs/ROADMAP.md` (wat open staat). Taal: docs in het Nederlands, code, commentaar en
+commitberichten in het Engels.
+
+## 1. Wat het product nu is
+
+BunkCraft is een **online arenashooter in de browser** (TypeScript, Three.js r186 op WebGL2, Vite) op een eigen
+voxel-engine. Het begon als Minecraft-kloon; de shooter is nu de voordeur en de voxel-sandbox zit achter
+**Bouwen & Survival (bèta)**. De menu's volgen de **Bunkhosting-huisstijl** (Manrope en Inter, tokens in
+`src/ui/shell.css` en `src/ui/Brand.ts`); het pixelfont blijft voor de in-game HUD en de survival-menu's.
+
+Shooter (de kern):
+
+- **12 modi:** Team Deathmatch, Free For All, Gun Game, Team Elimination, Hardpoint, Domination, Capture the Flag,
+  Kill Confirmed, Search & Destroy, Infected, Sharpshooter, King of the Hill (`src/modes/GameTypes.ts`,
+  server-regels in `server/modes/`).
+- **17 maps** (`src/modes/maps/`), vrije puntsymmetrische kaarten met zones, vlaggen en bomsites; jump pads op trage routes.
+- **Krunker-achtige beweging:** slide, slide-hop, bunny hop met momentum, air strafe, crouch. De anti-cheat modelleert de
+  slide-envelop exact.
+- **Wapens en richten:** Create-a-Class (primair, optiek, secundair, perk), red dot/holo/scopes met variabele zoom,
+  terugslagpatronen, per-klasse ADS-curves, geen aim assist. Arcade-tempo met trager, eerlijker time-to-kill
+  (`src/modes/Balance.ts`, `scripts/ttk-sim.ts`).
+- **Hitregistratie:** exacte rewind (lag-compensatie max 250 ms), hitboxes die het model volgen, geseede spreiding,
+  kogels door glas en bladeren, binaire schotframes (binary versie 3).
+- **Voortgang:** XP, levels 1-55 met prestige, ontgrendelingen, wapen-XP en camo's, dagelijkse en wekelijkse uitdagingen,
+  rangen, titels en visitekaartjes. XP komt alleen van de server (ondertekend profieltoken).
+- **Server-bots** vullen lege plekken (`server/bots/`), zijn echte matchspelers en slaan de anti-cheat niet over.
+- **Party's** (tot 6 vrienden, `server/Parties.ts`), **rejoin** na een weggevallen verbinding (`REJOIN_GRACE_SEC`, 120 s),
+  **eigen spelersskins** (klassiek 64x64, `server/skins/`), privéwedstrijden met code of link, kaartstemming.
+
+Sandbox: survival/creative/hardcore/spectator, 27 biomes (generator v3), block states, vloeistoffen, redstone, landbouw,
+enchanting, mobs met goal-AI, multiplayer met gedeelde mobs en kisten. Staat grotendeels stil (zie ROADMAP).
+
+Versie: `1.1.<buildnummer>` (MAJOR.MINOR uit `package.json`, buildnummer = het GitHub-runnummer; lokaal `1.1-dev`).
+
+## 2. Deployment
+
+Live op **https://craft.bunkhosting.nl**, achter een **Cloudflare Tunnel**. Geïnstalleerd met
+`sudo ./scripts/install.sh --proxy none` (geen Caddy, geen poort 80/443). Uitleg en opties: `docs/SERVER.md`
+(secties "Automatisch deployen" en "Achter een Cloudflare Tunnel").
+
+- **Image:** CI bouwt na elke groene push naar `main` een multi-arch image op GHCR (`ghcr.io/stijnvandepol/bunkcraft`),
+  rookt hem (hardening, `/health`, spelpagina, API, wegwerpgame) en publiceert pas daarna.
+- **Auto-update:** kanaal `latest` (`BUNKCRAFT_TAG=latest`, elke groene `main`-push), systemd-timer elke 5 min
+  (`bunkcraft autoupdate`). Wacht op een rustig moment (`playersInPlay` in `/health`, max 30 min), maakt een back-up,
+  herstart, controleert de gezondheid en rolt zichzelf terug als de nieuwe versie niet gezond wordt. Kanaal `stable` =
+  alleen release-tags (`v1.2.3`). Optioneel push-deploy via SSH (`DEPLOY_ENABLED`), niet nodig.
+- **Bezoekers-IP:** `TRUST_PROXY=0`, `TRUST_CLOUDFLARE=1` en `TRUSTED_PROXY_ADDRS`: `CF-Connecting-IP` wordt alleen
+  vertrouwd op verbindingen van de cloudflared-host. Anders kan iedereen die de poort bereikt zijn eigen IP kiezen en
+  de limieten per bezoeker omzeilen.
+- **Welke versie draait er live?**
+  ```bash
+  curl -s https://craft.bunkhosting.nl/health     # {"ok":true,"version":"1.1.<build>+<sha7>",...,"playersInPlay":N}
+  git ls-remote origin refs/heads/main            # de sha7 hoort bij deze commit
+  ```
+  Ook zichtbaar linksonder op het titelscherm en met `bunkcraft status` op de server. Loopt de live sha achter op
+  `main`: wacht 5-10 min (CI + timer), kijk anders naar de CI-run en `bunkcraft autoupdate status`.
+- **Beheer op de server:** `bunkcraft status | update | rollback | autoupdate status | restart | backup`, logs met
+  `journalctl -u bunkcraft-autoupdate`, deploylog `/var/log/bunkcraft-deploy.log`. Data in het Docker-volume
+  (`/app/data`: `world.json` per game, `profiles/`, `skins/`); dagelijkse back-up naar `/var/backups/bunkcraft` (14 bewaard).
+- **Admin:** `/admin` met `ADMIN_TOKEN` (spelers, verdenkingsscores, skins modereren).
+
+## 3. Repo-indeling in het kort
+
+| Pad | Inhoud |
+|---|---|
+| `src/core`, `src/world`, `src/rendering` | Game loop, renderer, chunks, generator (genVersion!), mesher, licht, shaders |
+| `src/entities`, `src/items`, `src/player` | Mobs, items, recepten, spelerfysica en -stats (sandbox) |
+| `src/modes` | Arcade: wapens, balans, hitscan, loadouts, maps (`maps/`), progressieregels (`progression/`), party-regels |
+| `src/net` | Gedeeld protocol (`protocol.ts`), NetClient, binaire frames, `Rejoin.ts`, `PartyApi.ts`, `SkinApi.ts`, `ProfileApi.ts` |
+| `src/ui` | Home, Realms-menu, ArcadeHud, party-paneel, shell-stijl (`shell.css`), i18n NL/EN (`i18n.ts`) |
+| `src/skins` | Skinformaat (gedeeld door client en server) |
+| `server/` | `GameServer`, `Match`, `Rooms`, `Parties`, `anticheat/`, `modes/`, `bots/`, `progression/`, `skins/`, `chunkgen/` |
+| `scripts/` | Installatie en deploy (`install.sh`, `update.sh`, `autoupdate.sh`, `backup.sh`), benchmarks, QA (`qa/`), laadtest (`load/`) |
+| `tests/` | Vitest (unit en `integration/`), Playwright (`e2e/`) |
+| `docs/` | `SERVER.md` (server en deploy), `GAMEMODES.md` (modi, wapens, bots, voortgang), `SECURITY.md`, `TESTING.md`, `research/` (IDENTITY, MAPS, KRUNKER, SERVER-DEPLOY), `qa/` (rapporten) |
+
+## 4. Testen
+
+Alles staat in `docs/TESTING.md`. De korte versie:
 
 ```bash
-git clone https://github.com/stijnvandepol/Game.git && cd Game   # of: git pull in een bestaande clone
-git checkout feature/bunkcraft-engine
-brew install node        # Node 20+ (of via nvm)
-npm install
+npx tsc --noEmit && npm run build     # verplicht na elke wijziging
+npm test                               # Vitest: unit, property, fuzz en server-integratie (~45 s)
+npm run test:coverage                  # wat CI draait (v8-coverage)
+npm run test:e2e                       # Playwright, Chromium en WebKit (~2 min)
+npm run test:perf && npm run size:check   # mesh/arena-budget en bundelbudget
+npm run load -- --steps survival:10x8,tdm:4x12   # botlaadtest tegen de gebouwde server
 ```
 
-> Push de branch eerst vanaf de Windows-pc (`git push`) als dat nog niet is gebeurd.
+- **Bot-suites:** `tests/botMatch.test.ts` (hele matches tot het einde, nul anti-cheat-meldingen), `botNav`, `botBalance`,
+  `botPerf`; `scripts/modes-bots.ts` (alle modi tegen een echte server), `scripts/cheat-bots.ts` (speedhacks moeten
+  gevangen worden), `scripts/arena-bots.ts`, `scripts/qa/` (browser-QA: `weapon-glitch.py`, `hitreg-browser.ts`,
+  `map-audit.ts`, `map-flow.ts`, `aim-feel.py`, `slide-check.py`, `smoke.py`).
+- **CI** (`.github/workflows/ci.yml`, acties vastgezet op SHA, `contents: read`): `check` (npm audit, typecheck,
+  coverage, build, bundelbudget, precompressed-controle), `perf`, `e2e` (Chromium op SwiftShader en WebKit),
+  `image` (alleen `main` en `v*`-tags, na de drie andere), optioneel `deploy`.
+- **Bekende gevoeligheden:**
+  - Trage runners: wandklok-asserts zijn verruimd (`TIME_SLACK`, `testTimeout` 90 s onder coverage) en Vitest probeert
+    in CI twee keer opnieuw (`retry: 2`); de anticheat-walk, growth-sync en arcade-flowtests zijn deterministisch gemaakt.
+    Een test die in CI faalt maar lokaal slaagt: eerst opnieuw draaien, pas dan een nieuwe time-out of fix.
+  - e2e-screenshotbaselines bestaan alleen voor macOS (`tests/e2e/baselines/*-darwin`); in CI wordt de pixelvergelijking
+    overgeslagen. Bewust een scherm veranderd: `--update-snapshots` lokaal en de baselines meecommitten.
+  - Playwright-vensters op de achtergrond draaien op 1-10 FPS (`bringToFront()`), pointer lock bestaat niet in
+    geautomatiseerde browsers (e2e forceert `locked`; skins-e2e moet de echte lock eerst loslaten), en de testserver
+    deelt één IP, dus zonder `ROOM_CREATE_LIMIT`, profiel- en partylimieten faalt de suite op 429.
+  - Prestaties meten: Chromium met `--use-angle=metal`, anders meet je SwiftShader.
+  - Bundelbudget faalt bij > 10 % groei: bewust groeien met `npm run size:check -- --update`.
 
-## Stap 2: deze prompt plakken in Claude Code op de Mac
+## 5. Conventies
 
-```text
-Ik zet hier de ontwikkeling van BunkCraft voort, die op mijn Windows-pc begonnen is. Lees eerst
-CLAUDE.md (projectoverzicht, commando's, regels en test-valkuilen), daarna docs/ROADMAP.md en
-docs/SERVER.md. Antwoord in het Nederlands.
+- **Branch:** `feature/bunkcraft-engine`; `main` is wat live gaat. Controleer `git branch --show-current` vóór een merge:
+  de main checkout is ooit ongemerkt op een lokale `main` beland.
+- **Pushen (afspraak met Stijn: vaak commit en push na elke geverifieerde merge of fix, nooit rood):**
+  ```bash
+  git push origin HEAD:feature/bunkcraft-engine
+  git push origin HEAD:main                      # dit triggert CI en daarna auto-deploy
+  git ls-remote origin refs/heads/main refs/heads/feature/bunkcraft-engine   # moet gelijk zijn aan git rev-parse HEAD
+  ```
+  Altijd een expliciete `HEAD:`-refspec en daarna `ls-remote` vergelijken voordat je "gepusht" meldt; een stale lokale
+  branch gaf eerder "Everything up-to-date" terwijl er niets op de remote kwam.
+- **Commitberichten:** Engels, beschrijvend (wat en waarom), eindigend met de Co-Authored-By-regel. Docs in het Nederlands.
+- **Agents:** Sonnet of Haiku voor lichter werk (merges, testruns, QA-herhalingen, docs, kleine fixes); Opus voor
+  netcode, anti-cheat, engine en lastige debugging. Houd het aantal parallelle agents laag (tokenverbruik) en laat ze
+  in eigen worktrees werken (`.claude/worktrees/`).
+- **Generator-uitvoer verandert nooit** voor bestaande werelden: nieuwe `genVersion` toevoegen, golden hashes behouden.
+- **Geen Mojang-assets** in de repo; texturepacks van de speler blijven in zijn eigen browser.
+- **Geen allocaties in per-frame-code**; prestatiedoel is 60+ FPS op een geïntegreerde GPU.
+- **Prestatiebudgetten** (`scripts/perf-budget.json`, `bundle-budget.json`) bewust ophogen in dezelfde commit als de oorzaak.
 
-Stand van zaken (branch feature/bunkcraft-engine, laatste commits):
-- Engine: chunks met greedy meshing, smooth lighting met AO, biome-tinting, cached schaduwen,
-  texture packs (Pixel Perfection + eigen Minecraft-jar importeren), kwaliteitspresets
-  Low→Extreme, menu's in Minecraft 1.21-stijl.
-- Gameplay: Survival, Creative, Hardcore en Spectator; health, honger en adem; mobs (varken, koe,
-  schaap, kip, zombie, creeper met explosies); items, tools en crafting (werkbank, oven); fakkels
-  en lava; first-person hand.
-- Multiplayer v1: één Node-server (server/) serveert de game en de WebSocket op /ws, met een
-  gedeelde wereld, chat, spelers en validatie. Getest met 2 spelers in 2 tabs: blokken, chat,
-  rollback en remote players werken. Multiplayer is nog vredig (geen mobs).
-- 15 bugs uit een code-review en de robuustheidsfixes uit de engine-audit zijn gedaan (zie
-  docs/ROADMAP.md, gemarkeerd als "Gedaan").
+## 6. Open punten en volgende stappen
 
-Stap 1, testen op de Mac (Apple Silicon + Safari/Chrome):
-1. npm run build en npm start, open http://localhost:3000 in Safari én Chrome. Controleer:
-   hoofdmenu, singleplayer survival (boom hakken → planken → werkbank → houten pickaxe),
-   creative, mobs 's nachts, fakkels en lava, F3-overlay, Options → Video Settings-presets.
-2. Meet de FPS per preset met F3 en vergelijk met de Windows-meting (geïntegreerde AMD:
-   Low 130–140, Medium 144, High ~110, Ultra ~68, Extreme ~43). Noteer de resultaten in
-   docs/RESEARCH.md.
-3. Safari-specifiek: pointer lock, de hotbar-tekst/font, WebGL2-schaduwen, de audio-unlock
-   en de import van ~/Library/Application Support/minecraft/versions/<versie>/<versie>.jar
-   via Options → Resource Packs.
-4. Multiplayer: start de server en join vanaf Mac + een tweede apparaat in het netwerk
-   (http://<ip-van-de-mac>:3000). Test samen bouwen, chat, /time set night en opnieuw inloggen
-   (positie en inventory blijven bewaard).
-5. Docker: docker build -t bunkcraft . && docker run -p 3000:3000 -v bunkcraft-data:/app/data bunkcraft
-Repareer wat stuk is (met typecheck + build), en rapporteer kort wat je gevonden hebt.
+Uitgebreid en geprioriteerd: `docs/ROADMAP.md`. De kop:
 
-Stap 2, verder bouwen volgens docs/ROADMAP.md, in deze volgorde:
-1. Mobs op de multiplayer-server (EntityManager/Mob zijn DOM-vrij; de server heeft al
-   TerrainGenerator; mob-snapshots versturen zoals spelers).
-2. Gebruik voor drops waar nu niets mee kan: goud + gouden tools, TNT, bed (spawnpunt + nacht
-   overslaan), vuursteen, pijl en boog.
-3. ~15 advancements met toasts die ook als tutorial dienen.
-4. Werkende keybind-remapping (het scherm bestaat al).
-5. Vitest-tests + GitHub Actions CI.
-6. Daarna block states (meta-array) voor stromend water, trappen, slabs en deuren.
-Doe eerst kort onderzoek waar nodig, laat een plan zien, en bouw dan. Commit per afgeronde stap op
-feature/bunkcraft-engine en push alleen als ik daarom vraag.
-```
+1. **ADS-validatie op de server** (SECURITY O-09): de server vertrouwt de `ads`-vlag van de client voor de kleinere
+   spreiding. Werk loopt; afmaken en testen met `scripts/cheat-bots.ts`.
+2. **Playtest met echte spelers** van de nieuwe wapenbalans (time-to-kill), richtgevoel en standaardgevoeligheid, plus
+   de weapon-glitch-fixes (`scripts/qa/weapon-glitch.py`). Daarna eventueel Classic compacter of uit de rotatie.
+3. **Hide & Seek / Prop Hunt:** bewust nog niet gebouwd; vraagt een hitbox per speler in `rayPlayer`, een
+   blokvermomming die op het raster snapt en rendering van verstopte spelers.
+4. **In-game HUD in de shell-typografie** (nu pixelfont) en een eventueel eigen display-font (keuze van Stijn; fontbestand
+   downloaden en licentie controleren). Create-a-Class ook vanaf de home.
+5. **Skins:** eerste-persoonshand met eigen skin, skins bij Direct Connect, opruimen van skins zonder eigenaar.
+6. **Rejoin en party's:** bewaarde plekken en party's overleven geen serverherstart; party-chat of pushkanaal.
+7. **Geparkeerd:** survival een eigen twist geven (en de survival-menu's in de shell-look); **dorpen en villagers** zijn
+   gestopt (alleen onderzoek in `docs/research/STRUCTURES-VILLAGES.md`, geen code); CrazyGames/Poki pas na touch voor de shooter.
 
-## Notities
-
-- **Werelden staan per browser.** Singleplayer-werelden staan in IndexedDB van de browser, dus op de Mac begin je met een lege lijst. Werelden overzetten kan pas als export/import is gebouwd (roadmap).
-- **Multiplayer-werelden** staan in `data/world.json` op de server; kopieer die map om een serverwereld mee te nemen.
-- **Line endings:** Windows waarschuwde over LF/CRLF; `.gitattributes` (`text=auto`) normaliseert dit, dus op de Mac is niets nodig.
+Bekende kleinere risico's: spawnkills in FFA na de snellere respawn (6,4 % in botmatches), aparte rate-limiter voor
+WebSocket-verbindingen (SECURITY O-05), `og:image` met absolute URL per deployment, en accounts/herstel van een verloren
+profieltoken (er zijn geen echte accounts; identiteit is een ondertekend token in de browser).
