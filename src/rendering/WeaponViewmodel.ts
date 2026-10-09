@@ -159,6 +159,7 @@ export class WeaponViewmodel {
   private readonly tmpSize = new THREE.Vector2();
   /** Bolt-action cycle 0..1 (1 = idle) and how long a weapon takes to come up (Quickdraw). */
   private bolt = 1;
+  private boltRate = 1 / BOLT_TIME;
   private equipTime = EQUIP_TIME;
   /** A weapon waiting for the one in hand to be lowered, and whether the weapon on its way up came after a lowering. */
   private pending: { id: string; optic: OpticId; sup: boolean } | null = null;
@@ -207,8 +208,9 @@ export class WeaponViewmodel {
   }
 
   /** Work the bolt (bolt-action rifles, after every shot). */
-  cycleBolt(): void {
+  cycleBolt(seconds = BOLT_TIME): void {
     this.bolt = 0;
+    this.boltRate = 1 / Math.max(0.1, seconds);
   }
 
   /** Height of the current sight line above the weapon origin (iron sights or the optic's reticle). */
@@ -351,7 +353,7 @@ export class WeaponViewmodel {
     } else {
       this.equip = Math.min(1, this.equip + dt / (this.lowered ? Math.max(0.06, this.equipTime - LOWER_TIME) : this.equipTime));
     }
-    this.bolt = Math.min(1, this.bolt + dt / BOLT_TIME);
+    this.bolt = Math.min(1, this.bolt + dt * this.boltRate);
     // Visible for at least the frame after the shot, however long it took (a frame over 55 ms used to skip the flash).
     this.flash.visible = this.flashLeft > 0;
     this.flashLeft = Math.max(0, this.flashLeft - dt);

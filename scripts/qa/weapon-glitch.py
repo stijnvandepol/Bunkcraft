@@ -243,7 +243,7 @@ def shots_vs_sounds(tag, w, data, expect_shots=None):
     if len(sent) != len(snd):
         finding(tag, 'fire messages vs gunshot sounds differ', f'{len(sent)} sent, {len(snd)} heard')
     # Double fires: two shots closer than 55% of the fire interval (burst weapons use their in-burst interval).
-    gap = 60 / w['rpm'] * 0.55
+    gap = 60 / w['rpm'] * 0.4  # a late frame may be followed by an on-time one (see FireControl MAX_LATE_SEC)
     ts = [s[1] / 1000 for s in sent]
     for i in range(1, len(ts)):
         if ts[i] - ts[i - 1] < gap:
@@ -326,23 +326,23 @@ def run_reload(page, w, optic, tag):
     """Shoot a few rounds, reload with extra input in the middle: fire and ADS must be refused, ammo and animation must agree."""
     reset(page)
     topup(page, w)
-    for _ in range(3):
+    for _ in range(min(3, max(1, w['magazine'] - 1))):  # never the whole magazine: an empty one reloads by itself
         click(page)
         pump(page, 60 / w['rpm'] + 0.05)
     pump(page, 0.4)
     m = mark(page)
     press(page, 'KeyR')
     pump(page, 0.15)
-    s = page.evaluate('() => ({ r: game.arcade.ammo[game.arcade.slot].reloading, mag: game.arcade.ammo[game.arcade.slot].mag })')
+    s = page.evaluate('() => ({ r: game.arcade.ammo[game.arcade.slot].reloading, mag: game.arcade.ammo[game.arcade.slot].mag, dur: game.arcade.ammo[game.arcade.slot].duration })')
     if not s['r']:
         finding(tag, 'reload did not start', json.dumps(s))
         return
     t_start = time.time()
     # In the middle: try to fire and to aim.
-    pump(page, w['reloadSec'] * 0.35)
+    pump(page, max(0.05, s['dur'] * 0.3 - 0.15))
     hold(page, 'Mouse2', True)
     click(page)
-    pump(page, 0.1)
+    pump(page, min(0.1, s['dur'] * 0.1))
     ads_mid = page.evaluate('() => game.arcade.ads')
     hold(page, 'Mouse2', False)
     pump(page, w['reloadSec'] * 0.9)
@@ -505,7 +505,7 @@ def sheet(page, tag, label, action):
 AUTOPILOT = """() => {
   const g = window.game, a = g.arcade, p = g.player, inp = g.input;
   if (window.__ap) return;
-  const ap = window.__ap = { on: true, target: 0, shots: 0, last: performance.now(), strafe: 1, strafeAt: 0, kills: 0, deaths: 0, wasDead: false };
+  const ap = window.__ap = { on: true, target: 0, shots: 0, shotAt: 0, last: performance.now(), strafe: 1, strafeAt: 0, kills: 0, deaths: 0, wasDead: false };
   const pose = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0 };
   const hold = (k, on) => (on ? inp.down.add(k) : inp.down.delete(k));
   const step = () => {
@@ -578,7 +578,8 @@ def match_analysis(data, weapons):
     hitches = [i for i in range(1, len(fr)) if row(fr[i], 't') - row(fr[i - 1], 't') > 120]
     print(f'  frames {len(fr)}, hitches>120ms {len(hitches)}', flush=True)
     sent = [s for s in data['sent'] if s[0] == 'fire']
-    snd = [s for s in data['sounds'] if s[2] and s[0].startswith('weapon.') and s[0].count('.') == 1 and s[0] not in ('weapon.kill', 'weapon.empty')]
+    guns = {f'weapon.{w["id"]}' for w in weapons} | {f'weapon.{w["id"]}.suppressed' for w in weapons}
+    snd = [s for s in data['sounds'] if s[2] and s[0] in guns]
     print(f'  fire messages {len(sent)}, own gunshot sounds {len(snd)}', flush=True)
     if sent and abs(len(sent) - len(snd)) > max(3, len(sent) * 0.03):
         finding('match', 'fire messages vs gunshot sounds differ', f'{len(sent)} vs {len(snd)}')
@@ -605,18 +606,23 @@ def run_match(page, weapons, seconds):
         print(f'-- match with {w["id"]}+{optic}', flush=True)
         # A class applies right after a spawn; wait for the next life when needed.
         page.evaluate(f"() => game.arcade.chooseClass({{ primary: '{w['id']}', optic: '{optic}', secondary: 'pistol', perk: 'none' }}, false)")
-        end = time.time() + seconds
-        while time.time() < end and page.evaluate('() => game.arcade.weapon.id') != w['id']:
-            page.evaluate("() => { game.input.locked = true; }")
+        waited = time.time()
+        while time.time() - waited < 180 and page.evaluate('() => game.arcade.weapon.id') != w['id']:
+            page.evaluate("() => { game.input.locked = true; if (game.state !== 'playing') game.state = 'playing'; }")
             time.sleep(0.3)
+        if page.evaluate('() => game.arcade.weapon.id') != w['id']:
+            finding('match', f'class {w["id"]} never applied', 'no respawn within 180 s')
+            continue
+        print(f'   in hand after {time.time() - waited:.0f} s', flush=True)
         m = mark(page)
+        d0 = page.evaluate('() => __ap.deaths')
         end = time.time() + seconds
         while time.time() < end:
             page.evaluate("() => { game.input.locked = true; if (game.state !== 'playing') game.state = 'playing'; }")
             time.sleep(0.2)
         d = since(page, m)
         st = page.evaluate('() => ({ kills: __ap.kills, deaths: __ap.deaths })')
-        print(f'   deaths so far {st["deaths"]}', flush=True)
+        print(f'   deaths in the window {st["deaths"] - d0}', flush=True)
         match_analysis(d, weapons)
         shots_vs_sounds(f'match {w["id"]}', w, d)
         # Reset for the next weapon: nothing else (the autopilot keeps playing).

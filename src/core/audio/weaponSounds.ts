@@ -114,6 +114,20 @@ export function reloadSteps(id: string): readonly ReloadStep[] {
 
 /** Seconds after a bolt-action shot when the bolt is worked (up/back, then forward/down). */
 export const BOLT_DELAY = 0.32;
+/** Seconds from the bolt coming back to it closing again. */
+export const BOLT_FORWARD = 0.2;
+
+/**
+ * When a bolt or lever cycles after a shot: back after `delay`, forward `forward` later, both squeezed so the whole cycle ends
+ * before the next shot can go out (the 0.5 s lever carbine used to fire again before its bolt closed: a lost sound, a restarted
+ * animation). `anim` is how long the hand's animation may take.
+ */
+export function boltTimes(intervalSec: number): { delay: number; forward: number; anim: number } {
+  const scale = Math.min(1, (intervalSec * 0.9) / (BOLT_DELAY + BOLT_FORWARD));
+  const delay = BOLT_DELAY * scale;
+  // The hand's animation (BOLT_TIME in the viewmodel, 0.55 s) starts at the bolt coming back and must be done by the next shot too.
+  return { delay, forward: BOLT_FORWARD * scale, anim: Math.max(0.15, Math.min(0.55, intervalSec * 0.95 - delay)) };
+}
 
 // ---------------------------------------------------------------- announcer and stingers
 

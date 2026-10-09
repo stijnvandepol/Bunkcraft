@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { BREATH_HOLD_SEC, BREATH_SPENT_SEC, RECOIL_RECOVER, RecoilState, SCOPE_SETTLE, SCOPE_SWAY, ScopeBreath, swayOffset } from '../src/modes/ArcadeLogic';
 import { AIM_CLIMB, WEAPONS, fireInterval, weaponDef } from '../src/modes/Weapons';
 import {
-  GUN_SOUNDS, MECH_KINDS, MULTI_KILL_WINDOW, RELOAD_STEPS, SUPPRESSED_EARSHOT, gunEarshot, medalFor, outdoorShare, reloadSteps,
+  GUN_SOUNDS, MECH_KINDS, MULTI_KILL_WINDOW, RELOAD_STEPS, SUPPRESSED_EARSHOT, boltTimes, gunEarshot, medalFor, outdoorShare, reloadSteps,
 } from '../src/core/audio/weaponSounds';
 import { buildCatalog } from '../src/core/audio/catalog';
 import { OPTIC_MODELS, WEAPON_MODELS, adsCutZ, sightYFor, weaponFrontGeometry, weaponGeometry } from '../src/rendering/WeaponModels';
@@ -99,6 +99,20 @@ describe('recoil', () => {
 
   it('every gun has a recoil pattern', () => {
     for (const w of WEAPONS) expect(w.pattern.length, w.id).toBeGreaterThan(0);
+  });
+});
+
+describe('bolt and lever cycle', () => {
+  it('the cycle (back, forward, and the hand animation) is over before the next shot can go out, for every bolt weapon', () => {
+    for (const w of WEAPONS.filter((x) => x.bolt)) {
+      const iv = fireInterval(w);
+      const t = boltTimes(iv);
+      expect(t.delay + t.forward, `${w.id} sounds`).toBeLessThanOrEqual(iv * 0.91);
+      expect(t.delay + t.anim, `${w.id} animation`).toBeLessThanOrEqual(iv * 0.96 + 0.15);
+      expect(t.delay, w.id).toBeGreaterThan(0.05);
+    }
+    // The slow rifles keep the full 0.32 s + 0.2 s cycle.
+    expect(boltTimes(1.33)).toMatchObject({ delay: 0.32, forward: 0.2 });
   });
 });
 

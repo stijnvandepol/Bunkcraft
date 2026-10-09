@@ -42,7 +42,7 @@ import { type BulletTrace, type HitPart, createBulletTrace, rayPlayer, shotRando
 import { HitregStats } from '../modes/HitregStats';
 import type { AudioEngine } from './Audio';
 import { type SurfaceLookup, surfaceLookup } from './audio/playerSounds';
-import { BOLT_DELAY, MULTI_KILL_WINDOW, type MechKind, gunEarshot, medalFor, medalText, reloadSteps } from './audio/weaponSounds';
+import { MULTI_KILL_WINDOW, type MechKind, boltTimes, gunEarshot, medalFor, medalText, reloadSteps } from './audio/weaponSounds';
 import { t } from '../ui/i18n';
 import type { Settings } from './Settings';
 import type { CameraController } from './Camera';
@@ -264,6 +264,8 @@ export class ArcadeSession {
   private readonly reloadStep = [0, 0, 0];
   private boltAt = 0;
   private boltStage = 0;
+  /** The pending bolt cycle of the last shot (see boltTimes). */
+  private bolt = { delay: 0.32, forward: 0.2, anim: 0.55 };
   /** Kills this life and in the current multi-kill chain. */
   private streak = 0;
   private multi = 0;
@@ -1014,7 +1016,7 @@ export class ArcadeSession {
     // short: a big kick moved the target on screen and made tracking feel heavy (aim-feel pass: 0.8 -> 0.45 of the recoil,
     // at most 3.4 degrees, gone in ~0.2 s).
     this.kick = Math.min(0.06, this.kick + (w.recoil * Math.PI) / 180 * 0.45);
-    if (w.bolt) { this.boltAt = now + BOLT_DELAY; this.boltStage = 0; }
+    if (w.bolt) { this.bolt = boltTimes(fireInterval(w)); this.boltAt = now + this.bolt.delay; this.boltStage = 0; }
     // Muzzle in the world: the weapon model's muzzle transformed by the view model's pose is close
     // enough to a fixed offset from the camera.
     const cam = this.d.cam.camera;
@@ -1378,9 +1380,9 @@ export class ArcadeSession {
     if (this.boltAt > 0 && now >= this.boltAt) {
       if (this.boltStage === 0) {
         this.d.audio.playMech('boltback');
-        this.viewmodel.cycleBolt();
+        this.viewmodel.cycleBolt(this.bolt.anim);
         this.boltStage = 1;
-        this.boltAt = now + 0.2;
+        this.boltAt = now + this.bolt.forward;
       } else {
         this.d.audio.playMech('boltfwd');
         this.boltAt = 0;
