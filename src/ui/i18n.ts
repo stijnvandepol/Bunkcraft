@@ -54,6 +54,7 @@ const EN = {
   // Home (the front door: the arena shooter) and the Build & Survival entry
   'home.tagline': 'Voxel arena shooter',
   'home.play': 'Play',
+  'home.by': 'A game by',
   'home.quickPlay': 'Quick play',
   'home.online': '{0} online',
   'home.nobody': 'Open lobby',
@@ -958,6 +959,7 @@ const NL: Record<I18nKey, string> = {
 
   'home.tagline': 'Voxel-arenashooter',
   'home.play': 'Spelen',
+  'home.by': 'Een spel van',
   'home.quickPlay': 'Snel spelen',
   'home.online': '{0} online',
   'home.nobody': 'Open lobby',

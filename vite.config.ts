@@ -34,6 +34,14 @@ function productionAssets(): Plugin {
           attrs: { rel: 'preload', as: 'font', type: 'font/otf', href: `${BASE}fonts/bunkcraft-pixel.otf`, crossorigin: '' },
           injectTo: 'head' as const,
         });
+        // The shell's fonts (Manrope for headings, Inter for text): the home screen is the first thing painted.
+        for (const font of ['manrope-var-latin.woff2', 'inter-var-latin.woff2']) {
+          tags.push({
+            tag: 'link',
+            attrs: { rel: 'preload', as: 'font', type: 'font/woff2', href: `${BASE}fonts/${font}`, crossorigin: '' },
+            injectTo: 'head' as const,
+          });
+        }
         // The default texture pack (one bundle of its ~56 PNGs, scripts/vite-texture-pack.ts): the title screen waits
         // for it, so start it with the HTML instead of after the bundle has run. `crossorigin` matches fetch()'s mode.
         tags.push({

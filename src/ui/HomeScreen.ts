@@ -6,7 +6,7 @@ import { type ProfileData, rankOf } from '../modes/progression/Profile';
 import { type ModeStats, REALMS_MODES } from '../modes/Realms';
 import { type RejoinOffer, formatLeft } from '../net/Rejoin';
 import { formatCode } from '../net/protocol';
-import { emblemSvg, svgDataUrl, wordmarkSvg } from './Brand';
+import { BUNKHOSTING_URL, emblemSvg, svgDataUrl } from './Brand';
 import { h } from './dom';
 import { type I18nKey, t } from './i18n';
 import { challengeText } from './ProgressText';
@@ -84,12 +84,11 @@ export class HomeScreen {
 
   constructor(private readonly host: HomeHost, opts: { mode: GameType; version: string; mapName: string }) {
     this.mode = REALMS_MODES.includes(opts.mode) ? opts.mode : REALMS_MODES[0];
-    const wm = wordmarkSvg({ cell: 10 });
     const brand = h('div', { class: 'home-brand' },
       h('img', { class: 'home-emblem', src: svgDataUrl(emblemSvg()), alt: '', draggable: false }),
       h('div', { class: 'home-brand-text' },
-        h('h1', { class: 'home-wordmark' }, h('img', { src: svgDataUrl(wm.svg), alt: 'BunkCraft', draggable: false })),
-        h('div', { class: 'home-tagline', text: t('home.tagline') })),
+        h('h1', { class: 'home-wordmark', 'aria-label': 'BunkCraft' }, h('span', { text: 'BUNK', 'aria-hidden': 'true' }), h('span', { class: 'craft', text: 'CRAFT', 'aria-hidden': 'true' })),
+        h('div', { class: 'home-tagline' }, iconEl('bolt'), h('span', { text: t('home.tagline') }))),
     );
 
     // PLAY: the first focusable control (keyboard and controller land here).
@@ -181,6 +180,8 @@ export class HomeScreen {
     const foot = h('footer', { class: 'home-foot' },
       build,
       h('div', { class: 'home-foot-meta' },
+        h('a', { class: 'home-by', href: BUNKHOSTING_URL, target: '_blank', rel: 'noopener noreferrer', 'aria-label': `${t('home.by')} Bunk Hosting` },
+          h('span', { text: t('home.by') }), iconEl('server'), h('b', { text: 'Bunk Hosting' })),
         h('span', { text: t('home.map', opts.mapName) }),
         h('span', { text: opts.version }),
         h('span', { text: t('title.disclaimer') })));

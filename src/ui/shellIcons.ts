@@ -21,6 +21,9 @@ const PATHS = {
   close: '<path d="m6 6 12 12M18 6 6 18"/>',
   check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
+  bolt: '<path d="M13 2.5 4.5 14h6.5l-1 7.5L19.5 10H13z" fill="currentColor" stroke="none"/>',
+  /** Bunkhosting's logo icon (two stacked server bars). */
+  server: '<rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><path d="M7 7.5h.01M7 16.5h.01" stroke-width="3"/>',
 } as const;
 
 export type ShellIcon = keyof typeof PATHS;
