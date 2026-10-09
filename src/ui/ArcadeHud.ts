@@ -268,7 +268,7 @@ export class ArcadeHud {
     );
 
     // -- Create-a-Class menu (clickable): quick-pick presets, the custom class and its editor (built in the language of the moment).
-    this.loadoutEl = h('div', { class: 'arc-loadout hidden' });
+    this.loadoutEl = h('div', { class: 'arc-loadout bc hidden' });
     this.buildLoadout();
   }
 
@@ -690,6 +690,8 @@ export class ArcadeHud {
     this.lastBanner = text;
     this.banner.textContent = text;
     this.banner.classList.toggle('hidden', text === '');
+    // The 3-2-1 and "Fight!" get the big size, the sentences ("Round 3 starts in 5") the normal one.
+    this.banner.classList.toggle('big', text.length > 0 && text.length <= 8);
   }
 
   setScoreboard(visible: boolean, roster: readonly RosterEntry[], ctx: ScoreboardContext): void {

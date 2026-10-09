@@ -16,7 +16,17 @@ function fail(message: string): void {
   root.replaceChildren();
   const el = document.createElement('div');
   el.className = 'fatal';
-  el.textContent = message;
+  // The wordmark of the home screen (BUNK in white, CRAFT in the gradient) over the message.
+  const mark = document.createElement('div');
+  mark.className = 'home-wordmark';
+  const craft = document.createElement('span');
+  craft.className = 'craft';
+  craft.textContent = 'CRAFT';
+  mark.append('BUNK', craft);
+  const text = document.createElement('div');
+  text.className = 'fatal-text';
+  text.textContent = message;
+  el.append(mark, text);
   root.append(el);
 }
 

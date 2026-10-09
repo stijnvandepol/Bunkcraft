@@ -46,7 +46,7 @@ export function installButton(cls = ''): HTMLButtonElement {
 
 function showUpdateToast(worker: ServiceWorker): void {
   if (document.querySelector('.pwa-toast')) return;
-  const toast = h('div', { class: 'pwa-toast', role: 'status' },
+  const toast = h('div', { class: 'pwa-toast bc', role: 'status' },
     h('span', { text: 'A new version of BunkCraft is available.' }),
     button('Reload', () => worker.postMessage({ type: 'SKIP_WAITING' })),
     button('Later', () => toast.remove()),

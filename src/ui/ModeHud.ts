@@ -132,7 +132,8 @@ export class ModeHud {
   toast(text: string, color: string, now: number): void {
     if (!text) return;
     this.toastEl.textContent = text;
-    this.toastEl.style.color = color;
+    // The colour (a team's, or the accent) is the edge of the plate; the words stay in the text colour.
+    this.toastEl.style.setProperty('--tc', color);
     this.toastEl.classList.remove('hidden');
     this.toastUntil = now + TOAST_SECONDS;
   }
