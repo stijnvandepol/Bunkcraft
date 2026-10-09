@@ -44,6 +44,7 @@ import type { AudioEngine } from './Audio';
 import { type SurfaceLookup, surfaceLookup } from './audio/playerSounds';
 import { MULTI_KILL_WINDOW, type MechKind, boltTimes, gunEarshot, medalFor, medalText, reloadSteps } from './audio/weaponSounds';
 import { t } from '../ui/i18n';
+import { BRAND } from '../ui/Brand';
 import type { Settings } from './Settings';
 import type { CameraController } from './Camera';
 import type { Input } from './Input';
@@ -673,7 +674,7 @@ export class ArcadeSession {
   private onEvent(msg: Extract<ServerMessage, { t: 'event' }>, now: number): void {
     const who = msg.id ? (msg.id === this.d.selfId ? t('arc.you') : this.nameOf(msg.id)) : '';
     const v = eventView(msg.kind, msg.team ?? '', this.team, msg.text ?? '', who, msg.id === this.d.selfId);
-    const color = msg.team ? TEAM_COLORS[msg.team] : '#ffff55';
+    const color = msg.team ? TEAM_COLORS[msg.team] : BRAND.accent;
     // Ladder steps of other players are not worth a banner.
     if (v.text) this.modeHud.toast(v.text, color, now);
     if (v.text || msg.id === this.d.selfId) this.d.audio.playModeCue(v.cue);
@@ -817,7 +818,7 @@ export class ArcadeSession {
       color = TEAM_COLORS[msg.winnerTeam];
     } else if (msg.winnerId) {
       title = msg.winnerId === this.d.selfId ? t('arc.end.youWin') : t('arc.end.wins', this.nameOf(msg.winnerId));
-      color = msg.winnerId === this.d.selfId ? '#ffd23f' : '#ffffff';
+      color = msg.winnerId === this.d.selfId ? BRAND.accent : '#ffffff';
     }
     // The final kill may have been yours: the end screen replaces the death screen and spectating.
     this.d.remote.setSpectated(0);

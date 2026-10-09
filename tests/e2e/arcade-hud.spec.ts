@@ -169,3 +169,18 @@ test('arcade: Create-a-Class hides the match HUD under it (its title sat on the 
   await page.evaluate(() => (window as any).game.arcade.closeLoadout());
   await expect(page.locator('.arc-top')).toBeVisible();
 });
+
+test('arcade: banners, medals and event plates use the Bunkhosting typography (Manrope), not the pixel font', async ({ page }) => {
+  await startPreview(page, 'tdm', 'atomic');
+  await page.evaluate(() => {
+    const s = (window as any).game.previewServer;
+    s.setPhase('countdown', 3);
+    s.event('zone-captured', 'blue', 0, 'Bravo');
+    s.killBot(0);
+    s.killBot(1);
+  });
+  for (const sel of ['.arc-banner', '.mode-toast', '.arc-medal']) {
+    await expect(page.locator(sel)).toBeVisible();
+    expect(await page.locator(sel).evaluate((el) => getComputedStyle(el).fontFamily)).toContain('Manrope');
+  }
+});

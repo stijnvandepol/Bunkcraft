@@ -268,7 +268,7 @@ export class ArcadeHud {
     );
 
     // -- Create-a-Class menu (clickable): quick-pick presets, the custom class and its editor (built in the language of the moment).
-    this.loadoutEl = h('div', { class: 'arc-loadout bc hidden' });
+    this.loadoutEl = h('div', { class: 'arc-loadout hidden' });
     this.buildLoadout();
   }
 
