@@ -13,11 +13,11 @@ import type { OpticId, WeaponDef } from './Weapons';
 export type AdsClass = 'light' | 'medium' | 'heavy';
 
 /**
- * Aim classes by the weapon's aim time: up to 0.16 s light, up to 0.26 s medium, slower heavy (the aim-feel pass made every
- * weapon ~20% quicker to aim and moved the limits with it, so every weapon kept its class).
+ * Aim classes by the weapon's aim time: up to 0.14 s light, up to 0.21 s medium, slower heavy (the limits move with the
+ * aim times: the aim-feel pass and the snappier-ADS pass each made weapons quicker, and every weapon kept its class).
  */
 export function adsClassOf(w: Pick<WeaponDef, 'adsTime'>): AdsClass {
-  return w.adsTime <= 0.16 ? 'light' : w.adsTime <= 0.26 ? 'medium' : 'heavy';
+  return w.adsTime <= 0.14 ? 'light' : w.adsTime <= 0.21 ? 'medium' : 'heavy';
 }
 
 /** Per class: power of the rising curve (higher = more front-loaded), power of the falling curve, and how much faster letting go is. */

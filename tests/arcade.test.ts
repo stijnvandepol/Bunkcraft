@@ -78,7 +78,8 @@ describe('fire control', () => {
   });
 
   it('the fire intervals of the weapon table are in seconds', () => {
-    expect(fireInterval(rifle)).toBeCloseTo(0.1, 9);
+    expect(fireInterval(rifle)).toBeCloseTo(60 / rifle.rpm, 9);
+    expect(fireInterval(rifle)).toBeGreaterThan(0.09);
     for (const w of WEAPONS) expect(fireInterval(w)).toBeGreaterThan(0);
   });
 });

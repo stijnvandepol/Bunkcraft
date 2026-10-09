@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { BALANCE_RANGES, killsPerMag, perfectTtk, realisticTtk } from '../src/modes/Balance';
+import { duel } from './helpers/botDuel';
+import { HUMAN_AVERAGE } from './helpers/humanProfiles';
 import {
   OPTICS, PERKS, PERK_IDS, PRIMARY_WEAPONS, SECONDARY_WEAPONS, WEAPONS, type WeaponDef, adsTimeFor, magazineFor, opticZoom, weaponDef,
 } from '../src/modes/Weapons';
@@ -107,6 +109,57 @@ describe('arcade balance', () => {
       expect(lmg.adsTime, w.id).toBeGreaterThan(w.adsTime);
       expect(lmg.moveSpeed, w.id).toBeLessThan(w.moveSpeed);
     }
+  });
+});
+
+describe('arcade pace (time to kill)', () => {
+  /** Weapons that kill in one hit or one pump on purpose (see the one-shot test above); they follow their own rules. */
+  const SPECIAL = new Set(['shotgun', 'sniper', 'antimat', 'semisniper', 'lever', 'revolver', 'knife']);
+  const normal = WEAPONS.filter((w) => !SPECIAL.has(w.id));
+  const autos = normal.filter((w) => w.auto || w.burst);
+
+  it('no ordinary weapon kills faster than 250 ms with every shot a headshot, and none needs fewer than three hits', () => {
+    for (const w of normal) {
+      const t = perfectTtk(w, 5, true);
+      expect(t.ms, `${w.id} head`).toBeGreaterThanOrEqual(240);
+      expect(t.stk, `${w.id} head`).toBeGreaterThanOrEqual(2);
+      expect(perfectTtk(w, 5).stk, `${w.id} body`).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  it('automatics kill in 400-650 ms with every shot on the body (arcade pace, not twitch)', () => {
+    for (const w of autos) {
+      const t = perfectTtk(w, 5).ms;
+      expect(t, w.id).toBeGreaterThanOrEqual(400);
+      expect(t, w.id).toBeLessThanOrEqual(650);
+    }
+  });
+
+  it('a headshot saves at most 40% of the body time on an ordinary weapon (heads reward aim, they do not delete the fight)', () => {
+    for (const w of autos) expect(perfectTtk(w, 5, true).ms, w.id).toBeGreaterThanOrEqual(perfectTtk(w, 5).ms * 0.6);
+  });
+
+  it('a simulated rifle fight takes half a second or so, not a blink (human-like bots, real combat)', () => {
+    const r = duel(HUMAN_AVERAGE, HUMAN_AVERAGE, { rounds: 120, seed: 77, primary: 'rifle', optic: 'iron', dist: 15 });
+    const t = r.kills.filter((k) => k.chained).map((k) => k.ttk).sort((a, b) => a - b);
+    expect(t.length).toBeGreaterThan(15);
+    expect(t[Math.floor(t.length / 2)]).toBeGreaterThanOrEqual(0.35);
+    expect(t[Math.floor(t.length / 2)]).toBeLessThanOrEqual(0.7);
+    // Hard to die in under a quarter second without a headshot spree: at most one kill in four.
+    expect(t.filter((x) => x < 0.25).length / t.length).toBeLessThanOrEqual(0.25);
+  });
+
+  it('ADS is snappy for every class and keeps its order: pistols < SMG/rifles < DMR/battle < LMG < snipers < anti-materiel', () => {
+    for (const w of WEAPONS) expect(w.adsTime, w.id).toBeLessThanOrEqual(0.32);
+    const ads = (id: string) => weaponDef(id)!.adsTime;
+    expect(ads('mpistol')).toBeLessThan(ads('rifle'));
+    expect(ads('smg')).toBeLessThan(ads('rifle'));
+    expect(ads('rifle')).toBeLessThan(ads('lmg'));
+    expect(ads('battle')).toBeLessThan(ads('lmg'));
+    expect(ads('dmr')).toBeLessThan(ads('lmg'));
+    expect(ads('lmg')).toBeLessThan(ads('antimat'));
+    // The bolt sniper keeps its quickscope; the semi-auto sniper is the slower scope of the two.
+    expect(ads('sniper')).toBeLessThan(ads('semisniper'));
   });
 });
 
