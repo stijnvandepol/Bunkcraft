@@ -333,7 +333,7 @@ describe('hitscan', () => {
 
     const s2 = liveDuel();
     s2.match.fire(1, aim(s2.match.players.get(1)!, head(10.5)));
-    expect(s2.host.of('hit', 1)[0]).toMatchObject({ damage: 40, head: true });
+    expect(s2.host.of('hit', 1)[0]).toMatchObject({ damage: 30, head: true });
 
     const s3 = liveDuel();
     s3.match.fire(1, aim(s3.match.players.get(1)!, { x: 3.5, y: 65.9, z: 10.5 }));
@@ -422,7 +422,7 @@ describe('hitscan', () => {
     s.advance(0.5);
     s.host.rng = () => 0;
     s.match.fire(1, aim(s.match.players.get(1)!, body(4.5)));
-    expect(s.host.of('hit', 1)[0].damage).toBe(144); // 8 pellets × 18 at point blank: one shot kills
+    expect(s.host.of('hit', 1)[0].damage).toBe(128); // 8 pellets × 16 at point blank: one shot kills
 
     const k = liveDuel('ffa');
     k.place(2, 0.5, 65, 2.2);

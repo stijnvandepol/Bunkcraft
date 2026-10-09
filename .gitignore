@@ -25,3 +25,4 @@ dist-server
 # Deploy state (scripts/update.sh, scripts/autoupdate.sh)
 .update.lock
 .autoupdate-state
+docs/qa/shots/glitch/

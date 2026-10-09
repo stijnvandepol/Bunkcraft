@@ -68,6 +68,12 @@ export function currentSpread(w: WeaponDef, ads: number, moving: boolean, airbor
 // ---------------------------------------------------------------- fire control
 
 /**
+ * A held automatic may fire this late (seconds: a frame at 20 fps) and the next shot still keeps the rhythm. The server accepts a
+ * fire message up to 40 ms earlier than its cadence, which a shot this late followed by an on-time one stays inside.
+ */
+const MAX_LATE_SEC = 0.06;
+
+/**
  * Throttles the trigger to the weapon's fire rate. Semi-automatic weapons need a fresh click per
  * shot, automatic ones keep firing while the button is held. Times are in seconds.
  */
@@ -78,9 +84,12 @@ export class FireControl {
   tryFire(now: number, interval: number, auto: boolean, held: boolean, pressed: boolean): boolean {
     if (!(auto ? held : pressed)) return false;
     if (now < this.nextAt) return false;
-    // Keep the rhythm while the button stays down (late frames do not slow the average rate), but
-    // after a pause start a fresh interval so there is no burst.
-    this.nextAt = now - this.nextAt > interval ? now + interval : this.nextAt + interval;
+    // A held automatic keeps its rhythm while it is late by a frame or so (late frames do not slow the average rate), but after
+    // a longer pause starts a fresh interval so there is no burst. Carrying more lateness (it was a whole interval, and clicks
+    // carried it too) let a shot follow the last one after only ~0.1 s (a 2 s anti-materiel rifle: 0.25 s) whenever the trigger
+    // had rested for less than an interval; the server, which holds the cadence, dropped that shot: here it was fired (sound,
+    // kick, tracer, bolt cycle, one round less), there it never happened.
+    this.nextAt = auto && now - this.nextAt <= Math.min(interval, MAX_LATE_SEC) ? this.nextAt + interval : now + interval;
     return true;
   }
 

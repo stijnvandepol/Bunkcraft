@@ -42,7 +42,7 @@ import { type BulletTrace, type HitPart, createBulletTrace, rayPlayer, shotRando
 import { HitregStats } from '../modes/HitregStats';
 import type { AudioEngine } from './Audio';
 import { type SurfaceLookup, surfaceLookup } from './audio/playerSounds';
-import { BOLT_DELAY, MULTI_KILL_WINDOW, type MechKind, gunEarshot, medalFor, medalText, reloadSteps } from './audio/weaponSounds';
+import { MULTI_KILL_WINDOW, type MechKind, boltTimes, gunEarshot, medalFor, medalText, reloadSteps } from './audio/weaponSounds';
 import { t } from '../ui/i18n';
 import type { Settings } from './Settings';
 import type { CameraController } from './Camera';
@@ -111,6 +111,8 @@ const tmpSway = { x: 0, y: 0 };
 const DEG = Math.PI / 180;
 /** Seconds a weapon takes to come up after a switch (Quickdraw halves it). */
 const EQUIP_SEC = 0.28;
+/** The view eases out of a zoom over this long when a weapon switch puts the sights down. */
+const ZOOM_FADE_SEC = 0.14;
 /** Enemy footsteps: blocks of travel per footfall (running) and how far away they are tracked at all. */
 const STRIDE = 2.1;
 const STEP_TRACK_RANGE = 30;
@@ -245,6 +247,10 @@ export class ArcadeSession {
    * instead of cycling weapons), and the zoom the view shows (eases between levels in about 0.1 s). Back to 0 every life.
    */
   private zoomLevel = 0;
+  /** The view's zoom when a weapon switch put the sights down, and how much of the way back to the hip is left (1..0). */
+  private zoomFrom = 1;
+  private zoomFade = 0;
+  private adsSoundAt = -1;
   private zoomShown = 1;
   /** When the sights last came fully up (the weapon model's settle) and whether they are up. */
   private adsUpAt = -1e9;
@@ -258,6 +264,8 @@ export class ArcadeSession {
   private readonly reloadStep = [0, 0, 0];
   private boltAt = 0;
   private boltStage = 0;
+  /** The pending bolt cycle of the last shot (see boltTimes). */
+  private bolt = { delay: 0.32, forward: 0.2, anim: 0.55 };
   /** Kills this life and in the current multi-kill chain. */
   private streak = 0;
   private multi = 0;
@@ -890,8 +898,15 @@ export class ArcadeSession {
 
   private equipSlot(slot: Slot, announce: boolean): void {
     if (announce && slot === this.slot) return;
-    if (announce) this.prevSlot = this.slot;
+    if (announce) {
+      this.prevSlot = this.slot;
+      // Switching cancels a reload, as on the server: no stale reload animation if the slot comes back before the server's `ammo`.
+      for (const a of this.ammo) a.reloading = false;
+    }
     this.slot = slot;
+    // The sights go down at once, but the view does not snap out of the zoom: it eases back over a moment (see update).
+    this.zoomFrom = this.d.cam.zoom;
+    this.zoomFade = this.zoomFrom < 0.999 ? 1 : 0;
     this.adsBlend.reset();
     this.adsInput.reset();
     const w = this.weapon;
@@ -1002,7 +1017,7 @@ export class ArcadeSession {
     // short: a big kick moved the target on screen and made tracking feel heavy (aim-feel pass: 0.8 -> 0.45 of the recoil,
     // at most 3.4 degrees, gone in ~0.2 s).
     this.kick = Math.min(0.06, this.kick + (w.recoil * Math.PI) / 180 * 0.45);
-    if (w.bolt) { this.boltAt = now + BOLT_DELAY; this.boltStage = 0; }
+    if (w.bolt) { this.bolt = boltTimes(fireInterval(w)); this.boltAt = now + this.bolt.delay; this.boltStage = 0; }
     // Muzzle in the world: the weapon model's muzzle transformed by the view model's pose is close
     // enough to a fixed offset from the camera.
     const cam = this.d.cam.camera;
@@ -1150,7 +1165,11 @@ export class ArcadeSession {
     const wantAds = this.adsInput.update(this.adsMode, input.rightDown, adsOk && input.rightClicked, !adsOk) && adsOk;
     if (wantAds !== this.wantAds) {
       this.wantAds = wantAds;
-      this.d.audio.playMech(wantAds ? 'adsin' : 'adsout');
+      // Flicking the aim button must not stutter: at most one sight sound per 0.12 s.
+      if (now - this.adsSoundAt >= 0.12) {
+        this.adsSoundAt = now;
+        this.d.audio.playMech(wantAds ? 'adsin' : 'adsout');
+      }
     }
     this.adsBlend.update(dt, wantAds, adsTimeFor(w, optic, this.cls.perk), cls);
     this.ads = this.adsBlend.t;
@@ -1163,6 +1182,10 @@ export class ArcadeSession {
     this.optZoom = this.zoomShown;
     const cam = this.d.cam;
     cam.zoom = 1 + (this.optZoom - 1) * eased;
+    if (this.zoomFade > 0) {
+      this.zoomFade = Math.max(0, this.zoomFade - dt / ZOOM_FADE_SEC);
+      cam.zoom += (this.zoomFrom - cam.zoom) * this.zoomFade * this.zoomFade;
+    }
     // The weapon model settles on the sights the moment they arrive (visual only; the reticle stays on the aim point).
     const up = this.adsBlend.t >= 1;
     if (up && !this.adsWasUp) this.adsUpAt = now;
@@ -1358,9 +1381,9 @@ export class ArcadeSession {
     if (this.boltAt > 0 && now >= this.boltAt) {
       if (this.boltStage === 0) {
         this.d.audio.playMech('boltback');
-        this.viewmodel.cycleBolt();
+        this.viewmodel.cycleBolt(this.bolt.anim);
         this.boltStage = 1;
-        this.boltAt = now + 0.2;
+        this.boltAt = now + this.bolt.forward;
       } else {
         this.d.audio.playMech('boltfwd');
         this.boltAt = 0;
