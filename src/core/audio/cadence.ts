@@ -5,7 +5,9 @@ export type MoveMode = 'walk' | 'sprint' | 'sneak';
 /** Distance (blocks) between footsteps per movement mode. */
 export const STEP_DISTANCE: Record<MoveMode, number> = { walk: 1.45, sprint: 1.1, sneak: 1.9 };
 /** Step loudness per mode. */
-export const STEP_VOLUME: Record<MoveMode, number> = { walk: 1, sprint: 1.3, sneak: 0.4 };
+export const STEP_VOLUME: Record<MoveMode, number> = { walk: 1, sprint: 1.1, sneak: 0.4 };
+/** Your own footsteps sit well under the mix: other players' steps (positional, in Audio) stay at full level. */
+export const OWN_STEP_GAIN = 0.4;
 
 export function moveMode(sprinting: boolean, sneaking: boolean): MoveMode {
   return sneaking ? 'sneak' : sprinting ? 'sprint' : 'walk';

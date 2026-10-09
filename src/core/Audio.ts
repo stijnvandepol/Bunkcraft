@@ -1,5 +1,5 @@
 import { Ambience, type ListenerState } from './audio/ambience';
-import { STEP_VOLUME, landingKind, landingVolume, splashVolume, type MoveMode } from './audio/cadence';
+import { OWN_STEP_GAIN, STEP_VOLUME, landingKind, landingVolume, splashVolume, type MoveMode } from './audio/cadence';
 import { AudioEnvironment, createEnvironment } from './audio/environment';
 import { glide } from './audio/glide';
 import { buildMix, makeNoiseBuffers, type Mix } from './audio/mixer';
@@ -340,8 +340,9 @@ export class AudioEngine {
   playStep(surface: BlockSound | string, mode: MoveMode = 'walk', foot = 0): void {
     this.emit(`player.step.${surface}`, NaN, NaN, NaN, 0.3 * STEP_VOLUME[mode]);
     this.placed(undefined, 0, Priority.Player, () => {
-      this.synth.block('step', surface, STEP_VOLUME[mode], this.pitchFor(surface) * (foot ? 1.04 : 0.97));
-      if (this.armor) this.synth.clink(this.armor, STEP_VOLUME[mode]);
+      const v = OWN_STEP_GAIN * STEP_VOLUME[mode];
+      this.synth.block('step', surface, v, this.pitchFor(surface) * (foot ? 1.04 : 0.97));
+      if (this.armor) this.synth.clink(this.armor, v);
     });
   }
 
@@ -356,8 +357,8 @@ export class AudioEngine {
   playJump(surface: BlockSound | string): void {
     this.emit('player.jump', NaN, NaN, NaN, 0.2);
     this.placed(undefined, 0, Priority.Player, () => {
-      this.synth.block('step', surface, 0.6, this.pitchFor(surface) * 1.05);
-      this.synth.whoosh(0.8);
+      this.synth.block('step', surface, 0.6 * OWN_STEP_GAIN, this.pitchFor(surface) * 1.05);
+      this.synth.whoosh(0.5);
     });
   }
 
