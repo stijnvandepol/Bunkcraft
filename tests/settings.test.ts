@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { DEFAULT_SETTINGS, SettingsStore, sanitizeSettings } from '../src/core/Settings';
+import { ARENA_DEFAULT_SENSITIVITY, DEFAULT_SETTINGS, SettingsStore, lookRadPerCount, sanitizeSettings } from '../src/core/Settings';
 import { KEYBINDS } from '../src/core/Keybinds';
 
 function stubStorage(initial?: string) {
@@ -150,5 +150,45 @@ describe('SettingsStore', () => {
     const store = new SettingsStore();
     store.set('fov', 100);
     expect(JSON.parse(data.get('bunkcraft.settings')!).fov).toBe(100);
+  });
+});
+
+describe('arena look sensitivity', () => {
+  const deg = (rad: number) => (rad * 180) / Math.PI;
+
+  it('has its own, lower default: ~0.07 degrees per count in the arena, the shared 0.126 elsewhere', () => {
+    expect(DEFAULT_SETTINGS.arcadeSensitivity).toBe(ARENA_DEFAULT_SENSITIVITY);
+    expect(deg(lookRadPerCount(DEFAULT_SETTINGS, true))).toBeCloseTo(0.07, 2);
+    expect(deg(lookRadPerCount(DEFAULT_SETTINGS, false))).toBeCloseTo(0.126, 3);
+  });
+
+  it('the arena setting changes only the arena, the shared one only the rest', () => {
+    const s = { sensitivity: 80, arcadeSensitivity: 40 };
+    expect(lookRadPerCount(s, true)).toBeCloseTo(0.0022 * 0.4, 9);
+    expect(lookRadPerCount(s, false)).toBeCloseTo(0.0022 * 0.8, 9);
+  });
+
+  it('saved settings from before: a changed shared sensitivity carries over to the arena, an untouched one gets the new default', () => {
+    expect(sanitizeSettings({ sensitivity: 140 }).arcadeSensitivity).toBe(140);
+    expect(sanitizeSettings({ sensitivity: 30 }).arcadeSensitivity).toBe(30);
+    expect(sanitizeSettings({ sensitivity: 100 }).arcadeSensitivity).toBe(ARENA_DEFAULT_SENSITIVITY);
+    expect(sanitizeSettings({}).arcadeSensitivity).toBe(ARENA_DEFAULT_SENSITIVITY);
+    expect(sanitizeSettings(null).arcadeSensitivity).toBe(ARENA_DEFAULT_SENSITIVITY);
+  });
+
+  it('a stored arena value always wins (also when it is the default or when the shared one differs)', () => {
+    expect(sanitizeSettings({ sensitivity: 140, arcadeSensitivity: 56 }).arcadeSensitivity).toBe(56);
+    expect(sanitizeSettings({ sensitivity: 100, arcadeSensitivity: 90 }).arcadeSensitivity).toBe(90);
+    expect(sanitizeSettings({ arcadeSensitivity: 9999 }).arcadeSensitivity).toBe(200);
+  });
+
+  it('a migrated value is stored with the next save, so changing the shared slider later does not move the arena', () => {
+    const data = stubStorage(JSON.stringify({ sensitivity: 150 }));
+    const store = new SettingsStore();
+    expect(store.values.arcadeSensitivity).toBe(150);
+    store.set('sensitivity', 60);
+    expect(JSON.parse(data.get('bunkcraft.settings')!).arcadeSensitivity).toBe(150);
+    expect(new SettingsStore().values.arcadeSensitivity).toBe(150);
+    vi.unstubAllGlobals();
   });
 });

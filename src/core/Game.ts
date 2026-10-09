@@ -99,7 +99,7 @@ import { gameRulesScreen } from '../ui/GameRulesScreen';
 import type { Difficulty } from '../world/Difficulty';
 import { WeatherSystem } from './WeatherSystem';
 import { DynamicResolution, MIN_ADAPTIVE_DISTANCE, suggestPreset } from './AdaptiveQuality';
-import { MAX_FPS_UNLIMITED, type Settings, SettingsStore } from './Settings';
+import { MAX_FPS_UNLIMITED, type Settings, SettingsStore, lookRadPerCount } from './Settings';
 import { applyAccessibilityDocument, effectiveParticles, limitFlash, mobSoundLabel, paletteFor } from './Accessibility';
 import { GamepadController, type PadContext, cleanName } from './Gamepad';
 import { latchPress, needsAutoJump } from './InputMath';
@@ -2149,7 +2149,7 @@ export class Game {
     const active = this.state === 'playing' && input.locked;
 
     if (active) {
-      const sens = 0.0022 * (this.settings.values.sensitivity / 100) * (this.arcade ? this.arcade.sensitivityScale : 1);
+      const sens = lookRadPerCount(this.settings.values, this.arcade !== null) * (this.arcade ? this.arcade.sensitivityScale : 1);
       p.yaw -= input.mouseDX * sens;
       p.pitch -= input.mouseDY * sens * (this.settings.values.invertMouse ? -1 : 1);
       const limit = Math.PI / 2 - 0.001;

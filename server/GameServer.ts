@@ -200,6 +200,8 @@ interface Session {
   guard: InventoryGuard;
   /** Arcade: fire, reload, weapon and loadout requests. */
   fires: Bucket;
+  /** Aim-down-sights up and down messages (arcade). */
+  ads: Bucket;
   /** Skin reports (slow: a report is a deliberate act). */
   skinReports: Bucket;
   /** The signed profile this connection plays with (hello.profile), and the custom skin hash it shows ('' = default). */
@@ -1109,7 +1111,7 @@ export class GameServer {
       edits: new Bucket(20, 40, 'edits'), attacks: new Bucket(8, 12, 'attacks'), shots: new Bucket(3, 5, 'shots'),
       drops: new Bucket(30, 60, 'drops'), takes: new Bucket(20, 30, 'takes'),
       chat: new Bucket(1, 5, 'chat'), moves: new Bucket(40, 80, 'moves'), states: new Bucket(0.5, 10, 'states'), containers: new Bucket(20, 40, 'containers'),
-      fires: new Bucket(25, 30, 'fires'), actions: new Bucket(15, 30, 'actions'), violations: 0,
+      fires: new Bucket(25, 30, 'fires'), ads: new Bucket(30, 60, 'ads'), actions: new Bucket(15, 30, 'actions'), violations: 0,
       skinReports: new Bucket(0.2, 3, 'skin_reports'), skin: '',
       pingMs: 0, pingSentAt: 0, awaiting: null, velX: 0, velY: 0, velZ: 0, aim: new AimStats(), lastFireAt: 0, trail: new PoseTrail(),
     };
@@ -1385,6 +1387,7 @@ export class GameServer {
       case 'fire': return void (s.fires.take() && this.onFire(s, msg, match));
       case 'reload': return void (s.actions.take() && match.reload(s.id, Number(msg.slot)));
       case 'weapon': return void (s.actions.take() && match.switchWeapon(s.id, Number(msg.slot)));
+      case 'ads': return void (s.ads.take() && match.setAds(s.id, msg.on === true));
       case 'skinreport': return this.onSkinReport(s, Number(msg.id));
       case 'vote': return void (s.actions.take() && match.castVote(s.id, Number(msg.map)));
       case 'loadout': {

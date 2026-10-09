@@ -104,6 +104,7 @@ export class Bot {
   private strafeUntil = 0;
   private hopAt = 0;
   private adsSince = 0;
+  private adsSent = false;
   private nextClickAt = 0;
   private shotIndex = 0;
   private lastShotAt = -1e9;
@@ -143,6 +144,7 @@ export class Bot {
         this.goalNode = -1;
         this.investigate = null;
         this.adsSince = 0;
+        this.adsSent = false;
         this.nextThink = Math.min(this.nextThink, now + 0.05);
         break;
       case 'teleport':
@@ -567,8 +569,12 @@ export class Bot {
     }
 
     // Aiming down the sights at range (takes the weapon's aim time), slower on the feet like a player.
-    const wantAds = this.skill.ads && !!k?.visible && w.slot !== 'melee' && Math.hypot(k.x - m.x, k.z - m.z) > 10 && !frozen;
+    const mine = me.slots[me.slot];
+    const wantAds = this.skill.ads && !!k?.visible && w.slot !== 'melee' && Math.hypot(k.x - m.x, k.z - m.z) > 10 && !frozen
+      && mine.reloadDoneAt === 0 && now >= me.switchReadyAt;
     if (wantAds) { if (this.adsSince === 0) this.adsSince = now; } else this.adsSince = 0;
+    // Like a player: the server times the aim from these messages.
+    if (wantAds !== this.adsSent) { this.adsSent = wantAds; this.env.send(this.id, { t: 'ads', on: wantAds }); }
     const ads = this.adsSince > 0 && now - this.adsSince >= w.adsTime;
     const carry = this.carrySlow(me);
     m.step(dt, wx, wz, jump, this.aim.yaw, w.moveSpeed * (ads ? 0.8 : 1) * carry, this.env.getBlock, this.env.getMeta);

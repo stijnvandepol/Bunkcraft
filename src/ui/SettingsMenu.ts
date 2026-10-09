@@ -176,11 +176,12 @@ function mouseScreen(store: SettingsStore, nav: OptionsNav): HTMLDivElement {
   return menuScreen(t('mouse.title'), [
     h('div', { class: 'grid2' },
       slider(10, 200, 1, s.sensitivity, (v) => t('mouse.sensitivity', v), (v) => store.set('sensitivity', v)),
+      slider(10, 200, 1, s.arcadeSensitivity, (v) => t('mouse.arcadeSensitivity', v), (v) => store.set('arcadeSensitivity', v)),
       cycleButton<'on' | 'off'>(t('mouse.invert'), ['off', 'on'], onOff(), s.invertMouse ? 'on' : 'off', (v) => store.set('invertMouse', v === 'on')),
       cycleButton<'on' | 'off'>(t('mouse.raw'), ['on', 'off'], onOff(), s.rawInput ? 'on' : 'off', (v) => store.set('rawInput', v === 'on')),
       slider(25, 200, 1, s.adsSensitivity, (v) => t('mouse.adsSensitivity', v), (v) => store.set('adsSensitivity', v)),
       cycleButton<'uniform' | 'monitor'>(t('mouse.adsScaling'), ['uniform', 'monitor'], { uniform: t('mouse.adsScaling.uniform'), monitor: t('mouse.adsScaling.monitor') }, s.adsScaling, (v) => store.set('adsScaling', v)),
-      cycleButton<'hold' | 'toggle'>(t('mouse.adsMode'), ['hold', 'toggle'], { hold: t('mouse.adsMode.hold'), toggle: t('mouse.adsMode.toggle') }, s.adsMode, (v) => store.set('adsMode', v)),
+      h('div', { class: 'wide' }, cycleButton<'hold' | 'toggle'>(t('mouse.adsMode'), ['hold', 'toggle'], { hold: t('mouse.adsMode.hold'), toggle: t('mouse.adsMode.toggle') }, s.adsMode, (v) => store.set('adsMode', v))),
     ),
   ], [button(t('common.done'), () => nav.pop())], { list: true });
 }

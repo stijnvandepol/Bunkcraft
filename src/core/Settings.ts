@@ -15,6 +15,11 @@ export interface Settings {
   particles: ParticleLevel;
   fov: number;
   sensitivity: number;
+  /**
+   * Look sensitivity in arena matches, in % of the same scale as `sensitivity` (100 % = 0.126 degrees per mouse count). Separate
+   * because a shooter wants a much lower value than a block game (see ARENA_DEFAULT_SENSITIVITY).
+   */
+  arcadeSensitivity: number;
   /** Arcade aiming: look sensitivity while aiming in % (on top of the zoom scaling), how it follows the zoom, and hold or toggle. */
   adsSensitivity: number;
   adsScaling: 'uniform' | 'monitor';
@@ -114,6 +119,21 @@ export interface Settings {
 
 export const MAX_FPS_UNLIMITED = 260;
 
+/** Radians of look per mouse count at 100 % sensitivity (0.126 degrees). */
+export const LOOK_RAD_PER_COUNT = 0.0022;
+/**
+ * Default look sensitivity of arena matches: 56 % = 0.07 degrees per count with raw input. Shooter defaults are 0.022 (CS2,
+ * sensitivity 1.0), 0.028 (Valorant, 0.4) and 0.066 (Apex, 3.0), and most players settle at 0.02 to 0.06. The block game's
+ * 0.126 is nearly twice the highest of those and swings the view a long way for a small hand movement. 0.07 is the top of what
+ * shooters ship with, so it stays easy to turn down (or up) from there.
+ */
+export const ARENA_DEFAULT_SENSITIVITY = 56;
+
+/** Radians per mouse count for the current game: arena matches use their own setting, everything else the shared one. */
+export function lookRadPerCount(s: Pick<Settings, 'sensitivity' | 'arcadeSensitivity'>, arena: boolean): number {
+  return LOOK_RAD_PER_COUNT * ((arena ? s.arcadeSensitivity : s.sensitivity) / 100);
+}
+
 export const DEFAULT_SETTINGS: Settings = {
   renderDistance: 8,
   renderScale: 100,
@@ -123,6 +143,7 @@ export const DEFAULT_SETTINGS: Settings = {
   particles: 'all',
   fov: 70,
   sensitivity: 100,
+  arcadeSensitivity: ARENA_DEFAULT_SENSITIVITY,
   adsSensitivity: 100,
   adsScaling: 'uniform',
   adsMode: 'hold',
@@ -236,6 +257,7 @@ const NUMBER_RANGES = {
   renderScale: [50, 200],
   fov: [30, 110],
   sensitivity: [10, 200],
+  arcadeSensitivity: [10, 200],
   adsSensitivity: [25, 200],
   crosshairSize: [50, 200],
   soundVolume: [0, 100],
@@ -304,6 +326,11 @@ export function sanitizeSettings(raw: unknown): Settings {
   }
   for (const key of BOOLEAN_KEYS) {
     if (typeof r[key] === 'boolean') o[key] = r[key];
+  }
+  // Saved before the arena had its own sensitivity: a player who changed the shared value keeps exactly what they play with
+  // (it carries over); one who never touched it (still 100 %) gets the lower arena default.
+  if (typeof r.arcadeSensitivity !== 'number' && typeof r.sensitivity === 'number' && Number.isFinite(r.sensitivity) && Math.round(r.sensitivity) !== 100) {
+    out.arcadeSensitivity = out.sensitivity;
   }
   const pack = r.texturePack;
   if (typeof pack === 'string' && pack.length > 0 && pack.length <= 200) out.texturePack = pack;

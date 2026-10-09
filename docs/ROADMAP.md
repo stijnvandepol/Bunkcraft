@@ -304,8 +304,15 @@ regenereert, respawns en een scoreboard. Beschrijving, besturing en wapentabel: 
   ~0,75 s terug. Nu: zoom en sway in hetzelfde frame, ADS ~20% sneller (rifle 99% zoom 285 → 167 ms), geen sway buiten de
   sniper-scope, ADS-spreiding ~40% kleiner (gedeeld met de server), lichtere terugslag die in ~0,2 s terugzakt, sniper-scopes
   met twee zoomstanden (scrolwiel), afstandsmeter en SVG-richtkruizen per optiek. Geen aim assist. **Volgende stap:**
-  playtest; eventueel standaardgevoeligheid voor arcade lager (100% = 0,126°/count is snel met raw input en een 1600-DPI-muis)
-  en de ADS-vlag server-side valideren (de server vertrouwt `ads` nu, dus een cheat kan altijd de ADS-spreiding claimen).
+  playtest. **Gedaan (vervolg):** de ADS-staat wordt server-side bijgehouden (zie hieronder) en arena-matches hebben een eigen
+  look-gevoeligheid (standaard 56% = 0,07°/count; survival blijft 0,126°). Open: `mv`/`air` van `fire` zijn nog
+  clientclaims (de server overrulet alleen `mv` met zijn snelheidsschatting).
+- **ADS server-gevalideerd: Gedaan.** Bericht `{t:'ads', on}` (additief; oude clients sturen het niet en schieten dan met
+  heupspreiding). De server houdt per speler de richtvoortgang bij met dezelfde lineaire curve als de client (`adsStep` in
+  `AimMath.ts`, tijd = `adsTimeFor(wapen, optiek, perk)`) en neemt de spreiding van een schot daaruit (`Match.adsBlend`,
+  gedeelde `shotSpread` met een blend 0..1), niet uit de `ads`-vlag van `fire`. Geen vizier tijdens herladen, wisselen
+  (wisselvertraging), glijden, bij wapens zonder vizier (mes) en na een wissel/respawn; 0,04 s slack voor jitter. Cheat-bot:
+  `scripts/cheat-bots.ts` (`adsCheats`), tests: `tests/adsServer.test.ts`.
 - **BunkCraft Realms: Gedaan.** Multiplayer is alleen Minecraft; de arcade-modes zitten onder *BunkCraft Realms*: playlist
   met live spelersaantallen, **Snel spelen** (server-side matchmaking `POST /api/quickplay`: volste open lobby die niet bijna
   klaar is, anders een nieuwe), *Lobby's bekijken* (fase, tijd, kaart), *Privélobby* (mode, kaart, limieten, max. spelers,

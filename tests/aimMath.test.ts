@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   AdsBlend, AdsInput, CROSSHAIR_FADE_END, CROSSHAIR_MAX_GAP, CROSSHAIR_MIN_GAP, CrosshairBloom, adsClassOf, adsEaseIn, adsEaseOut, adsOutSpeed,
-  adsSensitivity, crosshairAlpha, crosshairGap, opticSways,
+  adsSensitivity, adsStep, crosshairAlpha, crosshairGap, opticSways,
 } from '../src/modes/AimMath';
 import { SPREAD_AIR, SPREAD_MOVING, currentSpread, spreadPixels } from '../src/modes/ArcadeLogic';
 import { WEAPONS, adsTimeFor, opticZoom, weaponDef } from '../src/modes/Weapons';
@@ -295,5 +295,19 @@ describe('sway', () => {
   it('only the sniper scope sways (iron sights, red dot, holo and the combat scope are steady: aim-feel pass)', () => {
     for (const optic of ['iron', 'reddot', 'holo', 'combat'] as const) expect(opticSways(optic), optic).toBe(false);
     expect(opticSways('scope')).toBe(true);
+  });
+});
+
+describe('adsStep (the server evaluates the client blend in one step)', () => {
+  it('one closed-form step lands where the frame-by-frame blend does, up and down', () => {
+    for (const id of ['rifle', 'smg', 'sniper']) {
+      const sec = w(id).adsTime, cls = adsClassOf(w(id));
+      const b = new AdsBlend();
+      for (let i = 0; i < 6; i++) b.update(1 / 60, true, sec, cls);
+      expect(b.t).toBeCloseTo(adsStep(0, 6 / 60, true, sec, cls), 9);
+      const up = b.t;
+      for (let i = 0; i < 4; i++) b.update(1 / 60, false, sec, cls);
+      expect(b.t).toBeCloseTo(adsStep(up, 4 / 60, false, sec, cls), 9);
+    }
   });
 });
