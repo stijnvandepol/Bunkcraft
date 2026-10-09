@@ -85,7 +85,8 @@ main() {
       git pull -q --ff-only
     fi
     after="$(git rev-parse HEAD)"
-    [ "$before" = "$after" ] || git --no-pager log --oneline "$before..$after" | head -n 20
+    # -n instead of "| head": with pipefail a closed pipe (SIGPIPE, exit 141) would end the whole update.
+    [ "$before" = "$after" ] || git --no-pager log --oneline -n 20 "$before..$after" || true
   fi
 
   # ---- 2. image
@@ -176,7 +177,8 @@ main() {
     notify "update failed and the rollback is not healthy either: the server needs attention"
     echo "error: the rollback is not healthy either: see 'bunkcraft logs'." >&2
   fi
-  exit 1
+  # 3 = this build failed its health/smoke checks (auto-update then skips it); other failures stay retryable.
+  exit 3
 }
 
 say()  { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
@@ -204,7 +206,7 @@ restore_env() {
 }
 
 running_image_id() {
-  local cid; cid="$(docker compose ps -q bunkcraft 2>/dev/null | head -n1)"
+  local cid; cid="$(docker compose ps -q bunkcraft 2>/dev/null | sed -n 1p)"
   [ -n "$cid" ] && docker inspect --format '{{.Image}}' "$cid" 2>/dev/null || true
 }
 # With Caddy: it waits for a healthy game server, so 'up' itself fails when the new one is unhealthy: wait_healthy decides.

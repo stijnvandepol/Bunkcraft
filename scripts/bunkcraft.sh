@@ -96,7 +96,7 @@ case "${1:-status}" in
     docker compose ps
     echo
     ref="$(docker compose config --images bunkcraft)"
-    cid="$(docker compose ps -q bunkcraft | head -n1)"
+    cid="$(docker compose ps -q bunkcraft | sed -n 1p)"
     if [ -n "$cid" ]; then
       id="$(docker inspect --format '{{.Image}}' "$cid")"
       digest="$(docker image inspect --format '{{join .RepoDigests " "}}' "$id" 2>/dev/null || true)"

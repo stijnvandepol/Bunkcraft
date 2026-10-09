@@ -127,9 +127,13 @@ main() {
   ./scripts/update.sh || rc=$?
   if [ "$rc" = 0 ]; then
     state_set bad ""
-  else
+  elif [ "$rc" = 3 ]; then
+    # The build itself failed its checks and was rolled back: wait for a newer one.
     state_set bad "$key"
-    deploy_log "auto-update: $key failed (exit $rc); it is not tried again, the next new build is"
+    deploy_log "auto-update: $key failed its checks (rolled back); it is not tried again, the next new build is"
+  else
+    # Anything else (network, registry, a script error) says nothing about the build: retry on the next run.
+    deploy_log "auto-update: $key not deployed (exit $rc); retrying on the next run"
   fi
   return "$rc"
 }
@@ -137,7 +141,7 @@ main() {
 log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*"; }
 
 running_image_id() {
-  local cid; cid="$(docker compose ps -q bunkcraft 2>/dev/null | head -n1)"
+  local cid; cid="$(docker compose ps -q bunkcraft 2>/dev/null | sed -n 1p)"
   [ -n "$cid" ] && docker inspect --format '{{.Image}}' "$cid" 2>/dev/null || true
 }
 
@@ -203,8 +207,8 @@ registry_digest() {
   url="$scheme://$host/v2/$repo/manifests/$tag"
   accept='application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json'
   hdrs="$(curl -sS -m 20 -I -H "Accept: $accept" "$url" 2>/dev/null | tr -d '\r')" || return 1
-  if printf '%s\n' "$hdrs" | head -n1 | grep -q ' 401'; then
-    auth="$(printf '%s\n' "$hdrs" | sed -n 's/^[Ww][Ww][Ww]-[Aa]uthenticate: *[Bb]earer *//p' | head -n1)"
+  if printf '%s\n' "$hdrs" | sed -n 1p | grep -q ' 401'; then
+    auth="$(printf '%s\n' "$hdrs" | sed -n 's/^[Ww][Ww][Ww]-[Aa]uthenticate: *[Bb]earer *//p' | sed -n 1p)"
     realm="$(printf '%s' "$auth" | sed -n 's/.*realm="\([^"]*\)".*/\1/p')"
     service="$(printf '%s' "$auth" | sed -n 's/.*service="\([^"]*\)".*/\1/p')"
     scope="$(printf '%s' "$auth" | sed -n 's/.*scope="\([^"]*\)".*/\1/p')"
@@ -214,9 +218,9 @@ registry_digest() {
     [ -n "$token" ] || return 1
     hdrs="$(curl -sS -m 20 -I -H "Accept: $accept" -H "Authorization: Bearer $token" "$url" 2>/dev/null | tr -d '\r')" || return 1
   fi
-  printf '%s\n' "$hdrs" | head -n1 | grep -q ' 200' || return 1
+  printf '%s\n' "$hdrs" | sed -n 1p | grep -q ' 200' || return 1
   local digest
-  digest="$(printf '%s\n' "$hdrs" | sed -n 's/^[Dd]ocker-[Cc]ontent-[Dd]igest: *//p' | head -n1)"
+  digest="$(printf '%s\n' "$hdrs" | sed -n 's/^[Dd]ocker-[Cc]ontent-[Dd]igest: *//p' | sed -n 1p)"
   case "$digest" in sha256:*) echo "$digest" ;; *) return 1 ;; esac
 }
 
