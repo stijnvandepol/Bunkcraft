@@ -1171,3 +1171,33 @@ body .notice { padding: calc(var(--u) * 3) calc(var(--u) * 7); }
 .arc-hud .skin-tools { display: inline-flex; gap: calc(var(--u) * 1.5); margin-left: calc(var(--u) * 3); vertical-align: middle; }
 .arc-hud .skin-tool { pointer-events: auto; cursor: pointer; font: 700 var(--f-xs) / 1 var(--bc-font); padding: calc(var(--u) * 1) calc(var(--u) * 2); color: var(--bc-dim); background: var(--bc-ink3); border: 1px solid var(--bc-line); border-radius: var(--bc-r); }
 .arc-hud .skin-tool:hover:not(:disabled) { color: #fff; }
+
+/* ---------------------------------------------------------------- arena HUD in the Bunkhosting typography
+ * Score bar, clock, health, ammo, weapon slots, killfeed and death screen use the brand fonts and tokens instead of
+ * the pixel font. Prefixed with .arc-hud so they win over the base rules in styles.css whatever the load order.
+ * The survival HUD and the Build & Survival menus keep the pixel font. */
+.arc-hud { font-family: var(--bc-font); text-shadow: var(--bc-halo); color: var(--bc-text); }
+.arc-hud .arc-score, .arc-hud .arc-clock {
+  font: 800 var(--bc-hud-t) / 1 var(--bc-font-head); letter-spacing: 0.02em;
+  border: 1px solid var(--bc-line, rgba(255, 255, 255, 0.12)); border-radius: 4px;
+}
+.arc-hud .arc-clock { background: var(--bc-plate); font-variant-numeric: tabular-nums; }
+.arc-hud .arc-subline { font: 600 var(--bc-hud-xs) / 1.2 var(--bc-font); color: var(--bc-dim); }
+.arc-hud .arc-health-label, .arc-hud .arc-weapon-name {
+  font: 700 var(--bc-hud-xs) / 1.2 var(--bc-font-head); letter-spacing: 0.08em; text-transform: uppercase; color: var(--bc-dim);
+}
+.arc-hud .arc-health-num { font-family: var(--bc-font-head); font-weight: 800; font-variant-numeric: tabular-nums; }
+.arc-hud .arc-health-bar { border: 1px solid rgba(0, 0, 0, 0.6); box-shadow: none; border-radius: 2px; background: var(--bc-plate); }
+.arc-hud .arc-health-fill { border-radius: 1px; }
+.arc-hud .arc-ammo-mag { font-family: var(--bc-font-head); font-weight: 800; font-variant-numeric: tabular-nums; }
+.arc-hud .arc-ammo-reserve { font-family: var(--bc-font-head); font-weight: 600; color: var(--bc-dim); }
+.arc-hud .arc-slot {
+  font: 600 var(--bc-hud-xs) / 1.2 var(--bc-font); background: var(--bc-plate); color: var(--bc-dim);
+  border: 1px solid transparent; border-radius: 2px;
+}
+.arc-hud .arc-slot b { color: var(--bc-accent); font-weight: 800; }
+.arc-hud .arc-slot.selected { color: var(--bc-text); border-color: var(--bc-accent); background: var(--bc-plate); }
+.arc-hud .arc-feed-row { font: 600 var(--bc-hud-xs) / 1.25 var(--bc-font); background: var(--bc-plate); border-radius: 2px; }
+.arc-hud .arc-feed-row.self { border-color: var(--bc-accent); }
+.arc-hud .arc-feed-weapon { color: var(--bc-dim); }
+.arc-hud .arc-death { font-family: var(--bc-font); }
