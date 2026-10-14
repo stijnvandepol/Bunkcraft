@@ -15,8 +15,9 @@ volgt de Bunkhosting-huisstijl. Live op https://craft.bunkhosting.nl (Cloudflare
 
 **Nu (afmaken)**
 
-1. **Resterende schotclaims (S).** ADS is nu server-gevalideerd (bericht `ads`, richttijd per wapen, gedeelde spreidingscurve;
-   cheat-bot `adsCheats`). Nog clientclaims in `fire`: `mv` (de server overrulet met zijn snelheidsschatting) en `air`.
+1. **Schotclaims (klaar).** ADS is server-gevalideerd (bericht `ads`) en ook `mv`/`air` van `fire` worden genegeerd: lopen,
+   lucht en slide komen uit de geaccepteerde positierapporten (`server/anticheat/Stance.ts`, SECURITY §Schoten). De velden
+   blijven in het protocol voor oude clients en kunnen na een protocolversie weg.
 2. **Playtest met echte spelers (S, geen code).** Time-to-kill na de balans-pass (`ttk-sim.ts`, GAMEMODES §Rollen en balans),
    richtgevoel (standaardgevoeligheid 100 % = 0,126°/count is snel met raw input), de weapon-glitch-fixes
    (`scripts/qa/weapon-glitch.py`) en per kaart de looplijnen. Uitkomst: balanswijzigingen in `Balance.ts`, Classic compacter

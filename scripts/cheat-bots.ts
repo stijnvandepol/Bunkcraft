@@ -337,8 +337,17 @@ async function shotCheats(): Promise<void> {
     const a = aimAt(ox, oy, oz, t.x, t.y + 1.6, t.z);
     return traceBlocks(s.blocks(), ox, oy, oz, a.dx, a.dy, a.dz, d) >= d;
   };
-  let fired = 0;
-  for (let i = 0; i < 600 && fired < 60 && !s.kicked; i++) {
+  // The score is a rolling window of 40 shots and the bullets' spread makes single readings swing (a miss is not a snap),
+  // so the aimbot is read every 10 shots over 100 shots; what counts is the highest reading (the warning level is a
+  // crossing, the server logs it the moment it happens), and the victims must stay clean at every reading.
+  let fired = 0, peak = 0, victimsClean = true;
+  const read = async () => {
+    const ps = await adminPlayers(code);
+    if (!ps) return;
+    peak = Math.max(peak, ps.find((q) => q.name === 'aimbotter')?.suspicion ?? 0);
+    if (!ps.filter((q) => q.name !== 'aimbotter').every((q) => (q.suspicion ?? 0) < 40)) victimsClean = false;
+  };
+  for (let i = 0; i < 900 && fired < 100 && !s.kicked; i++) {
     // Victims that died walk back to their spots.
     if (spots) {
       for (const [v, spot] of [[v1, spots[0]], [v2, spots[1]]] as const) {
@@ -350,6 +359,7 @@ async function shotCheats(): Promise<void> {
       const ox = s.x, oy = s.y + 1.62, oz = s.z;
       s.send({ t: 'fire', slot: 0, ox, oy, oz, ...aimAt(ox, oy, oz, t.x, t.y + 1.6, t.z), ads: true });
       fired++;
+      if (fired % 10 === 0) await read();
     }
     await sleep(110);
   }
@@ -357,9 +367,9 @@ async function shotCheats(): Promise<void> {
   console.log(`      aimbot: ${s.of('hit').length} hits (${s.of('hit').filter((h) => h.head).length} head), ${s.of('ammo').length} ammo updates, phase ${s.of('match').at(-1)?.phase}`);
   const players = await adminPlayers(code);
   if (players) {
-    const p = players.find((q) => q.name === 'aimbotter');
-    check(`aimbot snaps raise the suspicion score to ${p?.suspicion} (>= 40, the warning level)`, (p?.suspicion ?? 0) >= 40);
-    check('...victims stay clean', players.filter((q) => q.name !== 'aimbotter').every((q) => (q.suspicion ?? 0) < 40));
+    await read();
+    check(`aimbot snaps raise the suspicion score to ${peak} (peak over ${fired} shots, >= 40, the warning level)`, peak >= 40);
+    check('...victims stay clean', victimsClean);
   } else console.log('SKIP  suspicion score (set ADMIN_TOKEN to check it)');
   s.close(); v1.close(); v2.close();
 }
@@ -435,6 +445,106 @@ async function adsCheats(): Promise<void> {
   s.close(); other.close();
 }
 
+/**
+ * Spread stance: the `mv` / `air` claims of a `fire` message are ignored, the server derives moving / airborne from the
+ * validated position reports. A bot that jumps or runs while claiming "still and grounded" must get the air / move spread;
+ * one that really stands still gets the plain spread whatever it claims.
+ */
+async function stanceCheats(): Promise<void> {
+  const code = await room('ffa');
+  const s = await join(code, 'stanceliar'), other = await join(code, 'stancevictim');
+  s.auto = other.auto = false;
+  for (let i = 0; i < 150 && s.of('match').at(-1)?.phase !== 'live'; i++) await sleep(100);
+  await sleep(1500);
+  const sp = s.of('spawn').at(-1);
+  const w = weaponDef(sp?.primary ?? '');
+  if (!sp || !w || !sp.ss) { check('stance: the shooter has a spawn with a spread seed', false); s.close(); other.close(); return; }
+  const gx = s.x, gy = s.y, gz = s.z;
+  let best = { dx: 0, dy: 0, dz: 1 }, bestD = 0;
+  for (let k = 0; k < 16; k++) {
+    const yaw = (k / 16) * Math.PI * 2, dx = Math.sin(yaw), dz = Math.cos(yaw);
+    const d = traceBlocks(s.blocks(), gx, gy + 1.62, gz, dx, 0, dz, w.maxRange);
+    if (d > bestD) { bestD = d; best = { dx, dy: 0, dz }; }
+  }
+  const predict = (n: number, ox: number, oy: number, oz: number, mv: boolean, air: boolean): number[] => {
+    const rand: [number, number] = [0, 0];
+    const dir: [number, number, number] = [0, 0, 0];
+    spreadRandom(sp.ss!, n, 0, rand);
+    spreadDirection(best.dx, best.dy, best.dz, shotSpread(w, 0, mv, air), rand[0], rand[1], dir);
+    const tr = traceBullet(s.blocks(), ox, oy, oz, dir[0], dir[1], dir[2], w.maxRange, createBulletTrace());
+    return [ox + dir[0] * tr.t, oy + dir[1] * tr.t, oz + dir[2] * tr.t];
+  };
+  const dist = (a: number[], b: number[]) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+  const tally = { plain: 0, stance: 0, neither: 0, same: 0 };
+  const reset = () => Object.assign(tally, { plain: 0, stance: 0, neither: 0, same: 0 });
+  /**
+   * Fires once from the bot's current pose with the given claims. `truth`: the stance the server should have seen; the
+   * bullet must end where that spread puts it (counted as `stance`), not where the plain spread does (`plain`).
+   */
+  const fire = async (claim: { mv: boolean; air: boolean }, truth: { mv: boolean; air: boolean }): Promise<void> => {
+    const ox = s.x, oy = s.y + 1.62, oz = s.z;
+    const shots = s.of('shot').length, ammo = s.of('ammo').length;
+    s.send({ t: 'fire', slot: 0, ox, oy, oz, ...best, ads: false, ...claim });
+    for (let t = 0; t < 1000 && (s.of('shot').length === shots || s.of('ammo').length === ammo); t += 10) await sleep(10);
+    const shot = s.of('shot').slice(shots).find((m) => m.id === s.id), am = s.of('ammo').slice(ammo).find((m) => m.sn !== undefined);
+    if (!shot || !am) { tally.neither++; return; }
+    const end = [shot.ex, shot.ey, shot.ez], n = am.sn! - 1;
+    const plain = predict(n, ox, oy, oz, false, false), stance = predict(n, ox, oy, oz, truth.mv, truth.air);
+    if (dist(plain, stance) < 0.12 && dist(plain, predict(n, ox, oy, oz, true, true)) < 0.12) tally.same++;
+    else if (dist(end, stance) < 0.06) tally.stance++;
+    else if (dist(end, plain) < 0.06) tally.plain++;
+    else tally.neither++;
+  };
+
+  // 1. Standing still on the ground and claiming air + moving: the plain spread (the truth is "plain" here).
+  for (let i = 0; i < 8; i++) {
+    for (let k = 0; k < 3; k++) { s.pos(); await sleep(40); }
+    await fire({ mv: true, air: true }, { mv: false, air: false });
+    await sleep(300);
+  }
+  console.log(`      still bot claiming air + moving: ${tally.stance} plain, ${tally.neither} neither, ${tally.same} indistinguishable`);
+  check('a bot that stands still but claims moving + airborne gets the plain spread', tally.stance >= 4 && tally.neither === 0);
+
+  // 2. Jumping (a legal jump curve) while claiming grounded and still: the air spread.
+  reset();
+  for (let i = 0; i < 8; i++) {
+    const t0 = performance.now();
+    let fired = false;
+    for (;;) {
+      const t = (performance.now() - t0) / 1000;
+      if (t > 0.58) break;
+      s.y = gy + Math.max(0, 8.9 * t - 15 * t * t);
+      s.pos();
+      if (!fired && t > 0.3) { fired = true; await fire({ mv: false, air: false }, { mv: false, air: true }); }
+      await sleep(33);
+    }
+    s.y = gy; s.pos();
+    await sleep(500);
+  }
+  console.log(`      jumping bot claiming grounded: ${tally.stance} air spread, ${tally.plain} plain, ${tally.neither} neither, ${tally.same} indistinguishable`);
+  check('a bot that jumps while claiming grounded and still gets the air spread', tally.stance >= 4 && tally.plain === 0 && tally.neither === 0);
+
+  // 3. Running (position reports at a legal speed) while claiming still: the move spread.
+  reset();
+  const dx = BOT_SPEED * 0.033;
+  for (let i = 0; i < 8; i++) {
+    const dir = i % 2 === 0 ? 1 : -1;
+    s.x = gx; s.pos(); await sleep(100);
+    for (let k = 0; k < 12; k++) {
+      if (s.blocks().getBlock(Math.floor(s.x + dir * dx), Math.floor(gy), Math.floor(gz)) !== 0) break;
+      s.x += dir * dx;
+      s.pos();
+      if (k === 8) await fire({ mv: false, air: false }, { mv: true, air: false });
+      await sleep(33);
+    }
+    s.x = gx; s.pos();
+    await sleep(500);
+  }
+  console.log(`      running bot claiming still: ${tally.stance} move spread, ${tally.plain} plain, ${tally.neither} neither, ${tally.same} indistinguishable`);
+  check('a bot that runs while claiming still gets the move spread', tally.stance >= 3 && tally.plain === 0 && tally.neither === 0);
+  s.close(); other.close();
+}
+
 /** Two open cells 6-10 blocks from the shooter, in plain sight, more than 90 degrees apart. */
 function aimbotSpots(s: Bot): [[number, number], [number, number]] | null {
   const m = s.map, v = s.variant;
@@ -460,7 +570,7 @@ function aimbotSpots(s: Bot): [[number, number], [number, number]] | null {
 
 async function main(): Promise<void> {
   console.log(`honest bots for ${LEGIT_SECONDS} s in parallel with the cheaters...`);
-  await Promise.all([legit(), (async () => { await movementCheats(); await shotCheats(); await adsCheats(); })()]);
+  await Promise.all([legit(), (async () => { await movementCheats(); await shotCheats(); await adsCheats(); await stanceCheats(); })()]);
 }
 
 main()

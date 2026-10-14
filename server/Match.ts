@@ -205,6 +205,9 @@ export interface MatchPlayer {
   /** Spread seed (dealt at the join, sent with every spawn) and the index of the next shot: the client derives the same spread. */
   spreadSeed: number;
   shotN: number;
+  /** Moving / airborne as the connection layer derived them from the accepted position reports (never from a `fire` claim). */
+  moving: boolean;
+  airborne: boolean;
 }
 
 /**
@@ -353,7 +356,7 @@ export class Match {
       spawnedAt: now, firedThisLife: false, streak: restore?.streak ?? 0,
       slots: [newSlot(DEFAULT_PRIMARY, 'none'), newSlot(DEFAULT_SECONDARY, 'none'), newSlot('knife', 'none')], slot: 0,
       switchReadyAt: 0, adsOn: false, adsT: 0, adsAt: 0, history: Array.from({ length: HISTORY_SIZE }, () => ({ t: 0, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, h: HITBOX.height })), historyHead: 0, historyCount: 0,
-      spreadSeed: Math.floor(this.host.random() * 0x100000000) >>> 0, shotN: 0,
+      spreadSeed: Math.floor(this.host.random() * 0x100000000) >>> 0, shotN: 0, moving: false, airborne: false,
       height: HITBOX.height,
       ...(bot ? { bot: true } : {}),
       ...((seat.party ?? restore?.party) ? { party: (seat.party ?? restore?.party)! } : {}),
@@ -496,6 +499,12 @@ export class Match {
     const p = this.players.get(id);
     if (!p) return;
     p.x = x; p.y = y; p.z = z; p.yaw = yaw; p.pitch = pitch; p.height = height;
+  }
+
+  /** The server's own view of the shooter's stance (see anticheat/Stance.ts); decides the movement and air spread of shots. */
+  setStance(id: number, moving: boolean, airborne: boolean): void {
+    const p = this.players.get(id);
+    if (p) { p.moving = moving; p.airborne = airborne; }
   }
 
   /**
@@ -699,7 +708,9 @@ export class Match {
     const dx = m.dx / len, dy = m.dy / len, dz = m.dz / len;
     // Aimed spread comes from the aim time the server saw (see setAds), not from the `ads` claim of the message.
     if (this.sliding(p)) this.adsReset(p);
-    const spread = shotSpread(w, this.adsBlend(p, now, ADS_SLACK), m.mv === true, m.air === true);
+    // Moving / airborne are the server's own derivation (a slide moves fast by definition); the `mv` / `air` claims of
+    // the message are ignored (kept in the protocol for old clients).
+    const spread = shotSpread(w, this.adsBlend(p, now, ADS_SLACK), p.moving || this.sliding(p), p.airborne);
 
     // Lag compensation: targets are tested where this shooter saw them. The client says which server tick its
     // screen showed (`rk`); without it (older clients) the round trip plus the interpolation delay estimates it.
