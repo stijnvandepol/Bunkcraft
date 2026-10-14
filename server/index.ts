@@ -15,10 +15,21 @@
 import { startServer } from './App';
 import { loadConfig } from './Config';
 import { log } from './Log';
+import { startMatchRunner } from './match/MatchRunner';
 
 const config = loadConfig();
 
-startServer(config).then((server) => {
+// ROLE=match: one arena lobby in its own container, started by the control plane (server/match/MatchRunner.ts).
+if (config.role === 'match') {
+  startMatchRunner(config).then((runner) => {
+    const stop = () => { void runner.stop('Match server stopped').then(() => process.exit(0), () => process.exit(1)); };
+    process.on('SIGINT', stop);
+    process.on('SIGTERM', stop);
+  }, (e: unknown) => {
+    log.error('match runner failed to start', { error: e instanceof Error ? e.message : String(e) });
+    process.exit(1);
+  });
+} else startServer(config).then((server) => {
   let stopping = false;
   const stop = (signal: string) => {
     if (stopping) return;

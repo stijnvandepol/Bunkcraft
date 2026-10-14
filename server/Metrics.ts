@@ -63,6 +63,8 @@ export class Metrics {
   private gcObserver: PerformanceObserver | null = null;
   /** The chunk generation threads, when the server has them (set by App). */
   chunkGen: (() => ChunkGenStats) | null = null;
+  /** More exposition lines (match containers, see ControlPlane.prometheus). */
+  extra: (() => string[]) | null = null;
   /** Chunk work on the main thread: generating (no pool, arenas, ensureChunk) and installing (edits, light, mob spawns). */
   chunksMainGenerated = 0;
   chunkMainGenMs = 0;
@@ -247,6 +249,7 @@ export class Metrics {
     metric('bunkcraft_cheat_kicks_total', 'counter', 'Players kicked by the arcade anti-cheat.', [`bunkcraft_cheat_kicks_total ${this.cheatKicks}`]);
     metric('bunkcraft_cheat_bans_total', 'counter', 'Players banned by the arcade anti-cheat.', [`bunkcraft_cheat_bans_total ${this.cheatBans}`]);
     metric('bunkcraft_suspicion_flags_total', 'counter', 'Aim anomaly warnings (suspicion score over the threshold).', [`bunkcraft_suspicion_flags_total ${this.suspicionFlags}`]);
+    if (this.extra) out.push(...this.extra());
     return `${out.join('\n')}\n`;
   }
 }

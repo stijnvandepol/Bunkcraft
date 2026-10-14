@@ -681,6 +681,12 @@ export class GameServer {
     return { team };
   }
 
+  /** Ticket keys of the unexpired party holds (a match runner reports them to the control plane). */
+  get holdKeys(): string[] {
+    this.pruneHolds();
+    return [...this.holds.keys()];
+  }
+
   /** Gives a reservation up (the party chose another lobby). */
   release(key: string): void {
     if (this.holds.delete(key)) this.bots?.refresh();

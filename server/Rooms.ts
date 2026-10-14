@@ -327,6 +327,17 @@ export class Rooms {
     log.info('room adopted from a match container', { code });
   }
 
+  /** A game's runner ended or died by itself: drop it (the next join loads it again). */
+  forget(code: string, server: RoomServer): void {
+    if (this.loaded.get(code)?.server === server) this.loaded.delete(code);
+  }
+
+  /** Something the listing shows changed (a remote game's heartbeat). */
+  metaChanged(code: string): void {
+    const r = this.loaded.get(code);
+    if (r) this.writeMeta(code, r.server);
+  }
+
   /** The in-process game of a code (tests, tools); null for a game in a match container or none. */
   game(raw: string): GameServer | null {
     const server = this.get(raw)?.server;

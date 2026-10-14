@@ -11,6 +11,8 @@ import { backupAll } from './Backup';
 import { type Config, backupDirOf } from './Config';
 import { GameServer } from './GameServer';
 import type { RoomServer } from './RoomServer';
+import { ControlPlane, driverFromConfig } from './match/ControlPlane';
+import type { MatchDriver } from './match/Drivers';
 import { log } from './Log';
 import { type Gauges, metrics } from './Metrics';
 import { Rooms } from './Rooms';
@@ -84,11 +86,18 @@ export interface RunningServer {
   skins: SkinService | null;
   /** Parties (null when switched off or without games). */
   parties: PartyService | null;
+  /** MATCH_ISOLATION=container: match runners and their internal API (null in-process). */
+  control: ControlPlane | null;
   /** Saves everything, tells clients to reconnect after `reconnectMs` (when given), and stops listening. */
   close(reconnectMs?: number): Promise<void>;
 }
 
-export async function startServer(config: Config): Promise<RunningServer> {
+export interface StartOptions {
+  /** MATCH_ISOLATION=container: use this driver instead of the one MATCH_DRIVER names (tests). */
+  matchDriver?: MatchDriver;
+}
+
+export async function startServer(config: Config, start: StartOptions = {}): Promise<RunningServer> {
   const version = serverVersion();
   const backupDir = backupDirOf(config);
   const failLimiter = new RateLimiter(config.passwordFailLimit, 600_000);
@@ -142,6 +151,22 @@ export async function startServer(config: Config): Promise<RunningServer> {
     : null;
 
 
+  // MATCH_ISOLATION=container: every arena lobby in its own match container (server/match/). Off by default.
+  const control = config.roomsEnabled && config.matchIsolation === 'container'
+    ? new ControlPlane({
+      dataDir: config.dataDir, roomsDir: join(config.dataDir, 'rooms'), secret: config.matchSecret,
+      warm: config.matchWarmPool, max: config.maxMatchContainers, internalPort: config.internalPort, internalHost: config.internalHost,
+      idleGraceSec: config.matchIdleGraceSec, roomMaxPlayers: config.roomMaxPlayers,
+      motd: config.motd === 'Welcome to BunkCraft!' ? 'Welcome to BunkCraft! Share the game code with your friends.' : config.motd,
+      binary: config.binary, rejoinGraceSec: config.rejoinGraceSec, adminToken: config.adminToken, version, profiles, skins,
+      driver: start.matchDriver ?? driverFromConfig(config, version, (process.env.LOG_LEVEL ?? 'info').toLowerCase()),
+    })
+    : null;
+  if (control) {
+    await control.start();
+    metrics.extra = () => control.prometheus();
+  }
+
   const rooms = config.roomsEnabled
     ? new Rooms({
       dataDir: join(config.dataDir, 'rooms'),
@@ -157,9 +182,11 @@ export async function startServer(config: Config): Promise<RunningServer> {
       quickPlayBots: config.quickPlayBots,
       quickPlayBotDifficulty: config.quickPlayBotDifficulty,
       profiles, skins,
+      remote: control, remoteIdleMs: config.matchIdleGraceSec * 1000,
       ...guard,
     })
     : null;
+  if (control && rooms) await control.attach(rooms);
   if (skins) skins.onChange = (pid) => { main?.refreshSkins(pid); rooms?.refreshSkins(pid); };
 
   // Parties: friends queue together. Server memory only; expires by itself (server/Parties.ts).
@@ -902,7 +929,7 @@ export async function startServer(config: Config): Promise<RunningServer> {
 
   let closing: Promise<void> | null = null;
   return {
-    port, main, rooms, profiles, skins, parties,
+    port, main, rooms, profiles, skins, parties, control,
     close(reconnectMs) {
       closing ??= (async () => {
         draining = true;
@@ -910,6 +937,9 @@ export async function startServer(config: Config): Promise<RunningServer> {
         // Saves every world and sends clients a kick with the reconnect hint.
         main?.shutdown(reconnectMs);
         rooms?.shutdown(reconnectMs);
+        // Running matches stay in their containers for the next control plane; warm runners go.
+        await control?.close();
+        metrics.extra = null;
         parties?.close();
         // After the games: a match that ended during shutdown has granted its XP.
         profiles?.close();
