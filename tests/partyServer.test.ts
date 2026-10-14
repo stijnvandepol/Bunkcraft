@@ -101,7 +101,7 @@ describe('parties over the API', () => {
     const stranger = await joinGame(t, ticket.code, 'stranger_x');
     joined.push(await joinGame(t, ticket.code, 'friend_b', { party: ticket.key, profile: b.profileToken }));
 
-    const room = t.server.rooms!.get(ticket.code)!.server as unknown as { match: { players: Map<number, { name: string; team: string; party?: string }> } };
+    const room = t.server.rooms!.game(ticket.code) as unknown as { match: { players: Map<number, { name: string; team: string; party?: string }> } };
     const players = [...room.match.players.values()];
     const team = (name: string) => players.find((p) => p.name === name)?.team;
     expect(new Set(['lead_one', 'friend_a', 'friend_b'].map(team)).size).toBe(1);

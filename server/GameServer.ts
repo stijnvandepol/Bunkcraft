@@ -47,8 +47,7 @@ import type { ChunkGenPool } from './chunkgen/ChunkGenPool';
 import { BotManager, type BotSettings, parseBotSettings } from './bots/BotManager';
 import { arenaGraph } from './bots/BotWorld';
 import { MatchProgress } from './progression/MatchProgress';
-import type { ProfileService } from './progression/ProfileService';
-import type { SkinService } from './skins/SkinService';
+import type { ProfileBackend, SkinBackend } from './RoomServer';
 import { type RateLimiter, hashIp, newToken, safeEqual, tokenMatches, verifyPassword, hashToken } from './Security';
 
 const TICK_MS = 50; // 20 ticks per second, like Minecraft
@@ -285,9 +284,9 @@ export interface ServerOptions {
   /** For a new arcade game: bots (see server/bots/BotManager). */
   bots?: BotSettings;
   /** Realms progression (profiles, XP) shared by every game on the server; absent = no XP. */
-  profiles?: ProfileService | null;
+  profiles?: ProfileBackend | null;
   /** Custom player skins: sessions with a profile token wear their profile's skin (absent = off). */
-  skins?: SkinService | null;
+  skins?: SkinBackend | null;
   /** Arcade: seconds a dropped player's seat, score and match XP are kept for a rejoin (env REJOIN_GRACE_SEC, default 120; 0 = off). */
   rejoinGraceSec?: number;
 }

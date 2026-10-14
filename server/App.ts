@@ -10,6 +10,7 @@ import { ADMIN_CSP, ADMIN_HTML } from './AdminPage';
 import { backupAll } from './Backup';
 import { type Config, backupDirOf } from './Config';
 import { GameServer } from './GameServer';
+import type { RoomServer } from './RoomServer';
 import { log } from './Log';
 import { type Gauges, metrics } from './Metrics';
 import { Rooms } from './Rooms';
@@ -369,7 +370,7 @@ export async function startServer(config: Config): Promise<RunningServer> {
       } catch {
         return json(res, 400, { error: 'Bad request' });
       }
-      const st = typeof body.code === 'string' ? rooms.rejoinStatus(body.code, { token: body.token, profile: bearer(req.headers.authorization) }) : null;
+      const st = typeof body.code === 'string' ? await rooms.rejoinStatus(body.code, { token: body.token, profile: bearer(req.headers.authorization) }) : null;
       return json(res, 200, st ?? { state: 'none', secondsLeft: 0 }, { 'cache-control': 'no-store' });
     }
     const m = /^\/api\/rooms\/([^/]+)$/.exec(path);
@@ -844,7 +845,7 @@ export async function startServer(config: Config): Promise<RunningServer> {
       metrics.rateLimited('conn_per_ip');
       return refuse(socket, '429 Too Many Requests', 'per-ip limit', ip);
     }
-    let target: GameServer | null = null;
+    let target: RoomServer | null = null;
     if (path === '/ws') {
       target = main;
     } else {

@@ -16,7 +16,7 @@ beforeAll(async () => { t = await startTestServer({ REJOIN_GRACE_SEC: '90' }); }
 afterAll(async () => { await t.stop(); cleanup(t.dir); });
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
-const gameOf = (code: string): GameServer => t.server.rooms!.get(code)!.server;
+const gameOf = (code: string): GameServer => t.server.rooms!.game(code)!;
 const matchOf = (code: string): Match => (gameOf(code) as unknown as { match: Match }).match;
 
 async function until(test: () => boolean, ms = 4000): Promise<void> {

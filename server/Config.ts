@@ -89,6 +89,41 @@ export interface Config {
   maxParties: number;
   /** New parties per client address per hour (PARTY_CREATE_LIMIT). */
   partyCreateLimit: number;
+  /** What this process is (ROLE): the full server (control plane) or a match runner started for one arena lobby. */
+  role: 'server' | 'match';
+  /** Where arena matches run (MATCH_ISOLATION): in this process (default) or one container per lobby. */
+  matchIsolation: 'inprocess' | 'container';
+  /** How match runners are started (MATCH_DRIVER): Docker containers, or plain child processes (development, tests). */
+  matchDriver: 'docker' | 'process';
+  /** Docker Engine API of the socket proxy (DOCKER_HOST): http://host:port, or unix:///path for a local smoke test. */
+  dockerHost: string;
+  /** Image for match containers (MATCH_IMAGE); empty = the image of this container (looked up at start-up). */
+  matchImage: string;
+  /** Docker network match containers join (MATCH_NETWORK): internal, no route to the internet. */
+  matchNetwork: string;
+  /** Per match container: CPUs (MATCH_CPUS), memory in MiB (MATCH_MEMORY, "256m" style accepted), processes (MATCH_PIDS). */
+  matchCpus: number;
+  matchMemoryMb: number;
+  matchPids: number;
+  /** Idle match runners kept ready so quick play starts at once (MATCH_WARM_POOL). */
+  matchWarmPool: number;
+  /** Most match runners at once, warm ones included (MAX_MATCH_CONTAINERS); above it new lobbies run in this process. */
+  maxMatchContainers: number;
+  /** Seconds an empty match container (no players, no kept or held seats) lives on (MATCH_IDLE_GRACE_SEC). */
+  matchIdleGraceSec: number;
+  /** Shared secret of the internal API (MATCH_SECRET); unset = DATA_DIR/match-secret.key. Runners only get a key derived from it. */
+  matchSecret?: string;
+  /** Internal API of the control plane for match runners (INTERNAL_PORT, INTERNAL_HOST): never published. */
+  internalPort: number;
+  internalHost: string;
+  /** How runners reach that API (CONTROL_URL), e.g. http://bunkcraft:3001 on the internal network. */
+  controlUrl: string;
+  /** Label put on (and required of) every match container, so the control plane never touches other containers (MATCH_OWNER). */
+  matchOwner: string;
+  /** Match runner only: its id, its key and the port it listens on (set by the control plane, never by hand). */
+  matchId: string;
+  matchToken: string;
+  matchPort: number;
 }
 
 const flag = (v: string | undefined, dflt: boolean): boolean => (v === undefined || v === '' ? dflt : !/^(0|off|false|no)$/i.test(v));
@@ -96,6 +131,14 @@ const num = (v: string | undefined, dflt: number): number => {
   const n = Number(v);
   return v !== undefined && v !== '' && Number.isFinite(n) ? n : dflt;
 };
+/** "256m", "1g", "512" (MiB) → MiB. */
+export function parseMemoryMb(v: string | undefined, dflt: number): number {
+  const m = /^\s*(\d+(?:\.\d+)?)\s*([kmg]?)b?\s*$/i.exec(v ?? '');
+  if (!m) return dflt;
+  const n = Number(m[1]);
+  const unit = m[2].toLowerCase();
+  return Math.round(unit === 'g' ? n * 1024 : unit === 'k' ? n / 1024 : n);
+}
 const list = (v: string | undefined): string[] => (v ?? '').split(/[,\s]+/).map((x) => x.trim()).filter(Boolean);
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -152,6 +195,26 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     parties: flag(env.PARTIES, true),
     maxParties: Math.max(1, Math.floor(num(env.MAX_PARTIES, 2000))),
     partyCreateLimit: Math.max(1, Math.floor(num(env.PARTY_CREATE_LIMIT, 20))),
+    role: env.ROLE === 'match' ? 'match' : 'server',
+    matchIsolation: env.MATCH_ISOLATION === 'container' ? 'container' : 'inprocess',
+    matchDriver: env.MATCH_DRIVER === 'process' ? 'process' : 'docker',
+    dockerHost: env.DOCKER_HOST || 'http://docker-proxy:2375',
+    matchImage: env.MATCH_IMAGE ?? '',
+    matchNetwork: env.MATCH_NETWORK || 'bunkcraft_match',
+    matchCpus: Math.max(0.1, Math.min(8, num(env.MATCH_CPUS, 1))),
+    matchMemoryMb: Math.max(96, Math.min(4096, parseMemoryMb(env.MATCH_MEMORY, 256))),
+    matchPids: Math.max(16, Math.min(1024, Math.floor(num(env.MATCH_PIDS, 64)))),
+    matchWarmPool: Math.max(0, Math.min(16, Math.floor(num(env.MATCH_WARM_POOL, 1)))),
+    maxMatchContainers: Math.max(1, Math.min(256, Math.floor(num(env.MAX_MATCH_CONTAINERS, 16)))),
+    matchIdleGraceSec: Math.max(5, Math.min(3600, num(env.MATCH_IDLE_GRACE_SEC, 30))),
+    matchSecret: env.MATCH_SECRET || undefined,
+    internalPort: num(env.INTERNAL_PORT, 3001),
+    internalHost: env.INTERNAL_HOST || '0.0.0.0',
+    controlUrl: env.CONTROL_URL || 'http://bunkcraft:3001',
+    matchOwner: (env.MATCH_OWNER || 'bunkcraft').replace(/[^a-zA-Z0-9_.-]/g, '').slice(0, 63) || 'bunkcraft',
+    matchId: env.MATCH_ID ?? '',
+    matchToken: env.MATCH_TOKEN ?? '',
+    matchPort: num(env.MATCH_PORT, 3100),
   };
 }
 

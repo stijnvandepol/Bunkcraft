@@ -8,7 +8,8 @@ import {
   LOBBY_SIZE_RANGE, type LobbyCandidate, type ListingKind, type ModeStats, REALMS_MODES, filterRooms, partyFits, pickLobby, quickPlayName,
 } from '../src/modes/Realms';
 import { GAME_MODES, type GameMode } from '../src/player/GameMode';
-import { GameServer, parseGameMode } from './GameServer';
+import { GameServer, type ServerOptions, parseGameMode } from './GameServer';
+import type { RejoinStatus, RoomServer } from './RoomServer';
 import { log } from './Log';
 import { RateLimiter } from './Security';
 import type { ChunkGenPool } from './chunkgen/ChunkGenPool';
@@ -49,6 +50,22 @@ export interface RoomOptions {
   skins?: SkinService | null;
   /** Seconds an arcade game keeps a dropped player's seat (see ServerOptions.rejoinGraceSec). */
   rejoinGraceSec?: number;
+  /** MATCH_ISOLATION=container: arcade games run in their own match container (server/match/). Absent = in this process. */
+  remote?: RemoteRooms | null;
+  /** Remote games: unload this long after the last player and kept seat are gone (MATCH_IDLE_GRACE_SEC). */
+  remoteIdleMs?: number;
+}
+
+/** Settings of a new arcade game that a match runner can build: plain JSON, no services or callbacks. */
+export type ArenaSpec = Pick<ServerOptions,
+  'worldName' | 'seed' | 'gameMode' | 'motd' | 'maxPlayers' | 'quiet' | 'label' | 'ownerHash' | 'passwordHash' | 'listed' | 'gameType'
+  | 'scoreLimit' | 'timeLimitSec' | 'mapId' | 'startMap' | 'lobbySize' | 'bots' | 'binary' | 'rejoinGraceSec'>;
+
+/** Builds games that run in a match container; null = none free (cap reached), the game then runs in this process. */
+export interface RemoteRooms {
+  create(code: string, spec: ArenaSpec, dir: string, onMeta: () => void): RoomServer | null;
+  /** A saved game: its world.json as text. */
+  load(code: string, world: string, dir: string, onMeta: () => void): RoomServer | null;
 }
 
 /** Hashes and flags for a new game, computed by the caller (hashing is async). */
@@ -153,8 +170,9 @@ function clampSetting(v: unknown, range: { min: number; max: number }, dflt: num
  * empty, so hundreds can exist on disk while only the busy ones use memory.
  */
 export class Rooms {
-  private readonly loaded = new Map<string, { server: GameServer; lastActive: number }>();
+  private readonly loaded = new Map<string, { server: RoomServer; lastActive: number }>();
   private readonly timer: NodeJS.Timeout;
+  private readonly remoteTimer: NodeJS.Timeout | null = null;
   private onDisk = 0;
   /** Rooms that opted into the public list (from meta.json). */
   private readonly listedMeta = new Map<string, RoomMeta>();
@@ -165,6 +183,11 @@ export class Rooms {
     this.expire();
     this.timer = setInterval(() => this.maintain(), 60_000);
     this.timer.unref();
+    // Match containers cost a reserved CPU and memory each: an empty one goes much sooner than an in-process game.
+    if (opts.remote) {
+      this.remoteTimer = setInterval(() => this.maintain(true), 5000);
+      this.remoteTimer.unref();
+    }
   }
 
   get count(): number {
@@ -178,11 +201,11 @@ export class Rooms {
   }
 
   /** Whether a loaded game keeps a seat for the player this proof (rejoin token / profile token) belongs to; never loads a game. */
-  rejoinStatus(raw: string, proof: { token?: unknown; profile?: unknown }): ReturnType<GameServer['rejoinStatus']> & { gameType?: GameType; map?: string } | null {
+  async rejoinStatus(raw: string, proof: { token?: unknown; profile?: unknown }): Promise<RejoinStatus & { gameType?: GameType; map?: string } | null> {
     const code = normalizeCode(raw);
     const live = code ? this.loaded.get(code) : undefined;
     if (!live) return null;
-    const st = live.server.rejoinStatus(proof);
+    const st = await live.server.rejoinStatus(proof);
     if (st.state === 'none') return st;
     const status = live.server.lobbyStatus();
     return { ...st, gameType: live.server.info().gameType, ...(status ? { map: status.map } : {}) };
@@ -206,9 +229,8 @@ export class Rooms {
     const bots = type.arcade
       ? parseBotSettings(match.botFill !== undefined ? { fill: match.botFill, difficulty: match.botDifficulty } : { count: match.bots, difficulty: match.botDifficulty }, lobbySize ?? this.opts.maxPlayers)
       : undefined;
-    const server = new GameServer({
-      ...this.serverOptions(code),
-      dataDir: join(this.opts.dataDir, code), worldName: cleanName, seed: cleanSeed, gameMode: mode,
+    const spec: ArenaSpec = {
+      worldName: cleanName, seed: cleanSeed, gameMode: mode,
       motd: this.opts.motd, maxPlayers: this.opts.maxPlayers, quiet: true,
       ownerHash: security.ownerHash, passwordHash: security.passwordHash, listed: security.listed,
       ...(type.arcade ? {
@@ -222,7 +244,14 @@ export class Rooms {
         ...(lobbySize !== undefined ? { lobbySize } : {}),
         ...(bots ? { bots } : {}),
       } : {}),
-    });
+    };
+    const dir = join(this.opts.dataDir, code);
+    let server: RoomServer | null = null;
+    if (type.arcade && this.opts.remote) {
+      mkdirSync(dir, { recursive: true });
+      server = this.opts.remote.create(code, { ...spec, label: code, binary: this.opts.binary, rejoinGraceSec: this.opts.rejoinGraceSec }, dir, this.metaHook(code));
+    }
+    server ??= new GameServer({ ...this.serverOptions(code), dataDir: dir, ...spec });
     this.loaded.set(code, { server, lastActive: Date.now() });
     this.onDisk++;
     this.writeMeta(code, server);
@@ -231,7 +260,7 @@ export class Rooms {
   }
 
   /** The running room for a code, loading it from disk when needed; null if it doesn't exist. */
-  get(raw: string): { code: string; server: GameServer } | null {
+  get(raw: string): { code: string; server: RoomServer } | null {
     const code = normalizeCode(raw);
     if (!code) return null;
     const live = this.loaded.get(code);
@@ -241,9 +270,10 @@ export class Rooms {
     }
     const dir = join(this.opts.dataDir, code);
     if (!existsSync(join(dir, 'world.json'))) return null;
-    let server: GameServer;
+    let server: RoomServer | null = null;
     try {
-      server = new GameServer({
+      if (this.opts.remote && this.isArcade(code)) server = this.opts.remote.load(code, readFileSync(join(dir, 'world.json'), 'utf8'), dir, this.metaHook(code));
+      server ??= new GameServer({
         ...this.serverOptions(code),
         dataDir: dir, worldName: 'BunkCraft Game', gameMode: 'survival',
         motd: this.opts.motd, maxPlayers: this.opts.maxPlayers, quiet: true,
@@ -269,12 +299,42 @@ export class Rooms {
       profiles: this.opts.profiles,
       skins: this.opts.skins,
       rejoinGraceSec: this.opts.rejoinGraceSec,
-      onMetaChange: () => { const r = this.loaded.get(code); if (r) this.writeMeta(code, r.server); },
+      onMetaChange: this.metaHook(code),
     };
   }
 
+  private metaHook(code: string): () => void {
+    return () => { const r = this.loaded.get(code); if (r) this.writeMeta(code, r.server); };
+  }
+
+  /** Whether a saved game is an arcade lobby (its meta.json says so; games from before meta.json are Minecraft worlds). */
+  private isArcade(code: string): boolean {
+    try {
+      const m = JSON.parse(readFileSync(join(this.opts.dataDir, code, 'meta.json'), 'utf8')) as RoomMeta;
+      return gameTypeDef(parseGameType(m.gameType)).arcade;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * A game found running in a match container when this process starts (the control plane was updated while the
+   * match went on): it is loaded again without starting anything.
+   */
+  adopt(code: string, server: RoomServer): void {
+    this.loaded.get(code)?.server.shutdown();
+    this.loaded.set(code, { server, lastActive: Date.now() });
+    log.info('room adopted from a match container', { code });
+  }
+
+  /** The in-process game of a code (tests, tools); null for a game in a match container or none. */
+  game(raw: string): GameServer | null {
+    const server = this.get(raw)?.server;
+    return server instanceof GameServer ? server : null;
+  }
+
   /** Writes the listing sidecar and refreshes the public list. */
-  private writeMeta(code: string, server: GameServer): void {
+  private writeMeta(code: string, server: RoomServer): void {
     const info = server.info();
     const meta: RoomMeta = {
       name: info.name, gameType: info.gameType, gameMode: info.gameMode, map: info.map, listed: server.listed, locked: server.locked, maxPlayers: info.maxPlayers,
@@ -476,7 +536,7 @@ export class Rooms {
   }
 
   /** Players of a loaded game (admin page). */
-  players(raw: string): ReturnType<GameServer['playerList']> {
+  players(raw: string): ReturnType<RoomServer['playerList']> {
     const code = normalizeCode(raw);
     const live = code ? this.loaded.get(code) : undefined;
     return live ? live.server.playerList() : [];
@@ -523,23 +583,28 @@ export class Rooms {
 
   shutdown(reconnectMs?: number): void {
     clearInterval(this.timer);
-    for (const r of this.loaded.values()) r.server.shutdown(reconnectMs);
+    if (this.remoteTimer) clearInterval(this.remoteTimer);
+    // A game in a match container goes on without this process: its players reconnect to the next control plane.
+    for (const r of this.loaded.values()) if (r.server.detach) r.server.detach(reconnectMs); else r.server.shutdown(reconnectMs);
     this.loaded.clear();
   }
 
-  private maintain(): void {
+  private maintain(remoteOnly = false): void {
     const now = Date.now();
     for (const [code, r] of this.loaded) {
+      const remote = !(r.server instanceof GameServer);
+      if (remoteOnly && !remote) continue;
+      const idleMs = remote ? (this.opts.remoteIdleMs ?? this.opts.idleUnloadMs) : this.opts.idleUnloadMs;
       // A kept seat keeps the game loaded: its player may be back any moment (and its XP is paid when the game unloads).
       if (r.server.playerCount > 0 || r.server.reservedSeats > 0) {
         r.lastActive = now;
-      } else if (now - r.lastActive > this.opts.idleUnloadMs) {
+      } else if (now - r.lastActive > idleMs) {
         r.server.shutdown(); // saves to disk
         this.loaded.delete(code);
         log.debug('room unloaded (idle)', { code });
       }
     }
-    if (new Date().getHours() === 4 && now % 3_600_000 < 60_000) this.expire();
+    if (!remoteOnly && new Date().getHours() === 4 && now % 3_600_000 < 60_000) this.expire();
   }
 
   /** Counts the rooms on disk and removes the ones nobody has used for a long time. */

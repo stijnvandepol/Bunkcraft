@@ -6,11 +6,12 @@ import type { ServerMessage } from '../../src/net/protocol';
 import type { Match, MatchHost } from '../Match';
 import type { MatchResult } from '../modes/ModeLogic';
 import { MatchRecorder } from './MatchRecorder';
-import type { ProfileService } from './ProfileService';
+import type { ProfileBackend } from '../RoomServer';
+import type { ProgressReport } from '../../src/modes/progression/Profile';
 
 /** Reports of matches that ended while the player was away are kept this long (ms) for when they come back. */
 const PENDING_REPORT_MS = 10 * 60_000;
-type Report = NonNullable<ReturnType<ProfileService['award']>>;
+type Report = ProgressReport;
 
 /** What MatchProgress needs from the game server. */
 export interface ProgressHost {
@@ -37,7 +38,7 @@ export class MatchProgress {
   /** Profile id → the XP report of a match that ended while they were away, shown when they are back. */
   private readonly pending = new Map<string, { report: Report; at: number }>();
 
-  constructor(private readonly service: ProfileService, private readonly host: ProgressHost) {}
+  constructor(private readonly service: ProfileBackend, private readonly host: ProgressHost) {}
 
   /** The Match hooks that feed the recorder (spread into the MatchHost). */
   hooks(): Pick<MatchHost, 'onMatchStart' | 'onDamage' | 'onKill' | 'onObjective' | 'onMatchEnd' | 'onParkedExpired'> {
@@ -194,9 +195,17 @@ export class MatchProgress {
     m.broadcastRoster();
   }
 
-  private grant(id: number, pid: string, tally: Parameters<ProfileService['award']>[1], outcome: MatchOutcome, connected: boolean): void {
+  private grant(id: number, pid: string, tally: Parameters<ProfileBackend['award']>[1], outcome: MatchOutcome, connected: boolean): void {
     const report = this.service.award(pid, tally, outcome);
-    if (!report) return;
+    // A match runner's grant is a call to the control plane: deliver the report when it is back (the player may have left by then).
+    if (report instanceof Promise) {
+      void report.then((r) => { if (r) this.deliver(id, pid, r, connected && this.profiles.get(id) === pid); }, () => undefined);
+      return;
+    }
+    if (report) this.deliver(id, pid, report, connected);
+  }
+
+  private deliver(id: number, pid: string, report: Report, connected: boolean): void {
     const p = this.host.match().players.get(id);
     if (p) p.rank = this.service.rank(pid);
     if (connected) {

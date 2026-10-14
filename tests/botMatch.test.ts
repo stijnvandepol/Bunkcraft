@@ -211,13 +211,13 @@ describe('bot settings of rooms', () => {
       const q = rooms.quickPlay('tdm', () => true);
       expect('code' in q).toBe(true);
       const code = (q as { code: string }).code;
-      expect(rooms.get(code)!.server.botSettings).toEqual({ fill: 8, difficulty: 'hard' });
+      expect(rooms.game(code)!.botSettings).toEqual({ fill: 8, difficulty: 'hard' });
       const priv = rooms.create('Mine', undefined, undefined, { gameType: 'ctf', maxPlayers: 6, bots: 9, botDifficulty: 'veteran' })!;
-      expect(rooms.get(priv)!.server.botSettings).toEqual({ count: 5, difficulty: 'veteran' });
+      expect(rooms.game(priv)!.botSettings).toEqual({ count: 5, difficulty: 'veteran' });
       const none = rooms.create('None', undefined, undefined, { gameType: 'ffa' })!;
-      expect(rooms.get(none)!.server.botSettings).toBeNull();
+      expect(rooms.game(none)!.botSettings).toBeNull();
       const mc = rooms.create('Sandbox', 'survival', undefined, { bots: 4 })!;
-      expect(rooms.get(mc)!.server.botSettings).toBeNull();
+      expect(rooms.game(mc)!.botSettings).toBeNull();
       // Saved with the world: a reloaded lobby keeps its bots.
       rooms.shutdown();
       expect(JSON.parse(readFileSync(join(dir, priv, 'world.json'), 'utf8')).bots).toEqual({ count: 5, difficulty: 'veteran' });

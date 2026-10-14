@@ -71,7 +71,7 @@ describe('Rooms lifecycle', () => {
   it('keeps a room in memory while players are in it', () => {
     const { rooms } = make({ idleUnloadMs: 1000 });
     const code = rooms.create('Busy', undefined, undefined)!;
-    const server = rooms.get(code)!.server;
+    const server = rooms.game(code)!;
     const ws = connect(server, 'resident');
     expect(ws.of('welcome')).toHaveLength(1);
     vi.advanceTimersByTime(5 * 60_000);
