@@ -43,6 +43,12 @@ heartbeat (> 30 s, echte tijd), `NetClient` van de browser tegen de echte server
 
 De tdm-, ffa- en heartbeat-bestanden duren elk 25–40 s, maar Vitest draait bestanden parallel.
 
+Een container per lobby (`MATCH_ISOLATION=container`): `tests/matchIsolation.test.ts` (containerspec en de onveilige varianten die
+moeten falen, pool-levenscyclus, stoelboekhouding, WebSocket-bridge incl. latency, adoptieregels, tally-klem),
+`tests/integration/fakeDocker.it.test.ts` (Docker-driver tegen een nep-Engine-API) en `tests/integration/matchContainers.it.test.ts`
+(control plane in het testproces, runners als child processes: warme pool, een hele TDM-match met bots door de proxy met XP
+precies één keer, rejoin en een party via de proxy, stoppen na de grace). Echte Docker: `scripts/qa/container-smoke.sh`.
+
 ## Browser end-to-end (`tests/e2e/`)
 
 ```bash

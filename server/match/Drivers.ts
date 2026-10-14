@@ -58,11 +58,13 @@ export class DockerApi {
     }
   }
 
+  // No API version in the path: Docker 29 refuses versions below 1.44 and older engines refuse newer ones; the unversioned
+  // API is the engine's own, and the few fields used here are the same in every version since 1.41.
   request<T = unknown>(method: 'GET' | 'POST', path: string, body?: unknown, timeoutMs = 15_000): Promise<{ status: number; body: T }> {
     return new Promise((resolve, reject) => {
       const data = body === undefined ? undefined : Buffer.from(JSON.stringify(body));
       const req = httpRequest({
-        ...this.base, method, path: `/v1.41${path}`, timeout: timeoutMs,
+        ...this.base, method, path, timeout: timeoutMs,
         headers: { host: 'docker', ...(data ? { 'content-type': 'application/json', 'content-length': String(data.length) } : {}) },
       }, (res) => {
         const parts: Buffer[] = [];

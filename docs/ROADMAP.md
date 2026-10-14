@@ -26,6 +26,11 @@ volgt de Bunkhosting-huisstijl. Live op https://craft.bunkhosting.nl (Cloudflare
    anticheat-walk) een week meekijken of er nog flaky tests zijn; Linux-baselines voor de e2e-screenshots toevoegen
    (nu alleen `*-darwin`, dus in CI wordt de pixelvergelijking overgeslagen).
 
+3b. **Container per lobby live zetten (S, beslissing Stijn).** `MATCH_ISOLATION=container` is gebouwd en getest (SERVER.md
+   "Een container per lobby", research/SCALING.md), standaard uit. Vóór aanzetten: rootless Docker of `userns-remap` op de VPS
+   (of een eigen create-filterende proxy, SECURITY.md), `MATCH_CPUS`/`MAX_MATCH_CONTAINERS` kiezen bij de VPS-maat, een week
+   `bunkcraft_match_*` meekijken. Daarna: autoupdate niet meer laten wachten op een rustig moment, Survival in containers pas na meting.
+
 **Daarna (product)**
 
 4. **Hide & Seek / Prop Hunt (L).** Bewust nog niet gebouwd: vraagt een hitbox per speler in `rayPlayer` (nu één maat),

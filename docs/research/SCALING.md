@@ -3,6 +3,50 @@
 Vraag van Stijn: auto-scaling van containers, of elke match in een eigen container? Dit is een onderzoek, geen code.
 Basis: `docs/research/SERVER-DEPLOY.md` (metingen), `docs/SERVER.md`, en de code (`server/App.ts`, `Rooms.ts`, `Parties.ts`).
 
+## Update 14 oktober 2026: gebouwd achter een schakelaar
+
+Stijn koos voor optie D: "een control container draait, en per lobby wordt een container gestart met de resources om die match
+soepel te draaien". Gebouwd als `MATCH_ISOLATION=container`; **standaard blijft `inprocess`** tot het op de live server bewezen is.
+Gebruik en instellingen: `docs/SERVER.md` ("Een container per lobby"); dreigingsmodel: `docs/SECURITY.md`.
+
+Wat er is (`server/match/`):
+
+| Onderdeel | Bestand | Wat |
+|---|---|---|
+| Control plane | `ControlPlane.ts`, `RemoteRoom.ts` | De bestaande server; arena-lobby's worden `RemoteRoom`s die uit heartbeats antwoorden. Interne API (ready, heartbeat, award, seen, skin-report, save, stopping) met HMAC-sleutel per runner |
+| Match runner | `MatchRunner.ts` | Zelfde image, `ROLE=match`: precies één lobby (Match, bots, anticheat, hitreg), geen statische bestanden, geen profielopslag |
+| Gateway | `WsProxy.ts` | `/ws/<CODE>` door de control plane naar de runner: frames 1-op-1, backpressure, ping/pong door (lag-compensatie meet de speler), sluitcodes |
+| Pool | `MatchPool.ts` | starting → idle (warm) → assigned → stopping; warme pool, cap, start- en heartbeat-timeouts, backoff, adoptie na herstart |
+| Orkestratie | `Drivers.ts`, `ContainerSpec.ts` | Docker Engine API via `docker-socket-proxy`, één gevalideerde containerspec; of child processes (`MATCH_DRIVER=process`) |
+
+De open vragen uit §1 zijn zo beantwoord:
+
+1. **Routing:** de control plane is de gateway (geen Caddy-`map`, geen subdomeinen): één domein en één tunnel blijven werken.
+2. **Gedeelde state:** profielen, accounts, skins, parties en de roomlijst blijven in de control plane. De runner krijgt per
+   verbinding wie de speler is (profiel, rang, skin) mee; XP gaat als grant terug en wordt alleen daar toegekend (eenmalig per
+   grant-id, geklemd, alleen voor spelers die de control plane zelf in die lobby liet). Rejoin-plekken leven in de runner en
+   overleven daardoor een herstart van de control plane. Party-holds gaan in volgorde naar de runner vóór de verbinding van het
+   partylid.
+3. **Levenscyclus:** de pool start, telt en stopt; lege lobby's stoppen na `MATCH_IDLE_GRACE_SEC`; een runner zonder heartbeat
+   (15 s) is dood en zijn lobby wordt vergeten; zonder control plane stopt een lege runner na 5 minuten zelf.
+4. **Observability:** heartbeats (tick p99, CPU, RSS) en Docker stats per lobby in `/metrics` (`bunkcraft_match_*`) en `/admin`.
+
+**Updates:** een nieuwe control plane adopteert lopende matchcontainers; spelers hebben een korte verbindingsonderbreking en
+komen via rejoin terug op dezelfde plek, in dezelfde match met dezelfde score. Dat is beter dan nu (een deploy beëindigt elke
+match). Lopende matches houden hun oude image; nieuwe starten op het nieuwe.
+
+**Bij volle cap** draait een nieuwe lobby in-process (zoals vandaag) in plaats van "server vol".
+
+**Gemeten** (lokaal, Docker Desktop op een M1 Pro, image uit deze branch; `scripts/qa/container-smoke.sh` en
+`tests/matchIsolation.test.ts`):
+
+SCALING_MEASUREMENTS
+
+**Later:** Survival/Bouwen in containers (chunkgeneratie en grotere state; eerst meten of het nodig is), een eigen proxy die
+de create-body controleert of rootless Docker (SECURITY), rate limits per bezoeker over runners heen (wachtwoordpogingen tellen
+nu per runner), autoupdate zonder op een rustig moment te wachten (matches overleven het nu), en meerdere hosts (dan wordt de
+control plane een echte scheduler).
+
 ## Kort antwoord
 
 **Nee, nu niet.** Eén Node-proces op een kleine VPS heeft bij de gemeten belasting nog >10× marge. Per-match containers lossen
