@@ -310,8 +310,8 @@ export class ControlPlane implements RemoteRooms, RemoteHost {
     return out ? { ident, first: JSON.stringify(out) } : { ident };
   }
 
-  passwordBlocked(room: RemoteRoom, ip: string): boolean {
-    return !!this.o.failLimiter && !this.o.failLimiter.allowed(passwordFailKey(room.code, ip));
+  passwordRemaining(room: RemoteRoom, ip: string): number {
+    return this.o.failLimiter ? this.o.failLimiter.remaining(passwordFailKey(room.code, ip)) : 1_000_000;
   }
 
   /** For a runner question about a player (rejoin): the Ident and the alias to send instead of the token. */

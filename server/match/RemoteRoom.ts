@@ -18,7 +18,8 @@ export interface RemoteHost {
   /** What the players of this room (or only this profile) wear now: profile id → skin hash ('' = none). */
   skinsFor(room: RemoteRoom, profileId?: string): Record<string, string>;
   /** Whether this address used up its wrong passwords for this lobby (the control plane counts them for all runners). */
-  passwordBlocked(room: RemoteRoom, ip: string): boolean;
+  /** Wrong lobby passwords this address may still try in this lobby (the control plane's count). */
+  passwordRemaining(room: RemoteRoom, ip: string): number;
   /** The runner of this room ended or died: forget the room. */
   gone(room: RemoteRoom): void;
 }
@@ -228,7 +229,8 @@ export class RemoteRoom implements RoomServer {
         const upstream = new WebSocket(`${runner.url.replace(/^http/, 'ws')}/ws`, {
           headers: {
             ...authHeaders(runner.id, runner.key), 'x-bc-ip': ip, 'x-bc-ident': encodeIdent(ident),
-            'x-bc-pw': this.host.passwordBlocked(this, ip) ? 'blocked' : 'ok',
+            // "blocked" at zero: a runner adopted from an older image only knows blocked/ok.
+            'x-bc-pw': ((n) => (n <= 0 ? 'blocked' : String(n)))(this.host.passwordRemaining(this, ip)),
           },
           autoPong: false, perMessageDeflate: false, maxPayload: 4 * 1024 * 1024, handshakeTimeout: 5000,
         });

@@ -128,23 +128,34 @@ export class RunnerProfiles implements ProfileBackend, SkinBackend {
  * every connection (`x-bc-pw`), and every wrong password goes back to it (`/internal/password-fail`).
  */
 export class RunnerFailCounter implements FailCounter {
-  private readonly blocked = new Map<string, boolean>();
+  /** Tries left per game and address, and since when this runner knows that number. */
+  private readonly left = new Map<string, { n: number; at: number }>();
 
-  constructor(private readonly report: (ip: string) => void) {}
+  constructor(private readonly report: (ip: string) => void, private readonly now: () => number = Date.now) {}
 
-  /** The control plane's verdict for this game and address, set when the connection opens (before its hello). */
-  verdict(game: string, ip: string, blocked: boolean): void {
+  /**
+   * The control plane's verdict for this game and address, set when the connection opens (before its hello): the
+   * number of tries left ("blocked"/"ok" from older control planes). A verdict can be older than a failure this runner
+   * just reported (connections opened at once, or a report still on its way), so within the limiter's window the
+   * runner keeps the lowest number it knows and counts its own failures down from it.
+   */
+  verdict(game: string, ip: string, header: unknown): void {
     const key = passwordFailKey(game, ip);
-    this.blocked.delete(key);
-    this.blocked.set(key, blocked);
-    while (this.blocked.size > MAX_IDENTS) this.blocked.delete(this.blocked.keys().next().value!);
+    const n = header === 'blocked' ? 0 : header === 'ok' || typeof header !== 'string' ? Infinity : Math.max(0, Math.floor(Number(header)) || 0);
+    const now = this.now();
+    const had = this.left.get(key);
+    this.left.delete(key);
+    this.left.set(key, had && now - had.at < 600_000 ? { n: Math.min(had.n, n), at: had.at } : { n, at: now });
+    while (this.left.size > MAX_IDENTS) this.left.delete(this.left.keys().next().value!);
   }
 
   allowed(key: string): boolean {
-    return this.blocked.get(key) !== true;
+    return (this.left.get(key)?.n ?? Infinity) > 0;
   }
 
   record(key: string): void {
+    const l = this.left.get(key);
+    if (l) l.n = Math.max(0, l.n - 1);
     this.report(key.slice(key.indexOf('|') + 1));
   }
 }
@@ -313,7 +324,7 @@ export async function startMatchRunner(config: Config): Promise<RunningRunner> {
     const ip = typeof req.headers['x-bc-ip'] === 'string' ? req.headers['x-bc-ip'].slice(0, 64) : 'unknown';
     const ident = decodeIdent(req.headers['x-bc-ident']);
     if (ident) profiles.register(ident);
-    if (code) fails.verdict(code, ip, req.headers['x-bc-pw'] === 'blocked');
+    if (code) fails.verdict(code, ip, req.headers['x-bc-pw']);
     const g = game;
     wss.handleUpgrade(req, socket, head, (ws) => g.accept(ws, { ip }));
   });

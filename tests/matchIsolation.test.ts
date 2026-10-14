@@ -12,7 +12,8 @@ import { authHeaders, authRunner, runnerKey, type RunnerStatus } from '../server
 import { MatchPool, type Runner } from '../server/match/MatchPool';
 import { RemoteRoom, type RemoteHost } from '../server/match/RemoteRoom';
 import { ControlPlane, adoptableCode, cleanTally, savedArcadeType } from '../server/match/ControlPlane';
-import { RunnerProfiles } from '../server/match/MatchRunner';
+import { RunnerFailCounter, RunnerProfiles } from '../server/match/MatchRunner';
+import { passwordFailKey } from '../server/Security';
 import { ProfileService } from '../server/progression/ProfileService';
 import { PROTOCOL_VERSION } from '../src/net/protocol';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -360,8 +361,30 @@ describe('audit A2-16: a runner cannot hammer the disk through /internal/save', 
   });
 });
 
+describe('audit A2-18: wrong lobby passwords in a runner cannot outrun the control plane count', () => {
+  it('connections opened before the reports arrive still stop at the limit', () => {
+    const reported: string[] = [];
+    const fails = new RunnerFailCounter((ip) => reported.push(ip));
+    const key = passwordFailKey('ABCDEF', '203.0.113.4');
+    // An attacker opens four connections at once: each gets the control plane's verdict "3 tries left".
+    for (let i = 0; i < 4; i++) fails.verdict('ABCDEF', '203.0.113.4', '3');
+    let tries = 0;
+    for (let i = 0; i < 4; i++) {
+      if (!fails.allowed(key)) break;
+      tries++;
+      fails.record(key);
+      fails.verdict('ABCDEF', '203.0.113.4', '3'); // a verdict computed before the report landed
+    }
+    expect(tries).toBe(3);
+    expect(reported).toHaveLength(3);
+    // Old control planes say ok/blocked.
+    fails.verdict('ZZZZZZ', '203.0.113.4', 'blocked');
+    expect(fails.allowed(passwordFailKey('ZZZZZZ', '203.0.113.4'))).toBe(false);
+  });
+});
+
 describe('remote room seat accounting', () => {
-  const host: RemoteHost = { identify: () => ({ ident: {} }), identOf: () => ({}), passwordBlocked: () => false, skinsFor: () => ({}), gone: () => undefined };
+  const host: RemoteHost = { identify: () => ({ ident: {} }), identOf: () => ({}), passwordRemaining: () => 5, skinsFor: () => ({}), gone: () => undefined };
   const status = (o: Partial<RunnerStatus>): RunnerStatus => ({
     id: 'r', version: 'v', room: 'ABCDEF', players: 0, reservedSeats: 0, botCount: 0, playersInPlay: 0, listed: true, locked: false, maxPlayers: 4,
     info: { name: 'x', gameType: 'tdm', maxPlayers: 4 }, lobby: null, teams: { red: 0, blue: 0 }, holds: [], playerList: [], tickP99Ms: 0, cpu: 0, rssBytes: 0, heapBytes: 0, ...o,
