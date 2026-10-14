@@ -395,6 +395,19 @@ describe('WebSocket bridge', () => {
     ws.close();
   });
 
+  it('audit A2-10: a connection that never says hello is closed, like in-process games do', async () => {
+    const http = createServer();
+    const front = new WebSocketServer({ server: http });
+    let connects = 0;
+    front.on('connection', (client) => bridge(client, { helloTimeoutMs: 100, connect: async () => { connects++; throw new Error('never'); } }));
+    await new Promise<void>((r) => http.listen(0, '127.0.0.1', () => r()));
+    servers.push({ close: () => { front.close(); http.close(); } });
+    const ws = await open(`ws://127.0.0.1:${(http.address() as AddressInfo).port}`);
+    const code = await new Promise<number>((r) => ws.once('close', (c) => r(c)));
+    expect(code).toBe(1008);
+    expect(connects).toBe(0);
+  });
+
   it('propagates close codes both ways', async () => {
     let upClosed: number | null = null;
     const { front } = await setup((u) => u.on('close', (code) => { upClosed = code; }));
