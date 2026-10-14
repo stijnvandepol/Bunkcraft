@@ -53,6 +53,13 @@ export const ADMIN_HTML = `<!doctype html>
     <h2>Blocked addresses</h2>
     <form id="banform" class="row"><input id="banip" placeholder="IP address" size="24" aria-label="IP address"><button type="submit">Block</button></form>
     <ul id="bans" class="players"></ul>
+    <section id="accounts" hidden>
+      <h2>Accounts</h2>
+      <form id="accform" class="row"><input id="accq" placeholder="Search username (empty = newest)" size="32" aria-label="Search accounts"><button type="submit">Search</button></form>
+      <div class="mute" id="accinfo"></div>
+      <div id="accrecovery" class="card" hidden role="status"></div>
+      <div class="wrap"><table id="acctable"><thead><tr><th>Name</th><th>Level</th><th>Created</th><th>Sessions</th><th>State</th><th></th></tr></thead><tbody></tbody></table></div>
+    </section>
     <section id="skins" hidden>
       <h2>Skin reports</h2>
       <div class="mute" id="skininfo"></div>
@@ -70,6 +77,7 @@ export const ADMIN_HTML = `<!doctype html>
   try { token = sessionStorage.getItem(tokenKey) || ''; } catch (e) {}
   var $ = function (id) { return document.getElementById(id); };
   var timer = 0;
+  var accountsTried = false;
   function el(tag, text, cls) { var e = document.createElement(tag); if (text !== undefined) e.textContent = String(text); if (cls) e.className = cls; return e; }
   function api(method, path, body) {
     return fetch('/api/admin' + path, {
@@ -171,6 +179,33 @@ export const ADMIN_HTML = `<!doctype html>
     if (!s.bans.length) ul.append(el('li', 'None', 'mute'));
   }
 
+  function loadAccounts() {
+    return api('GET', '/accounts?q=' + encodeURIComponent($('accq').value.trim())).then(function (r) {
+      $('accounts').hidden = false;
+      $('accinfo').textContent = r.count + ' accounts in total, showing ' + r.accounts.length + '.';
+      var body = $('acctable').tBodies[0]; body.textContent = '';
+      r.accounts.forEach(function (a) {
+        var tr = el('tr'); var last = el('td');
+        var post = function (what, extra) { return api('POST', '/accounts/' + what, { name: a.name }).then(function (j) { if (extra) extra(j); loadAccounts(); }, fail); };
+        last.append(act(a.locked ? 'Unlock' : 'Lock', function () { post(a.locked ? 'unlock' : 'lock'); }), ' ',
+          act('Log out', function () { post('logout'); }), ' ',
+          act('Recovery code', function () {
+            if (!confirm('Issue a new recovery code for ' + a.name + '? The old code and all sessions stop working. Only do this after the owner proved ownership out-of-band.')) return;
+            post('recovery', function (j) {
+              var box = $('accrecovery'); box.textContent = ''; box.hidden = false;
+              var close = act('Hide', function () { box.hidden = true; box.textContent = ''; });
+              box.append(el('div', 'Recovery code for ' + j.name + ' (shown once, hand it to the owner privately):'), el('b', j.recovery, 'hash'), close);
+            });
+          }), ' ',
+          act('Delete', function () { if (confirm('Delete account ' + a.name + ' and its profile for good?')) post('delete'); }, true));
+        tr.append(el('td', a.name), el('td', a.level), el('td', new Date(a.created).toISOString().slice(0, 10), 'mute'), el('td', a.sessions),
+          el('td', a.locked ? 'locked' : 'active', a.locked ? 'err' : 'mute'), last);
+        body.append(tr);
+      });
+      if (!r.accounts.length) { var none = el('tr'); none.append(el('td', 'No accounts', 'mute')); body.append(none); }
+    }, function (e) { if (e.message === 'Accounts are disabled') $('accounts').hidden = true; else fail(e); });
+  }
+
   function refresh() {
     if (!token) return Promise.resolve();
     // The skins list is optional: a server with SKINS=off answers 404 and the section stays hidden.
@@ -179,10 +214,12 @@ export const ADMIN_HTML = `<!doctype html>
       $('err').textContent = ''; $('app').hidden = false; $('logout').hidden = false;
       render(r[0], r[1], r[2]);
       if (r[3]) renderSkins(r[3]); else $('skins').hidden = true;
+      // Accounts load once (a search result must not jump every 5 seconds, and a recovery code must stay on screen).
+      if ($('accounts').hidden && !accountsTried) { accountsTried = true; loadAccounts(); }
     }, function (e) { fail(e); if (e.message === 'Wrong token') signOut(); });
   }
   function signOut() {
-    token = ''; try { sessionStorage.removeItem(tokenKey); } catch (e) {}
+    token = ''; accountsTried = false; $('accounts').hidden = true; $('accrecovery').hidden = true; try { sessionStorage.removeItem(tokenKey); } catch (e) {}
     $('app').hidden = true; $('logout').hidden = true; clearInterval(timer);
   }
   $('login').onsubmit = function (e) {
@@ -192,6 +229,7 @@ export const ADMIN_HTML = `<!doctype html>
     refresh().then(function () { clearInterval(timer); timer = setInterval(refresh, 5000); });
   };
   $('logout').onclick = signOut;
+  $('accform').onsubmit = function (e) { e.preventDefault(); loadAccounts(); };
   $('skinbanform').onsubmit = function (e) {
     e.preventDefault();
     var hash = $('skinbanhash').value.trim().toLowerCase(); if (!hash) return;

@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { isIP } from 'node:net';
 import { normalizeCode, sanitizeChat } from '../src/net/protocol';
 import { isSkinHash } from '../src/skins/SkinFormat';
+import type { AccountService } from './accounts/AccountService';
 import type { GameServer } from './GameServer';
 import { log } from './Log';
 import { type Gauges, metrics } from './Metrics';
@@ -57,6 +58,8 @@ export interface AdminContext {
   bans: IpBans;
   /** Custom skins (null = switched off). */
   skins?: SkinService | null;
+  /** Player accounts (null = switched off). */
+  accounts?: AccountService | null;
   version: string;
   gauges(): Gauges;
   clientIp(req: IncomingMessage): string;
@@ -170,6 +173,29 @@ export async function adminApi(ctx: AdminContext, req: IncomingMessage, res: Ser
       if (parts[1] === 'unban') return json(res, skins.unban(hash) ? 200 : 404, { ok: true });
       if (parts[1] === 'dismiss') return json(res, skins.dismiss(hash) ? 200 : 404, { ok: true });
       if (parts[1] === 'purge') return json(res, skins.purge(hash) ? 200 : 404, { ok: true });
+    }
+  }
+  // Account moderation: list/search, lock, unlock, force logout, delete, a fresh recovery code (shown once). Names, never ids.
+  if (parts[0] === 'accounts') {
+    const accounts = ctx.accounts;
+    if (!accounts) return json(res, 404, { error: 'Accounts are disabled' });
+    if (parts.length === 1 && method === 'GET') {
+      const q = new URL(req.url ?? '/', 'http://x').searchParams.get('q') ?? '';
+      return json(res, 200, { count: accounts.count, accounts: accounts.adminList(q.slice(0, 32)) });
+    }
+    if (parts.length === 2 && method === 'POST') {
+      const name = (await body()).name;
+      const act = parts[1];
+      const r = act === 'lock' ? accounts.adminLock(name, true)
+        : act === 'unlock' ? accounts.adminLock(name, false)
+          : act === 'logout' ? accounts.adminLogout(name)
+            : act === 'delete' ? accounts.adminDelete(name)
+              : act === 'recovery' ? accounts.adminRecoveryCode(name) : null;
+      if (!r) return json(res, 404, { error: 'Not found' });
+      log.warn('admin account', { action: act, ok: r.ok });
+      if (!r.ok) return json(res, r.status, { error: r.error });
+      const { ok: _ok, ...rest } = r;
+      return json(res, 200, { ok: true, ...rest });
     }
   }
   if (parts[0] === 'ip-bans') {

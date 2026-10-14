@@ -205,6 +205,82 @@ describe('account HTTP API', () => {
     expect((await call('POST', '/api/account/register', { name: 'Linked_2', password: PW }, reg.body.token as string)).body.error).toBe('already_account');
   });
 
+  it('409 guest_progress: a guest with XP logging in is asked first; cancel loses nothing, discard logs in to the account profile', async () => {
+    t = await startTestServer();
+    const acc = await call('POST', '/api/account/register', { name: 'Home_Acc', password: PW });
+    const accProfile = (acc.body.profile as { id: string }).id;
+    const guest = await call('POST', '/api/profile', { name: 'guesty' });
+    const gtoken = guest.body.token as string;
+    const gid = (guest.body.profile as { id: string }).id;
+    // A guest without progress logs in without a question.
+    expect((await call('POST', '/api/account/login', { name: 'Home_Acc', password: PW }, gtoken)).status).toBe(200);
+    t.server.profiles!.get(gid)!.xp = 120;
+    // With progress: 409, no session issued, nothing touched.
+    const ask = await call('POST', '/api/account/login', { name: 'Home_Acc', password: PW }, gtoken);
+    expect(ask.status).toBe(409);
+    expect(ask.body).toMatchObject({ error: 'guest_progress', guest: { xp: 120 } });
+    expect(ask.body.token).toBeUndefined();
+    // Cancel = the client simply stays a guest: the guest token still works and the progress is intact.
+    const still = await call('GET', '/api/profile', undefined, gtoken);
+    expect(still.status).toBe(200);
+    expect((still.body.profile as { xp: number }).xp).toBe(120);
+    // Accept = the same call with discardGuest: the account profile, a session token; the account keeps its own progress.
+    const ok = await call('POST', '/api/account/login', { name: 'Home_Acc', password: PW, discardGuest: true }, gtoken);
+    expect(ok.status).toBe(200);
+    expect((ok.body.profile as { id: string }).id).toBe(accProfile);
+    expect((ok.body.profile as { xp: number }).xp).toBe(0);
+    expect((await call('GET', '/api/account/me', undefined, ok.body.token as string)).status).toBe(200);
+    // A wrong password after accepting is still a plain 401.
+    expect((await call('POST', '/api/account/login', { name: 'Home_Acc', password: 'wrong wrong wrong', discardGuest: true }, gtoken)).status).toBe(401);
+  });
+
+  it('admin: list, lock, force logout, recovery code, delete (token protected)', async () => {
+    t = await startTestServer({ ADMIN_TOKEN: 'admin-token-for-tests' });
+    const admin = (method: string, path: string, body?: unknown, token = 'admin-token-for-tests') =>
+      call(method, `/api/admin${path}`, body, token);
+    const reg = await call('POST', '/api/account/register', { name: 'Mod_Target', password: PW });
+    await call('POST', '/api/account/register', { name: 'Other_One', password: PW });
+    const session = reg.body.token as string;
+    expect((await admin('GET', '/accounts', undefined, 'nope')).status).toBe(401);
+
+    const list = await admin('GET', '/accounts?q=mod_t');
+    expect(list.status).toBe(200);
+    expect(list.body.count).toBe(2);
+    expect((list.body.accounts as { name: string }[]).map((a) => a.name)).toEqual(['Mod_Target']);
+    expect(JSON.stringify(list.body)).not.toMatch(/scrypt|recovery|"pass"/);
+
+    // Lock: sessions die at once, no login, the name stays reserved.
+    expect((await admin('POST', '/accounts/lock', { name: 'mod_target' })).status).toBe(200);
+    expect((await call('GET', '/api/account/me', undefined, session)).status).toBe(401);
+    const locked = await call('POST', '/api/account/login', { name: 'Mod_Target', password: PW });
+    expect({ s: locked.status, e: locked.body.error }).toEqual({ s: 403, e: 'account_locked' });
+    expect((await call('POST', '/api/account/register', { name: 'M0d_Target', password: PW })).body.error).toBe('name_taken');
+    expect((await admin('POST', '/accounts/unlock', { name: 'Mod_Target' })).status).toBe(200);
+    const again = await call('POST', '/api/account/login', { name: 'Mod_Target', password: PW });
+    expect(again.status).toBe(200);
+
+    // Force logout.
+    expect((await admin('POST', '/accounts/logout', { name: 'Mod_Target' })).body.ended).toBe(1);
+    expect((await call('GET', '/api/account/me', undefined, again.body.token as string)).status).toBe(401);
+
+    // Lost password AND code: the admin issues a new code (shown once); the old code is dead.
+    const rec = await admin('POST', '/accounts/recovery', { name: 'Mod_Target' });
+    expect(rec.status).toBe(200);
+    const code = rec.body.recovery as string;
+    expect(code).toMatch(/^[0-9A-Z]{5}(-[0-9A-Z]{5}){4}$/);
+    expect((await call('POST', '/api/account/recover', { name: 'Mod_Target', code: reg.body.recovery, password: 'brand new pass' })).status).toBe(401);
+    expect((await call('POST', '/api/account/recover', { name: 'Mod_Target', code, password: 'brand new pass' })).status).toBe(200);
+
+    // Delete: account and profile are gone.
+    const profileId = (reg.body.profile as { id: string }).id;
+    expect(t.server.profiles!.get(profileId)).not.toBeNull();
+    expect((await admin('POST', '/accounts/delete', { name: 'Mod_Target' })).status).toBe(200);
+    expect(t.server.profiles!.get(profileId)).toBeNull();
+    expect((await call('POST', '/api/account/login', { name: 'Mod_Target', password: 'brand new pass' })).status).toBe(401);
+    expect((await admin('POST', '/accounts/delete', { name: 'Mod_Target' })).status).toBe(404);
+    expect((await admin('POST', '/accounts/explode', { name: 'Other_One' })).status).toBe(404);
+  });
+
   it('guards origin, content type and size, and rejects weak passwords', async () => {
     t = await startTestServer();
     const body = { name: 'Origin_1', password: PW };

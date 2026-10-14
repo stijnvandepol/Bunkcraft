@@ -7,6 +7,8 @@
 //   players            print "<players in play> <players online>" (auto-update waits for the first to be 0)
 //   announce <text>    system chat line in every game (exit 3: admin disabled, no ADMIN_TOKEN)
 //   save               write every loaded world to disk now (exit 3: admin disabled)
+//   account <lock|unlock|logout|delete|recovery|list> [name]
+//                      account moderation through the admin API (exit 3: admin disabled; 4: no such account)
 //   smoke              post-deploy smoke test: /health, the game page and its script, the JSON API, and with
 //                      ADMIN_TOKEN a throw-away game that is created, looked up and deleted again
 const base = `http://127.0.0.1:${process.env.PORT || 3000}`;
@@ -39,6 +41,27 @@ try {
     const r = cmd === 'announce' ? await admin('announce', { text: args.join(' ') }) : await admin('save');
     console.log(r.text);
     process.exit(r.status === 200 ? 0 : 1);
+  }
+  if (cmd === 'account') {
+    if (!token) { console.log('admin disabled (no ADMIN_TOKEN)'); process.exit(3); }
+    const [action = '', name = ''] = args;
+    if (action === 'list') {
+      const r = await get(`/api/admin/accounts?q=${encodeURIComponent(name)}`, { headers: { authorization: `Bearer ${token}` } });
+      if (r.status !== 200) { console.log(r.text); process.exit(1); }
+      const j = JSON.parse(r.text);
+      console.log(`${j.count} accounts`);
+      for (const a of j.accounts) console.log(`${a.name.padEnd(16)} level ${String(a.level).padEnd(3)} ${new Date(a.created).toISOString().slice(0, 10)} sessions ${a.sessions}${a.locked ? ' LOCKED' : ''}`);
+      process.exit(0);
+    }
+    if (!['lock', 'unlock', 'logout', 'delete', 'recovery'].includes(action) || !name) { console.log('usage: account <lock|unlock|logout|delete|recovery|list> [name]'); process.exit(2); }
+    const r = await admin(`accounts/${action}`, { name });
+    if (r.status === 404) { console.log(`no such account: ${name}`); process.exit(4); }
+    if (r.status !== 200) { console.log(r.text); process.exit(1); }
+    const j = JSON.parse(r.text);
+    console.log(action === 'recovery'
+      ? `Recovery code for ${j.name} (shown once, hand it over privately): ${j.recovery}`
+      : `${action} ${name}: ok${j.ended !== undefined ? ` (${j.ended} sessions ended)` : ''}`);
+    process.exit(0);
   }
   if (cmd === 'smoke') {
     const h = await get('/health');

@@ -12,6 +12,9 @@
 #                          (scripts/autoupdate.sh; the timer runs this every AUTOUPDATE_INTERVAL)
 #   bunkcraft autoupdate on|off   turn the auto-update timer on or off (AUTOUPDATE in .env)
 #   bunkcraft autoupdate status   setting, timer, whether an update is waiting, the deploy log
+#   bunkcraft account <lock|unlock|logout|delete|recovery|list> [name]
+#                          player account moderation through the admin API (needs ADMIN_TOKEN; 'delete' asks first,
+#                          'recovery' prints a new recovery code once: only after the owner proved who they are)
 #   bunkcraft deploy       the auto-update flow now, also when AUTOUPDATE=off (push deploys over SSH)
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")/.."
@@ -126,6 +129,20 @@ case "${1:-status}" in
       run) shift || true; exec ./scripts/autoupdate.sh "$@" ;;
       *) exec ./scripts/autoupdate.sh "$@" ;;
     esac
+    ;;
+  account)
+    shift
+    action="${1:-}"; name="${2:-}"
+    case "$action" in
+      list) ;;
+      lock|unlock|logout|delete|recovery) [ -n "$name" ] || { echo "usage: bunkcraft account $action <name>" >&2; exit 2; } ;;
+      *) echo "usage: bunkcraft account <lock|unlock|logout|delete|recovery|list> [name]" >&2; exit 2 ;;
+    esac
+    if [ "$action" = delete ]; then
+      read -r -p "Delete account '$name' and its profile for good? [y/N] " yn
+      case "$yn" in y|Y|yes) ;; *) echo "cancelled"; exit 1 ;; esac
+    fi
+    server_check account "$action" ${name:+"$name"}
     ;;
   # Push deploys (GitHub Actions over SSH, docs/SERVER.md) run exactly this, through a forced command.
   deploy) shift; exec ./scripts/autoupdate.sh --force --wait-lock "$@" ;;
