@@ -310,6 +310,8 @@ interface SeatHold {
  */
 export class GameServer {
   private readonly sessions = new Map<number, Session>();
+  /** Password checks running now, per game and address (see login). */
+  private readonly passwordChecks = new Set<string>();
   private nextId = 1;
   private world: WorldData;
   private readonly file: string;
@@ -949,14 +951,16 @@ export class GameServer {
     }
     const password = typeof hello.password === 'string' ? hello.password : '';
     if (!password) return kick('This game needs a password.', 'password');
+    // One check at a time per address: parallel hellos would all pass `allowed` before the first failure is recorded.
+    if (this.passwordChecks.has(limitKey)) return kick('Too many wrong passwords. Try again in a few minutes.', 'password');
+    this.passwordChecks.add(limitKey);
     return verifyPassword(password, hash).then((ok) => {
+      this.passwordChecks.delete(limitKey);
+      if (!ok) limiter?.record(limitKey);
       if (this.closed || ws.readyState !== ws.OPEN) return null;
-      if (!ok) {
-        limiter?.record(limitKey);
-        return kick('Wrong password.', 'password');
-      }
+      if (!ok) return kick('Wrong password.', 'password');
       return proceed();
-    });
+    }, (e: unknown) => { this.passwordChecks.delete(limitKey); throw e; });
   }
 
   private finishLogin(

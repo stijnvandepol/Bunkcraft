@@ -9,6 +9,7 @@ import { AccountService } from '../../server/accounts/AccountService';
 import { weakSecrets } from '../../server/Config';
 import { OPS_CSP, OPS_HTML } from '../../server/OpsPage';
 import { GameServer } from '../../server/GameServer';
+import { RateLimiter, hashPassword } from '../../server/Security';
 import { PROTOCOL_VERSION, sanitizeChat } from '../../src/net/protocol';
 import { addressKey, blockKey } from '../../server/HttpSecurity';
 import { cleanup, startTestServer, type TestServer } from '../helpers/serverHarness';
@@ -147,6 +148,31 @@ describe('A2-03: ADMIN_TOKEN guesses over the WebSocket hello are limited', () =
       admin.say({ t: 'hello', v: PROTOCOL_VERSION, name: 'Real_admin', owner: ADMIN });
       const ops = Object.fromEntries(server.playerList().map((p) => [p.name, p.op]));
       expect(ops).toEqual({ Guess_ok: false, Real_admin: true });
+    } finally {
+      server.shutdown();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('A2-13: parallel hellos cannot run past the wrong-password limit', () => {
+  it('ten simultaneous guesses from one address get at most the limit of password checks', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'bunk-pw-'));
+    const limiter = new RateLimiter(5, 600_000);
+    const server = new GameServer({
+      dataDir: dir, worldName: 'W', seed: '1', gameMode: 'creative', motd: '', maxPlayers: 64, quiet: true, label: 'PWGAME',
+      passwordHash: await hashPassword('the real password'), failLimiter: limiter,
+    });
+    try {
+      const sockets = Array.from({ length: 10 }, (_, i) => {
+        const ws = new FakeSocket();
+        server.accept(ws as unknown as WsType, { ip: '203.0.113.77' });
+        ws.say({ t: 'hello', v: PROTOCOL_VERSION, name: `Guesser_${i}`, password: `guess number ${i}` });
+        return ws;
+      });
+      await new Promise((r) => setTimeout(r, 1500));
+      const checked = sockets.filter((s) => s.sent.some((m) => m.t === 'kick' && m.reason === 'Wrong password.')).length;
+      expect(checked).toBeLessThanOrEqual(5);
     } finally {
       server.shutdown();
       rmSync(dir, { recursive: true, force: true });
