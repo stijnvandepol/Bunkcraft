@@ -79,14 +79,19 @@ test('accounts: a guest makes an account, another browser logs in to the same pr
   consoleErrors.splice(0).filter((e) => !/status of 4(00|01|29)/.test(e)).forEach((e) => { throw new Error(e); });
 });
 
-test('accounts: a guest with progress is asked before logging in; cancel stays a guest, accept logs in to the account profile', async ({ page, browser, consoleErrors }) => {
+test('accounts: a guest with progress is asked before logging in; cancel stays a guest, accept logs in to the account profile', async ({ page, browser, consoleErrors }, testInfo) => {
+  // Unique per attempt (retry, --repeat-each): the e2e server keeps its accounts for the whole run.
+  const tag = `${testInfo.repeatEachIndex}${testInfo.retry}${Date.now().toString(36).slice(-4)}`;
+  const acct = `ask_user${tag}`;
+  const shown = acct;
   // The account (made through the API, as another device would).
   const other = await browser.newContext();
   const p0 = await other.newPage();
   await openTitle(p0);
-  const made = await p0.evaluate(async (pw) => (await fetch('/api/account/register', {
-    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Ask_User', password: pw }),
-  })).json(), PW);
+  const made = await p0.evaluate(async ({ pw, acct }) => (await fetch('/api/account/register', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: acct, password: pw }),
+  })).json(), { pw: PW, acct });
+  expect(made.error).toBeUndefined();
   const accountProfile = (made.profile as { id: string }).id;
   await other.close();
 
@@ -110,7 +115,8 @@ test('accounts: a guest with progress is asked before logging in; cancel stays a
   const login = async () => {
     await page.locator('.home-account').getByRole('button', { name: 'Log in' }).click();
     const inputs = page.locator('input.mc-input:visible');
-    await inputs.nth(0).fill('ask_user');
+    await expect(inputs.nth(0)).toBeFocused(); // the dialog focuses its first field once; typing before that would lose to it
+    await inputs.nth(0).fill(acct);
     await inputs.nth(1).fill(PW);
     await page.locator('.screen-footer').getByRole('button', { name: 'Log in' }).click();
     await expect(page.getByText('Discard guest progress?')).toBeVisible();
@@ -128,7 +134,7 @@ test('accounts: a guest with progress is asked before logging in; cancel stays a
   // Accept: logged in with the account profile.
   await login();
   await page.getByRole('button', { name: 'Discard and log in' }).click();
-  await expect(page.locator('.home-account')).toContainText('Account: Ask_User');
+  await expect(page.locator('.home-account')).toContainText(`Account: ${shown}`);
   expect(sawDiscard).toBe(1);
   expect(await sessionToken(page)).toMatch(/^s1\./);
   expect((await serverProfile(page)).id).toBe(accountProfile);
