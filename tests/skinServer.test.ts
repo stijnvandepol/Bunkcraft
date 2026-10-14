@@ -299,6 +299,20 @@ describe('SkinService storage', () => {
     expect(reopened.storedBytes).toBe(skins.storedBytes);
   });
 
+  it('audit A2-07: once the reporter list is full, one reporter cannot inflate the count (or rewrite the file) by repeating', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'bunk-skinrep-'));
+    dirs.push(dir);
+    const profiles = new ProfileService({ dataDir: dir, maxProfiles: 10, secret: 'skin-store-test-secret-3' });
+    services.push(profiles);
+    const p = profiles.create('alice')!;
+    const skins = new SkinService({ dataDir: dir, profiles, maxBytes: 1_000_000, uploadsPerHour: 50 });
+    const up = skins.upload(p.profile.id, skinFile(4));
+    if (!up.ok) throw new Error('upload failed');
+    for (let i = 0; i < 100; i++) skins.report(up.hash, `reporter-${i}`, 'alice');
+    for (let i = 0; i < 50; i++) expect(skins.report(up.hash, 'repeat-offender', 'alice')).toBe(false);
+    expect(skins.listReports()[0].count).toBe(100);
+  });
+
   it('keeps bans and reports across restarts', () => {
     const dir = mkdtempSync(join(tmpdir(), 'bunk-skinmod-'));
     dirs.push(dir);
