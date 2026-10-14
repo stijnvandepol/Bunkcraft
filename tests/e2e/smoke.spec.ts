@@ -39,5 +39,7 @@ test('the menu screens open and match their baselines', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Create New World' }).first()).toBeVisible();
   await expect(page).toHaveScreenshot('select-world.png', { mask: [page.locator('.world-meta')], maxDiffPixelRatio: 0.04 });
   await page.getByRole('button', { name: 'Create New World' }).first().click();
-  await expect(page).toHaveScreenshot('create-world.png', { maxDiffPixelRatio: 0.04 });
+  // On a loaded CI runner the screen's font can take longer than the default 15 s screenshot wait.
+  await page.evaluate(() => document.fonts.ready.then(() => undefined));
+  await expect(page).toHaveScreenshot('create-world.png', { maxDiffPixelRatio: 0.04, timeout: 30_000 });
 });

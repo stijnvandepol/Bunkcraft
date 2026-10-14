@@ -10,16 +10,17 @@ VERSION="$(node -p "require('@playwright/test/package.json').version")"
 IMAGE="mcr.microsoft.com/playwright:v${VERSION}-noble"
 SPECS="${SPECS:-smoke.spec.ts realms.spec.ts}"
 COMPARE="${COMPARE:-0}"
-[ "$COMPARE" = 1 ] || rm -rf tests/e2e/baselines/chromium-linux tests/e2e/baselines/webkit-linux
 docker run --rm --platform linux/amd64 --ipc=host -e SPECS="$SPECS" -e COMPARE="$COMPARE" -v "$PWD:/src:ro" -v "$PWD/tests/e2e/baselines:/out" "$IMAGE" bash -c '
   set -euo pipefail
   mkdir /work
-  cd /src && tar --exclude=./node_modules --exclude=./.git --exclude=./dist --exclude=./data* --exclude=./test-results -cf - . | tar -xf - -C /work
+  cd /src && tar --exclude=./node_modules --exclude=./.git --exclude=./dist --exclude=./dist-server --exclude=./dist-static --exclude=./.claude --exclude=./data* --exclude=./test-results -cf - . | tar -xf - -C /work
   cd /work && npm ci --no-audit --no-fund >/dev/null
   if [ "$COMPARE" = 1 ]; then
     CI=1 npx playwright test -c tests/e2e/playwright.config.ts $SPECS --retries=0
   else
     npx playwright test -c tests/e2e/playwright.config.ts $SPECS --update-snapshots=all --retries=0
+    # Replace the committed baselines only after a successful run.
+    rm -rf /out/chromium-linux /out/webkit-linux
     cp -r tests/e2e/baselines/chromium-linux tests/e2e/baselines/webkit-linux /out/
   fi
 '
