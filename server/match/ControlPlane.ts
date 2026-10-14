@@ -1,8 +1,9 @@
 import { createHash, createHmac } from 'node:crypto';
-import { existsSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { type Server, createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { join } from 'node:path';
+import { join, resolve, sep } from 'node:path';
+import { normalizeCode } from '../../src/net/protocol';
 import { type GameType, gameTypeDef, parseGameType } from '../../src/modes/GameTypes';
 import { type MatchOutcome, type MatchTally, emptyTally, emptyWeaponTally } from '../../src/modes/progression/XpRules';
 import { parseGameMode } from '../GameServer';
@@ -16,7 +17,7 @@ import { safeEqual } from '../Security';
 import type { SkinService } from '../skins/SkinService';
 import { MATCH_PORT } from './ContainerSpec';
 import { DockerApi, DockerDriver, type MatchDriver, ProcessDriver } from './Drivers';
-import { type Ident, type RunnerStatus, authHeaders, authRunner, callJson, readJson, runnerKey, sendJson } from './Internal';
+import { type Ident, RUNNER_ID, type RunnerStatus, authHeaders, authRunner, callJson, readJson, runnerKey, sendJson } from './Internal';
 import { MatchPool, type Runner } from './MatchPool';
 import { type RemoteHost, RemoteRoom } from './RemoteRoom';
 
@@ -70,8 +71,19 @@ export class ControlPlane implements RemoteRooms, RemoteHost {
   fallbacks = 0;
   internalPort = 0;
 
+  /** Runner id → the lobby this control plane assigned to it (DATA_DIR/match-runners.json; read back after a restart). */
+  private assignments: Record<string, string> = Object.create(null) as Record<string, string>;
+  private readonly assignmentsFile: string;
+
   constructor(private readonly o: ControlPlaneOptions) {
     this.secret = loadSecret(join(o.dataDir, 'match-secret.key'), o.secret);
+    this.assignmentsFile = join(o.dataDir, 'match-runners.json');
+    try {
+      const raw = JSON.parse(readFileSync(this.assignmentsFile, 'utf8')) as unknown;
+      if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+        for (const [id, code] of Object.entries(raw)) if (RUNNER_ID.test(id) && typeof code === 'string' && normalizeCode(code) === code) this.assignments[id] = code;
+      }
+    } catch { /* first start, or no records */ }
     this.pool = new MatchPool({
       driver: o.driver, secret: this.secret, warm: o.warm, max: o.max,
       startTimeoutMs: o.startTimeoutMs, beatTimeoutMs: o.beatTimeoutMs,
@@ -115,6 +127,7 @@ export class ControlPlane implements RemoteRooms, RemoteHost {
     } catch (e) {
       log.warn('could not list match containers', { error: String(e) });
     }
+    const taken = new Set<string>();
     for (const h of found) {
       const url = this.o.driver.urlFor(h, MATCH_PORT);
       const key = runnerKey(this.secret, h.id);
@@ -124,19 +137,27 @@ export class ControlPlane implements RemoteRooms, RemoteHost {
       } catch (e) {
         log.warn('match container did not answer', { runner: h.id, error: String(e) });
       }
-      const code = status?.room ?? null;
-      if (!status || !code || !existsSync(join(this.o.roomsDir, code, 'world.json'))) {
-        // A warm runner of the previous control plane (maybe an older image), or one we cannot talk to.
+      // Only the lobby this control plane itself gave the runner (recorded at assign time), never what the runner says.
+      const code = status ? adoptableCode(this.assignments[h.id], status.room, this.o.roomsDir, taken, (c) => rooms.isLoaded(c)) : null;
+      if (!status || !code) {
+        // A warm runner of the previous control plane (maybe an older image), one we cannot talk to, or one whose story
+        // does not match our records.
+        if (status?.room && status.room !== this.assignments[h.id]) log.warn('match container claims a lobby it was not given', { runner: h.id });
+        delete this.assignments[h.id];
         await this.o.driver.stop(h).catch(() => undefined);
         continue;
       }
-      const runner = this.pool.adopt(h, url, status);
+      taken.add(code);
+      const runner = this.pool.adopt(h, url, { ...status, room: code });
       const dir = join(this.o.roomsDir, code);
       const room = RemoteRoom.adopted(code, this, runner, () => this.rooms?.metaChanged(code));
       room.apply(status);
       this.lobbies.set(code, { room, dir });
       rooms.adopt(code, room);
     }
+    // Records of runners that are gone.
+    for (const id of Object.keys(this.assignments)) if (!this.pool.runners.has(id)) delete this.assignments[id];
+    this.saveAssignments();
     this.pool.ensureWarm();
   }
 
@@ -182,7 +203,18 @@ export class ControlPlane implements RemoteRooms, RemoteHost {
     return room;
   }
 
+  private saveAssignments(): void {
+    try {
+      writeFileSync(`${this.assignmentsFile}.tmp`, JSON.stringify(this.assignments));
+      renameSync(`${this.assignmentsFile}.tmp`, this.assignmentsFile);
+    } catch (e) {
+      log.warn('match runner records not saved', { error: String(e) });
+    }
+  }
+
   private async assign(r: Runner, code: string, dir: string, payload: { spec?: ArenaSpec; world?: string }): Promise<RunnerStatus> {
+    this.assignments[r.id] = code;
+    this.saveAssignments();
     const res = await callJson<{ status: RunnerStatus; world: string }>(`${r.url}/internal/assign`, authHeaders(r.id, r.key), {
       code, ...payload,
       maxPlayers: this.o.roomMaxPlayers, motd: this.o.motd, binary: this.o.binary, rejoinGraceSec: this.o.rejoinGraceSec,
@@ -250,7 +282,11 @@ export class ControlPlane implements RemoteRooms, RemoteHost {
     if (l?.room === room) this.lobbies.delete(room.code);
     room.ended();
     this.rooms?.forget(room.code, room);
-    if (room.runner) void this.pool.release(room.runner.id, 'lobby over');
+    if (room.runner) {
+      delete this.assignments[room.runner.id];
+      this.saveAssignments();
+      void this.pool.release(room.runner.id, 'lobby over');
+    }
   }
 
   private lobbyOf(runnerId: string): { room: RemoteRoom; dir: string } | null {
@@ -419,6 +455,20 @@ export class ControlPlane implements RemoteRooms, RemoteHost {
 
 function hashHex(s: string): string {
   return createHash('sha256').update(s).digest('hex');
+}
+
+/**
+ * The lobby a runner found at start-up may be adopted for: exactly the code this control plane assigned to it, in
+ * canonical form, inside the rooms directory, with a world on disk, and not already taken by another runner or a
+ * loaded game. Null otherwise (the runner is stopped).
+ */
+export function adoptableCode(assigned: string | undefined, reported: string | null, roomsDir: string, taken: Set<string>, loaded: (code: string) => boolean): string | null {
+  if (!assigned || reported !== assigned || normalizeCode(assigned) !== assigned) return null;
+  if (taken.has(assigned) || loaded(assigned)) return null;
+  const root = resolve(roomsDir);
+  const dir = resolve(root, assigned);
+  if (!dir.startsWith(root + sep) || !existsSync(join(dir, 'world.json'))) return null;
+  return assigned;
 }
 
 const clampCount = (v: unknown): number => Math.max(0, Math.min(TALLY_CAP, Math.floor(Number(v) || 0)));

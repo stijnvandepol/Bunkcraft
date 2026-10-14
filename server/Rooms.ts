@@ -322,9 +322,13 @@ export class Rooms {
    * match went on): it is loaded again without starting anything.
    */
   adopt(code: string, server: RoomServer): void {
-    this.loaded.get(code)?.server.shutdown();
+    if (this.loaded.has(code)) throw new Error(`room ${code} is already loaded`);
     this.loaded.set(code, { server, lastActive: Date.now() });
     log.info('room adopted from a match container', { code });
+  }
+
+  isLoaded(code: string): boolean {
+    return this.loaded.has(code);
   }
 
   /** A game's runner ended or died by itself: drop it (the next join loads it again). */
