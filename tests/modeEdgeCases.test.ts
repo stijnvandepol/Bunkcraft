@@ -132,3 +132,74 @@ describe('hardpoint edge cases', () => {
     expect(gap.zones.every((z) => z.owner === '')).toBe(true);
   });
 });
+
+/**
+ * A dropped connection keeps the seat, the team and the score (Match.parked). The round modes used to go straight back
+ * to the warm-up when a side had nobody connected, which wiped every round won so far before the player could come back.
+ */
+describe('round modes keep the match for a player whose connection dropped', () => {
+  const ROUND = gameTypeDef('elimination').rounds!;
+  const keep = (token: string, graceSec = 120) => ({ proof: { token }, graceSec, limit: 6 });
+
+  it('elimination 1v1: a drop holds the next round until the player is back, the round wins stay', () => {
+    const s = started('elimination', 2, 4);
+    const red = [...s.match.players.values()].find((p) => p.team === 'red')!;
+    const blue = [...s.match.players.values()].find((p) => p.team === 'blue')!;
+    s.advance(ROUND.intermissionSec + ROUND.countdownSec + 0.2);
+    shootDead(s, red.id, blue.id);
+    expect(s.match.scores.red).toBe(1);
+    s.advance(ROUND.postSec + 0.2);
+    s.match.leave(blue.id, keep('b'));
+    s.advance(30);
+    expect(s.match.phase).toBe('intermission');
+    expect(s.match.scores.red).toBe(1);
+    const back = s.match.join(blue.id, blue.name, false, { restore: s.match.parked.get(blue.id) });
+    s.match.ready(blue.id);
+    expect(back.team).toBe('blue');
+    s.advance(ROUND.intermissionSec + ROUND.countdownSec + 0.2);
+    expect(s.match.phase).toBe('live');
+    expect(s.match.scores.red).toBe(1);
+  });
+
+  it('elimination: a drop in the middle of a round loses that round, not the match', () => {
+    const s = started('elimination', 2, 4);
+    const blue = [...s.match.players.values()].find((p) => p.team === 'blue')!;
+    s.advance(ROUND.intermissionSec + ROUND.countdownSec + 0.2);
+    s.match.leave(blue.id, keep('b'));
+    s.advance(0.1);
+    expect(s.match.phase).toBe('roundend');
+    expect(s.match.scores.red).toBe(1);
+    s.advance(ROUND.postSec + 10);
+    expect(s.match.phase).toBe('intermission');
+    expect(s.match.scores.red).toBe(1);
+  });
+
+  it('elimination: when the kept seat runs out, the match goes back to the warm-up', () => {
+    const s = started('elimination', 2, 4);
+    const blue = [...s.match.players.values()].find((p) => p.team === 'blue')!;
+    s.match.leave(blue.id, keep('b', 20));
+    s.advance(10);
+    expect(s.match.phase).toBe('intermission');
+    s.advance(11);
+    expect(s.match.parked.size).toBe(0);
+    expect(s.match.phase).toBe('warmup');
+  });
+
+  it('a player who leaves on purpose still sends a one-sided match back to the warm-up', () => {
+    const s = started('elimination', 2, 4);
+    const blue = [...s.match.players.values()].find((p) => p.team === 'blue')!;
+    s.match.leave(blue.id);
+    expect(s.match.phase).toBe('warmup');
+  });
+
+  it('infected with two players: a drop does not end the match, the seat holds the survivor', () => {
+    const s = live('infected', 2);
+    s.match.leave(2, keep('b'));
+    s.advance(0.1);
+    expect(s.match.phase).toBe('live');
+    const back = s.match.join(2, 'p2', false, { restore: s.match.parked.get(2) });
+    s.match.ready(2);
+    expect(back.team).toBeTruthy();
+    expect(s.match.phase).toBe('live');
+  });
+});

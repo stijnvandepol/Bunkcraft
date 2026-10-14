@@ -160,9 +160,19 @@ export class InfectedLogic extends BaseLogic {
   onLeave(m: Match, p: MatchPlayer): void {
     if (m.phase === 'warmup' || m.phase === 'ended') return;
     if (p.id === this.lastId) this.lastId = 0;
-    if (m.players.size < 2) m.returnToWarmup();
+    // A dropped player's seat (Match.parked) still counts: they may come back to the match.
+    if (m.players.size + m.parked.size < 2) m.returnToWarmup();
     else this.checkLast(m);
     m.markModeDirty();
+  }
+
+  onSeatGivenUp(m: Match): void {
+    if (m.phase !== 'warmup' && m.phase !== 'ended' && m.players.size + m.parked.size < 2) m.returnToWarmup();
+  }
+
+  /** Survivors including the kept seats of survivors whose connection dropped (they are not caught while away). */
+  private survivorsLeft(m: Match): number {
+    return m.seatedTeamSize(SURVIVORS);
   }
 
   /** One survivor left: announce them, hand out the bonus. */
@@ -180,11 +190,11 @@ export class InfectedLogic extends BaseLogic {
 
   checkEnd(m: Match): MatchResult | null {
     if (!this.outbroken) return null;
-    return m.teamSize(SURVIVORS) === 0 ? { winnerTeam: INFECTED, winnerId: 0 } : null;
+    return this.survivorsLeft(m) === 0 ? { winnerTeam: INFECTED, winnerId: 0 } : null;
   }
 
   winner(m: Match): MatchResult {
-    return { winnerTeam: m.teamSize(SURVIVORS) > 0 ? SURVIVORS : INFECTED, winnerId: 0 };
+    return { winnerTeam: this.survivorsLeft(m) > 0 ? SURVIVORS : INFECTED, winnerId: 0 };
   }
 
   scoreText(m: Match): string {

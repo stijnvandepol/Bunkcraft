@@ -14,6 +14,8 @@ import { BaseLogic, type MatchResult, teamWinner } from './ModeLogic';
  */
 export class RoundsLogic extends BaseLogic {
   protected round = 0;
+  /** The next round waits for a side whose players all dropped (their seats are kept): see `sideMissing`. */
+  private waiting = false;
 
   protected get cfg() {
     return { postSec: 4, intermissionSec: 5, countdownSec: 3 };
@@ -26,6 +28,24 @@ export class RoundsLogic extends BaseLogic {
 
   onReset(): void {
     this.round = 0;
+    this.waiting = false;
+  }
+
+  /** A side has nobody connected (only kept seats, or nobody at all): no round can start. */
+  protected sideMissing(m: Match): boolean {
+    return m.teamSize('red') === 0 || m.teamSize('blue') === 0;
+  }
+
+  /** A side has nobody, not even a kept seat: nothing to play for. */
+  private sideGone(m: Match): boolean {
+    return m.seatedTeamSize('red') === 0 || m.seatedTeamSize('blue') === 0;
+  }
+
+  /** Holds the intermission (no timer) until the missing side is back or its kept seats run out. */
+  private hold(m: Match): void {
+    if (!this.waiting) m.say('Waiting for players to reconnect');
+    this.waiting = true;
+    m.setPhase('intermission', 0);
   }
 
   canStart(m: Match): boolean {
@@ -35,7 +55,8 @@ export class RoundsLogic extends BaseLogic {
   protected nextRound(m: Match): void {
     this.round++;
     m.respawnAll(m.now());
-    m.setPhase('intermission', m.def.rounds?.intermissionSec ?? this.cfg.intermissionSec);
+    if (this.sideMissing(m)) this.hold(m);
+    else m.setPhase('intermission', m.def.rounds?.intermissionSec ?? this.cfg.intermissionSec);
     m.event('round-start', '', 0, `Round ${this.round}`);
     m.broadcastRoster();
   }
@@ -77,9 +98,15 @@ export class RoundsLogic extends BaseLogic {
 
   onLeave(m: Match, _p: MatchPlayer, now: number): void {
     if (m.phase === 'warmup' || m.phase === 'ended') return;
-    // One side is gone: nothing to play for, wait for players again.
-    if (m.teamSize('red') === 0 || m.teamSize('blue') === 0) m.returnToWarmup();
+    // One side is gone for good: nothing to play for, wait for players again. A side whose players only dropped keeps
+    // the match (their seats are kept): a round in progress goes on without them, the next one waits for them.
+    if (this.sideGone(m)) m.returnToWarmup();
     else if (m.phase === 'live') this.checkWipe(m, now);
+    else if ((m.phase === 'intermission' || m.phase === 'countdown') && this.sideMissing(m)) this.hold(m);
+  }
+
+  onSeatGivenUp(m: Match): void {
+    if (m.phase !== 'warmup' && m.phase !== 'ended' && this.sideGone(m)) m.returnToWarmup();
   }
 
   onJoin(m: Match, p: MatchPlayer): void {
@@ -87,6 +114,11 @@ export class RoundsLogic extends BaseLogic {
     if (m.phase === 'live' || m.phase === 'roundend') {
       p.alive = false;
       p.respawnAt = Infinity;
+    }
+    // The side the next round waited for is back.
+    if (this.waiting && m.phase === 'intermission' && !this.sideMissing(m)) {
+      this.waiting = false;
+      m.setPhase('intermission', m.def.rounds?.intermissionSec ?? this.cfg.intermissionSec);
     }
   }
 

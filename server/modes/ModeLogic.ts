@@ -50,7 +50,10 @@ export interface ModeLogic {
   /** A player got a fresh life (spawn): the place for per-life state. */
   onSpawn?(m: Match, p: MatchPlayer, now: number): void;
   onJoin?(m: Match, p: MatchPlayer, now: number): void;
+  /** `p` left (or dropped: then a seat is kept for them in `Match.parked`, and they may come back to it). */
   onLeave?(m: Match, p: MatchPlayer, now: number): void;
+  /** A kept seat ran out (or was given up for room) while players are still in the match. */
+  onSeatGivenUp?(m: Match, now: number): void;
   /** An objective happened that the mode reports itself (zone captured, flag captured): points, banners. */
   onObjective?(m: Match, p: MatchPlayer | null, kind: string, now: number): void;
   /**

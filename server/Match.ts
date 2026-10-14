@@ -455,6 +455,7 @@ export class Match {
     if (!this.parked.delete(id)) return;
     this.host.onParkedExpired?.(id);
     if (this.teams && !this.logic.keepTeams && this.players.size > 0) this.planBalance();
+    if (this.players.size > 0) this.logic.onSeatGivenUp?.(this, this.host.now());
   }
 
   /** The first kept seat that `test` accepts. */
