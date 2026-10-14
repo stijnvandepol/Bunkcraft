@@ -187,6 +187,8 @@ export interface MatchPlayer {
   slot: 0 | 1 | 2;
   /** Realms rank for the roster (prestige * 100 + level, see progression/Levels.ts); 0 or absent = none. */
   rank?: number;
+  /** The player is logged in to the registered account that owns their name (verified mark). */
+  verified?: boolean;
   /** Hash of the custom skin for the roster ('' or absent = default). */
   skin?: string;
   switchReadyAt: number;
@@ -223,6 +225,7 @@ export interface ParkedPlayer {
   streak: number;
   next: ClassSpec;
   rank?: number;
+  verified?: boolean;
   /** The party the player queued with: it follows them back, so a rejoin never splits it. */
   party?: string;
   joinSeq: number;
@@ -356,6 +359,7 @@ export class Match {
       ...((seat.party ?? restore?.party) ? { party: (seat.party ?? restore?.party)! } : {}),
     };
     if (restore?.rank) p.rank = restore.rank;
+    if (restore?.verified) p.verified = true;
     this.players.set(id, p);
     this.resetLife(p, now);
     this.logic.onJoin?.(this, p, now);
@@ -418,7 +422,7 @@ export class Match {
   private parkRecord(p: MatchPlayer, keep: ParkRequest, now: number): ParkedPlayer {
     return {
       id: p.id, name: p.name, proof: keep.proof, team: p.team, kills: p.kills, deaths: p.deaths, pts: p.pts, streak: p.streak, next: { ...p.next },
-      rank: p.rank, ...(p.party ? { party: p.party } : {}), joinSeq: p.joinSeq, wasAlive: p.alive, respawnIn: p.alive ? 0 : Math.max(0, p.respawnAt - now),
+      rank: p.rank, verified: p.verified, ...(p.party ? { party: p.party } : {}), joinSeq: p.joinSeq, wasAlive: p.alive, respawnIn: p.alive ? 0 : Math.max(0, p.respawnAt - now),
       inCombat: p.alive && now - p.lastDamageAt < COMBAT_LOG_SECONDS, parkedAt: now, until: now + keep.graceSec,
     };
   }
@@ -1252,6 +1256,7 @@ export class Match {
       ...(withPts ? { pts: p.pts } : {}),
       ...(p.bot ? { bot: 1 as const } : {}),
       ...(p.rank ? { rk: p.rank } : {}),
+      ...(p.verified ? { vf: 1 as const } : {}),
       ...(p.skin ? { sk: p.skin } : {}),
     }));
   }

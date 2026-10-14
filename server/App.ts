@@ -111,6 +111,7 @@ export async function startServer(config: Config): Promise<RunningServer> {
         exists: (id) => !!profiles.get(id),
         rename: (id, name) => profiles.seen(id, name),
         remove: (id) => { profiles.get(id) && profiles.remove(id); },
+        level: (id) => profiles.level(id),
       },
     })
     : null;

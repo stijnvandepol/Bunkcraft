@@ -14,6 +14,8 @@ export interface ProfileHooks {
   rename(id: string, name: string): void;
   /** Removes the profile and everything hanging on it (skin assignment, file). */
   remove(id: string): void;
+  /** Level of a profile for the admin list (optional). */
+  level?(id: string): number;
 }
 
 export interface AccountOptions {
@@ -34,7 +36,7 @@ export interface AccountOptions {
 export type AccountFail = {
   ok: false;
   status: number;
-  error: 'invalid_request' | AccountIssue | 'name_taken' | 'invalid_credentials' | 'locked' | 'full' | 'unauthorized' | 'already_account' | 'disk';
+  error: 'invalid_request' | AccountIssue | 'name_taken' | 'invalid_credentials' | 'locked' | 'full' | 'unauthorized' | 'already_account' | 'account_locked' | 'not_found' | 'disk';
   retryAfter?: number;
 };
 export type AccountOk<T> = { ok: true } & T;
@@ -95,6 +97,11 @@ export class AccountService {
   /** True when this profile belongs to an account (its old guest token no longer works). */
   isLinked(profileId: string): boolean { return this.store.isLinked(profileId); }
 
+  /** The profile id of the account that holds this name or a look-alike of it (guests may not play under it), if any. */
+  reservedProfile(name: string): string | null {
+    return this.store.byIdentity(name)?.profile ?? null;
+  }
+
   /** The account name of a profile, if it belongs to an account. */
   nameOf(profileId: string): string | undefined { return this.store.byProfileId(profileId)?.name; }
 
@@ -145,7 +152,7 @@ export class AccountService {
   /** The profile id behind a session token (sync, memory only), or null (unknown, expired, logged out). Slides the expiry. */
   verifySession(token: unknown, now = Date.now()): string | null {
     const f = this.find(token);
-    if (!f || f.s.exp <= now) return null;
+    if (!f || f.s.exp <= now || f.a.locked) return null;
     if (now - f.s.last > 3_600_000) {
       f.s.last = now;
       f.s.exp = Math.min(now + this.opts.sessionDays * DAY, f.s.created + this.opts.sessionMaxDays * DAY);
@@ -157,7 +164,7 @@ export class AccountService {
   /** The account of a valid session token. */
   accountOf(token: unknown): AccountRec | null {
     const f = this.find(token);
-    return f && f.s.exp > Date.now() ? f.a : null;
+    return f && f.s.exp > Date.now() && !f.a.locked ? f.a : null;
   }
 
   private async dummyHash(): Promise<string> {
@@ -182,11 +189,11 @@ export class AccountService {
     const bad = checkUsername(name) ?? checkPassword(password, typeof name === 'string' ? name : undefined);
     if (bad) return fail(400, bad);
     const uname = name as string;
-    if (this.store.byName(usernameKey(uname))) return fail(409, 'name_taken');
+    if (this.store.byIdentity(uname)) return fail(409, 'name_taken');
     if (this.store.count >= this.opts.maxAccounts) return fail(503, 'full');
     const pass = await hashPassword(password as string);
     // Everything from here is synchronous: two simultaneous registrations cannot both win a name or a profile.
-    if (this.store.byName(usernameKey(uname))) return fail(409, 'name_taken');
+    if (this.store.byIdentity(uname)) return fail(409, 'name_taken');
     let profile: string | null = null;
     if (guestProfile && this.opts.profiles.exists(guestProfile) && !this.store.isLinked(guestProfile)) profile = guestProfile;
     else profile = this.opts.profiles.create(uname);
@@ -216,6 +223,7 @@ export class AccountService {
       this.failed(key, now);
       return fail(401, 'invalid_credentials');
     }
+    if (a.locked) return fail(403, 'account_locked');
     this.fails.delete(key);
     return a;
   }
@@ -270,6 +278,7 @@ export class AccountService {
       this.failed(key, now);
       return fail(401, 'invalid_credentials');
     }
+    if (a.locked) return fail(403, 'account_locked');
     const bad = checkPassword(newPassword, a.name);
     if (bad) return fail(400, bad);
     a.pass = await hashPassword(newPassword as string);
@@ -304,6 +313,72 @@ export class AccountService {
     this.opts.profiles.remove(a.profile);
     log.info('account deleted', { accounts: this.store.count });
     return { ok: true };
+  }
+
+  // ----- admin (ADMIN_TOKEN-protected HTTP layer; no password needed) -----
+
+  /** Accounts for the admin list (never hashes): newest first, optionally filtered by a name fragment. */
+  adminList(query = '', limit = 200): { name: string; created: number; passChanged: number; sessions: number; locked: boolean; level: number }[] {
+    const q = query.trim().toLowerCase();
+    return this.store.all()
+      .filter((a) => !q || a.key.includes(q))
+      .sort((x, y) => y.created - x.created).slice(0, limit)
+      .map((a) => ({
+        name: a.name, created: a.created, passChanged: a.passChanged,
+        sessions: a.sessions.filter((s) => s.exp > Date.now()).length, locked: !!a.locked,
+        level: this.opts.profiles.level?.(a.profile) ?? 0,
+      }));
+  }
+
+  private byAdminName(name: unknown): AccountRec | undefined {
+    return typeof name === 'string' ? this.store.byName(usernameKey(name.slice(0, 32))) : undefined;
+  }
+
+  /** Locks (no login, sessions dead, name stays reserved) or unlocks an account. */
+  adminLock(name: unknown, locked: boolean): AccountOk<object> | AccountFail {
+    const a = this.byAdminName(name);
+    if (!a) return fail(404, 'not_found');
+    a.locked = locked || undefined;
+    if (locked) a.sessions = [];
+    log.info('account moderated', { action: locked ? 'lock' : 'unlock' });
+    return this.persist(a) ?? { ok: true };
+  }
+
+  /** Ends every session of an account. */
+  adminLogout(name: unknown): AccountOk<{ ended: number }> | AccountFail {
+    const a = this.byAdminName(name);
+    if (!a) return fail(404, 'not_found');
+    const ended = a.sessions.length;
+    a.sessions = [];
+    log.info('account moderated', { action: 'logout', ended });
+    return this.persist(a) ?? { ok: true, ended };
+  }
+
+  /** Deletes an account and its profile. */
+  adminDelete(name: unknown): AccountOk<object> | AccountFail {
+    const a = this.byAdminName(name);
+    if (!a) return fail(404, 'not_found');
+    this.store.delete(a.id);
+    this.opts.profiles.remove(a.profile);
+    log.info('account moderated', { action: 'delete', accounts: this.store.count });
+    return { ok: true };
+  }
+
+  /**
+   * Recovery for an owner who lost password and code: a new recovery code (shown once to the admin, who hands it
+   * over after the owner proved ownership out-of-band). The old code stops working and every session ends; the
+   * owner then resets the password with it on the normal recovery screen. The failure counter is cleared.
+   */
+  adminRecoveryCode(name: unknown): AccountOk<{ name: string; recovery: string }> | AccountFail {
+    const a = this.byAdminName(name);
+    if (!a) return fail(404, 'not_found');
+    const fresh = newRecoveryCode();
+    a.recovery = hashRecovery(fresh);
+    a.sessions = [];
+    this.fails.delete(`r|${a.key}`);
+    this.fails.delete(`l|${a.key}`);
+    log.info('account moderated', { action: 'recovery' });
+    return this.persist(a) ?? { ok: true, name: a.name, recovery: fresh };
   }
 
   close(): void {

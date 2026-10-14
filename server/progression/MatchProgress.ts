@@ -72,7 +72,7 @@ export class MatchProgress {
     this.profiles.set(id, pid);
     this.service.seen(pid, name);
     const p = this.host.match().players.get(id);
-    if (p) p.rank = this.service.rank(pid);
+    if (p) { p.rank = this.service.rank(pid); p.verified = this.service.reservedProfile(name) === pid; }
     this.recorder.join(id, this.host.now());
     this.countHumans();
   }

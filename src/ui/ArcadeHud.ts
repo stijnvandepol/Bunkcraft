@@ -11,7 +11,7 @@ import { h } from './dom';
 import { type I18nKey, t } from './i18n';
 import type { Rank } from '../modes/progression/Levels';
 import { classUnlocked, isUnlocked, unlockLevel } from '../modes/progression/Unlocks';
-import { rankBadge } from './RankBadge';
+import { rankBadge, verifiedMark } from './RankBadge';
 import { type ScopeKind, scopeReticleSvg } from './ScopeReticles';
 
 const MAX_DAMAGE_MARKERS = 6;
@@ -368,11 +368,13 @@ export class ArcadeHud {
   private rank: Rank = { level: 1, prestige: 0 };
   /** Realms rank per player name, from the roster (kill feed icons). */
   private readonly ranks = new Map<string, number>();
+  private readonly verified = new Set<string>();
 
   /** Rank icons for the kill feed follow the roster. */
   setRanks(roster: readonly RosterEntry[]): void {
     this.ranks.clear();
-    for (const p of roster) if (p.rk) this.ranks.set(p.name, p.rk);
+    this.verified.clear();
+    for (const p of roster) { if (p.rk) this.ranks.set(p.name, p.rk); if (p.vf) this.verified.add(p.name); }
   }
 
   private editCustom(field: keyof typeof this.pick, id: string): void {
@@ -656,10 +658,10 @@ export class ArcadeHud {
 
   setKillFeed(entries: readonly KillFeedEntry[], selfName: string): void {
     this.feed.replaceChildren(...entries.map((e) => h('div', { class: `arc-feed-row${e.killer === selfName || e.victim === selfName ? ' self' : ''}` },
-      h('span', { style: `color:${teamColor(e.killerTeam)}` }, rankBadge(this.ranks.get(e.killer)), e.killer),
+      h('span', { style: `color:${teamColor(e.killerTeam)}` }, rankBadge(this.ranks.get(e.killer)), verifiedMark(this.verified.has(e.killer)), e.killer),
       h('span', { class: 'arc-feed-weapon', text: weaponTag(e.weapon) }),
       e.head ? h('span', { class: 'arc-feed-head', text: 'HS' }) : null,
-      h('span', { style: `color:${teamColor(e.victimTeam)}` }, rankBadge(this.ranks.get(e.victim)), e.victim),
+      h('span', { style: `color:${teamColor(e.victimTeam)}` }, rankBadge(this.ranks.get(e.victim)), verifiedMark(this.verified.has(e.victim)), e.victim),
     )));
   }
 
@@ -904,7 +906,7 @@ function renderBoard(host: HTMLElement, roster: readonly RosterEntry[], ctx: Sco
       : null;
     rows.push(h('div', { class: `arc-row${cols}${p.id === ctx.selfId ? ' self' : ''}` },
       h('span', { class: 'rank', text: String(i + 1) }),
-      h('span', { class: 'name', style: `color:${teamColor(p.team)}` }, rankBadge(p.rk), p.name, skinButtons),
+      h('span', { class: 'name', style: `color:${teamColor(p.team)}` }, rankBadge(p.rk), verifiedMark(p.vf), p.name, skinButtons),
       ctx.scoreColumn ? h('span', { text: String(ctx.scoreColumn === 'Level' ? (p.pts ?? 0) + 1 : p.pts ?? 0) }) : null,
       h('span', { text: String(p.kills) }), h('span', { text: String(p.deaths) }),
       h('span', { text: kdRatio(p.kills, p.deaths) }), h('span', { text: p.ping > 0 ? String(Math.round(p.ping)) : '-' })));

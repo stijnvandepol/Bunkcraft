@@ -8,7 +8,7 @@ import type { ScreenStack } from './Screens';
 
 const COLUMN = 'display: flex; flex-direction: column; align-items: center; gap: calc(var(--u) * 4);';
 const KNOWN = new Set(['network', 'invalid_request', 'username_format', 'username_reserved', 'password_short', 'password_long', 'password_common', 'password_name',
-  'name_taken', 'invalid_credentials', 'locked', 'limited', 'full', 'unauthorized', 'already_account', 'origin', 'disk']);
+  'name_taken', 'invalid_credentials', 'locked', 'limited', 'full', 'unauthorized', 'already_account', 'account_locked', 'origin', 'disk']);
 
 /** The player-facing text of a failed account call. Wrong password, unknown name and wrong code all read the same on purpose. */
 export function accountErrorText(e: unknown): string {

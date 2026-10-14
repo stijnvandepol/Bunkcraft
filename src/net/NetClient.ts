@@ -81,7 +81,7 @@ export class NetClient {
         const owner = room ? ownerToken(room) : undefined;
         const password = room ? roomPassword(room) : undefined;
         // Realms profile (server-issued, per host): the server grants XP and shows the rank icon and the custom skin with it.
-        const profile = room ? profileToken(host) : undefined;
+        const profile = profileToken(host) || undefined; // also for the main world: account names are reserved there too
         // The secret of the last visit to this lobby: after a dropped connection it takes the kept seat back.
         const rejoin = room ? ticketToken(host, room) : undefined;
         // Party ticket: the seat held for this member, on the party's team (only valid for the lobby it was made for).

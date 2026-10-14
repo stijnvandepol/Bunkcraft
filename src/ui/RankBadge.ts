@@ -26,6 +26,12 @@ export function rankBadge(rank: Rank | number | null | undefined, big = false): 
   return el;
 }
 
+/** A small check next to the name of a player who is logged in to the registered account that owns that name. */
+export function verifiedMark(on: boolean | number | undefined): HTMLSpanElement | null {
+  if (!on) return null;
+  return h('span', { class: 'verified-mark', title: t('acct.verified'), role: 'img', 'aria-label': t('acct.verified') });
+}
+
 /** CSS background of a calling card (procedural: a gradient with a pixel checker of the accent colour). */
 export function cardBackground(card: string): string {
   const c = CARD_STYLES[card] ?? CARD_STYLES.stone;

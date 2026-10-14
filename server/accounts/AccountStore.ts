@@ -1,5 +1,6 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { identityKey } from '../../src/modes/progression/AccountRules';
 import { log } from '../Log';
 
 export interface SessionRec {
@@ -27,6 +28,8 @@ export interface AccountRec {
   created: number;
   passChanged: number;
   sessions: SessionRec[];
+  /** Set by an admin: no login, no session, but the name stays reserved. */
+  locked?: boolean;
 }
 
 const ID = /^[A-Za-z0-9_-]{22}$/;
@@ -41,7 +44,7 @@ function clean(raw: unknown): AccountRec | null {
     ? r.sessions.filter((s): s is Record<string, unknown> => !!s && typeof s === 'object' && typeof (s as { h?: unknown }).h === 'string')
       .slice(0, 16).map((s) => ({ h: String(s.h), created: num(s.created), last: num(s.last), exp: num(s.exp) }))
     : [];
-  return { v: 1, id: r.id, name: r.name, key: r.key, profile: r.profile, pass: r.pass, recovery: r.recovery, created: num(r.created), passChanged: num(r.passChanged), sessions };
+  return { v: 1, id: r.id, name: r.name, key: r.key, profile: r.profile, pass: r.pass, recovery: r.recovery, created: num(r.created), passChanged: num(r.passChanged), sessions, ...(r.locked === true ? { locked: true } : {}) };
 }
 
 /**
@@ -53,6 +56,7 @@ export class AccountStore {
   private readonly byId = new Map<string, AccountRec>();
   private readonly byKey = new Map<string, string>();
   private readonly byProfile = new Map<string, string>();
+  private readonly byIdent = new Map<string, string>();
   private readonly dirty = new Set<string>();
 
   constructor(readonly dir: string) {
@@ -75,12 +79,17 @@ export class AccountStore {
   get(id: string): AccountRec | undefined { return this.byId.get(id); }
   byName(key: string): AccountRec | undefined { const id = this.byKey.get(key); return id ? this.byId.get(id) : undefined; }
   byProfileId(profile: string): AccountRec | undefined { const id = this.byProfile.get(profile); return id ? this.byId.get(id) : undefined; }
+  /** The account whose name is this one or a look-alike of it (see identityKey). */
+  byIdentity(name: string): AccountRec | undefined { const id = this.byIdent.get(identityKey(name)); return id ? this.byId.get(id) : undefined; }
+  all(): AccountRec[] { return [...this.byId.values()]; }
   isLinked(profile: string): boolean { return this.byProfile.has(profile); }
 
   private index(a: AccountRec): void {
     this.byId.set(a.id, a);
     this.byKey.set(a.key, a.id);
     this.byProfile.set(a.profile, a.id);
+    const ik = identityKey(a.name);
+    if (!this.byIdent.has(ik) || this.byIdent.get(ik) === a.id) this.byIdent.set(ik, a.id);
   }
 
   private file(id: string): string { return join(this.dir, id.slice(0, 2), `${id}.json`); }
@@ -105,6 +114,7 @@ export class AccountStore {
     this.byId.delete(id);
     if (this.byKey.get(a.key) === id) this.byKey.delete(a.key);
     if (this.byProfile.get(a.profile) === id) this.byProfile.delete(a.profile);
+    if (this.byIdent.get(identityKey(a.name)) === id) this.byIdent.delete(identityKey(a.name));
     this.dirty.delete(id);
     rmSync(this.file(id), { force: true });
     rmSync(`${this.file(id)}.tmp`, { force: true });

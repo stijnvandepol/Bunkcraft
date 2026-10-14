@@ -27,7 +27,7 @@ export class ProfileService {
   private readonly signer: ProfileSigner;
   private readonly timer: NodeJS.Timeout;
   /** Accounts, when switched on: their session tokens stand for profiles too, and an account's profile ignores its old guest token. */
-  private accounts: { verifySession(token: unknown): string | null; isLinked(profileId: string): boolean; nameOf(profileId: string): string | undefined } | null = null;
+  private accounts: { verifySession(token: unknown): string | null; isLinked(profileId: string): boolean; nameOf(profileId: string): string | undefined; reservedProfile(name: string): string | null } | null = null;
 
   constructor(opts: ProfileServiceOptions) {
     const dir = join(opts.dataDir, 'profiles');
@@ -61,6 +61,11 @@ export class ProfileService {
     return id && !this.accounts?.isLinked(id) ? id : null;
   }
 
+  /** The profile of the account that holds this name (or a look-alike), or null: guests may not play under such a name. */
+  reservedProfile(name: string): string | null {
+    return this.accounts?.reservedProfile(name) ?? null;
+  }
+
   /** Whether the profile belongs to an account. */
   linked(id: string): boolean {
     return this.accounts?.isLinked(id) ?? false;
@@ -79,6 +84,12 @@ export class ProfileService {
 
   get(id: string): ProfileData | null {
     return this.store.get(id);
+  }
+
+  /** Level of a profile (admin list); 0 when unknown. */
+  level(id: string): number {
+    const p = this.store.get(id);
+    return p ? rankOf(p).level : 0;
   }
 
   /** Roster rank code of a profile (0 when unknown). */

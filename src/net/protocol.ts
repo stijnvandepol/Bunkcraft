@@ -60,6 +60,8 @@ export interface RosterEntry {
   bot?: 1;
   /** Realms rank: prestige * 100 + level (progression/Levels.ts rankCode); absent for guests and bots. */
   rk?: number;
+  /** Logged in to the registered account that owns this name (verified mark). */
+  vf?: 1;
   /** Hash of the player's custom skin; absent = the default skin. */
   sk?: string;
 }

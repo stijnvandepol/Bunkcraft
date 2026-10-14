@@ -41,3 +41,11 @@ export function checkPassword(v: unknown, username?: string): AccountIssue | nul
 
 /** Key a username is stored and compared under (names are unique case-insensitively). */
 export const usernameKey = (v: string): string => v.toLowerCase();
+
+/**
+ * Key a name is compared under when it must not be mistaken for another (impersonation): case, underscores and
+ * look-alike characters (0/o, 1/i/l, 5/s, 3/e) are folded away. Registered account names are reserved under this
+ * key, so "Bob", "b0b" and "B_o_b" are one name as far as accounts and guests go.
+ */
+export const identityKey = (v: string): string =>
+  v.toLowerCase().replace(/_/g, '').replace(/0/g, 'o').replace(/[1il]/g, 'l').replace(/5/g, 's').replace(/3/g, 'e');

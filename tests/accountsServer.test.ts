@@ -58,10 +58,10 @@ function arena(profiles: ProfileService, data: string) {
   });
   closers.push(() => server.shutdown());
   const match = (server as unknown as { match: Match }).match;
-  const connect = (name: string, profile?: string) => {
+  const connect = (name: string, profile?: string, key?: string) => {
     const ws = new FakeSocket();
     server.accept(ws as unknown as WebSocket);
-    ws.say({ t: 'hello', v: PROTOCOL_VERSION, name, ...(profile ? { profile } : {}) });
+    ws.say({ t: 'hello', v: PROTOCOL_VERSION, name, ...(profile ? { profile } : {}), ...(key ? { key } : {}) });
     return ws;
   };
   return { match, connect };
@@ -117,6 +117,40 @@ describe('accounts and progression', () => {
     expect(run2.profiles.resolve(login.token)?.xp).toBe(xp);
     expect(run2.profiles.resolve(login.token)?.name).toBe('Stijn_01');
     expect(run2.profiles.verify(guest.token)).toBeNull();
+  });
+
+  it('reserves registered names (and look-alikes) for their account; guests are refused, the holder gets a verified mark', async () => {
+    const data = mkdtempSync(join(tmpdir(), 'bunk-acc-name-'));
+    dirs.push(data);
+    const run = services(data);
+    const guest = run.profiles.create('guesty')!;
+    const g = arena(run.profiles, data);
+    // A guest holds the name first (identity claim in this game) ...
+    const early = g.connect('Bob_One', guest.token, 'k'.repeat(24));
+    expect(early.of('welcome')).toHaveLength(1);
+    const reg = await run.accounts.register('Bob_One', PW);
+    if (!reg.ok) throw new Error(reg.error);
+    // ... then the account exists: no guest may use it, however it is spelled, with or without a profile token.
+    const kicked = (ws: FakeSocket) => ws.of('kick')[0]?.code;
+    expect(kicked(g.connect('Bob_One'))).toBe('identity');
+    expect(kicked(g.connect('bob_one', guest.token))).toBe('identity');
+    expect(kicked(g.connect('B0b_One'))).toBe('identity');
+    // Registering a look-alike is refused too.
+    const twin = await run.accounts.register('B0bOne', PW);
+    expect(twin).toMatchObject({ ok: false, error: 'name_taken' });
+    // The account holder gets in (even over the older guest claim) and is marked verified in the roster.
+    const holder = g.connect('Bob_One', reg.token, 'x'.repeat(24));
+    expect(holder.of('welcome')).toHaveLength(1);
+    expect(holder.of('kick')).toHaveLength(0);
+    expect(g.match.roster().find((p) => p.name === 'Bob_One')?.vf).toBe(1);
+    // A logged-in account may not wear another account's name either.
+    const other = await run.accounts.register('Other_Two', PW);
+    if (!other.ok) throw new Error(other.error);
+    expect(kicked(g.connect('Bob_One', other.token))).toBe('identity');
+    // Names nobody holds stay free for guests and carry no mark.
+    const free = g.connect('Free_Name');
+    expect(free.of('welcome')).toHaveLength(1);
+    expect(g.match.roster().find((p) => p.name === 'Free_Name')?.vf).toBeUndefined();
   });
 });
 

@@ -910,16 +910,25 @@ export class GameServer {
     }
     // A name belongs to the browser that first used it (identity key), so nobody can take over an operator.
     // Open lobbies (Realms quick play, nobody owns them) keep no names: strangers come and go, a name is only taken while it plays.
+    // A registered account holds its name (and look-alikes) everywhere: only a login of that account may play under it.
+    const reserved = this.opts.profiles?.reservedProfile(name) ?? null;
+    const holder = !!reserved && this.opts.profiles!.verify(hello.profile) === reserved;
+    if (reserved && !holder && !owner) {
+      return kick('This name belongs to a registered account. Log in with it, or pick another name.', 'identity');
+    }
     const claim = this.openLobby ? undefined : this.claimOf(name);
-    if (claim && !owner && !tokenMatches(key, claim)) {
+    // The account holder outranks an older guest claim on the same name, except where the name is an operator (never handed over).
+    const takeClaim = holder && !!claim && !!key && !tokenMatches(key, claim) && !this.world.ops!.includes(lc(name));
+    if (claim && !owner && !takeClaim && !tokenMatches(key, claim)) {
       return kick('This name is already used by another player. Pick another name.', 'identity');
     }
-    const verified = owner || (!!key && (!claim || tokenMatches(key, claim)));
+    if (takeClaim) Object.defineProperty(this.world.claims!, lc(name), { value: hashToken(key!), enumerable: true, writable: true, configurable: true });
+    const verified = owner || (!!key && (!claim || takeClaim || tokenMatches(key, claim)));
     const wl = this.world.whitelist!;
     if (wl.on && !owner && !wl.names.includes(lc(name)) && !(verified && this.world.ops!.includes(lc(name)))) {
       return kick('This game has a whitelist and you are not on it.', 'whitelist');
     }
-    const proceed = () => this.finishLogin(ws, ip, name, hello, { owner, verified, key });
+    const proceed = () => this.finishLogin(ws, ip, name, hello, { owner, verified, key, holder });
     const hash = this.world.passwordHash;
     if (!hash || owner) return proceed();
     // Password: refuse before doing any work when this address failed too often for THIS game (per game, so one
@@ -944,7 +953,7 @@ export class GameServer {
 
   private finishLogin(
     ws: WebSocket, ip: string, name: string, hello: Extract<ClientMessage, { t: 'hello' }>,
-    who: { owner: boolean; verified: boolean; key: string | null },
+    who: { owner: boolean; verified: boolean; key: string | null; holder?: boolean },
   ): Session | null {
     const keyHash = who.key ? hashToken(who.key) : undefined;
     const match = this.match;
@@ -963,7 +972,8 @@ export class GameServer {
     }
     const seat = proof && match ? match.findParked((p) => lc(p.name) === lc(name) && this.proves(p.proof, proof)) : undefined;
     if (this.openLobby) {
-      const taken = [...this.sessions.values()].some((s) => lc(s.name) === lc(name) && !(keyHash && s.keyHash === keyHash))
+      // The account that owns the name takes it back from a guest who was playing under it before the account existed.
+      const taken = !who.holder && [...this.sessions.values()].some((s) => lc(s.name) === lc(name) && !(keyHash && s.keyHash === keyHash))
         // A kept seat holds its name for its player.
         || (!seat && !!match && !!match.findParked((p) => lc(p.name) === lc(name)));
       if (taken) {
