@@ -136,7 +136,7 @@ vechten 120 s, 0 correcties, 0 strafpunten.
 - Verdenkingsscore 0-100 per speler over de laatste 40 schoten: headshot-ratio van de treffers, trefkans op meer
   dan 30 blok, "snap"-treffers (≥ 20° en ≥ 600°/s sinds het vorige schot) en schoten waarvan de richting > 25° afwijkt
   van de kijkrichting uit de laatste `pos`. Vanaf 40: logregel `cheat` (`kind: aim`) en
-  `bunkcraft_suspicion_flags_total`; zichtbaar (alleen-lezen) in `/admin` per speler. Nooit een automatische ban;
+  `bunkcraft_suspicion_flags_total`; zichtbaar (alleen-lezen) in `/ops` per speler. Nooit een automatische ban;
   een kick alleen met `ARCADE_AUTOKICK_SCORE` (standaard uit). Eerlijke bots: 0, de aimbot in `cheat-bots.ts`: 40-55.
 
 **Informatie verbergen (anti-wallhack)** (`Visibility.ts`). Tijdens een lopende match krijgt elke speler alleen
@@ -208,8 +208,14 @@ Wat een aanvaller kan proberen en wat de server doet:
 - **Moderatie:** `ADMIN_TOKEN`-beheer kan accounts zoeken, vergrendelen (geen login, sessies direct dood, naam blijft gereserveerd), ontgrendelen,
   uitloggen, verwijderen (account + profiel) en een nieuwe herstelcode uitgeven; zie SERVER.md. Elke actie logt alleen de actie, geen naam of code.
   Een vergrendeling of verwijdering sluit een lopende WebSocket-verbinding niet; die eindigt bij het volgende laden of kan met Kick/Block IP.
+- **Admin-accounts (ops-dashboard `/ops`):** een account is admin via `ADMIN_ACCOUNTS` of de vaste vlag (`bunkcraft account admin <naam> on`).
+  Een admin-sessie mag op `/api/ops/*` precies wat het `ADMIN_TOKEN` mag; verder geldt alles hierboven (verlopen/uitgelogd = 401,
+  vergrendeld of geen admin = 403, foute pogingen tellen in dezelfde limiet als het token, wijzigingen alleen same-site en als JSON).
+  Risico: een naam in `ADMIN_ACCOUNTS` die nog niet geregistreerd is, maakt de eerste registrant admin (de server waarschuwt bij het
+  starten); de CLI-vlag heeft dat niet. Een gestolen admin-sessie is zo sterk als het token: log uit (of `bunkcraft account logout <naam>`)
+  op gedeelde apparaten. Elke beheeractie komt in de audit log (serverlog `admin action` met accountnaam).
 - **Herstel als wachtwoord en herstelcode weg zijn:** er is bewust geen e-mail. De beheerder geeft een nieuwe herstelcode uit
-  (`bunkcraft account recovery <naam>` of de knop in `/admin`). Dat gebeurt alleen nadat de eigenaar zijn identiteit buiten het spel heeft
+  (`bunkcraft account recovery <naam>` of de knop in `/ops`). Dat gebeurt alleen nadat de eigenaar zijn identiteit buiten het spel heeft
   aangetoond, en de code gaat via datzelfde kanaal terug. Zie de procedure in SERVER.md. De oude code en alle sessies zijn meteen dood.
 - **Bekende beperkingen:** geen e-mail, dus zonder tussenkomst van de beheerder verliest wie wachtwoord en herstelcode kwijt is het account (bewust: geen PII).
   De naamcontrole geldt bij het inloggen in een game; een gast die al in een lopende match zat blijft tot zijn volgende login. Parties tonen

@@ -54,10 +54,17 @@ beforeAll(async () => {
         { Id: FOREIGN, Labels: containers[FOREIGN].Config.Labels, State: 'running', Image: 'snackspot', ImageID: 'sha256:f' },
       ]);
     }
-    const m = /^\/containers\/([^/]+)\/(json|start|stop|stats)/.exec(path);
+    const m = /^\/containers\/([^/]+)\/(json|start|stop|stats|logs)/.exec(path);
     if (m) {
       const c = byRef(m[1]);
       if (!c) return send(404, { message: 'No such container' });
+      if (m[2] === 'logs') {
+        // The Engine's multiplexed log stream: 8-byte frame headers, a line split over two stdout frames.
+        const frame = (stream: number, text: string) => { const b = Buffer.from(text); const h = Buffer.alloc(8); h[0] = stream; h.writeUInt32BE(b.length, 4); return Buffer.concat([h, b]); };
+        res.writeHead(200, { 'content-type': 'application/vnd.docker.multiplexed-stream' });
+        res.end(Buffer.concat([frame(1, 'match runner ready\nplayer jo'), frame(1, 'ined\n'), frame(2, 'warning: slow tick\n'), frame(1, 'match ended\n')]));
+        return;
+      }
       if (m[2] === 'json') return send(200, c);
       if (m[2] === 'stats') return send(200, {});
       return send(204);
@@ -145,6 +152,26 @@ describe('Docker gate: what passes', () => {
     expect(filters.label).toEqual([`${LABEL_ROLE}=match`, `${LABEL_OWNER}=bunkcraft`]);
   });
 
+  it('hands out the last log lines of our container, demultiplexed, never following', async () => {
+    const r = await raw('GET', `/v1.41/containers/${OURS}/logs?stdout=1&stderr=1&tail=200`);
+    expect(r.status).toBe(200);
+    expect(JSON.parse(r.body).lines).toEqual([
+      { stream: 'out', text: 'match runner ready' }, { stream: 'out', text: 'player joined' },
+      { stream: 'err', text: 'warning: slow tick' }, { stream: 'out', text: 'match ended' },
+    ]);
+    const asked = calls.find((c) => c.path.includes('/logs'))!;
+    expect(asked.path).toBe(`/containers/${OURS}/logs?stdout=1&stderr=1&follow=0&tail=200`);
+    // The driver reads it through the gate the same way.
+    const api = new DockerApi(gateBase, SECRET);
+    expect((await api.logs(OURS, 2)).map((l) => l.text)).toEqual(['warning: slow tick', 'match ended']);
+  });
+
+  it('refuses the logs of containers that are not ours', async () => {
+    expect((await raw('GET', `/containers/${FOREIGN}/logs?tail=10`)).status).toBe(403);
+    expect((await raw('GET', `/containers/${IMPOSTOR}/logs?tail=10`)).status).toBe(403);
+    expect(engineSaw((c) => c.path.includes('/logs'))).toBe(false);
+  });
+
   it('has a health endpoint that needs no secret and says nothing', async () => {
     const r = await raw('GET', '/_gate/health', { secret: null });
     expect(r).toEqual({ status: 200, body: '{"ok":true}' });
@@ -220,7 +247,12 @@ describe('Docker gate: what never reaches the Engine', () => {
     ['restart', 'POST', `/containers/${OURS}/restart`],
     ['attach', 'POST', `/containers/${OURS}/attach?stream=1`],
     ['archive (copy files in)', 'PUT', `/containers/${OURS}/archive?path=/`],
-    ['logs', 'GET', `/containers/${OURS}/logs`],
+    ['logs that follow', 'GET', `/containers/${OURS}/logs?follow=1`],
+    ['logs with timestamps', 'GET', `/containers/${OURS}/logs?tail=10&timestamps=1`],
+    ['logs since a time', 'GET', `/containers/${OURS}/logs?since=0`],
+    ['more than 500 log lines', 'GET', `/containers/${OURS}/logs?tail=501`],
+    ['all log lines', 'GET', `/containers/${OURS}/logs?tail=all`],
+    ['logs with a POST', 'POST', `/containers/${OURS}/logs?tail=10`],
     ['images', 'GET', '/images/json'],
     ['image pull', 'POST', '/images/create?fromImage=alpine'],
     ['build', 'POST', '/build'],

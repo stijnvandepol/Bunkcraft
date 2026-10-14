@@ -2,6 +2,7 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { join } from 'node:path';
 import { isIP } from 'node:net';
+import { cpus, freemem, loadavg, totalmem } from 'node:os';
 import { normalizeCode, sanitizeChat } from '../src/net/protocol';
 import { isSkinHash } from '../src/skins/SkinFormat';
 import type { AccountService } from './accounts/AccountService';
@@ -10,8 +11,11 @@ import { log } from './Log';
 import { type Gauges, metrics } from './Metrics';
 import type { ControlPlane } from './match/ControlPlane';
 import type { Rooms } from './Rooms';
+import type { RoomServer } from './RoomServer';
+import { type AuditLog, type OpsIdentity, type OpsSettings, auditDetail } from './Ops';
+import { MAX_LOG_TAIL } from './match/Drivers';
 import type { SkinService } from './skins/SkinService';
-import { RateLimiter, bearer, safeEqual } from './Security';
+import { RateLimiter } from './Security';
 
 /** Blocked client addresses (server-wide), persisted in DATA_DIR/ip-bans.json. */
 export class IpBans {
@@ -70,45 +74,131 @@ export interface AdminContext {
   dropIp?(ip: string): void;
   /** MATCH_ISOLATION=container: the match runners (null in-process). */
   control?: ControlPlane | null;
+  /** Who is asking (authorizeOps); the audit log names them. */
+  who?: OpsIdentity;
+  audit?: AuditLog;
+  /** Run-time settings of the ops dashboard (absent: GET/POST settings answer 404). */
+  settings?: OpsSettings | null;
+}
+
+/** What the ops dashboard shows of one loaded game, wherever it runs. */
+function gameView(code: string, server: RoomServer, remote: boolean): Record<string, unknown> {
+  const i = server.info();
+  const lobby = server.lobbyStatus();
+  return {
+    code, name: i.name, gameType: i.gameType, gameMode: i.gameMode, remote, players: server.playerCount, maxPlayers: server.maxPlayers,
+    bots: server.botCount, reserved: server.reservedSeats, listed: server.listed, locked: server.locked,
+    map: lobby?.map ?? (typeof i.map === 'string' ? i.map : null), phase: lobby?.phase ?? null, timeLeft: lobby ? Math.round(lobby.timeLeft) : null,
+  };
 }
 
 /** 20 wrong tokens per address per 10 minutes, then 429: the token cannot be brute-forced over HTTP. */
 export const newAuthLimiter = (): RateLimiter => new RateLimiter(20, 600_000);
 
-/** True when the request carries the admin token (constant-time compare). Writes the error response otherwise. */
-export function authorizeAdmin(
-  ctx: Pick<AdminContext, 'token' | 'clientIp' | 'json'> & { failures: RateLimiter }, req: IncomingMessage, res: ServerResponse,
-): boolean {
-  const authFailures = ctx.failures;
-  const ip = ctx.clientIp(req);
-  if (!authFailures.allowed(ip)) {
-    metrics.rateLimited('admin_auth');
-    ctx.json(res, 429, { error: 'Too many attempts' });
-    return false;
-  }
-  const given = bearer(req.headers.authorization);
-  if (!given || !safeEqual(given, ctx.token)) {
-    authFailures.record(ip);
-    log.warn('admin auth failed', { ip });
-    ctx.json(res, 401, { error: 'Unauthorized' });
-    return false;
-  }
-  return true;
-}
-
-/** /api/admin/*: overview, games, kick, close, address blocks, announce, save. The caller has checked the token. */
+/**
+ * /api/admin/* (CLI, ADMIN_TOKEN) and /api/ops/* (the ops dashboard): overview, containers, games, kick, close,
+ * address blocks, announce, save, accounts, skins, settings, audit. The caller has authorized the request
+ * (authorizeOps); every change is written to the audit log with who did it and how it ended.
+ */
 export async function adminApi(ctx: AdminContext, req: IncomingMessage, res: ServerResponse, path: string): Promise<void> {
-  const { json } = ctx;
-  const parts = path.replace(/^\/api\/admin\/?/, '').split('/').filter(Boolean);
+  const parts = path.replace(/^\/api\/(admin|ops)\/?/, '').split('/').filter(Boolean);
   const method = req.method ?? 'GET';
-  const body = async (): Promise<Record<string, unknown>> => {
+  // A body is read once (changes only), so the audit line can name what was changed.
+  let parsed: Record<string, unknown> = {};
+  if (method !== 'GET') {
     try {
-      const parsed = JSON.parse((await ctx.readBody(req)) || '{}') as unknown;
-      return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};
+      const raw = JSON.parse((await ctx.readBody(req)) || '{}') as unknown;
+      parsed = raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
     } catch {
-      return {};
+      parsed = {};
     }
+  }
+  const body = async (): Promise<Record<string, unknown>> => parsed;
+  const json: AdminContext['json'] = method === 'GET' ? ctx.json : (r, status, b) => {
+    ctx.audit?.record({
+      at: Date.now(), who: ctx.who?.who ?? 'admin token', action: `${method} ${parts.join('/')}`.slice(0, 120), detail: auditDetail(parsed),
+      status, ip: ctx.clientIp(req),
+    });
+    ctx.json(r, status, b);
   };
+
+  if (parts[0] === 'whoami' && method === 'GET') {
+    return json(res, 200, { who: ctx.who?.who ?? 'admin token', via: ctx.who?.via ?? 'token', version: ctx.version });
+  }
+  if (parts[0] === 'audit' && method === 'GET') {
+    return json(res, 200, { entries: ctx.audit?.list() ?? [] });
+  }
+  // The dashboard's top cards: one call, everything a glance needs.
+  if (parts[0] === 'overview' && method === 'GET') {
+    const snap = metrics.snapshot(ctx.gauges());
+    const games = ctx.rooms?.loadedGames() ?? [];
+    let matches = 0;
+    let inMatches = 0;
+    for (const g of games) {
+      if (g.server.lobbyStatus()) matches++;
+      inMatches += g.server.playerCount;
+    }
+    const c = ctx.control;
+    const avgStart = c && c.pool.counters.startMs.length ? c.pool.counters.startMs.reduce((a, b) => a + b, 0) / c.pool.counters.startMs.length : 0;
+    return json(res, 200, {
+      version: ctx.version, uptimeSec: snap.uptimeSeconds, isolation: c ? 'container' : 'inprocess',
+      driver: c?.pool.driver.kind ?? null, driverAvailable: c?.driverAvailable ?? null,
+      matches, gamesLoaded: snap.roomsLoaded, gamesTotal: snap.roomsTotal,
+      containers: c ? { total: c.pool.count(), assigned: c.pool.count('assigned'), warm: c.pool.count('idle'), starting: c.pool.count('starting'), stopping: c.pool.count('stopping'), max: c.pool.max, warmTarget: c.pool.warm } : null,
+      fallbacks: c?.fallbacks ?? 0,
+      counters: c ? { starts: c.pool.counters.starts, startFailures: c.pool.counters.startFailures, deaths: c.pool.counters.deaths, capped: c.pool.counters.capped, avgStartMs: Math.round(avgStart) } : null,
+      playersInMatches: inMatches, playersOnline: snap.players, mainWorldPlayers: ctx.main?.playerCount ?? 0, connections: snap.connections,
+      cpu: snap.cpu, rssBytes: snap.rssBytes, heapBytes: snap.heapUsedBytes,
+      tickP99Ms: snap.tickP99Ms, loopLagP99Ms: snap.loopLagP99Ms, bytesOutPerSec: snap.bytesOutPerSec,
+      host: { cpus: cpus().length, load: loadavg().map((l) => Math.round(l * 100) / 100), memTotal: totalmem(), memFree: freemem() },
+    });
+  }
+  // Portainer-like: every match runner (container mode) and every loaded game, wherever it runs.
+  if (parts[0] === 'containers' && parts.length === 1 && method === 'GET') {
+    const c = ctx.control;
+    const lim = c?.pool.driver.limits?.() ?? null;
+    return json(res, 200, {
+      isolation: c ? 'container' : 'inprocess', driver: c?.pool.driver.kind ?? null, image: c?.pool.driver.image ?? null, available: c?.driverAvailable ?? null,
+      limits: lim, runners: c?.runners() ?? [],
+      games: (ctx.rooms?.loadedGames() ?? []).map((g) => gameView(g.code, g.server, g.remote)),
+    });
+  }
+  if (parts[0] === 'containers' && parts.length === 3) {
+    const c = ctx.control;
+    if (!c) return json(res, 404, { error: 'No match containers (MATCH_ISOLATION=inprocess)' });
+    const id = parts[1];
+    if (!/^[a-z0-9]{8,24}$/.test(id)) return json(res, 400, { error: 'Bad runner id' });
+    if (parts[2] === 'stop' && method === 'POST') {
+      const r = c.stopRunner(id);
+      return json(res, r ? 200 : 404, r ? { ok: true, result: r } : { error: 'Runner not found' });
+    }
+    if (parts[2] === 'logs' && method === 'GET') {
+      const q = Number(new URL(req.url ?? '/', 'http://x').searchParams.get('tail') ?? 200);
+      const tail = Math.max(1, Math.min(MAX_LOG_TAIL, Number.isFinite(q) ? Math.floor(q) : 200));
+      try {
+        const lines = await c.runnerLogs(id, tail);
+        return lines ? json(res, 200, { lines }) : json(res, 404, { error: 'Runner not found' });
+      } catch (e) {
+        return json(res, 502, { error: `Logs unavailable: ${e instanceof Error ? e.message.slice(0, 120) : 'error'}` });
+      }
+    }
+  }
+  if (parts[0] === 'settings' && ctx.settings) {
+    const s = ctx.settings;
+    if (parts.length === 1 && method === 'GET') {
+      return json(res, 200, { isolation: ctx.control ? 'container' : 'inprocess', settings: s.rows() });
+    }
+    if (parts.length === 1 && method === 'POST') {
+      const values = parsed.values;
+      if (!values || typeof values !== 'object' || Array.isArray(values)) return json(res, 400, { error: 'values must be an object' });
+      const r = s.set(values as Record<string, unknown>);
+      return r.ok ? json(res, 200, { ok: true, changed: r.changed, settings: s.rows() }) : json(res, 400, { error: `${r.key}: ${r.error}`, key: r.key });
+    }
+    if (parts[1] === 'reset' && parts.length === 2 && method === 'POST') {
+      const r = s.reset(parsed.keys);
+      return r.ok ? json(res, 200, { ok: true, changed: r.changed, settings: s.rows() }) : json(res, 400, { error: `${r.key}: ${r.error}`, key: r.key });
+    }
+  }
 
   if (parts[0] === 'stats' && method === 'GET') {
     return json(res, 200, { ...metrics.snapshot(ctx.gauges()), version: ctx.version });
@@ -191,6 +281,13 @@ export async function adminApi(ctx: AdminContext, req: IncomingMessage, res: Ser
     if (parts.length === 1 && method === 'GET') {
       const q = new URL(req.url ?? '/', 'http://x').searchParams.get('q') ?? '';
       return json(res, 200, { count: accounts.count, accounts: accounts.adminList(q.slice(0, 32)) });
+    }
+    if (parts[1] === 'admin' && parts.length === 2 && method === 'POST') {
+      const b = await body();
+      if (typeof b.admin !== 'boolean') return json(res, 400, { error: 'admin must be true or false' });
+      const r = accounts.adminSetAdmin(b.name, b.admin);
+      if (!r.ok) return json(res, r.status, { error: r.error });
+      return json(res, 200, { ok: true, name: r.name, admin: r.admin });
     }
     if (parts.length === 2 && method === 'POST') {
       const name = (await body()).name;

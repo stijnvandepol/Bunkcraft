@@ -152,6 +152,7 @@
   cursor: pointer;
 }
 .bc-link:hover { text-decoration: underline; }
+a.bc-link { text-decoration: none; }
 
 .bc-input {
   min-width: 0;

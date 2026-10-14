@@ -80,6 +80,8 @@ export class AccountService {
   private readonly timer: NodeJS.Timeout;
   private readonly fails = new Map<string, { n: number; until: number; last: number }>();
   private dummy: Promise<string> | null = null;
+  /** ADMIN_ACCOUNTS (lower-case names): admins besides the accounts with the persistent `admin` flag. */
+  private adminNames = new Set<string>();
   private readonly opts: Required<Omit<AccountOptions, 'profiles' | 'dataDir'>> & { profiles: ProfileHooks };
 
   constructor(o: AccountOptions) {
@@ -159,6 +161,32 @@ export class AccountService {
       this.store.touch(f.a.id);
     }
     return f.a.profile;
+  }
+
+  /** ADMIN_ACCOUNTS: these account names (case-insensitive, exact) are admins as long as the setting lists them. */
+  setAdminNames(names: string[]): void {
+    this.adminNames = new Set(names.map((n) => usernameKey(n.trim())).filter((n) => n.length > 0));
+  }
+
+  /** Names in ADMIN_ACCOUNTS that no account holds yet: whoever registers such a name becomes an admin. */
+  unclaimedAdminNames(): string[] {
+    return [...this.adminNames].filter((k) => !this.store.byName(k));
+  }
+
+  isAdmin(a: AccountRec): boolean {
+    return a.admin === true || this.adminNames.has(a.key);
+  }
+
+  /**
+   * The admin account behind a session token: null when the token is no valid session (unknown, expired, logged out),
+   * `false` for a session of an account that is no admin or is locked.
+   */
+  adminOf(token: unknown): { name: string } | false | null {
+    const f = this.find(token);
+    if (!f || f.s.exp <= Date.now()) return null;
+    // A lock ends every session; should one survive (an edited file), a locked account is still refused.
+    if (f.a.locked) return false;
+    return this.isAdmin(f.a) ? { name: f.a.name } : false;
   }
 
   /** The account of a valid session token. */
@@ -318,14 +346,14 @@ export class AccountService {
   // ----- admin (ADMIN_TOKEN-protected HTTP layer; no password needed) -----
 
   /** Accounts for the admin list (never hashes): newest first, optionally filtered by a name fragment. */
-  adminList(query = '', limit = 200): { name: string; created: number; passChanged: number; sessions: number; locked: boolean; level: number }[] {
+  adminList(query = '', limit = 200): { name: string; created: number; passChanged: number; sessions: number; locked: boolean; admin: boolean; level: number }[] {
     const q = query.trim().toLowerCase();
     return this.store.all()
       .filter((a) => !q || a.key.includes(q))
       .sort((x, y) => y.created - x.created).slice(0, limit)
       .map((a) => ({
         name: a.name, created: a.created, passChanged: a.passChanged,
-        sessions: a.sessions.filter((s) => s.exp > Date.now()).length, locked: !!a.locked,
+        sessions: a.sessions.filter((s) => s.exp > Date.now()).length, locked: !!a.locked, admin: this.isAdmin(a),
         level: this.opts.profiles.level?.(a.profile) ?? 0,
       }));
   }
@@ -342,6 +370,15 @@ export class AccountService {
     if (locked) a.sessions = [];
     log.info('account moderated', { action: locked ? 'lock' : 'unlock' });
     return this.persist(a) ?? { ok: true };
+  }
+
+  /** Grants or withdraws the persistent admin flag (an ADMIN_ACCOUNTS name stays admin while the setting lists it). */
+  adminSetAdmin(name: unknown, admin: boolean): AccountOk<{ name: string; admin: boolean }> | AccountFail {
+    const a = this.byAdminName(name);
+    if (!a) return fail(404, 'not_found');
+    a.admin = admin || undefined;
+    log.info('account moderated', { action: admin ? 'admin on' : 'admin off' });
+    return this.persist(a) ?? { ok: true, name: a.name, admin: this.isAdmin(a) };
   }
 
   /** Ends every session of an account. */

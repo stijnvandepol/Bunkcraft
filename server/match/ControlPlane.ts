@@ -15,8 +15,8 @@ import type { ArenaSpec, RemoteRooms, Rooms } from '../Rooms';
 import type { RoomServer } from '../RoomServer';
 import { type RateLimiter, passwordFailKey, safeEqual } from '../Security';
 import type { SkinService } from '../skins/SkinService';
-import { MATCH_PORT } from './ContainerSpec';
-import { DockerApi, DockerDriver, type MatchDriver, ProcessDriver } from './Drivers';
+import { MATCH_PORT, containerName } from './ContainerSpec';
+import { DockerApi, DockerDriver, type LogLine, type MatchDriver, ProcessDriver } from './Drivers';
 import { type Ident, RUNNER_ID, type RunnerStatus, authHeaders, authRunner, callJson, readJson, runnerKey, sendJson } from './Internal';
 import { MatchPool, type Runner } from './MatchPool';
 import { type RemoteHost, RemoteRoom } from './RemoteRoom';
@@ -71,6 +71,8 @@ export class ControlPlane implements RemoteRooms, RemoteHost {
   private available = false;
   /** Lobbies that ran in-process because the cap was reached or the driver was not available. */
   fallbacks = 0;
+  /** Runners an admin stopped whose match is still winding down (XP settled, world sent back). */
+  private readonly draining = new Set<string>();
   internalPort = 0;
 
   /** Runner id → the lobby this control plane assigned to it (DATA_DIR/match-runners.json; read back after a restart). */
@@ -300,6 +302,7 @@ export class ControlPlane implements RemoteRooms, RemoteHost {
   gone(room: RemoteRoom): void {
     const l = this.lobbies.get(room.code);
     if (l?.room === room) this.lobbies.delete(room.code);
+    if (room.runner) this.draining.delete(room.runner.id);
     room.ended();
     this.rooms?.forget(room.code, room);
     if (room.runner) {
@@ -415,23 +418,82 @@ export class ControlPlane implements RemoteRooms, RemoteHost {
     return [200, answer];
   }
 
+  // ------------------------------------------------------------------------------------------ ops dashboard
+
+  /** Whether the driver works (false: every lobby runs in-process until it does). */
+  get driverAvailable(): boolean {
+    return this.available;
+  }
+
+  /** Settings the ops dashboard changes at run time; they apply to lobbies opened from now on. */
+  tune(t: { motd?: string; roomMaxPlayers?: number; idleGraceSec?: number }): void {
+    if (t.motd !== undefined) this.o.motd = t.motd;
+    if (t.roomMaxPlayers !== undefined) this.o.roomMaxPlayers = t.roomMaxPlayers;
+    if (t.idleGraceSec !== undefined) this.o.idleGraceSec = t.idleGraceSec;
+  }
+
+  /**
+   * Stops one runner from the ops dashboard. A warm one just goes. One with a lobby ends its match the graceful way:
+   * XP is settled, the world goes back to disk, and its players are told to reconnect in a few seconds; by then the
+   * lobby is forgotten here, so their reconnect opens it again in a fresh runner (the same code, the rejoin path).
+   */
+  stopRunner(id: string, reconnectMs = 4000): 'stopped' | 'draining' | null {
+    const r = this.pool.runners.get(id);
+    if (!r || r.state === 'stopping') return null;
+    const l = this.lobbyOf(id);
+    if (!l) {
+      void this.pool.release(id, 'stopped by an admin');
+      return 'stopped';
+    }
+    this.draining.add(id);
+    l.room.shutdown(reconnectMs, 'The match server is restarting: reconnecting');
+    this.rooms?.forget(l.room.code, l.room);
+    // A runner that does not wind down by itself is stopped hard after a while.
+    setTimeout(() => {
+      if (this.pool.runners.get(id) === r) {
+        const left = this.lobbyOf(id);
+        if (left?.room === l.room) this.gone(l.room);
+        else void this.pool.release(id, 'stop timed out');
+      }
+      this.draining.delete(id);
+    }, 20_000).unref();
+    return 'draining';
+  }
+
+  /** The last log lines of one runner (owned runners only: the pool knows no others). */
+  async runnerLogs(id: string, tail: number): Promise<LogLine[] | null> {
+    const r = this.pool.runners.get(id);
+    if (!r?.handle) return null;
+    return this.o.driver.logs(r.handle, tail);
+  }
+
   // ------------------------------------------------------------------------------------------ status
 
-  /** Runners for /admin and /metrics. */
+  /** Runners for /admin, /ops and /metrics. */
   runners(): {
-    id: string; state: string; room: string | null; version: string; adopted: boolean; players: number; tickP99Ms: number;
+    id: string; name: string; state: string; room: string | null; version: string; image: string; adopted: boolean; players: number; maxPlayers: number;
+    bots: number; gameType: string | null; map: string | null; phase: string | null; tickP99Ms: number;
     cpu: number; memBytes: number; memLimitBytes: number; uptimeSec: number;
   }[] {
     const now = Date.now();
-    return [...this.pool.runners.values()].map((r) => ({
-      id: r.id, state: r.state, room: r.room, version: r.version, adopted: r.adopted,
-      players: r.status?.players ?? 0, tickP99Ms: r.status?.tickP99Ms ?? 0,
+    return [...this.pool.runners.values()].map((r) => {
+      const l = this.lobbyOf(r.id);
+      const lobby = (r.status?.lobby ?? null) as { phase?: string; map?: string } | null;
+      return {
+      id: r.id, name: this.o.driver.kind === 'docker' ? containerName(r.id) : `process ${r.handle?.ref ?? ''}`.trim(),
+      // Warm runners are "warm", a stopped one still finishing its match is "draining".
+      state: this.draining.has(r.id) && r.state !== 'stopping' ? 'draining' : r.state === 'idle' ? 'warm' : r.state,
+      room: r.room, version: r.version, image: r.handle?.image ?? this.o.driver.image, adopted: r.adopted,
+      players: r.status?.players ?? 0, maxPlayers: r.status?.maxPlayers ?? 0, bots: r.status?.botCount ?? 0,
+      gameType: l?.gameType ?? null, map: lobby?.map ?? null, phase: lobby?.phase ?? null,
+      tickP99Ms: r.status?.tickP99Ms ?? 0,
       // Docker stats when there are (the container as the kernel sees it), else the runner's own numbers.
       cpu: r.stats?.cpu ?? r.status?.cpu ?? 0,
       memBytes: r.stats?.memBytes ?? r.status?.rssBytes ?? 0,
       memLimitBytes: r.stats?.memLimitBytes ?? 0,
       uptimeSec: Math.round((now - r.startedAt) / 1000),
-    }));
+      };
+    });
   }
 
   prometheus(): string[] {
@@ -462,7 +524,7 @@ export class ControlPlane implements RemoteRooms, RemoteHost {
       '# TYPE bunkcraft_match_players gauge',
     ];
     for (const r of this.runners()) {
-      if (r.state !== 'assigned' || !r.room) continue;
+      if ((r.state !== 'assigned' && r.state !== 'draining') || !r.room) continue;
       const l = `{room="${r.room}",runner="${r.id}"}`;
       lines.push(
         `bunkcraft_match_tick_p99_seconds${l} ${(r.tickP99Ms / 1000).toFixed(4)}`,

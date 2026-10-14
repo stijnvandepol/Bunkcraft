@@ -227,14 +227,14 @@ bij een nieuwe run) en `DOCKER_GID` (de groep van `/var/run/docker.sock`) in `.e
 - Spelers verbinden alleen met de control plane (één domein, één tunnel). Die stuurt `/ws/<CODE>` door naar de juiste
   matchcontainer over het interne netwerk: frames ongewijzigd (tekst en binair), met backpressure, ping/pong doorgegeven
   (de lag-compensatie meet dus de echte ping van de speler) en sluitcodes beide kanten op.
-- Profielen, accounts, XP, party's, skins, de roomlijst, matchmaking, rejoin-aanbod en `/admin` blijven in de control plane.
+- Profielen, accounts, XP, party's, skins, de roomlijst, matchmaking, rejoin-aanbod en het ops-dashboard (`/ops`) blijven in de control plane.
   Een matchcontainer heeft geen profielopslag: wie een speler is (profiel, rang, skin) geeft de control plane mee bij de
   verbinding, en XP wordt aan het eind van de match door de control plane toegekend (eenmalig per grant).
 - Een **warme pool** (`MATCH_WARM_POOL`, standaard 1) houdt een gestarte container klaar, zodat Quick Play niet op een
   containerstart wacht. Een lege lobby (geen spelers, geen bewaarde rejoin-plekken, geen party-holds) stopt na
   `MATCH_IDLE_GRACE_SEC`; de lobby zelf blijft op schijf en start bij de volgende join in een nieuwe container.
 - **Limiet:** `MAX_MATCH_CONTAINERS` (warme meegeteld). Is die bereikt, dan draait een nieuwe lobby gewoon in de control plane
-  (zoals zonder isolatie). Spelers merken niets; `/admin` en `bunkcraft_match_inprocess_fallback_total` tellen het. Gekozen boven
+  (zoals zonder isolatie). Spelers merken niets; `/ops` en `bunkcraft_match_inprocess_fallback_total` tellen het. Gekozen boven
   "server vol": spelen gaat voor isolatie.
 - **Updates:** `bunkcraft update` en de autoupdate-timer werken zoals altijd. De nieuwe control plane adopteert de lopende
   matchcontainers (alleen de lobby die hij ze zelf gaf, zie SECURITY.md); spelers verliezen kort de verbinding en komen via
@@ -291,7 +291,8 @@ Browser ──HTTP──▶  /            → dist/ (de game)
         ──WS────▶  /ws/<CODE>   → een game van een speler
         ──HTTP──▶  /health      → {"ok":true,"version":"1.0.0","uptime":3600,"players":2,"rooms":3,"roomsLoaded":1,"tickP99Ms":2.1,"loopLagP99Ms":1.4,"rssMB":96}
         ──HTTP──▶  /metrics     → Prometheus (alleen lokaal of met token)
-        ──HTTP──▶  /admin       → beheerpagina (alleen met ADMIN_TOKEN), API op /api/admin/*
+        ──HTTP──▶  /ops         → ops-dashboard (admin-account of ADMIN_TOKEN), API op /api/ops/*; /admin stuurt door
+        ──HTTP──▶  /api/admin/* → dezelfde beheer-API voor de CLI (alleen met ADMIN_TOKEN)
 ```
 
 ## Snel starten
@@ -377,7 +378,8 @@ limieten per bezoeker werken in plaats van per proxy.
 | `SKIN_UPLOAD_LIMIT` | `5` | Uploads per profiel per uur (ook mislukte tellen mee: decoderen kost CPU) |
 | `ROOM_IDLE_UNLOAD_MIN` | `5` | Minuten dat een lege game in het geheugen blijft voordat hij wordt opgeslagen en uitgeladen |
 | `CHUNK_WORKERS` | `min(2, cores − 1)` | Threads die nieuw terrein genereren voor alle survival-games samen, zodat verkennende spelers de ticks niet ophouden. `0` = op de main thread (het oude pad, ook de standaard met één core). Cores = die van de machine, of minder als Docker een CPU-limiet zet (`BUNKCRAFT_CPUS`). Elke thread kost ~20-25 MB RSS. Meer dan 2 helpt pas bij honderden verkennende spelers. |
-| `ADMIN_TOKEN` | niet gezet | Geheim voor `/admin` en `/api/admin/*`. Leeg = beheer staat uit. Minstens 16 willekeurige tekens (`openssl rand -hex 24`). Wie dit token als `owner` meestuurt, is ook operator in elke game. |
+| `ADMIN_TOKEN` | niet gezet | Geheim voor `/api/admin/*` (CLI) en het ops-dashboard. Leeg = de CLI-API staat uit. Minstens 16 willekeurige tekens (`openssl rand -hex 24`). Wie dit token als `owner` meestuurt, is ook operator in elke game. |
+| `ADMIN_ACCOUNTS` | niet gezet | Accountnamen (komma-gescheiden, hoofdletterongevoelig) die met hun eigen login het ops-dashboard (`/ops`) in mogen. Alternatief zonder herstart: `bunkcraft account admin <naam> on`. Zie *Beheer*. |
 | `METRICS_TOKEN` | niet gezet | Bearer-token voor `/metrics`. Zonder `METRICS_TOKEN` en `ADMIN_TOKEN` is `/metrics` alleen bereikbaar vanaf deze machine (niet via een reverse proxy). |
 | `OPS` | leeg | Komma-gescheiden namen die operator zijn in de **hoofdwereld** (games hebben hun eigen eigenaar). |
 | `ALLOWED_ORIGINS` | leeg (alles) | Komma-gescheiden `Origin`-lijst voor WebSocket en API-CORS, bijv. `https://play.example.com`. `same-origin` staat alleen de eigen host toe. |
@@ -421,7 +423,7 @@ Voorbeeld: `SEED=bunk GAMEMODE=creative WORLD_NAME="Bouwserver" npm start`
 - **Eigenaar:** `POST /api/rooms` geeft **één keer** een `ownerToken` terug (alleen de SHA-256 staat in `world.json`). De
   browser van de maker bewaart hem in `localStorage` (`bunkcraft.owner.<CODE>`) en stuurt hem mee bij het joinen: dat maakt
   hem eigenaar en operator, zonder wachtwoord en zonder dat een ban of whitelist hem buitensluit. Raak je dat token kwijt,
-  dan ben je geen eigenaar meer; de beheerder kan de game dan nog sluiten via `/admin`.
+  dan ben je geen eigenaar meer; de beheerder kan de game dan nog sluiten via `/ops`.
 - **Namen zijn gebonden aan een browser.** Elke browser maakt per server en game een geheime sleutel (`bunkcraft.key.<host>/<CODE>`)
   en stuurt hem mee. De eerste login met een naam claimt die naam in die game (`claims` in `world.json`, alleen de hash).
   Wie later dezelfde naam met een andere sleutel gebruikt, wordt geweigerd. Zo kan niemand zich voordoen als operator.
@@ -517,27 +519,29 @@ hangen niet aan dat geheim, alleen gasttokens.
 dat account. Accounthouders krijgen een klein vinkje in scoreboard, killfeed en lobby. Een oude gastclaim op dezelfde naam in een game
 (`world.json`) maakt plaats voor de accounthouder, behalve als de naam in die game operator is.
 
-**Beheer.** Beschermd door `ADMIN_TOKEN`, net als de rest. In `/admin` staat een sectie *Accounts* (zoeken op naam, vergrendelen,
-ontgrendelen, uitloggen, herstelcode, verwijderen); dezelfde acties via de API en via het script:
+**Beheer.** Beschermd door `ADMIN_TOKEN` of een admin-account, net als de rest. In het ops-dashboard (`/ops`) staat een tab
+*Accounts* (zoeken op naam, admin maken/intrekken, vergrendelen, ontgrendelen, uitloggen, herstelcode, verwijderen); dezelfde
+acties via de API en via het script:
 
 ```
 GET  /api/admin/accounts?q=<deel van naam>
 POST /api/admin/accounts/{lock|unlock|logout|delete|recovery}   {"name": "<gebruikersnaam>"}
 bunkcraft account list [zoekterm]
 bunkcraft account <lock|unlock|logout|delete|recovery> <naam>     # delete vraagt eerst om bevestiging
+bunkcraft account admin <naam> [on|off]                            # mag (niet meer) in het ops-dashboard
 ```
 
 - **lock:** geen login, alle sessies direct dood, de naam blijft gereserveerd (`403 account_locked`). **unlock** draait dat terug.
 - **logout:** beëindigt alle sessies; de speler kan gewoon opnieuw inloggen.
 - **delete:** verwijdert account en profiel (voortgang, skintoewijzing); de naam komt vrij.
-- **recovery:** geeft een nieuwe herstelcode uit, **eenmalig getoond aan de beheerder** (in `/admin` blijft hij op het scherm tot je op Hide klikt, in
+- **recovery:** geeft een nieuwe herstelcode uit, **eenmalig getoond aan de beheerder** (in `/ops` blijft hij op het scherm tot je op Verbergen klikt, in
   de CLI staat hij in de uitvoer). De oude code en alle sessies zijn meteen dood.
 
 **Als wachtwoord en herstelcode allebei kwijt zijn.** Er is geen e-mail, dus dit is een handmatige procedure voor de beheerder:
 1. De eigenaar meldt zich via een kanaal dat jij buiten het spel kent (Discord, mail of een eerder bericht van die persoon). Een bericht
    in het spel is geen bewijs.
 2. Vraag details die alleen de eigenaar weet: ongeveer wanneer het account is gemaakt, level en prestige, gekozen titel of camo's. Controleer
-   ze met `bunkcraft account list <naam>` (level, aanmaakdatum, sessies) of in `/admin`.
+   ze met `bunkcraft account list <naam>` (level, aanmaakdatum, sessies) of in `/ops`.
 3. Twijfel je (bijvoorbeeld een claim van iemand anders op een bekende naam), vergrendel dan eerst (`lock`) en wacht tot het verhaal klopt.
 4. Geef met `recovery` een nieuwe code uit en stuur die via hetzelfde buitenspelkanaal terug. De eigenaar kiest met **Wachtwoord vergeten**
    (naam + code) zelf een nieuw wachtwoord en krijgt daarbij meteen een verse herstelcode. Verwijder het bericht met de code daarna.
@@ -582,7 +586,7 @@ elkaar.
 
 **Moderatie is de verantwoordelijkheid van de operator.** BunkCraft bekijkt geen inhoud: wie `SKINS=on` laat staan, laat
 spelers plaatjes publiceren die andere spelers te zien krijgen (denk aan haatsymbolen of seksuele inhoud) en moet de meldingen
-bijhouden. Gebruik `/admin` (*Skin reports*) of de API hierboven om een hash te verbieden; een verboden hash wordt nooit meer
+bijhouden. Gebruik `/ops` (tab *Moderatie*) of de API hierboven om een hash te verbieden; een verboden hash wordt nooit meer
 geserveerd, kan niet opnieuw geüpload worden (ook niet in een andere bestandsvorm, want de hash hangt aan de pixels) en
 verdwijnt direct bij verbonden spelers. Zet je geen moderatie in, gebruik dan `SKINS=off` of beperk de server tot mensen die
 je kent. De meldingen en verboden hashes staan in `DATA_DIR/skin-reports.json` en `DATA_DIR/skin-bans.json`; `DATA_DIR/skins/`
@@ -612,29 +616,70 @@ Opslag: `ops`, `bans` en `whitelist` staan in `world.json` en overleven herstart
 dateert, heeft geen eigenaar: daar bestaan geen moderatiecommando's en blijft `/time` open voor iedereen, zoals vroeger.
 De hoofdwereld krijgt operators via `OPS` (namen, gebonden via de sleutel) of via `ADMIN_TOKEN` als `owner`.
 
-## Beheer: `/admin` en `/api/admin/*`
+## Beheer: het ops-dashboard (`/ops`) en `/api/admin/*`
 
-Alleen actief met `ADMIN_TOKEN`. Elk verzoek heeft `Authorization: Bearer <token>` nodig; het token wordt in constante tijd
-vergeleken (`timingSafeEqual` over SHA-256) en 20 foute pogingen per adres per 10 minuten geven 429. Zet `/admin` bij voorkeur
-alleen open via HTTPS, of beperk het in je reverse proxy tot je eigen IP.
+**Wie mag erin.** Twee manieren, die precies hetzelfde mogen:
 
-| Verzoek | Doet |
+- **Een admin-account** (aanbevolen): log in met je gewone BunkCraft-account. Een account is admin als het in
+  `ADMIN_ACCOUNTS` staat (bijv. `ADMIN_ACCOUNTS=Stijn` in `.env`, daarna `bunkcraft restart`) of als het de vaste
+  admin-vlag heeft: `bunkcraft account admin Stijn on` (direct actief, geen herstart; `off` trekt hem weer in). Registreer
+  het account eerst in het spel: een naam in `ADMIN_ACCOUNTS` die nog niemand heeft, maakt de eerste die hem registreert
+  admin (de server waarschuwt daarvoor in de log bij het starten). De vlag via de CLI heeft dat risico niet.
+- **`ADMIN_TOKEN`** als bearer-token: voor de CLI (`bunkcraft account …`, auto-update) en als noodingang op het dashboard.
+
+Elke aanvraag wordt gecontroleerd: het token in constante tijd (`timingSafeEqual` over SHA-256), een sessie zoals overal
+(onbekend, verlopen of uitgelogd = 401; een account zonder adminrechten of een vergrendeld account = 403). Foute pogingen tellen
+samen: 20 per adres per 10 minuten, daarna 429. Wijzigingen (alles behalve GET) moeten van deze site komen (Origin /
+Sec-Fetch-Site, dezelfde controle als de account-API) en een browsersessie moet JSON sturen. Elke wijziging komt in de
+**audit log**: in de serverlog (`admin action`, met accountnaam, actie, details, status en adres) en de laatste 200 in het
+dashboard. Het `ADMIN_TOKEN` en de sleutels van de match-runners komen nooit in de browser.
+
+**Het dashboard.** `/ops` (en `/admin`, dat ernaartoe doorstuurt) is één statische pagina zonder framework, in de
+BunkCraft-stijl, met een strikte CSP (alleen het eigen script en de eigen stijl via hash). Ben je in het spel ingelogd met
+een admin-account, dan kom je direct binnen; anders log je in met gebruikersnaam en wachtwoord (die sessie blijft in
+`sessionStorage` van dat tabblad) of met het token. In het spel staat dan op het startscherm een knop **Beheer/Admin** (alleen
+voor admins; `/api/account/me` geeft `admin: true` alleen aan hen) die het dashboard in een nieuw tabblad opent. Het ververst
+elke 3 seconden:
+
+- **Overzicht:** versie, uptime, isolatie, lopende matches, containers (in gebruik / max, warm, startend), spelers in matches en
+  online, CPU en geheugen van de control plane, loop lag en tick p99, in-process fallbacks, gemiddelde starttijd.
+- **Containers** (Portainer-achtig, bij `MATCH_ISOLATION=container`): per runner naam, status (starting, warm, assigned,
+  draining, stopping), versie en image, lobby, modus, map, spelers/max, bots, uptime, CPU, geheugen (gebruik/limiet), tick p99.
+  Acties: **Logs** (de laatste 100–500 regels, stdout en stderr apart), **Spelers** (kick, IP blokkeren), **Stop** (een warme
+  container stopt gewoon; bij een lobby wordt de XP uitbetaald, de wereld bewaard en krijgen de spelers een reconnect-hint: ze
+  komen via dezelfde code terug in een verse container) en **Lobby sluiten**. In-process staan hier de lobby's.
+- **Instellingen** (zonder herstart, bewaard in `DATA_DIR/ops-settings.json`, gaan vóór de `.env`; *Reset* = weer de
+  `.env`-waarde, die er steeds naast staat): `MAX_MATCH_CONTAINERS` (1–256) en `MATCH_WARM_POOL` (0–16) direct (een kleinere
+  pool stopt overbodige warme containers, containers met een lobby nooit), `MATCH_CPUS` en `MATCH_MEMORY` alleen voor nieuwe
+  containers en hoogstens de `.env`-waarde (de Docker gate laat niet meer toe), `MATCH_IDLE_GRACE_SEC` (5–3600) direct, en
+  voor nieuwe lobby's `MOTD`, `ROOM_MAX_PLAYERS` (2–16) en `QUICKPLAY_BOTS` (0 = geen bots in quick play). Plus een
+  aankondiging aan alle spelers en *alles nu opslaan*.
+- **Accounts** (zoeken, admin maken/intrekken, vergrendelen, uitloggen, herstelcode, verwijderen), **Moderatie**
+  (geblokkeerde adressen, skin-meldingen) en de **audit log**.
+
+**Cloudflare.** Cloudflare's WAF (managed rules) blokkeert op de live server elk verzoek naar `/api/admin/*` met een
+403-blokpagina, ook zonder token. Het dashboard gebruikt daarom alleen `/api/ops/*` (dezelfde API). `/api/admin/*` blijft voor
+de CLI, die op de server zelf via `127.0.0.1` praat en Cloudflare niet passeert. Wil je de oude paden van buitenaf gebruiken,
+maak dan in Cloudflare een uitzondering (WAF → custom rule *Skip* voor `/api/admin/` vanaf je eigen IP), of gebruik `/api/ops/`.
+
+| Verzoek (`/api/ops/…` of `/api/admin/…`) | Doet |
 |---|---|
-| `GET /api/admin/stats` | uptime, spelers, games, verbindingen, CPU, geheugen, tick p50/p99, verkeer |
-| `GET /api/admin/rooms` | hoofdwereld en alle games (ook die niet in het geheugen staan) |
-| `GET /api/admin/rooms/<CODE>/players`, `GET /api/admin/main/players` | spelers met adres en ping |
-| `POST /api/admin/rooms/<CODE>/kick`, `POST /api/admin/main/kick` | `{"name":"..."}` |
-| `POST /api/admin/rooms/<CODE>/close` | iedereen eruit en uit het geheugen; `{"remove":true}` verwijdert ook de data |
-| `GET/POST /api/admin/ip-bans`, `DELETE /api/admin/ip-bans/<ip>` | adressen blokkeren (bewaard in `data/ip-bans.json`); open verbindingen sluiten direct |
-| `POST /api/admin/announce` | `{"text":"..."}`: servermelding in de chat van elke game (auto-update waarschuwt zo voor een herstart) |
-| `POST /api/admin/save` | elke geladen wereld nu naar schijf (auto-update doet dit vlak voor de back-up) |
-| `GET /api/admin/skins` | gemelde skins (hash, aantal meldingen, namen van dragers), verboden hashes en opslaggebruik; `404` bij `SKINS=off` |
-| `POST /api/admin/skins/ban`, `unban`, `dismiss`, `purge` | `{"hash":"…"}`: verbieden (wordt nooit meer geserveerd of geüpload en verdwijnt live bij de spelers), terugdraaien, meldingen wissen, bestand definitief verwijderen |
+| `GET whoami`, `GET overview`, `GET audit` | wie je bent; de kaarten van het dashboard; de laatste 200 beheeracties |
+| `GET containers` | runners (containers) met status, lobby, CPU, geheugen, tick p99, plus alle geladen games |
+| `POST containers/<id>/stop`, `GET containers/<id>/logs?tail=N` | runner stoppen (zie boven); laatste N ≤ 500 logregels |
+| `GET settings`, `POST settings` `{"values":{…}}`, `POST settings/reset` `{"keys":[…]}` | instellingen lezen, wijzigen (alles of niets), terugzetten |
+| `GET stats`, `GET matches` | ruwe cijfers (oude pagina) |
+| `GET rooms` | hoofdwereld en alle games (ook die niet in het geheugen staan) |
+| `GET rooms/<CODE>/players`, `GET main/players` | spelers met adres en ping |
+| `POST rooms/<CODE>/kick`, `POST main/kick` | `{"name":"..."}` |
+| `POST rooms/<CODE>/close` | iedereen eruit en uit het geheugen; `{"remove":true}` verwijdert ook de data |
+| `GET/POST ip-bans`, `DELETE ip-bans/<ip>` | adressen blokkeren (bewaard in `data/ip-bans.json`); open verbindingen sluiten direct |
+| `POST announce` | `{"text":"..."}`: servermelding in de chat van elke game (auto-update waarschuwt zo voor een herstart) |
+| `POST save` | elke geladen wereld nu naar schijf (auto-update doet dit vlak voor de back-up) |
+| `GET skins`, `POST skins/{ban,unban,dismiss,purge}` | skin-meldingen en verboden hashes; `404` bij `SKINS=off` |
+| `GET accounts?q=`, `POST accounts/{lock,unlock,logout,delete,recovery}`, `POST accounts/admin` `{"name","admin":true}` | accountbeheer |
 
-`/admin` is één statische HTML-pagina zonder framework en zonder geheimen erin: je plakt het token in (alleen in
-`sessionStorage` van dat tabblad), ziet elke 5 seconden de cijfers en kunt games sluiten of verwijderen, spelers kicken en
-adressen blokkeren. Onder *Skin reports* staan gemelde skins met een voorbeeld, het aantal meldingen en knoppen *Ban hash* en
-*Dismiss*; daaronder de verboden hashes. Alle data gaat via `textContent` de pagina in en een strikte CSP verbiedt externe scripts.
+`/api/admin/*` bestaat alleen met `ADMIN_TOKEN`; `/api/ops/*` en `/ops` met `ADMIN_TOKEN` of met accounts aan.
 
 ## Observability en betrouwbaarheid
 

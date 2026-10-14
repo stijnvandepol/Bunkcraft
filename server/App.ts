@@ -5,8 +5,9 @@ import type { AddressInfo } from 'node:net';
 import { extname, join, normalize, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { type WebSocket, WebSocketServer } from 'ws';
-import { IpBans, adminApi, authorizeAdmin, newAuthLimiter } from './Admin';
-import { ADMIN_CSP, ADMIN_HTML } from './AdminPage';
+import { IpBans, adminApi, newAuthLimiter } from './Admin';
+import { OPS_CSP, OPS_HTML } from './OpsPage';
+import { AuditLog, OpsSettings, type OpsValues, authorizeOps } from './Ops';
 import { backupAll } from './Backup';
 import { type Config, backupDirOf } from './Config';
 import { GameServer } from './GameServer';
@@ -125,7 +126,29 @@ export async function startServer(config: Config, start: StartOptions = {}): Pro
       },
     })
     : null;
-  if (accounts) profiles!.attachAccounts(accounts);
+  if (accounts) {
+    profiles!.attachAccounts(accounts);
+    accounts.setAdminNames(config.adminAccounts);
+    // An ADMIN_ACCOUNTS name nobody registered yet would make its first registrant an admin: say so loudly.
+    const unclaimed = accounts.unclaimedAdminNames();
+    if (unclaimed.length) log.warn('ADMIN_ACCOUNTS names no account holds yet: whoever registers them becomes an admin', { names: unclaimed });
+  }
+  // Run-time settings of the ops dashboard (DATA_DIR/ops-settings.json) over the environment.
+  const opsDefaults: OpsValues = {
+    maxMatchContainers: config.maxMatchContainers, matchWarmPool: Math.min(config.matchWarmPool, config.maxMatchContainers), matchCpus: config.matchCpus,
+    matchMemoryMb: config.matchMemoryMb, matchIdleGraceSec: config.matchIdleGraceSec, motd: config.motd,
+    roomMaxPlayers: config.roomMaxPlayers, quickPlayBots: config.quickPlayBots,
+  };
+  const matchDriver = config.roomsEnabled && config.matchIsolation === 'container'
+    ? start.matchDriver ?? driverFromConfig(config, version, (process.env.LOG_LEVEL ?? 'info').toLowerCase())
+    : null;
+  // The Docker gate allows CPU and memory up to MATCH_CPUS and MATCH_MEMORY: the dashboard can only go lower.
+  const opsSettings = new OpsSettings(config.dataDir, opsDefaults, matchDriver?.kind === 'docker'
+    ? { matchCpus: { max: config.matchCpus }, matchMemoryMb: { max: config.matchMemoryMb } }
+    : {});
+  const ops = opsSettings.values;
+  const roomMotd = (m: string): string => (m === 'Welcome to BunkCraft!' ? 'Welcome to BunkCraft! Share the game code with your friends.' : m);
+  const audit = new AuditLog();
   // Custom player skins hang on the signed profiles: no profiles, no skins.
   const skins = profiles && config.skins
     ? new SkinService({ dataDir: config.dataDir, profiles, maxBytes: config.skinStorageMb * 1048576, uploadsPerHour: config.skinUploadLimit })
@@ -155,13 +178,14 @@ export async function startServer(config: Config, start: StartOptions = {}): Pro
   const control = config.roomsEnabled && config.matchIsolation === 'container'
     ? new ControlPlane({
       dataDir: config.dataDir, roomsDir: join(config.dataDir, 'rooms'), secret: config.matchSecret,
-      warm: config.matchWarmPool, max: config.maxMatchContainers, internalPort: config.internalPort, internalHost: config.internalHost,
-      idleGraceSec: config.matchIdleGraceSec, roomMaxPlayers: config.roomMaxPlayers,
-      motd: config.motd === 'Welcome to BunkCraft!' ? 'Welcome to BunkCraft! Share the game code with your friends.' : config.motd,
+      warm: ops.matchWarmPool, max: ops.maxMatchContainers, internalPort: config.internalPort, internalHost: config.internalHost,
+      idleGraceSec: ops.matchIdleGraceSec, roomMaxPlayers: ops.roomMaxPlayers,
+      motd: roomMotd(ops.motd),
       binary: config.binary, rejoinGraceSec: config.rejoinGraceSec, adminToken: config.adminToken, version, profiles, skins, failLimiter,
-      driver: start.matchDriver ?? driverFromConfig(config, version, (process.env.LOG_LEVEL ?? 'info').toLowerCase()),
+      driver: matchDriver!,
     })
     : null;
+  matchDriver?.setLimits?.(ops.matchCpus, ops.matchMemoryMb);
   if (control) {
     await control.start();
     metrics.extra = () => control.prometheus();
@@ -171,22 +195,29 @@ export async function startServer(config: Config, start: StartOptions = {}): Pro
     ? new Rooms({
       dataDir: join(config.dataDir, 'rooms'),
       maxRooms: config.maxRooms,
-      maxPlayers: config.roomMaxPlayers,
-      motd: config.motd === 'Welcome to BunkCraft!' ? 'Welcome to BunkCraft! Share the game code with your friends.' : config.motd,
+      maxPlayers: ops.roomMaxPlayers,
+      motd: roomMotd(ops.motd),
       idleUnloadMs: config.roomIdleUnloadMin * 60_000,
       expireDays: config.roomExpireDays,
       adminToken: config.adminToken,
       failLimiter,
       backupDir: config.backupKeep > 0 ? backupDir : undefined,
       listMax: config.listMax,
-      quickPlayBots: config.quickPlayBots,
+      quickPlayBots: ops.quickPlayBots,
       quickPlayBotDifficulty: config.quickPlayBotDifficulty,
       profiles, skins,
-      remote: control, remoteIdleMs: config.matchIdleGraceSec * 1000,
+      remote: control, remoteIdleMs: ops.matchIdleGraceSec * 1000,
       ...guard,
     })
     : null;
   if (control && rooms) await control.attach(rooms);
+  // A changed setting reaches what uses it at once; limits and lobby settings apply to what starts from now on.
+  opsSettings.onChange = (v) => {
+    control?.pool.resize(v.matchWarmPool, v.maxMatchContainers);
+    matchDriver?.setLimits?.(v.matchCpus, v.matchMemoryMb);
+    control?.tune({ motd: roomMotd(v.motd), roomMaxPlayers: v.roomMaxPlayers, idleGraceSec: v.matchIdleGraceSec });
+    rooms?.tune({ motd: roomMotd(v.motd), maxPlayers: v.roomMaxPlayers, quickPlayBots: v.quickPlayBots, remoteIdleMs: v.matchIdleGraceSec * 1000 });
+  };
   if (skins) skins.onChange = (pid) => { main?.refreshSkins(pid); rooms?.refreshSkins(pid); };
 
   // Parties: friends queue together. Server memory only; expires by itself (server/Parties.ts).
@@ -309,7 +340,7 @@ export async function startServer(config: Config, start: StartOptions = {}): Pro
       return json(res, 200, {
         rooms: !!rooms, main: !!main, players: gauges().players,
         // Largest lobby a game may have (ROOM_MAX_PLAYERS): Realms only offers sizes up to it.
-        ...(rooms ? { roomMaxPlayers: config.roomMaxPlayers } : {}),
+        ...(rooms ? { roomMaxPlayers: opsSettings.values.roomMaxPlayers } : {}),
         // What this server can do beyond the basics; clients hide features an older server lacks.
         features: { passwords: true, browse: !!rooms, binary: config.binary, realms: !!rooms, profiles: !!profiles, accounts: !!accounts, skins: !!skins, party: !!parties },
       });
@@ -565,7 +596,11 @@ export async function startServer(config: Config, start: StartOptions = {}): Pro
     const view = (profileId: string): Record<string, unknown> => ({ account: { name: accounts.nameOf(profileId) }, profile: profiles.get(profileId) });
     if (path === '/api/account/me' && req.method === 'GET') {
       const id = token?.startsWith('s1.') ? profiles.verify(token) : null;
-      return id ? json(res, 200, view(id)) : json(res, 401, { error: 'unauthorized' });
+      if (!id) return json(res, 401, { error: 'unauthorized' });
+      const v = view(id);
+      // Only an admin learns that admin exists (the game shows the ops button); nobody else gets the field.
+      if (accounts.adminOf(token)) (v.account as Record<string, unknown>).admin = true;
+      return json(res, 200, v);
     }
     if (req.method !== 'POST') return json(res, 404, { error: 'not_found' });
     if (!sameSitePost(req)) return json(res, 403, { error: 'origin' });
@@ -767,23 +802,32 @@ export async function startServer(config: Config, start: StartOptions = {}): Pro
       res.end(req.method === 'HEAD' ? undefined : png);
       return;
     }
+    // The ops dashboard: with ADMIN_TOKEN or player accounts (an admin account logs in). /admin is its old address.
+    const opsOn = !!config.adminToken || !!accounts;
     if (url.pathname === '/admin' || url.pathname === '/admin/') {
-      if (!config.adminToken) {
-        res.writeHead(404, { 'content-type': 'text/plain' }).end('Admin is disabled (set ADMIN_TOKEN).');
-        return;
-      }
-      res.writeHead(200, {
-        'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'content-security-policy': ADMIN_CSP,
-        'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer',
-      });
-      res.end(ADMIN_HTML);
+      if (!opsOn) { res.writeHead(404, { 'content-type': 'text/plain' }).end('Admin is disabled (set ADMIN_TOKEN or ADMIN_ACCOUNTS).'); return; }
+      res.writeHead(302, { location: '/ops', 'cache-control': 'no-store' }).end();
       return;
     }
-    if (url.pathname.startsWith('/api/admin/') || url.pathname === '/api/admin') {
-      if (!config.adminToken) return json(res, 404, { error: 'Admin is disabled' });
-      if (!authorizeAdmin({ token: config.adminToken, clientIp, json, failures: adminFailures }, req, res)) return;
+    if (url.pathname === '/ops' || url.pathname === '/ops/') {
+      if (!opsOn) { res.writeHead(404, { 'content-type': 'text/plain' }).end('The ops dashboard is disabled (set ADMIN_TOKEN or ADMIN_ACCOUNTS).'); return; }
+      res.writeHead(200, {
+        'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'content-security-policy': OPS_CSP,
+        'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer',
+      });
+      res.end(req.method === 'HEAD' ? undefined : OPS_HTML);
+      return;
+    }
+    // /api/admin/*: the CLI with ADMIN_TOKEN (as before). /api/ops/*: the same API for the dashboard, under a path
+    // Cloudflare's WAF does not block. Both take the token or an admin account's session.
+    const legacy = url.pathname.startsWith('/api/admin/') || url.pathname === '/api/admin';
+    if (legacy || url.pathname.startsWith('/api/ops/') || url.pathname === '/api/ops') {
+      if (legacy ? !config.adminToken : !opsOn) return json(res, 404, { error: 'Admin is disabled' });
+      const who = authorizeOps({ token: config.adminToken, accounts, failures: adminFailures, clientIp, json, sameSite: sameSitePost }, req, res);
+      if (!who) return;
       adminApi({
-        token: config.adminToken, rooms, main, bans: ipBans, skins, accounts, version, gauges, clientIp, readBody, json, control,
+        token: config.adminToken ?? '', rooms, main, bans: ipBans, skins, accounts, version, gauges, clientIp, readBody, json, control,
+        who, audit, settings: rooms ? opsSettings : null,
         dropIp: (ip) => { for (const c of wss.clients) if ((c as WebSocket & { ip?: string }).ip === ip) c.terminate(); },
       }, req, res, url.pathname).catch(() => { if (!res.headersSent) json(res, 500, { error: 'Server error' }); });
       return;

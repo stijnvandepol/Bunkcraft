@@ -191,9 +191,9 @@ export class RemoteRoom implements RoomServer {
   shutdown(reconnectMs?: number, reason?: string): void {
     if (this.closed) return;
     this.closed = true;
-    void reconnectMs;
     // The runner settles XP, sends world.json back and reports `stopping`; then the pool stops its container.
-    void this.op({ op: 'shutdown', ...(reason ? { reason } : {}) });
+    // With `reconnectMs` its players are told to come back (an admin restarted the runner: the lobby reopens).
+    void this.op({ op: 'shutdown', ...(reason ? { reason } : {}), ...(reconnectMs ? { reconnectMs } : {}) });
   }
 
   detach(reconnectMs?: number): void {

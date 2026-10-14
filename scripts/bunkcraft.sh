@@ -15,6 +15,8 @@
 #   bunkcraft account <lock|unlock|logout|delete|recovery|list> [name]
 #                          player account moderation through the admin API (needs ADMIN_TOKEN; 'delete' asks first,
 #                          'recovery' prints a new recovery code once: only after the owner proved who they are)
+#   bunkcraft account admin <name> [on|off]
+#                          let an account into the ops dashboard (/ops) with its own login, or take that away again
 #   bunkcraft matches      match containers (MATCH_ISOLATION=container): lobby, image, CPU and memory
 #   bunkcraft matches stop stop every match container of this install (their players are disconnected)
 #   bunkcraft deploy       the auto-update flow now, also when AUTOUPDATE=off (push deploys over SSH)
@@ -138,7 +140,13 @@ case "${1:-status}" in
     case "$action" in
       list) ;;
       lock|unlock|logout|delete|recovery) [ -n "$name" ] || { echo "usage: bunkcraft account $action <name>" >&2; exit 2; } ;;
-      *) echo "usage: bunkcraft account <lock|unlock|logout|delete|recovery|list> [name]" >&2; exit 2 ;;
+      admin)
+        [ -n "$name" ] || { echo "usage: bunkcraft account admin <name> [on|off]" >&2; exit 2; }
+        case "${3:-on}" in on|off) ;; *) echo "usage: bunkcraft account admin <name> [on|off]" >&2; exit 2 ;; esac
+        server_check account admin "$name" "${3:-on}"
+        exit $?
+        ;;
+      *) echo "usage: bunkcraft account <lock|unlock|logout|delete|recovery|list|admin> [name]" >&2; exit 2 ;;
     esac
     if [ "$action" = delete ]; then
       read -r -p "Delete account '$name' and its profile for good? [y/N] " yn

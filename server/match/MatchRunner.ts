@@ -272,7 +272,11 @@ export async function startMatchRunner(config: Config): Promise<RunningRunner> {
         }
         return { ok: true };
       }
-      case 'shutdown': void stop(typeof body.reason === 'string' ? body.reason : undefined); return { ok: true };
+      case 'shutdown': {
+        const reconnect = Math.floor(Number(body.reconnectMs));
+        void stop(typeof body.reason === 'string' ? body.reason.slice(0, 200) : undefined, reconnect >= 1000 && reconnect <= 60_000 ? reconnect : undefined);
+        return { ok: true };
+      }
       default: return { ok: false };
     }
   };
@@ -321,12 +325,12 @@ export async function startMatchRunner(config: Config): Promise<RunningRunner> {
   ];
   for (const t of timers) t.unref();
 
-  const stop = (reason?: string): Promise<void> => {
+  const stop = (reason?: string, reconnectMs?: number): Promise<void> => {
     stopping ??= (async () => {
       timers.forEach(clearInterval);
       if (game) {
         // Settles every open XP tally (grants go to the control plane) and saves world.json.
-        game.shutdown(undefined, reason ?? 'This match has ended');
+        game.shutdown(reconnectMs, reason ?? 'This match has ended');
         await profiles.settle(8000);
         await pushWorld(true);
       }

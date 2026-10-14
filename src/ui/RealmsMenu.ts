@@ -7,7 +7,7 @@ import { OPTICS, PERKS, isPerk, weaponDef } from '../modes/Weapons';
 import { type PartyChange, normalizePartyCode } from '../modes/Party';
 import { NAME_PATTERN, formatCode, normalizeCode } from '../net/protocol';
 import { PartyCallError, party as partyClient } from '../net/PartyApi';
-import { loggedIn } from '../net/AccountApi';
+import { accountIsAdmin, knownAdmin, loggedIn } from '../net/AccountApi';
 import { currentProfile, currentRank, loadProfile, onProfile } from '../net/ProfileApi';
 import { checkRejoin } from '../net/Rejoin';
 import { type ListedRoom, type RoomInfo, browseRooms, createRoom, inviteLink, inviteText, lookupRoom, quickPlay, realmsStats, serverInfo } from '../net/RoomApi';
@@ -207,6 +207,15 @@ export class RealmsMenu {
     return home;
   }
 
+  /** The account line of the home screen; an admin account also gets the ops dashboard link (asked once per session). */
+  private showAccount(home: HomeScreen, name: string | null): void {
+    home.setAccount(name, this.accountsOn, !!name && knownAdmin());
+    if (!name || !this.accountsOn || knownAdmin()) return;
+    void accountIsAdmin().then((admin) => {
+      if (admin && this.home === home && home.el.isConnected && loggedIn()) home.setAccount(name, this.accountsOn, true);
+    });
+  }
+
   /** Server features, the profile and live player counts for the home screen. */
   private async connect(home: HomeScreen): Promise<void> {
     const info = await serverInfo();
@@ -219,7 +228,7 @@ export class RealmsMenu {
     this.sizes = lobbySizes(info.roomMaxPlayers);
     this.profilesOn = !!info.features?.profiles;
     this.accountsOn = !!info.features?.accounts && this.profilesOn;
-    home.setAccount(loggedIn() ? currentProfile()?.name ?? validSavedName() : null, this.accountsOn);
+    this.showAccount(home, loggedIn() ? currentProfile()?.name ?? validSavedName() : null);
     this.partyOn = !!info.features?.party;
     home.setServer('online');
     // Dropped from a match not long ago (reload, crash, network)? The server may still keep the seat.
@@ -231,7 +240,7 @@ export class RealmsMenu {
     const off = onProfile((p) => {
       if (this.home !== home) { off(); return; }
       home.setProfile(p, validSavedName(), this.profilesOn);
-      home.setAccount(loggedIn() ? p?.name ?? validSavedName() : null, this.accountsOn);
+      this.showAccount(home, loggedIn() ? p?.name ?? validSavedName() : null);
     });
     this.loadProfile();
     const refresh = async () => {
@@ -368,7 +377,7 @@ export class RealmsMenu {
   /** The profile of this browser (created on first use) once there is a name; joining waits for it. */
   private loadProfile(): void {
     const name = validSavedName();
-    this.home?.setAccount(loggedIn() ? currentProfile()?.name ?? name : null, this.accountsOn);
+    if (this.home) this.showAccount(this.home, loggedIn() ? currentProfile()?.name ?? name : null);
     if (!name || !this.profilesOn) {
       this.home?.setProfile(currentProfile(), name, this.profilesOn);
       return;

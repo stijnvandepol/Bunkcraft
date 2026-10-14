@@ -82,6 +82,29 @@ export class MatchPool {
     return this.o.driver;
   }
 
+  /** Idle runners kept ready (MATCH_WARM_POOL) and the most runners at once (MAX_MATCH_CONTAINERS). */
+  get warm(): number { return this.o.warm; }
+  get max(): number { return this.o.max; }
+
+  /**
+   * New pool sizes at run time (the ops dashboard). A bigger warm pool starts runners now; a smaller one (or a lower
+   * cap) stops surplus warm runners. Runners with a lobby are never touched: they finish their match.
+   */
+  resize(warm: number, max: number): void {
+    this.o.warm = Math.max(0, Math.floor(warm));
+    this.o.max = Math.max(1, Math.floor(max));
+    let surplus = this.warmCount() - this.o.warm;
+    let over = this.runners.size - this.o.max;
+    for (const r of [...this.runners.values()]) {
+      if (surplus <= 0 && over <= 0) break;
+      if (r.state !== 'idle') continue;
+      surplus--;
+      over--;
+      void this.release(r.id, 'warm pool resized');
+    }
+    this.ensureWarm();
+  }
+
   count(state?: RunnerState): number {
     if (!state) return this.runners.size;
     let n = 0;

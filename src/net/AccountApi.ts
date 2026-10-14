@@ -16,7 +16,7 @@ interface Reply {
   token?: string;
   recovery?: string;
   profile?: unknown;
-  account?: { name?: string };
+  account?: { name?: string; admin?: boolean };
   error?: string;
   retryAfter?: number;
   guest?: { name: string; xp: number; prestige: number };
@@ -42,6 +42,25 @@ async function call(method: 'GET' | 'POST', path: string, body?: Record<string, 
 /** Whether this browser is logged in (a session token is stored; the server decides whether it is still valid). */
 export function loggedIn(): boolean {
   return isAccountSession();
+}
+
+let adminCache: { token: string; admin: boolean } | null = null;
+
+/** Whether the logged-in account is a server admin, as far as already known (no request). */
+export function knownAdmin(): boolean {
+  const token = profileToken();
+  return !!token && adminCache?.token === token && adminCache.admin;
+}
+
+/** Whether the logged-in account is a server admin: the server only tells admins (once per session token). */
+export async function accountIsAdmin(): Promise<boolean> {
+  const token = profileToken();
+  if (!token?.startsWith('s1.')) return false;
+  if (adminCache?.token === token) return adminCache.admin;
+  let admin = false;
+  try { admin = (await call('GET', '/api/account/me')).account?.admin === true; } catch { return false; }
+  adminCache = { token, admin };
+  return admin;
 }
 
 /** The account name of the loaded profile, when logged in. */

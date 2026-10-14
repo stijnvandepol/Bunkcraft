@@ -355,13 +355,15 @@ export class HomeScreen {
    * The account row: "Guest · Create account / Log in", or the account name with a button to manage it.
    * `enabled` false (server without accounts) hides the row; `name` null = guest.
    */
-  setAccount(name: string | null, enabled: boolean): void {
+  setAccount(name: string | null, enabled: boolean, admin = false): void {
     this.accountEl.hidden = !enabled;
     if (!enabled) return;
     if (name) {
-      this.accountEl.replaceChildren(
-        h('span', { class: 'home-account-who', text: t('acct.signedIn', name) }),
-        h('button', { class: 'bc-link', type: 'button', text: t('acct.manage'), onclick: () => this.host.account.manage() }));
+      const parts: Node[] = [h('span', { class: 'home-account-who', text: t('acct.signedIn', name) })];
+      // Server admins only (the server says so in /api/account/me): the ops dashboard, in a new tab.
+      if (admin) parts.push(h('a', { class: 'bc-link', href: '/ops', target: '_blank', rel: 'noopener', 'data-ops': '1', text: t('acct.admin') }));
+      parts.push(h('button', { class: 'bc-link', type: 'button', text: t('acct.manage'), onclick: () => this.host.account.manage() }));
+      this.accountEl.replaceChildren(...parts);
       return;
     }
     this.accountEl.replaceChildren(

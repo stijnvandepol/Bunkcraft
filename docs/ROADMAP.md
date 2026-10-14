@@ -68,6 +68,11 @@ volgt de Bunkhosting-huisstijl. Live op https://craft.bunkhosting.nl (Cloudflare
 
 ## 3. Gedaan
 
+- **Ops-dashboard (oktober 2026):** `/ops` in de BunkCraft-stijl, inloggen met een admin-account (`ADMIN_ACCOUNTS` of
+  `bunkcraft account admin <naam> on`) of het token; containers à la Portainer (status, lobby, CPU, geheugen, tick p99, logs,
+  graceful stop), lobby's, instellingen zonder herstart (`DATA_DIR/ops-settings.json`), accounts, moderatie en audit log; API op
+  `/api/ops/*` omdat Cloudflare's WAF `/api/admin/*` blokkeert. Knop *Beheer* op het startscherm voor admins.
+
 - **Spelersaccounts:** gebruikersnaam + wachtwoord (scrypt), herstelcode (eenmalig getoond, alleen hash bewaard), sessietokens die
   overal werken waar het gasttoken werkte, koppelen van een gastprofiel bij registreren, bevestiging voordat gastvoortgang wordt
   weggegooid, limieten en uitstel per adres en naam, verwijderen met wachtwoord, back-ups van `data/accounts/`. Zie SERVER.md

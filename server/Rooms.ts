@@ -525,6 +525,19 @@ export class Rooms {
     return out;
   }
 
+  /** Settings the ops dashboard changes at run time; they apply to games opened (or loaded) from now on. */
+  tune(t: { motd?: string; maxPlayers?: number; quickPlayBots?: number; remoteIdleMs?: number }): void {
+    if (t.motd !== undefined) this.opts.motd = t.motd;
+    if (t.maxPlayers !== undefined) this.opts.maxPlayers = t.maxPlayers;
+    if (t.quickPlayBots !== undefined) this.opts.quickPlayBots = t.quickPlayBots;
+    if (t.remoteIdleMs !== undefined) this.opts.remoteIdleMs = t.remoteIdleMs;
+  }
+
+  /** Every loaded game with what the ops dashboard shows of it (in-process and in a match container). */
+  loadedGames(): { code: string; server: RoomServer; remote: boolean }[] {
+    return [...this.loaded].map(([code, r]) => ({ code, server: r.server, remote: !(r.server instanceof GameServer) }));
+  }
+
   /** Disconnects everybody and unloads a game; `remove` also deletes its data. */
   close(raw: string, remove: boolean): boolean {
     const code = normalizeCode(raw);

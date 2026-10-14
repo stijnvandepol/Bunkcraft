@@ -35,6 +35,8 @@ export interface Config {
   roomCreateLimit: number;
   /** Bearer token for /api/admin/* and /admin; unset = admin API disabled. */
   adminToken?: string;
+  /** Account names (case-insensitive) that may use the ops dashboard (/ops) with their login (ADMIN_ACCOUNTS). */
+  adminAccounts: string[];
   /** Bearer token for /metrics; unset = loopback only (or the admin token when that is set). */
   metricsToken?: string;
   /** Names that are operators of the main world. */
@@ -161,6 +163,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     roomIdleUnloadMin: Math.max(0.1, num(env.ROOM_IDLE_UNLOAD_MIN, 5)),
     roomCreateLimit: num(env.ROOM_CREATE_LIMIT, 6),
     adminToken: env.ADMIN_TOKEN || undefined,
+    adminAccounts: list(env.ADMIN_ACCOUNTS),
     metricsToken: env.METRICS_TOKEN || undefined,
     ops: list(env.OPS),
     allowedOrigins: list(env.ALLOWED_ORIGINS).map((o) => o.replace(/\/+$/, '').toLowerCase()),

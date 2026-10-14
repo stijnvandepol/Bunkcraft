@@ -145,6 +145,7 @@ class FakeDriver implements MatchDriver {
   async stop(h: RunnerHandle): Promise<void> { this.stopped.push(h.id); }
   async list(): Promise<RunnerHandle[]> { return []; }
   async stats(): Promise<null> { return null; }
+  async logs(): Promise<[]> { return []; }
 }
 
 const flush = () => new Promise((r) => setImmediate(r));
@@ -169,6 +170,32 @@ describe('match runner pool', () => {
     await flush();
     expect(driver.started).toHaveLength(2); // refilled behind it
     expect(p.count('starting')).toBe(1);
+  });
+
+  it('resizes at run time (ops dashboard): more warm runners start, surplus warm ones stop, assigned ones stay', async () => {
+    const { driver, p } = pool(1, 4);
+    p.ensureWarm();
+    await flush();
+    p.ready(driver.started[0], 4000, 'v');
+    const busy = await p.lease()!;
+    await flush();
+    for (const id of driver.started) p.ready(id, 4000, 'v');
+    expect(p.count('idle')).toBe(1);
+    p.resize(3, 4);
+    await flush();
+    for (const id of driver.started) p.ready(id, 4000, 'v');
+    expect([p.warm, p.max]).toEqual([3, 4]);
+    expect(p.count('idle')).toBe(3); // 1 assigned + 3 warm = the cap
+    p.resize(0, 2);
+    await flush();
+    expect(p.count('idle')).toBe(0);
+    expect(driver.stopped).toHaveLength(3);
+    expect(driver.stopped).not.toContain(busy.id);
+    expect(p.runners.get(busy.id)?.state).toBe('assigned');
+    // At the cap nothing new starts.
+    p.resize(4, 1);
+    await flush();
+    expect(p.count()).toBe(1);
   });
 
   it('starts a runner for a lease when none is warm, and says no at the cap', async () => {

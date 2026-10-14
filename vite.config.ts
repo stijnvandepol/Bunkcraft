@@ -109,6 +109,8 @@ export default defineConfig({
       '/ws': { target: 'ws://localhost:3000', ws: true },
       '/api': { target: 'http://localhost:3000' },
       '/skins': { target: 'http://localhost:3000' },
+      // The ops dashboard (server/OpsPage.ts) is served by the game server.
+      '/ops': { target: 'http://localhost:3000' },
     },
   },
 });

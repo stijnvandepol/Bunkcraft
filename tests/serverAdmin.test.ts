@@ -22,10 +22,17 @@ async function start(env: Record<string, string> = {}): Promise<TestServer> {
 const auth = (token: string) => ({ authorization: `Bearer ${token}` });
 
 describe('admin API', () => {
-  it('is disabled without ADMIN_TOKEN', async () => {
+  it('is disabled without ADMIN_TOKEN (the CLI API) and without accounts (the dashboard)', async () => {
     const t = await start();
     expect((await fetch(`${t.base}/api/admin/stats`, { headers: auth('anything') })).status).toBe(404);
-    expect((await fetch(`${t.base}/admin`)).status).toBe(404);
+    // Accounts are on: an admin account may log in to the dashboard, /admin is its old address.
+    const old = await fetch(`${t.base}/admin`, { redirect: 'manual' });
+    expect(old.status).toBe(302);
+    expect(old.headers.get('location')).toBe('/ops');
+    const off = await start({ ACCOUNTS: 'off' });
+    expect((await fetch(`${off.base}/admin`, { redirect: 'manual' })).status).toBe(404);
+    expect((await fetch(`${off.base}/ops`)).status).toBe(404);
+    expect((await fetch(`${off.base}/api/ops/overview`, { headers: auth('anything') })).status).toBe(404);
   });
 
   it('rejects missing and wrong tokens, then rate limits guessing', async () => {
@@ -43,10 +50,16 @@ describe('admin API', () => {
   it('serves a static admin page with a strict CSP', async () => {
     const t = await start({ ADMIN_TOKEN: 'tok-tok-tok-tok' });
     const res = await fetch(`${t.base}/admin`);
+    expect(res.url).toMatch(/\/ops$/);
     expect(res.status).toBe(200);
-    expect(res.headers.get('content-security-policy')).toContain("default-src 'none'");
+    const csp = res.headers.get('content-security-policy')!;
+    expect(csp).toContain("default-src 'none'");
+    // Only this page's own script and style, by hash: no 'unsafe-inline', nothing from elsewhere.
+    expect(csp).not.toContain('unsafe-inline');
+    expect(csp).toMatch(/script-src 'sha256-[A-Za-z0-9+/=]+'/);
+    expect(csp).toContain("connect-src 'self'");
     const html = await res.text();
-    expect(html).toContain('BunkCraft admin');
+    expect(html).toContain('BunkCraft beheer');
     expect(html).not.toContain('tok-tok-tok-tok');
   });
 

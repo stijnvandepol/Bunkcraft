@@ -60,7 +60,7 @@ Live op **https://craft.bunkhosting.nl**, achter een **Cloudflare Tunnel**. Geï
 - **Beheer op de server:** `bunkcraft status | update | rollback | autoupdate status | restart | backup`, logs met
   `journalctl -u bunkcraft-autoupdate`, deploylog `/var/log/bunkcraft-deploy.log`. Data in het Docker-volume
   (`/app/data`: `world.json` per game, `profiles/`, `skins/`); dagelijkse back-up naar `/var/backups/bunkcraft` (14 bewaard).
-- **Admin:** `/admin` met `ADMIN_TOKEN` (spelers, verdenkingsscores, skins modereren).
+- **Admin:** het ops-dashboard `/ops` (admin-account via `ADMIN_ACCOUNTS` of `bunkcraft account admin <naam> on`, of `ADMIN_TOKEN`): containers, lobby's, instellingen zonder herstart, accounts, skins, audit log.
 
 ## 3. Repo-indeling in het kort
 

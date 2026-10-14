@@ -9,6 +9,8 @@
 //   save               write every loaded world to disk now (exit 3: admin disabled)
 //   account <lock|unlock|logout|delete|recovery|list> [name]
 //                      account moderation through the admin API (exit 3: admin disabled; 4: no such account)
+//   account admin <name> [on|off]
+//                      the account may (or may no longer) log in to the ops dashboard (/ops)
 //   smoke              post-deploy smoke test: /health, the game page and its script, the JSON API, and with
 //                      ADMIN_TOKEN a throw-away game that is created, looked up and deleted again
 const base = `http://127.0.0.1:${process.env.PORT || 3000}`;
@@ -50,7 +52,17 @@ try {
       if (r.status !== 200) { console.log(r.text); process.exit(1); }
       const j = JSON.parse(r.text);
       console.log(`${j.count} accounts`);
-      for (const a of j.accounts) console.log(`${a.name.padEnd(16)} level ${String(a.level).padEnd(3)} ${new Date(a.created).toISOString().slice(0, 10)} sessions ${a.sessions}${a.locked ? ' LOCKED' : ''}`);
+      for (const a of j.accounts) console.log(`${a.name.padEnd(16)} level ${String(a.level).padEnd(3)} ${new Date(a.created).toISOString().slice(0, 10)} sessions ${a.sessions}${a.locked ? ' LOCKED' : ''}${a.admin ? ' ADMIN' : ''}`);
+      process.exit(0);
+    }
+    if (action === 'admin') {
+      const on = (args[2] ?? 'on') !== 'off';
+      if (!name) { console.log('usage: account admin <name> [on|off]'); process.exit(2); }
+      const r = await admin('accounts/admin', { name, admin: on });
+      if (r.status === 404) { console.log(`no such account: ${name} (register it in the game first)`); process.exit(4); }
+      if (r.status !== 200) { console.log(r.text); process.exit(1); }
+      const j = JSON.parse(r.text);
+      console.log(`${j.name}: ${j.admin ? 'admin (logs in at /ops)' : 'no admin'}${!on && j.admin ? ' (still admin through ADMIN_ACCOUNTS)' : ''}`);
       process.exit(0);
     }
     if (!['lock', 'unlock', 'logout', 'delete', 'recovery'].includes(action) || !name) { console.log('usage: account <lock|unlock|logout|delete|recovery|list> [name]'); process.exit(2); }

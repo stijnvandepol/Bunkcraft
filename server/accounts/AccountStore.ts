@@ -30,6 +30,8 @@ export interface AccountRec {
   sessions: SessionRec[];
   /** Set by an admin: no login, no session, but the name stays reserved. */
   locked?: boolean;
+  /** Server administrator (the ops dashboard): set with `bunkcraft account admin <name> on`. ADMIN_ACCOUNTS adds names at start-up. */
+  admin?: boolean;
 }
 
 const ID = /^[A-Za-z0-9_-]{22}$/;
@@ -44,7 +46,7 @@ function clean(raw: unknown): AccountRec | null {
     ? r.sessions.filter((s): s is Record<string, unknown> => !!s && typeof s === 'object' && typeof (s as { h?: unknown }).h === 'string')
       .slice(0, 16).map((s) => ({ h: String(s.h), created: num(s.created), last: num(s.last), exp: num(s.exp) }))
     : [];
-  return { v: 1, id: r.id, name: r.name, key: r.key, profile: r.profile, pass: r.pass, recovery: r.recovery, created: num(r.created), passChanged: num(r.passChanged), sessions, ...(r.locked === true ? { locked: true } : {}) };
+  return { v: 1, id: r.id, name: r.name, key: r.key, profile: r.profile, pass: r.pass, recovery: r.recovery, created: num(r.created), passChanged: num(r.passChanged), sessions, ...(r.locked === true ? { locked: true } : {}), ...(r.admin === true ? { admin: true } : {}) };
 }
 
 /**

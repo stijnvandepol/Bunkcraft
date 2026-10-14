@@ -6,6 +6,7 @@ import { bearer, safeEqual } from '../Security';
 import {
   LABEL_OWNER, LABEL_ROLE, LABEL_RUNNER, type MatchSpecPolicy, containerName, matchSettingsFromEnv, validateMatchSpec,
 } from './ContainerSpec';
+import { MAX_LOG_TAIL, demuxDockerLogs } from './Drivers';
 import { RUNNER_ID } from './Internal';
 
 /**
@@ -19,7 +20,8 @@ import { RUNNER_ID } from './Internal';
  *   GET  /containers/{id}/json           \
  *   POST /containers/{id}/start           |  only when the target, inspected first, carries our role and owner labels
  *   POST /containers/{id}/stop?t=N        |  and its runner's name; forwarded by the full id the inspect returned
- *   GET  /containers/{id}/stats?stream=false /
+ *   GET  /containers/{id}/stats?stream=false |
+ *   GET  /containers/{id}/logs?stdout=1&stderr=1&tail=N /  N ≤ 500, never `follow`; answered as JSON lines
  *
  * Everything else is 403: exec, kill, update, delete, build, images, volumes, networks, events, system, swarm, plugins.
  * A path is matched as sent, never decoded: anything outside [A-Za-z0-9/_.-], an empty, `.` or `..` segment is refused,
@@ -53,7 +55,7 @@ const CONTAINER_REF = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 const FULL_ID = /^[0-9a-f]{64}$/;
 const MATCH_NAME = /^bunkcraft-match-[a-z0-9]{8,24}$/;
 /** Every path the gate knows; anything else is refused before its body is read. */
-const ENDPOINT = /^\/(_ping|_gate\/image|containers\/json|containers\/create|containers\/[^/]+\/(json|start|stop|stats))$/;
+const ENDPOINT = /^\/(_ping|_gate\/image|containers\/json|containers\/create|containers\/[^/]+\/(json|start|stop|stats|logs))$/;
 
 class Refused extends Error {
   constructor(readonly status: number, why: string) { super(why); }
@@ -253,10 +255,22 @@ export class DockerGate {
         fwd(await this.up('POST', `/containers/create?name=${name}`, Buffer.from(JSON.stringify(spec))));
         return;
       }
-      const m = /^\/containers\/([^/]+)\/(json|start|stop|stats)$/.exec(path);
+      const m = /^\/containers\/([^/]+)\/(json|start|stop|stats|logs)$/.exec(path);
       if (m) {
         const [, ref, op] = m;
-        if ((op === 'json' || op === 'stats') !== (method === 'GET')) throw new Refused(403, 'method');
+        if ((op === 'json' || op === 'stats' || op === 'logs') !== (method === 'GET')) throw new Refused(403, 'method');
+        if (op === 'logs') {
+          // The ops dashboard: the last lines, once. No follow (a stream that never ends), no since/until, no timestamps.
+          onlyKeys(query, ['stdout', 'stderr', 'tail']);
+          for (const k of ['stdout', 'stderr']) if (query.has(k) && !/^(0|1|true|false)$/.test(query.get(k)!)) throw new Refused(403, `logs ${k}`);
+          const tail = query.get('tail') ?? '100';
+          if (!/^\d{1,3}$/.test(tail) || Number(tail) < 1 || Number(tail) > MAX_LOG_TAIL) throw new Refused(403, 'logs tail');
+          const { id } = await this.owned(ref);
+          const r = await this.up('GET', `/containers/${id}/logs?stdout=1&stderr=1&follow=0&tail=${Number(tail)}`, undefined, 10_000);
+          if (r.status !== 200) { fwd(r); return; }
+          json(200, { lines: demuxDockerLogs(r.body, Number(tail)) });
+          return;
+        }
         if (op === 'json' || op === 'start') onlyKeys(query, []);
         if (op === 'stop') onlyKeys(query, ['t']);
         if (op === 'stats') { onlyKeys(query, ['stream']); if (query.get('stream') !== 'false') throw new Refused(403, 'stats must not stream'); }
