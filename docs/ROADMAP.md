@@ -64,8 +64,11 @@ volgt de Bunkhosting-huisstijl. Live op https://craft.bunkhosting.nl (Cloudflare
 - **Spelersaccounts:** gebruikersnaam + wachtwoord (scrypt), herstelcode (eenmalig getoond, alleen hash bewaard), sessietokens die
   overal werken waar het gasttoken werkte, koppelen van een gastprofiel bij registreren, bevestiging voordat gastvoortgang wordt
   weggegooid, limieten en uitstel per adres en naam, verwijderen met wachtwoord, back-ups van `data/accounts/`. Zie SERVER.md
-  (Spelersaccounts) en SECURITY.md. Open: unieke spelersnamen in matches voor gasten (nu kan een gast een accountnaam voeren),
-  optioneel e-mailherstel of 2FA, beheerderscommando om een account te verwijderen of te vergrendelen.
+  (Spelersaccounts) en SECURITY.md. Accountnamen zijn gereserveerd (look-alike-bewust) met een vinkje in scoreboard, killfeed en lobby;
+  moderatie in `/admin`, de admin-API en `bunkcraft account` (zoeken, vergrendelen, uitloggen, verwijderen, nieuwe herstelcode); herstel
+  zonder wachtwoord en code via een door de beheerder uitgegeven code (procedure in SERVER.md); `guest_progress` getest (server + e2e);
+  de account-UI is visueel gecontroleerd (`docs/screenshots/accounts/`). Open: optioneel e-mailherstel of 2FA, een vinkje in
+  party-paneel en profielkaart, een lopende verbinding sluiten bij vergrendelen of verwijderen.
 
 **Shooter en platform**
 

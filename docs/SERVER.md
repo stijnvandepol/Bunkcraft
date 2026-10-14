@@ -435,6 +435,39 @@ Het archief bevat wachtwoord-hashes: houd `BUNKCRAFT_BACKUP_DIR` privé (het scr
 kopieer een snapshot terug naar `data/accounts/`. Zonder `profiles/secret.key` (of `PROFILE_SECRET`) blijven accounts werken: sessietokens
 hangen niet aan dat geheim, alleen gasttokens.
 
+### Accountnamen en moderatie
+
+**Gereserveerde namen.** Een accountnaam kan door geen gast worden gebruikt, ook niet als look-alike (`Bob` = `b0b` = `B_o_b`; zie
+`identityKey` in `AccountRules.ts`). Een game weigert zo'n naam bij het inloggen (`kick`, code `identity`) tenzij de speler is ingelogd op
+dat account. Accounthouders krijgen een klein vinkje in scoreboard, killfeed en lobby. Een oude gastclaim op dezelfde naam in een game
+(`world.json`) maakt plaats voor de accounthouder, behalve als de naam in die game operator is.
+
+**Beheer.** Beschermd door `ADMIN_TOKEN`, net als de rest. In `/admin` staat een sectie *Accounts* (zoeken op naam, vergrendelen,
+ontgrendelen, uitloggen, herstelcode, verwijderen); dezelfde acties via de API en via het script:
+
+```
+GET  /api/admin/accounts?q=<deel van naam>
+POST /api/admin/accounts/{lock|unlock|logout|delete|recovery}   {"name": "<gebruikersnaam>"}
+bunkcraft account list [zoekterm]
+bunkcraft account <lock|unlock|logout|delete|recovery> <naam>     # delete vraagt eerst om bevestiging
+```
+
+- **lock:** geen login, alle sessies direct dood, de naam blijft gereserveerd (`403 account_locked`). **unlock** draait dat terug.
+- **logout:** beëindigt alle sessies; de speler kan gewoon opnieuw inloggen.
+- **delete:** verwijdert account en profiel (voortgang, skintoewijzing); de naam komt vrij.
+- **recovery:** geeft een nieuwe herstelcode uit, **eenmalig getoond aan de beheerder** (in `/admin` blijft hij op het scherm tot je op Hide klikt, in
+  de CLI staat hij in de uitvoer). De oude code en alle sessies zijn meteen dood.
+
+**Als wachtwoord en herstelcode allebei kwijt zijn.** Er is geen e-mail, dus dit is een handmatige procedure voor de beheerder:
+1. De eigenaar meldt zich via een kanaal dat jij buiten het spel kent (Discord, mail of een eerder bericht van die persoon). Een bericht
+   in het spel is geen bewijs.
+2. Vraag details die alleen de eigenaar weet: ongeveer wanneer het account is gemaakt, level en prestige, gekozen titel of camo's. Controleer
+   ze met `bunkcraft account list <naam>` (level, aanmaakdatum, sessies) of in `/admin`.
+3. Twijfel je (bijvoorbeeld een claim van iemand anders op een bekende naam), vergrendel dan eerst (`lock`) en wacht tot het verhaal klopt.
+4. Geef met `recovery` een nieuwe code uit en stuur die via hetzelfde buitenspelkanaal terug. De eigenaar kiest met **Wachtwoord vergeten**
+   (naam + code) zelf een nieuw wachtwoord en krijgt daarbij meteen een verse herstelcode. Verwijder het bericht met de code daarna.
+5. Lukt het bewijs niet, dan blijft het account van niemand: `delete` en laat de speler een nieuw account maken.
+
 ## Spelersskins: uploaden en moderatie
 
 Spelers kunnen een eigen skin uploaden: een klassieke Minecraft-skin (PNG van 64×64, of het oude 64×32; brede Steve-armen of

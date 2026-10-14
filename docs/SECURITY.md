@@ -187,9 +187,23 @@ Wat een aanvaller kan proberen en wat de server doet:
 - **Race bij registreren:** de controle op naam en profiel en het schrijven gebeuren zonder `await` ertussen; twee gelijktijdige registraties kunnen
   geen naam of gastprofiel allebei winnen.
 - **Logs:** wachtwoorden, herstelcodes en tokens worden nooit gelogd; "account created/deleted" logt alleen een aantal.
-- **Bekende beperkingen:** geen e-mail, dus wie wachtwoord en herstelcode verliest, verliest het account (bewust: geen PII).
-  Spelersnamen in matches zijn voor gasten nog niet uniek; een gast kan dus dezelfde naam voeren als een account (alleen de rangicoon en
-  voortgang hangen aan het profiel). Geen 2FA.
+- **Naamreservering (identiteit):** een accountnaam is gereserveerd in alle games van de server, op `identityKey()` (hoofdletters, underscores en
+  look-alikes `0/o`, `1/i/l`, `5/s`, `3/e` worden samengevouwen: `Bob`, `b0b` en `B_o_b` zijn dezelfde naam). Bij het inloggen in een game
+  (`hello`) moet `hello.name` een vrije naam zijn, of het meegestuurde profieltoken moet een sessie zijn van precies dat account; anders
+  `kick` met code `identity`. Een tweede account met een look-alike van een bestaande naam wordt geweigerd (`name_taken`). Alleen de accounthouder
+  krijgt in scoreboard, killfeed en lobby een klein vinkje (`vf` in het rooster); bots houden hun `[BOT]`-voorvoegsel en vallen buiten
+  deze controle. In games waar een gast de naam al had geclaimd (identiteitssleutel in `world.json`) wint de accounthouder, behalve als die
+  naam in die game operator is: een operatorrol wordt nooit overgedragen door een account te registreren. De gast met de oude claim kan
+  daarna die naam niet meer gebruiken (gereserveerd). Een accounthouder neemt in een open lobby de plek over van een gast die onder die naam speelde.
+- **Moderatie:** `ADMIN_TOKEN`-beheer kan accounts zoeken, vergrendelen (geen login, sessies direct dood, naam blijft gereserveerd), ontgrendelen,
+  uitloggen, verwijderen (account + profiel) en een nieuwe herstelcode uitgeven; zie SERVER.md. Elke actie logt alleen de actie, geen naam of code.
+  Een vergrendeling of verwijdering sluit een lopende WebSocket-verbinding niet; die eindigt bij het volgende laden of kan met Kick/Block IP.
+- **Herstel als wachtwoord en herstelcode weg zijn:** er is bewust geen e-mail. De beheerder geeft een nieuwe herstelcode uit
+  (`bunkcraft account recovery <naam>` of de knop in `/admin`). Dat gebeurt alleen nadat de eigenaar zijn identiteit buiten het spel heeft
+  aangetoond, en de code gaat via datzelfde kanaal terug. Zie de procedure in SERVER.md. De oude code en alle sessies zijn meteen dood.
+- **Bekende beperkingen:** geen e-mail, dus zonder tussenkomst van de beheerder verliest wie wachtwoord en herstelcode kwijt is het account (bewust: geen PII).
+  De naamcontrole geldt bij het inloggen in een game; een gast die al in een lopende match zat blijft tot zijn volgende login. Parties tonen
+  alleen een gamertag en geen vinkje. Geen 2FA.
 
 ## Content-Security-Policy
 
