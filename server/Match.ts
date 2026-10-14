@@ -920,6 +920,7 @@ export class Match {
       if (this.parked.size > 0) {
         if (Number.isFinite(this.phaseEnd)) this.phaseEnd += dt;
         if (this.warmupEnd > 0) this.warmupEnd += dt;
+        if (this.phase !== 'warmup' && this.phase !== 'ended') this.logic.shiftClock?.(this, dt);
       }
       return;
     }

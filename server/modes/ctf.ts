@@ -107,6 +107,10 @@ export class CtfLogic extends BaseLogic {
     }
   }
 
+  shiftClock(_m: Match, dt: number): void {
+    for (const f of this.flags) if (f.status === 'dropped') f.returnAt += dt;
+  }
+
   private pickUp(m: Match, p: MatchPlayer, f: FlagRun): void {
     if (this.carrying(p)) return;
     f.status = 'carried';

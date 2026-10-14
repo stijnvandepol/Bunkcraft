@@ -63,6 +63,10 @@ export class ConfirmLogic extends BaseLogic {
     }
   }
 
+  shiftClock(_m: Match, dt: number): void {
+    for (const tag of this.tags) tag.expiresAt += dt;
+  }
+
   private take(m: Match, p: MatchPlayer, tag: Tag, index: number): void {
     this.tags.splice(index, 1);
     p.pts++;

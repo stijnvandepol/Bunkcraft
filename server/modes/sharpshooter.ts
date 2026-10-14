@@ -50,6 +50,10 @@ export class SharpshooterLogic extends BaseLogic {
     m.markModeDirty();
   }
 
+  shiftClock(_m: Match, dt: number): void {
+    this.switchAt += dt;
+  }
+
   onKill(): void {
     // Free for all: the kill counter is the score.
   }

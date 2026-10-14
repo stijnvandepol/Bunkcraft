@@ -53,6 +53,12 @@ export interface ModeLogic {
   onLeave?(m: Match, p: MatchPlayer, now: number): void;
   /** An objective happened that the mode reports itself (zone captured, flag captured): points, banners. */
   onObjective?(m: Match, p: MatchPlayer | null, kind: string, now: number): void;
+  /**
+   * The match stands still for `dt` seconds (only kept seats are left, see Match.tick): every clock of the mode
+   * (hill rotation, flag return, outbreak, weapon rotation, tag expiry) moves on by `dt`, so nothing happens while
+   * nobody is there.
+   */
+  shiftClock?(m: Match, dt: number): void;
   /** The match went back to a fresh warm-up (a new match, or the room emptied): forget mode state. */
   onReset?(m: Match): void;
   /** Seconds until `victim` respawns, or a negative number for "not before the round is over". */

@@ -97,6 +97,11 @@ export class ZonesLogic extends BaseLogic {
     this.flush(m);
   }
 
+  shiftClock(_m: Match, dt: number): void {
+    this.hillEnd += dt;
+    this.gapEnd += dt;
+  }
+
   /** Moves the hill on after `rotateSec`, with a pause of `gapSec` in between. */
   private rotate(m: Match, now: number, rotateSec: number, gapSec: number): void {
     if (this.hill >= 0 && now >= this.hillEnd) {
