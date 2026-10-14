@@ -18,6 +18,7 @@ import type { SkinService } from '../skins/SkinService';
 import { MATCH_PORT, containerName } from './ContainerSpec';
 import { DockerApi, DockerDriver, type LogLine, type MatchDriver, ProcessDriver } from './Drivers';
 import { type Ident, RUNNER_ID, type RunnerStatus, authHeaders, authRunner, callJson, cleanStatus, readJson, runnerKey, sendJson } from './Internal';
+import { AdmissionLedger, GrantLedger } from './Ledgers';
 import { MatchPool, type Runner } from './MatchPool';
 import { type RemoteHost, RemoteRoom } from './RemoteRoom';
 
@@ -64,7 +65,11 @@ export class ControlPlane implements RemoteRooms, RemoteHost {
   readonly pool: MatchPool;
   private readonly secret: Buffer;
   private readonly lobbies = new Map<string, { room: RemoteRoom; dir: string; gameType: GameType }>();
+  /** Answers of recent grants (a retry gets the same answer) and, on disk, every grant paid (a retry after a restart pays nothing). */
   private readonly grants = new Map<string, unknown>();
+  private readonly paid: GrantLedger;
+  /** The profiles this control plane let into each lobby (DATA_DIR/match-admitted.json): an adopted lobby keeps them. */
+  private readonly admitted: AdmissionLedger;
   private rooms: Rooms | null = null;
   private internal: Server | null = null;
   private timers: NodeJS.Timeout[] = [];
@@ -82,6 +87,8 @@ export class ControlPlane implements RemoteRooms, RemoteHost {
   constructor(private readonly o: ControlPlaneOptions) {
     this.secret = loadSecret(join(o.dataDir, 'match-secret.key'), o.secret);
     this.assignmentsFile = join(o.dataDir, 'match-runners.json');
+    this.paid = new GrantLedger(join(o.dataDir, 'match-grants.json'));
+    this.admitted = new AdmissionLedger(join(o.dataDir, 'match-admitted.json'));
     try {
       const raw = JSON.parse(readFileSync(this.assignmentsFile, 'utf8')) as unknown;
       if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
@@ -168,6 +175,8 @@ export class ControlPlane implements RemoteRooms, RemoteHost {
       const runner = this.pool.adopt(h, url, { ...status, room: code });
       const dir = join(this.o.roomsDir, code);
       const room = RemoteRoom.adopted(code, this, runner, gameType, () => this.rooms?.metaChanged(code));
+      // The players this control plane let in before its restart may still be granted XP (its own records, not the runner's).
+      for (const pid of this.admitted.admitted(code)) room.pids.add(pid);
       room.apply(status);
       this.lobbies.set(code, { room, dir, gameType });
       rooms.adopt(code, room);
@@ -175,6 +184,7 @@ export class ControlPlane implements RemoteRooms, RemoteHost {
     // Records of runners that are gone.
     for (const id of Object.keys(this.assignments)) if (!this.pool.runners.has(id)) delete this.assignments[id];
     this.saveAssignments();
+    this.admitted.retain([...taken, ...this.lobbies.keys()]);
     this.pool.ensureWarm();
   }
 
@@ -273,6 +283,7 @@ export class ControlPlane implements RemoteRooms, RemoteHost {
       ident.rank = p!.rank(pid);
       ident.skin = this.o.skins?.effective(pid) ?? '';
       room.pids.add(pid);
+      this.admitted.admit(room.code, pid);
     }
     return ident;
   }
@@ -321,7 +332,10 @@ export class ControlPlane implements RemoteRooms, RemoteHost {
 
   gone(room: RemoteRoom): void {
     const l = this.lobbies.get(room.code);
-    if (l?.room === room) this.lobbies.delete(room.code);
+    if (l?.room === room) {
+      this.lobbies.delete(room.code);
+      this.admitted.forget(room.code);
+    }
     if (room.runner) this.draining.delete(room.runner.id);
     room.ended();
     this.rooms?.forget(room.code, room);
@@ -432,7 +446,10 @@ export class ControlPlane implements RemoteRooms, RemoteHost {
     const pid = String(body.pid ?? '');
     const profiles = this.o.profiles;
     if (!profiles || !l || !l.room.pids.has(pid)) return [403, { error: 'not a player of this lobby' }];
+    // Paid before this control plane restarted (the answer was lost on the way): nothing more, no report to show again.
+    if (this.paid.has(grantId)) return [200, { report: null, rank: profiles.rank(pid) }];
     const report = profiles.award(pid, cleanTally(body.tally), cleanOutcome(body.outcome, l.room));
+    this.paid.record(grantId);
     const answer = { report, rank: profiles.rank(pid) };
     this.grants.set(grantId, answer);
     if (this.grants.size > GRANT_MEMORY) this.grants.delete(this.grants.keys().next().value!);
