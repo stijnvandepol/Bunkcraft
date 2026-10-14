@@ -23,7 +23,7 @@ function duel(): Setup {
 }
 
 /** Fires straight along +z claiming `claim`, and returns where the server's bullet ended and the one a given aim blend predicts. */
-function shoot(s: Setup, claim: boolean, blend: number): { got: number[]; want: number[]; hip: number[]; full: number[] } {
+function shoot(s: Setup, claim: boolean, blend: number, moving = false): { got: number[]; want: number[]; hip: number[]; full: number[] } {
   const p = s.match.players.get(1)!;
   const w = p.slots[p.slot].def;
   const n = p.shotN;
@@ -34,7 +34,7 @@ function shoot(s: Setup, claim: boolean, blend: number): { got: number[]; want: 
     const rand: [number, number] = [0, 0];
     const dir: [number, number, number] = [0, 0, 0];
     spreadRandom(SEED, n, 0, rand);
-    spreadDirection(0, 0, 1, shotSpread(w, b, false, false), rand[0], rand[1], dir);
+    spreadDirection(0, 0, 1, shotSpread(w, b, moving, false), rand[0], rand[1], dir);
     const tr = traceBullet(s.host.blocks, 0.5, 66.62, 0.5, dir[0], dir[1], dir[2], w.maxRange, createBulletTrace());
     return [0.5 + dir[0] * tr.t, 66.62 + dir[1] * tr.t, 0.5 + dir[2] * tr.t];
   };
@@ -157,7 +157,7 @@ describe('server-validated ADS spread', () => {
     s.match.setAds(1, true);
     s.advance(adsTimeFor(w, p.optic, p.perk) + 0.1);
     s.match.setPosition(1, 0.5, 65, 0.5, 0, 0, POSE.SLIDE_HEIGHT);
-    const r = shoot(s, true, 0);
+    const r = shoot(s, true, 0, true); // a slide is movement: hip fire with the moving spread
     expectEnd(r.got, r.hip);
     expect(p.adsOn).toBe(false);
     s.advance(0.3);

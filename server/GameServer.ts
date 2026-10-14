@@ -34,6 +34,7 @@ import { ContainerService } from './Containers';
 import type { SavedEntity } from '../src/world/BlockEntities';
 import { type Actor, type BanEntry, type CommandHost, type Moderation, type Target, lc, runCommand } from './Commands';
 import { InventoryGuard, parseInventory } from './InventoryGuard';
+import { StanceTracker } from './anticheat/Stance';
 import { POSE_SAMPLE_DELAY_MS, type Pose, PoseTrail } from './PoseTrail';
 import { type ChildLogger, log } from './Log';
 import { metrics } from './Metrics';
@@ -51,8 +52,6 @@ import type { SkinService } from './skins/SkinService';
 import { type RateLimiter, hashIp, newToken, safeEqual, tokenMatches, verifyPassword, hashToken } from './Security';
 
 const TICK_MS = 50; // 20 ticks per second, like Minecraft
-/** Blocks per second above which the server counts a shooter as moving (spread penalty), whatever the client says. */
-const MOVING_SPEED = 3;
 const DAY_SECONDS = 1200;
 const SAVE_INTERVAL_MS = 30_000;
 /** A game tick at least this long (wall clock) is counted and logged with its phases. */
@@ -221,6 +220,8 @@ interface Session {
   lastFireAt: number;
   /** Recent position reports on the receive timeline: snapshots sample them at one fixed moment (see PoseTrail). */
   trail: PoseTrail;
+  /** Arcade: moving / airborne as the accepted position reports show it (the spread of a shot; see anticheat/Stance.ts). */
+  stance: StanceTracker;
   /** Server-side bot (server/bots): messages go to this handler as objects instead of a socket. */
   sink?: (msg: ServerMessage) => void;
   /** Arcade: hash of the rejoin token this session was given in its welcome (see ParkedPlayer.proof). */
@@ -790,6 +791,8 @@ export class GameServer {
         if (!s) return;
         s.x = x; s.y = y; s.z = z;
         s.trail.reset();
+        s.stance.reset();
+        this.match?.setStance(id, false, false);
         s.hasPos = true;
         s.lastPosTime = Date.now();
         s.awaiting = { x, y, z, until: Date.now() + 1500 };
@@ -1113,7 +1116,7 @@ export class GameServer {
       chat: new Bucket(1, 5, 'chat'), moves: new Bucket(40, 80, 'moves'), states: new Bucket(0.5, 10, 'states'), containers: new Bucket(20, 40, 'containers'),
       fires: new Bucket(25, 30, 'fires'), ads: new Bucket(30, 60, 'ads'), actions: new Bucket(15, 30, 'actions'), violations: 0,
       skinReports: new Bucket(0.2, 3, 'skin_reports'), skin: '',
-      pingMs: 0, pingSentAt: 0, awaiting: null, velX: 0, velY: 0, velZ: 0, aim: new AimStats(), lastFireAt: 0, trail: new PoseTrail(),
+      pingMs: 0, pingSentAt: 0, awaiting: null, velX: 0, velY: 0, velZ: 0, aim: new AimStats(), lastFireAt: 0, trail: new PoseTrail(), stance: new StanceTracker(),
     };
   }
 
@@ -1464,6 +1467,10 @@ export class GameServer {
     s.hasPos = true;
     s.lastPosTime = now;
     s.trail.push(now, s.x, s.y, s.z, s.yaw, s.pitch);
+    if (this.match && this.guard) {
+      s.stance.note(now / 1000, s.x, s.z, this.guard.grounded(s.id));
+      this.match.setStance(s.id, s.stance.moving, s.stance.airborne);
+    }
     if (this.match) {
       const height = this.poseHeight(s);
       // Others see the pose the server believes (the snapshot flags), the same one bullets hit.
@@ -1513,9 +1520,8 @@ export class GameServer {
       this.logger.debug('cheat', { name: s.name, kind: 'shot', rule: 'origin', error: Math.round(err * 100) / 100 });
       m = { ...msg, ox: s.x, oy: s.y + 1.62, oz: s.z };
     }
-    // Spread penalty for moving: the client says so, and the server's own velocity estimate overrules a client that
-    // claims to stand still while running (its tracers then disagree with the server, its problem).
-    if (!m.mv && Math.hypot(s.velX, s.velZ) > MOVING_SPEED) m = { ...m, mv: true };
+    // The spread penalties for moving and being airborne come from the position reports the movement validator accepted
+    // (Match.setStance), never from the `mv` / `air` claims of the message.
     s.lastFireAt = now;
     return match.fire(s.id, m);
   }
@@ -1562,6 +1568,8 @@ export class GameServer {
     if (r.action === 'correct' || s.owner) {
       s.x = at.x; s.y = at.y; s.z = at.z;
       s.trail.reset();
+      s.stance.reset();
+      this.match?.setStance(s.id, false, false);
       s.awaiting = { x: at.x, y: at.y, z: at.z, until: Date.now() + 1500 };
       this.match?.setPosition(s.id, s.x, s.y, s.z, s.yaw, s.pitch);
       this.send(s, { t: 'teleport', x: at.x, y: at.y, z: at.z });
