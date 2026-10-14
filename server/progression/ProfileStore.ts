@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { type ProfileData, newProfile, sanitizeProfile } from '../../src/modes/progression/Profile';
 
@@ -80,6 +80,14 @@ export class ProfileStore {
     } catch {
       return null;
     }
+  }
+
+  /** Removes a profile from memory and disk. */
+  delete(id: string): void {
+    if (this.cache.delete(id) || existsSync(this.file(id))) this.total = Math.max(0, this.total - 1);
+    this.dirty.delete(id);
+    rmSync(this.file(id), { force: true });
+    rmSync(`${this.file(id)}.tmp`, { force: true });
   }
 
   /** The profile changed in memory: written on the next flush. */

@@ -26,6 +26,8 @@ export class ProfileService {
   readonly store: ProfileStore;
   private readonly signer: ProfileSigner;
   private readonly timer: NodeJS.Timeout;
+  /** Accounts, when switched on: their session tokens stand for profiles too, and an account's profile ignores its old guest token. */
+  private accounts: { verifySession(token: unknown): string | null; isLinked(profileId: string): boolean; nameOf(profileId: string): string | undefined } | null = null;
 
   constructor(opts: ProfileServiceOptions) {
     const dir = join(opts.dataDir, 'profiles');
@@ -45,14 +47,33 @@ export class ProfileService {
     return { token, profile };
   }
 
-  /** The profile id of a valid token (signature only, no disk access). */
+  attachAccounts(a: NonNullable<ProfileService['accounts']>): void {
+    this.accounts = a;
+  }
+
+  /**
+   * The profile id of a valid token: a session token of an account, or a guest token (signature only). Once a
+   * profile belongs to an account its guest token is dead: only a login reaches it.
+   */
   verify(token: unknown): string | null {
-    return this.signer.verify(token);
+    if (typeof token === 'string' && token.startsWith('s1.')) return this.accounts?.verifySession(token) ?? null;
+    const id = this.signer.verify(token);
+    return id && !this.accounts?.isLinked(id) ? id : null;
+  }
+
+  /** Whether the profile belongs to an account. */
+  linked(id: string): boolean {
+    return this.accounts?.isLinked(id) ?? false;
+  }
+
+  /** Removes a profile for good (account deletion). */
+  remove(id: string): void {
+    this.store.delete(id);
   }
 
   /** The profile behind a token, or null (bad token, or the profile is gone). */
   resolve(token: unknown): ProfileData | null {
-    const id = this.signer.verify(token);
+    const id = this.verify(token);
     return id ? this.store.get(id) : null;
   }
 
@@ -71,6 +92,8 @@ export class ProfileService {
   /** Remembers the name a profile last played with (display only). */
   seen(id: string, name: string): void {
     const p = this.store.get(id);
+    const fixed = this.accounts?.nameOf(id);
+    if (fixed) name = fixed;
     if (!p || p.name === name) return;
     p.name = cleanName(name);
     this.store.touch(id);
