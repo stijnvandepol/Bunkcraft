@@ -9,6 +9,7 @@ import { gameTypeDef } from '../modes/GameTypes';
 import { getMap } from '../modes/maps';
 import { isArcade } from '../modes/Realms';
 import { RealmsMenu, realmsModeName } from './RealmsMenu';
+import { loggedIn } from '../net/AccountApi';
 import { savePlayerName, savedPlayerName } from './playerName';
 import { installButton } from '../pwa/Pwa';
 import { button, dirtBackground, h, menuScreen, screen } from './dom';
@@ -172,6 +173,8 @@ export class MainMenu {
     const info = await serverInfo();
     if (!info) return this.showDirectConnect();
     const name = h('input', { class: 'mc-input', value: savedPlayerName(), maxLength: 16, placeholder: t('mp.name.placeholder') });
+    // Logged in: the account name is the player name (Build & Survival and the arena share it).
+    if (loggedIn()) name.readOnly = true;
     const code = h('input', { class: 'mc-input', value: prefillCode, maxLength: 80, placeholder: t('mp.code.placeholder') });
     const error = h('div', { class: 'error' });
     const roomInfo = h('div', { class: 'hint' });

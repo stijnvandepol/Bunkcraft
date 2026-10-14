@@ -28,6 +28,8 @@ export interface HomeHost {
   joinCode(raw: string): void;
   /** The profile card: the profile screen, or the name prompt for a guest. */
   profile(): void;
+  /** The account row under the profile card: create, log in, or the account screen when logged in. */
+  account: { create(): void; login(): void; manage(): void };
   loadouts(): void;
   armory(): void;
   stats(): void;
@@ -71,6 +73,7 @@ export class HomeScreen {
   private readonly status: HTMLDivElement;
   private readonly cards = new Map<GameType, { el: HTMLButtonElement; count: HTMLSpanElement }>();
   private readonly profileEl: HTMLButtonElement;
+  private readonly accountEl: HTMLElement;
   private readonly challengesEl: HTMLElement;
   private readonly onlineEls: HTMLElement[] = [];
   private readonly codeInput: HTMLInputElement;
@@ -161,8 +164,10 @@ export class HomeScreen {
     this.challengesEl.addEventListener('click', () => this.host.challenges());
 
     this.profileEl = h('button', { class: 'home-profile', type: 'button', onclick: () => this.host.profile() });
+    this.accountEl = h('div', { class: 'home-account' });
+    this.accountEl.hidden = true;
     const util = h('div', { class: 'home-util' },
-      this.profileEl,
+      h('div', { class: 'home-profile-wrap' }, this.profileEl, this.accountEl),
       h('div', { class: 'home-util-row' },
         iconButton('globe', t('home.language'), () => this.host.language(), 'flat icon-only'),
         iconButton('gear', t('home.settings'), () => this.host.settings(), 'flat icon-only'),
@@ -344,6 +349,26 @@ export class HomeScreen {
     }
     el.setAttribute('aria-label', name ? `${name}${p ? `, ${t('prog.level', rankOf(p).level)}` : ''}` : t('home.chooseName'));
     this.renderChallenges(p);
+  }
+
+  /**
+   * The account row: "Guest · Create account / Log in", or the account name with a button to manage it.
+   * `enabled` false (server without accounts) hides the row; `name` null = guest.
+   */
+  setAccount(name: string | null, enabled: boolean): void {
+    this.accountEl.hidden = !enabled;
+    if (!enabled) return;
+    if (name) {
+      this.accountEl.replaceChildren(
+        h('span', { class: 'home-account-who', text: t('acct.signedIn', name) }),
+        h('button', { class: 'bc-link', type: 'button', text: t('acct.manage'), onclick: () => this.host.account.manage() }));
+      return;
+    }
+    this.accountEl.replaceChildren(
+      h('span', { class: 'home-account-who', title: t('acct.hint'), text: t('acct.guest') }),
+      h('button', { class: 'bc-link', type: 'button', text: t('acct.create'), onclick: () => this.host.account.create() }),
+      h('span', { class: 'bc-dim', text: '/' }),
+      h('button', { class: 'bc-link', type: 'button', text: t('acct.login'), onclick: () => this.host.account.login() }));
   }
 
   private renderChallenges(p: ProfileData | null): void {

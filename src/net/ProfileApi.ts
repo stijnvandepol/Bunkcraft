@@ -33,6 +33,28 @@ function saveToken(token: string): void {
   try { storage()?.setItem(TOKEN_PREFIX + host(), token); } catch { /* private mode: a new profile next time */ }
 }
 
+/** Whether this browser's token is an account session (a login) rather than a guest token. */
+export function isAccountSession(): boolean {
+  return (profileToken() ?? '').startsWith('s1.');
+}
+
+/** A login, registration or recovery succeeded: this token and profile are the browser's from now on. */
+export function adoptSession(token: string, profile: unknown): ProfileData | null {
+  saveToken(token);
+  return set(sanitizeProfile(profile));
+}
+
+/** Logged out or the account is gone: the browser forgets its token and profile (a new guest profile comes with the next visit). */
+export function forgetSession(): void {
+  try { storage()?.removeItem(TOKEN_PREFIX + host()); } catch { /* nothing to forget */ }
+  set(null);
+}
+
+/** The server changed the session token (password change): keep working with the new one. */
+export function replaceToken(token: string): void {
+  saveToken(token);
+}
+
 export function currentProfile(): ProfileData | null {
   return current;
 }

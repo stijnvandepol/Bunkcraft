@@ -344,6 +344,10 @@
 .home-util-row { display: flex; flex-direction: column; gap: calc(var(--u) * 2); }
 .home-util-row .bc-btn { background: var(--bc-panel); border-color: var(--bc-line); color: var(--bc-text); min-height: calc(var(--u) * 14); }
 .home-util-row .bc-btn:hover:not(:disabled) { background: var(--bc-panel-solid); border-color: var(--bc-line-accent); color: var(--bc-accent); }
+.home-profile-wrap { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: calc(var(--u) * 1.5); }
+.home-account { display: flex; align-items: center; gap: calc(var(--u) * 2.5); padding: 0 calc(var(--u) * 2); font-size: calc(var(--u) * 5); color: var(--bc-dim); }
+.home-account[hidden] { display: none; }
+.home-account-who { font-weight: 600; color: var(--bc-text); margin-right: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .home-profile {
   flex: 1 1 auto;
   min-width: 0;

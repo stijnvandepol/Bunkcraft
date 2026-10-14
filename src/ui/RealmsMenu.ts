@@ -7,9 +7,11 @@ import { OPTICS, PERKS, isPerk, weaponDef } from '../modes/Weapons';
 import { type PartyChange, normalizePartyCode } from '../modes/Party';
 import { NAME_PATTERN, formatCode, normalizeCode } from '../net/protocol';
 import { PartyCallError, party as partyClient } from '../net/PartyApi';
+import { loggedIn } from '../net/AccountApi';
 import { currentProfile, currentRank, loadProfile, onProfile } from '../net/ProfileApi';
 import { checkRejoin } from '../net/Rejoin';
 import { type ListedRoom, type RoomInfo, browseRooms, createRoom, inviteLink, inviteText, lookupRoom, quickPlay, realmsStats, serverInfo } from '../net/RoomApi';
+import { AccountScreens } from './AccountScreens';
 import { button, h, menuScreen } from './dom';
 import { HomeScreen } from './HomeScreen';
 import { type I18nKey, t } from './i18n';
@@ -143,6 +145,9 @@ export class RealmsMenu {
   /** Level bar, stats, challenges and armory. */
   readonly profiles: ProfileScreens;
   private profilesOn = false;
+  /** Whether this server has player accounts (from /api/server). */
+  private accountsOn = false;
+  private readonly accountScreens: AccountScreens;
   /** Whether this server runs the arena (null until /api/server answered). */
   private online: boolean | null = null;
   private home: HomeScreen | null = null;
@@ -153,6 +158,7 @@ export class RealmsMenu {
 
   constructor(private readonly stack: ScreenStack, private readonly actions: RealmsActions) {
     this.profiles = new ProfileScreens(stack);
+    this.accountScreens = new AccountScreens(stack, () => this.refreshHome());
     // The server wants to know whether this browser sits in the menu or plays a match (the leader does not wait for the latter).
     partyClient.statusOf = () => (this.home?.el.isConnected ? 'menu' : 'game');
   }
@@ -169,6 +175,11 @@ export class RealmsMenu {
       lobbies: () => void this.showBrowse(),
       privateMatch: (mode) => this.showCreate(mode),
       joinCode: (raw) => this.joinTyped(raw),
+      account: {
+        create: () => this.accountScreens.showRegister(),
+        login: () => this.accountScreens.showLogin(),
+        manage: () => this.accountScreens.showAccount(),
+      },
       profile: () => (validSavedName() ? this.profiles.showProfile() : this.showName(() => this.refreshHome())),
       loadouts: () => this.showLoadouts(),
       armory: () => this.profiles.showArmory(),
@@ -207,6 +218,8 @@ export class RealmsMenu {
     }
     this.sizes = lobbySizes(info.roomMaxPlayers);
     this.profilesOn = !!info.features?.profiles;
+    this.accountsOn = !!info.features?.accounts && this.profilesOn;
+    home.setAccount(loggedIn() ? currentProfile()?.name ?? validSavedName() : null, this.accountsOn);
     this.partyOn = !!info.features?.party;
     home.setServer('online');
     // Dropped from a match not long ago (reload, crash, network)? The server may still keep the seat.
@@ -218,6 +231,7 @@ export class RealmsMenu {
     const off = onProfile((p) => {
       if (this.home !== home) { off(); return; }
       home.setProfile(p, validSavedName(), this.profilesOn);
+      home.setAccount(loggedIn() ? p?.name ?? validSavedName() : null, this.accountsOn);
     });
     this.loadProfile();
     const refresh = async () => {
@@ -354,6 +368,7 @@ export class RealmsMenu {
   /** The profile of this browser (created on first use) once there is a name; joining waits for it. */
   private loadProfile(): void {
     const name = validSavedName();
+    this.home?.setAccount(loggedIn() ? currentProfile()?.name ?? name : null, this.accountsOn);
     if (!name || !this.profilesOn) {
       this.home?.setProfile(currentProfile(), name, this.profilesOn);
       return;
