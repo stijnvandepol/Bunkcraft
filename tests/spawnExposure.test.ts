@@ -9,7 +9,7 @@ import { reachable } from './helpers/mapAnalysis';
  */
 const SHELTERED = [
   'classic', 'suburb', 'quarter', 'dockyard', 'desert', 'atomic', 'bunker', 'villa', 'yacht', 'town', 'station',
-  'plaza', 'site', 'carrier', 'shanty', 'mall', 'scrap',
+  'plaza', 'site', 'carrier', 'shanty', 'mall', 'scrap', 'pantry',
 ] as const;
 const EYE = 1.62;
 

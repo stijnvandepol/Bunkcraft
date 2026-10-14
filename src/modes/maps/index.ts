@@ -6,6 +6,7 @@ import { CLASSIC } from './classic';
 import { DESERT } from './desert';
 import { DOCKYARD } from './dockyard';
 import { MALL } from './mall';
+import { PANTRY } from './pantry';
 import { PLAZA } from './plaza';
 import { QUARTER } from './quarter';
 import { SCRAP } from './scrap';
@@ -21,7 +22,7 @@ export { ARENA_FLOOR_Y, ArenaMap, type Flag, type MapRequirement, type Site, typ
 import type { MapRequirement } from './ArenaMap';
 
 export type MapId = 'classic' | 'suburb' | 'quarter' | 'dockyard' | 'desert' | 'atomic' | 'bunker' | 'villa' | 'yacht' | 'town' | 'station'
-  | 'plaza' | 'site' | 'carrier' | 'shanty' | 'mall' | 'scrap';
+  | 'plaza' | 'site' | 'carrier' | 'shanty' | 'mall' | 'scrap' | 'pantry';
 /** The map of plain "arena" worlds; it must stay 'classic' so old saves keep their map. */
 export const DEFAULT_MAP: MapId = 'classic';
 /** The map the create-game menu suggests first. */
@@ -30,7 +31,7 @@ export const MENU_DEFAULT_MAP: MapId = 'atomic';
 /** Room setting: a fixed map, or "rotate" = the next match uses the next map. */
 export type MapSetting = MapId | 'rotate';
 
-export const MAPS: ArenaMap[] = [CLASSIC, SUBURB, QUARTER, DOCKYARD, DESERT, ATOMIC, BUNKER, VILLA, YACHT, TOWN, STATION, PLAZA, SITE, CARRIER, SHANTY, MALL, SCRAP].map((d) => new ArenaMap(d));
+export const MAPS: ArenaMap[] = [CLASSIC, SUBURB, QUARTER, DOCKYARD, DESERT, ATOMIC, BUNKER, VILLA, YACHT, TOWN, STATION, PLAZA, SITE, CARRIER, SHANTY, MALL, SCRAP, PANTRY].map((d) => new ArenaMap(d));
 export const MAP_IDS: MapId[] = MAPS.map((m) => m.id as MapId);
 export const MAP_SETTINGS: MapSetting[] = [...MAP_IDS, 'rotate'];
 
