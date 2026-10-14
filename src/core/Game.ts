@@ -121,7 +121,7 @@ const DEFAULT_HOTBAR = [
 ];
 const MENU_SEED = hashString('BunkCraft');
 /** Arena maps that fly by behind the home screen, one per visit in turn (the best-looking from above). */
-const MENU_MAPS: MapId[] = ['atomic', 'dockyard', 'villa', 'town', 'yacht', 'plaza', 'carrier', 'suburb'];
+const MENU_MAPS: MapId[] = ['atomic', 'dockyard', 'villa', 'town', 'yacht', 'plaza', 'carrier', 'suburb', 'pantry', 'couch', 'workshop'];
 const MENU_MAP_KEY = 'bunkcraft.menuMap';
 
 /** The next background map (rotates per visit; `?menuMap=id` picks one, for screenshots). */

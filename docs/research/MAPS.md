@@ -110,6 +110,27 @@ een pad die de rechte lijn tussen twee `pos` net mist, een muur die als grond go
 lift zijn als regressietest teruggelegd (`tests/anticheatMovement.test.ts`) en liggen sinds de validator-fix ook weer op
 de kaart zelf (`carrier.ts`, naast de liftrand).
 
+## Reuzenhuis-kaarten (de_rats-gedachte)
+
+Drie kaarten waar je een muis in een gewoon huis bent (alleen de mechaniek, eigen namen en indelingen): `pantry` (keuken),
+`couch` (woonkamer) en `workshop` (garage), 68 × 44, puntsymmetrisch met een eigen palet per helft. Het meubilair is het level:
+tafels, banken en een werkbank als hoog terrein met hellingen van boeken, dozen en kisten (jump pad via een autoband op de
+werkbank), poten als pilaren, tunnels onder bank, salontafel en speelgoedauto, borden/blikken/dozen als dekking, een stopcontact
+en een tegelvloer als schaalhint. Gedeelde bouwstenen staan in `src/modes/maps/giant.ts`. Vlaggen, zones en bomplaatsen staan in
+alle drie (alle modes werken); alle kaarttests, spawnExposure (0 plekken) en de anticheat-bewegingsreplay zijn groen.
+
+| Kaart | vis% | range | long% | first | spawn→see | gap | kpm |
+|---|---|---|---|---|---|---|---|
+| Atomic Lane (ter vergelijking) | 17,2 | 29 | 2,8 | 2,1 s | 3,3 s | 2,9 s | 64,7 |
+| Pantry Panic | 13,7 | 23 | 2,7 | 2,5 s | 3,6 s | 3,1 s | 61,2 |
+| Couch Canyon | 10,9 | 20 | 0,0 | 4,4 s | 4,1 s | 3,3 s | 59,6 |
+| Workbench Run | 10,6 | 21 | 0,2 | 3,6 s | 3,9 s | 3,3 s | 60,0 |
+
+Gevechten beginnen dichter bij (20-23 tegen 29 blokken) en lange lijnen zijn weg, maar de eerste contacten komen later
+(Couch Canyon ~2 s later dan Atomic Lane: de bibliotheekkast en de luidspreker sluiten de lanes af bij het midden). Eerste les bij het
+bouwen: bots lopen langs de rand tussen lane en midden, dus de lange lijnen zaten niet in de lanes zelf maar op die rand; een
+blokker van 3-4 breed en 7-8 hoog op elke rand bracht `long%` van 11 naar 0. Schermafbeeldingen: `docs/screenshots/maps/{pantry,couch,workshop}-*.png`.
+
 ## Wat nog beter kan
 
 - **Classic** is compact gemaakt (zie boven); echte playtests moeten uitwijzen of de deuren van de bases niet te veel kampeerplekken geven.

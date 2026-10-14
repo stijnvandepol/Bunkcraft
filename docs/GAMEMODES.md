@@ -141,6 +141,9 @@ kleurenpalet, spiegelsymmetrisch voor tdm, omheind en met spawns die ver uit elk
 | Tin Roofs | `shanty` | Vrije kaart (64 × 44): een dichte sloppenwijk met plankbruggen over de daken en een watertoren, zie hieronder. | zones, vlaggen, bommen |
 | Galleria | `mall` | Vrije binnenkaart (64 × 44): een winkelcentrum van twee verdiepingen onder één dak, zie hieronder. | zones, vlaggen, bommen |
 | Scrapyard | `scrap` | Vrije kaart (60 × 42): een autosloperij als doolhof van geplette auto's, zie hieronder. | zones, vlaggen, bommen |
+| Pantry Panic | `pantry` | Vrije kaart (68 × 44): muizen in een reuzenkeuken, zie hieronder. | zones, vlaggen, bommen |
+| Couch Canyon | `couch` | Vrije kaart (68 × 44): muizen in een reuzenwoonkamer, zie hieronder. | zones, vlaggen, bommen |
+| Workbench Run | `workshop` | Vrije kaart (68 × 44): muizen in een reuzengarage, zie hieronder. | zones, vlaggen, bommen |
 | Bunker Flag | `bunker` | Voor capture the flag (64 × 40): een droge rivierbedding met oevers van 2 hoog, twee oversteekplaatsen en een overdekte duiker in het midden; elke vlag in een betonnen bunker met één deur achter een scherfmuur, spawns in een ommuurde tuin erachter. | zones, vlaggen |
 
 ### Vrije kaarten in BO2-stijl
@@ -185,6 +188,26 @@ maar de twee kanten zien er anders uit. Screenshots: `docs/screenshots/maps/<id>
   gangen; een portaalkraan staat over het midden met een auto aan de magneet boven de middelste zone. Per team een
   poortplein achter een plaatijzeren hek, een kantoor op palen. Zijbanen: een bandenberg om op te klimmen (jump pad naar
   een autostapel) en een baan met autostapels en een camper.
+- **Pantry Panic** (`pantry`), **Couch Canyon** (`couch`) en **Workbench Run** (`workshop`): de "de_rats-gedachte" (alleen de
+  mechaniek, eigen namen en indelingen): je bent een muis in een gewoon huis, dus het meubilair is het level. Schaalhints
+  zijn overal: een stopcontact met twee gaten, een geblokte vloer met tegels van vier blokken, een gingham tafelkleed, een
+  tv-scherm, een tafel van vijf hoog met poten als pilaren. Alle drie hebben drie lanes, een puntsymmetrische indeling (de
+  oostelijke helft is de westelijke 180° gedraaid, met een eigen palet), spawns in een holle kast/fauteuil/gereedschapskist met
+  uitgangen noord en zuid, een middenlandmark met een tunnel eronder en een platform erboven, hoge dekking om de paar blokken en
+  geen enkele plek op de vijandelijke helft die een spawn ziet (`spawnExposure.test.ts`).
+  - **Pantry Panic**: een keuken. In het midden een tafel met een rood/wit (west) en blauw/wit (oost) tafelkleed, borden,
+    een cornflakesdoos en zoutvaatjes erop; kookboekhellingen van één, twee en drie hoog (stapels boeken) leiden erheen. Langs
+    de noordmuur een aanrecht met een gootsteen (het water is ijs), een broodrooster, een messenblok en een stopcontact, bereikbaar
+    met een boekenhelling; een deegroller als brug van het aanrecht naar het tafelkleed. De koelkast (rood) en het fornuis
+    (blauw) zijn de landmarks tussen spawn en tafel, boodschappendozen met een flankgang erachter vormen de zuidbaan.
+  - **Couch Canyon**: een woonkamer. Een reusachtige bank (rood) en een tv-meubel (blauw) met kastjes ervoor; onder de bank en in
+    de kastjes loopt een tunnel van twee hoog, de zitting en het meubel zijn hoog terrein (hellingen van tijdschriften).
+    Een salontafel op een enorm kleed met popcorn, een blikje en een afstandsbediening, een bibliotheekkast en een luidspreker die
+    de lanes opdelen, een staande lamp, een varen en poefs.
+  - **Workbench Run**: een garage. Een speelgoedauto zo groot als een huis in het midden (tunnel eronder tussen de wielen, motorkap
+    en dak als trap van platforms), een werkbank met bankschroef en gereedschapsbord langs de noordmuur (een autoband met jump pad
+    als springplank), een stalen rek met twee planken en kartonnen dozen als trap langs de zuidmuur, een gereedschapskist (rood)
+    of verfkast (blauw) als landmark. Oliedrums, bandenstapels, een meetlint en een hamer als dekking.
 - **Skyline Villa** (`villa`): een moderne witte villa van twee verdiepingen met glazen gevels rond een open atrium (de
   middelste zone). Boven de begane grond een dakterras met glazen balustrade, trappen naar het platte dak van de
   slaapvleugel. Rood heeft een leeg zwembad (een verzonken bak van blauwe wol) met ligstoelen en parasols, blauw een

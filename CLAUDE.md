@@ -1,6 +1,6 @@
 # BunkCraft: notes for Claude Code
 
-BunkCraft is an online arena shooter for the browser (12 modes, 17 maps, bots, progression) on its own voxel engine, with a Minecraft-style sandbox behind "Build & Survival (beta)".
+BunkCraft is an online arena shooter for the browser (12 modes, 20 maps, bots, progression) on its own voxel engine, with a Minecraft-style sandbox behind "Build & Survival (beta)".
 TypeScript, Three.js r186 (WebGL2) and Vite. A Node server (`server/`) serves the built game and the multiplayer WebSocket on one port.
 Live at https://craft.bunkhosting.nl (version `1.1.<build>` in `/health`).
 The user is Stijn and writes in **Dutch**, so reply in Dutch. Code, comments and commit messages are in English.
@@ -50,7 +50,7 @@ Server configuration uses environment variables (`PORT`, `DATA_DIR`, `SEED`, `GA
 - Custom player skins: `src/skins/SkinFormat.ts` (classic 64x64 layout, canonical form, shared), `server/skins/` (strict PNG decoder + store + moderation), `src/rendering/SkinAtlas.ts` (one atlas for all players; the player model in `MobTypes.ts` uses classic box UV). Docs in `docs/SERVER.md`.
 - `src/net/` + `server/`: JSON protocol (`src/net/protocol.ts`, shared). The server owns the edits, time and player records (`data/world.json`) and validates reach, ids, rates and speed. Clients apply edits optimistically and roll back on reject. The sandbox server simulates mobs, drops, containers and fluids.
   Server terrain is generated on worker threads (`server/chunkgen/`, `CHUNK_WORKERS`); not-yet-arrived chunks read as UNLOADED, `ServerWorld.ensureChunk` generates one synchronously when it cannot wait.
-- Arena shooter: `src/modes/` (weapons, `Balance.ts`, hitscan, loadouts, `GameTypes.ts`, 17 maps in `maps/`) is shared with `server/Match.ts` + `server/modes/` (one `ModeLogic` per game mode). The server owns hit registration (lag-compensated rewind); `server/anticheat/` validates movement and shots.
+- Arena shooter: `src/modes/` (weapons, `Balance.ts`, hitscan, loadouts, `GameTypes.ts`, 20 maps in `maps/`) is shared with `server/Match.ts` + `server/modes/` (one `ModeLogic` per game mode). The server owns hit registration (lag-compensated rewind); `server/anticheat/` validates movement and shots.
 - Bots: `server/bots/` are real match players without a socket (nav graph, aim/skill levels); they fill Quick play and private lobbies and must produce zero anti-cheat reports (`tests/botMatch.test.ts`).
 - Parties: `server/Parties.ts` (in-memory, polled via `src/net/PartyApi.ts`, panel in `src/ui/PartyPanel.ts`), party-aware matchmaking in `src/modes/Realms.ts`. Rejoin: the server keeps a dropped player's seat, score and match XP for `REJOIN_GRACE_SEC` (`Match.ts`, `GameServer.ts`, `/api/rejoin`); client side in `src/net/Rejoin.ts`.
 - Progression: pure rules in `src/modes/progression/` (levels, unlocks, XP, camos, challenges); `server/progression/` holds profiles, signed profile tokens (no accounts), the match recorder and the XP grant. XP only ever comes from the server.

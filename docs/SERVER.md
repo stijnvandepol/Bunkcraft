@@ -797,7 +797,7 @@ Een game aanmaken (`POST /api/rooms`) accepteert `{ name, gameMode, seed, gameTy
 | `gameType` | `minecraft` | een id uit `GAME_TYPES` (onbekend = `minecraft`) |
 | `scoreLimit` | van het type (30 / 20 / 4 / 250 / 100 / 3) | 5 tot 100, verruimd met de keuzes van het type (1 capture, 250 punten); gun game negeert het (de ladder) |
 | `timeLimitSec` | van het type (600; elimination 90 = rondetijd) | 120 tot 1800 seconden, verruimd met de keuzes van het type (rondetijd 60 s) |
-| `mapId` | `classic` | een id uit `MAP_IDS` (`classic`, `suburb`, `quarter`, `dockyard`, `desert`, `atomic`, `bunker`, `villa`, `yacht`, `town`, `station`, `plaza`, `site`, `carrier`, `shanty`, `mall`, `scrap`) of `rotate` (onbekend = `classic`) |
+| `mapId` | `classic` | een id uit `MAP_IDS` (`classic`, `suburb`, `quarter`, `dockyard`, `desert`, `atomic`, `bunker`, `villa`, `yacht`, `town`, `station`, `plaza`, `site`, `carrier`, `shanty`, `mall`, `scrap`, `pantry`, `couch`, `workshop`) of `rotate` (onbekend = `classic`) |
 
 **Realms-endpoints:**
 
@@ -864,6 +864,9 @@ rode en blauwe wol markeert de teamzones. Elke kaart heeft eigen spawns die ver 
 | `shanty` | Tin Roofs | 64 × 44 | Vrije kaart: sloppenwijk met dakbruggen, steegjes en een watertoren |
 | `mall` | Galleria | 64 × 44 | Vrije binnenkaart: winkelcentrum met mezzanine, foodcourt en draaimolen |
 | `scrap` | Scrapyard | 60 × 42 | Vrije kaart: autosloperij met autostapels, bandenberg en portaalkraan |
+| `pantry` | Pantry Panic | 68 × 44 | Vrije kaart: reuzenkeuken met tafel, aanrecht, koelkast en fornuis |
+| `couch` | Couch Canyon | 68 × 44 | Vrije kaart: reuzenwoonkamer met bank, tv-meubel en salontafel |
+| `workshop` | Workbench Run | 68 × 44 | Vrije kaart: reuzengarage met speelgoedauto, werkbank en stalen rek |
 
 De instelling `rotate` speelt elke volgende match op de volgende kaart (in de volgorde hierboven). Bij een nieuwe
 kaart vervangt de server zijn kogelwereld en stuurt hij `match` met `info.map`; de client ziet dat dit niet zijn kaart
