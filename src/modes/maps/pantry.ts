@@ -3,6 +3,7 @@ import { type FreeArenaMapDef, type LayoutBuilder, TEAM } from './ArenaMap';
 import { AIR, turn, turned } from './helpers';
 import { C, crates } from './props';
 import { can, chair, checker, disc, ramp, socket, table } from './giant';
+import { type Wall, bottleCap, ceiling, centerLamp, clock, coin, curtain, doorway, pencil, poster, windowPane } from './giantRoom';
 
 /**
  * "Pantry Panic": the players are mice in a normal kitchen, so the kitchen is the level. A giant table with a
@@ -44,6 +45,9 @@ const DINNER: Palette = {
   counter: C.POLISHED_ANDESITE, books: [BLOCK.BLUE_WOOL, C.LAPIS_BLOCK, BLOCK.GREEN_WOOL, C.DEEPSLATE_TILES],
   box1: C.DIAMOND_BLOCK, box2: C.LAPIS_BLOCK, box3: C.MELON, mug: C.COPPER_BLOCK, wood: C.DARK_OAK_PLANKS,
 };
+
+/** The kitchen is 40 blocks high (the walls); the ceiling is the layer above. */
+const ROOM_H = 40;
 
 const RED_SPAWNS: [number, number][] = [[-31, -6], [-29, -3], [-31, 0], [-29, 3], [-31, 5], [-29, 6]];
 const FFA_WEST: [number, number][] = [[-27, -11], [-19, -9], [-30, 18], [-20, 11], [-14, 2], [-5, -12]];
@@ -156,6 +160,34 @@ function half(b: LayoutBuilder, s: 1 | -1, p: Palette): void {
   can(t, -18, 11, 3, BLOCK.GLASS, C.GOLD_BLOCK);
   chair(t, -9, 8, 's', p.wood);
   box(-4, -4, 12, 12, 1, 1, C.HAY);
+  dress(t, p);
+}
+
+/** The room itself: ceiling, window with curtains, door, clock, posters, drawers and a few giant everyday things. */
+function dress(t: LayoutBuilder, p: Palette): void {
+  const N: Wall = { axis: 'z', at: -22, dir: 1 }, W: Wall = { axis: 'x', at: -34, dir: 1 }, S: Wall = { axis: 'z', at: 21, dir: -1 };
+  ceiling(t, -34, -1, -22, 21, ROOM_H + 1, [[-26, -14, 2], [-12, -14, 2], [-26, 0, 2], [-26, 14, 2], [-12, 14, 2], [-4, 14, 2], [-4, -14, 2]]);
+  // The window over the sink, its curtains, the clock and the door (with a strip of light under it) on the west wall.
+  windowPane(t, N, -24, -14, 12, 30, BLOCK.WHITE_WOOL);
+  curtain(t, N, -28, -25, 11, 32, p.cloth, p.cloth2);
+  curtain(t, N, -13, -10, 11, 32, p.cloth, p.cloth2);
+  doorway(t, W, 10, 17, 26, p.cabinet, C.DARK_OAK_PLANKS);
+  clock(t, W, 13, 33, 4, BLOCK.WHITE_WOOL, p.cabinet);
+  poster(t, W, -20, -12, 16, 28, p.cabinet, BLOCK.WHITE_WOOL, p.cloth);
+  poster(t, S, -29, -21, 15, 27, p.wood, C.TERRACOTTA, BLOCK.WHITE_WOOL);
+  poster(t, S, -15, -9, 18, 28, p.cabinet, C.CALCITE, p.box1);
+  // The toaster is plugged into the wall socket.
+  t.box(-13, -13, -19, -19, 6, 7, C.COAL_BLOCK);
+  t.box(-13, -11, -19, -19, 6, 6, C.COAL_BLOCK);
+  // Drawer fronts and handles on the counter.
+  for (let x = -33; x <= -3; x += 6) {
+    t.box(x, x, -17, -17, 1, 4, C.DARK_OAK_PLANKS);
+    t.box(x + 2, x + 3, -17, -17, 3, 3, C.IRON_BLOCK);
+  }
+  // Giant everyday things on the floor.
+  coin(t, -8, -12, 2.6);
+  bottleCap(t, -14, -6, 2.2);
+  pencil(t, -30, 11, 8, true);
 }
 
 export const PANTRY: FreeArenaMapDef = {
@@ -165,8 +197,9 @@ export const PANTRY: FreeArenaMapDef = {
   description: 'Mice in a giant kitchen: a gingham table, a sink, a fridge and a stove',
   halfX: 34,
   halfZ: 22,
-  wallHeight: 14,
-  wallBlock: C.CUT_SANDSTONE,
+  wallHeight: ROOM_H,
+  room: { ceiling: ROOM_H + 2, playHeight: 14 },
+  wallBlock: C.CALCITE,
   floorBlock: C.CALCITE,
   variants: 1,
   redSpawns: RED_SPAWNS,
@@ -188,5 +221,6 @@ export const PANTRY: FreeArenaMapDef = {
   build(_variant, b) {
     half(b, 1, BREAKFAST);
     half(b, -1, DINNER);
+    centerLamp(b, ROOM_H, 31, 7, BLOCK.WHITE_WOOL);
   },
 };

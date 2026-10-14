@@ -149,7 +149,8 @@ describe('arena maps', () => {
         for (let x = b.minX; x < b.maxX; x++) {
           for (const z of [b.minZ, b.maxZ - 1]) {
             for (let y = ARENA_FLOOR_Y + 1; y <= ARENA_FLOOR_Y + map.wallHeight; y++) expect(SOLID[at(x, y, z)]).toBe(1);
-            expect(at(x, ARENA_FLOOR_Y + map.wallHeight + 1, z)).toBe(BLOCK.AIR);
+            // A room map has its ceiling layer over the ring (tests/room.test.ts checks it).
+            if (!map.room) expect(at(x, ARENA_FLOOR_Y + map.wallHeight + 1, z)).toBe(BLOCK.AIR);
           }
         }
         for (let z = b.minZ; z < b.maxZ; z++) {

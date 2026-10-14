@@ -857,7 +857,7 @@ export class Game {
     world.chunks.renderDistance = Math.min(this.settings.values.renderDistance, 6);
     this.entities!.hostileSpawning = false;
     const b = map.bounds;
-    this.menuOrbit.set((b.minX + b.maxX) / 2, ARENA_FLOOR_Y + map.wallHeight + 9, (b.minZ + b.maxZ) / 2);
+    this.menuOrbit.set((b.minX + b.maxX) / 2, ARENA_FLOOR_Y + (map.room ? map.room.playHeight + 12 : map.wallHeight + 9), (b.minZ + b.maxZ) / 2);
     this.menuRadius.set((b.maxX - b.minX) * 0.32, (b.maxZ - b.minZ) * 0.32);
     this.cycle.time = 0.11;
     this.menu.showTitle();
