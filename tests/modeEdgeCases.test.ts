@@ -1,0 +1,113 @@
+import { describe, expect, it } from 'vitest';
+import { gameTypeDef } from '../src/modes/GameTypes';
+import type { SndLogic } from '../server/modes/snd';
+import type { ConfirmLogic } from '../server/modes/confirm';
+import { live, place, shootDead, started } from './helpers/matchHost';
+
+/** Regression tests for edge cases of the game modes (found by reading the mode logic against the rules). */
+describe('search and destroy edge cases', () => {
+  const DEF = gameTypeDef('snd');
+  const ROUND = DEF.rounds!;
+  const P = DEF.params!;
+
+  it('two attackers finishing a plant on both sites in the same tick plant one bomb only', () => {
+    const s = started('snd', 4);
+    s.advance(ROUND.intermissionSec + ROUND.countdownSec + 0.2);
+    const logic = s.match.logic as SndLogic;
+    const att = [...s.match.players.values()].filter((p) => p.team === logic.attackers);
+    const def = [...s.match.players.values()].filter((p) => p.team !== logic.attackers);
+    def.forEach((d, i) => place(s, d.id, -40 + i * 3, 65, -40));
+    const [a, b] = s.match.map.sites;
+    place(s, att[0].id, a.x, a.y, a.z);
+    place(s, att[1].id, b.x, b.y, b.z);
+    s.advance(P.plantSec + 0.2);
+    expect(logic.siteRuns.filter((r) => r.planted)).toHaveLength(1);
+    expect(s.host.events('bomb-planted')).toHaveLength(1);
+    expect(att[0].pts + att[1].pts).toBe(1);
+  });
+});
+
+/**
+ * A match whose players all dropped (kept seats only) stands still (Match.tick): the mode's own clocks must stand
+ * still with it, or the hill moves on, flags return and the outbreak happens while nobody is there.
+ */
+describe('mode clocks stand still while only kept seats are left', () => {
+  const keep = (token: string) => ({ proof: { token }, graceSec: 600, limit: 6 });
+  const dropAllAndReturn = (s: ReturnType<typeof live>, ids: number[], away: number) => {
+    const seats = ids.map((id) => s.match.leave(id, keep(`t${id}`))!);
+    s.advance(away, 0.25);
+    for (const seat of seats) { s.match.join(seat.id, seat.name, false, { restore: s.match.parked.get(seat.id) }); s.match.ready(seat.id); }
+    s.advance(0.1);
+  };
+  const modeState = (s: ReturnType<typeof live>) => s.host.of('mode').at(-1)!.state;
+
+  it('ctf: a dropped flag does not return while the match stands still', () => {
+    const s = live('ctf', 2);
+    const red = [...s.match.players.values()].find((p) => p.team === 'red')!;
+    const blue = [...s.match.players.values()].find((p) => p.team === 'blue')!;
+    const bf = s.match.map.flags.find((f) => f.team === 'blue')!;
+    place(s, blue.id, 0.5, 65, -40);
+    place(s, red.id, bf.x, bf.y, bf.z);
+    s.advance(0.3);
+    place(s, red.id, 0.5, 65, 30);
+    s.advance(0.3);
+    s.match.leave(red.id, keep('r'));
+    s.advance(0.05);
+    const before = modeState(s);
+    if (before.kind !== 'ctf') throw new Error('ctf');
+    expect(before.flags.find((f) => f.team === 'blue')!.status).toBe('dropped');
+    dropAllAndReturn(s, [blue.id], 60);
+    s.match.join(red.id, red.name, false, { restore: s.match.parked.get(red.id) });
+    s.advance(0.1);
+    const after = modeState(s);
+    if (after.kind !== 'ctf') throw new Error('ctf');
+    expect(after.flags.find((f) => f.team === 'blue')!.status).toBe('dropped');
+  });
+
+  it('hardpoint: the hill timer does not run out while the match stands still', () => {
+    const s = live('hardpoint', 2);
+    s.advance(5);
+    const st = modeState(s);
+    if (st.kind !== 'zones') throw new Error('zones');
+    const left = st.rotateIn;
+    dropAllAndReturn(s, [1, 2], 200);
+    const st2 = modeState(s);
+    if (st2.kind !== 'zones') throw new Error('zones');
+    expect(st2.gap).toBe(false);
+    expect(st2.rotateIn).toBeGreaterThan(left - 1);
+  });
+
+  it('koth: the hill timer does not run out while the match stands still', () => {
+    const s = live('koth', 2);
+    s.advance(5);
+    const st = modeState(s);
+    if (st.kind !== 'zones') throw new Error('zones');
+    dropAllAndReturn(s, [1, 2], 200);
+    const st2 = modeState(s);
+    if (st2.kind !== 'zones') throw new Error('zones');
+    expect(st2.rotateIn).toBeGreaterThan(st.rotateIn - 1);
+  });
+
+  it('kill confirmed: a dog tag does not expire while the match stands still', () => {
+    const s = live('killconfirmed', 2);
+    shootDead(s, 1, 2);
+    const logic = s.match.logic as ConfirmLogic;
+    expect(logic.dropped).toHaveLength(1);
+    place(s, 1, -40, 65, 40);
+    dropAllAndReturn(s, [1, 2], (gameTypeDef('killconfirmed').params?.tagSec ?? 30) + 30);
+    expect(logic.dropped).toHaveLength(1);
+  });
+
+  it('sharpshooter: the weapon rotation does not run while the match stands still', () => {
+    const s = live('sharpshooter', 2);
+    const st = modeState(s);
+    if (st.kind !== 'roulette') throw new Error('roulette');
+    const rotations = s.host.events('weapon-rotate').length;
+    dropAllAndReturn(s, [1, 2], 300);
+    const st2 = modeState(s);
+    if (st2.kind !== 'roulette') throw new Error('roulette');
+    expect(s.host.events('weapon-rotate')).toHaveLength(rotations);
+    expect(st2.switchIn).toBeGreaterThan(st.switchIn - 1);
+    expect(st2.switchIn).toBeLessThanOrEqual(st.switchIn + 0.1);
+  });
+});

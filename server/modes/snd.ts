@@ -114,7 +114,11 @@ export class SndLogic extends RoundsLogic {
     const params = m.def.params ?? {};
     const bomb = this.planted;
     if (bomb) this.defuse(m, bomb, dt, params.defuseSec ?? 6, now);
-    else for (const r of this.runs) this.plant(m, r, dt, params.plantSec ?? 4, params.fuseSec ?? 35);
+    else {
+      // One bomb per round: the first plant ends planting (two sites can finish in the same tick).
+      for (const r of this.runs) if (this.plant(m, r, dt, params.plantSec ?? 4, params.fuseSec ?? 35)) break;
+      if (this.planted) for (const r of this.runs) if (!r.planted) { r.progress = 0; r.actor = 0; }
+    }
     if (m.phase === 'live') this.checkWipe(m, now);
   }
 
@@ -144,14 +148,15 @@ export class SndLogic extends RoundsLogic {
     return 0;
   }
 
-  private plant(m: Match, r: SiteRun, dt: number, plantSec: number, fuseSec: number): void {
+  /** Plant progress on one site; true when the bomb went down. */
+  private plant(m: Match, r: SiteRun, dt: number, plantSec: number, fuseSec: number): boolean {
     if (r.att === 0) {
       if (r.progress > 0) { r.progress = 0; m.markModeDirty(); }
-      return;
+      return false;
     }
     if (!r.actor) r.actor = this.firstOn(m, r, this.attackers);
     r.progress = Math.min(1, r.progress + dt / plantSec);
-    if (r.progress < 1) return;
+    if (r.progress < 1) return false;
     r.planted = true;
     r.progress = 0;
     const planter = m.players.get(r.actor);
@@ -165,6 +170,7 @@ export class SndLogic extends RoundsLogic {
     m.setPhase('live', fuseSec);
     m.event('bomb-planted', this.attackers, planter?.id ?? 0, r.site.name);
     m.broadcastRoster();
+    return true;
   }
 
   private defuse(m: Match, r: SiteRun, dt: number, defuseSec: number, now: number): void {
