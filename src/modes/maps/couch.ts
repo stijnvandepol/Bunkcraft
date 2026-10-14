@@ -98,7 +98,7 @@ function half(b: LayoutBuilder, s: 1 | -1, p: Palette): void {
   box(-10, -7, -13, -10, 9, 9, BLOCK.YELLOW_WOOL);
   box(-9, -8, -12, -11, 10, 10, BLOCK.YELLOW_WOOL);
   box(-27, -25, 11, 13, 1, 2, p.pot);
-  box(-28, -24, 10, 14, 3, 5, BLOCK.OAK_LEAVES);
+  box(-28, -24, 10, 14, 3, 5, C.MOSS);
   box(-25, -23, -14, -12, 1, 1, BLOCK.WHITE_WOOL);
   box(-24, -24, -13, -13, 2, 2, BLOCK.WHITE_WOOL);
   box(-7, -4, 10, 11, 1, 2, p.slipper); // a slipper
