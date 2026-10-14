@@ -88,6 +88,7 @@ DoS. Regressietests: `tests/security/audit2.test.ts`, plus `matchIsolation`, `sk
 | A2-15 | Midden | `Parties`, `src/modes/Party.ts` | Partycodes van 5 tekens (~25 bit) waren met 2000 parties per /64 binnen uren te raden; een lid dat de kroon kreeg terwijl de maker weg was, kon de maker kicken | Codes van 10 tekens (~50 bit), getoond als `K7QM2-8XHTQ`; joinen 10/min per adres; de maker is niet te kicken |
 | A2-16 | Laag | `ControlPlane` (`/internal/save`) | Een runner kon onbeperkt vaak 2 MB laten wegschrijven | Hoogstens één schrijfactie per 5 s per runner (de nieuwste wint, bij einde altijd weggeschreven), max 16 MB per minuut (429) |
 | A2-17 | Midden | `Admin.ts` (accounts) | Elke admin kon de eigenaar (`ADMIN_ACCOUNTS`) en zichzelf vergrendelen, verwijderen, de-adminnen of een herstelcode geven (overname) | Voor admin-sessies 403 (en audit) op `ADMIN_ACCOUNTS`-namen en het eigen account; het `ADMIN_TOKEN` mag het wel |
+| A2-18 | Laag | `RunnerFailCounter`, `RemoteRoom` | Containerlobby: de runner kreeg alleen blocked/ok en fouten gingen async terug, dus tegelijk geopende verbindingen konden de wachtwoordlimiet overlopen (ook een flaky test) | De control plane stuurt het aantal resterende pogingen; de runner houdt het laagste en telt eigen fouten af |
 
 Gecontroleerd en in orde: ops-pagina (alleen `textContent`, CSP met hashes, `frame-ancestors 'none'` + `X-Frame-Options`,
 geen tokens in `localStorage`), CSRF (geen cookies; wijzigingen same-site + JSON), CORS alleen voor `ALLOWED_ORIGINS`,
