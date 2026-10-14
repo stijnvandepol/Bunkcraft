@@ -31,7 +31,7 @@ import urllib.request
 from playwright.sync_api import sync_playwright
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MAPS = ['classic', 'suburb', 'quarter', 'dockyard', 'desert', 'atomic', 'bunker', 'station', 'town', 'villa', 'yacht']
+MAPS = ['classic', 'suburb', 'quarter', 'dockyard', 'desert', 'atomic', 'bunker', 'villa', 'yacht', 'town', 'station', 'plaza', 'site', 'carrier', 'shanty', 'mall', 'scrap', 'pantry', 'couch', 'workshop']
 
 # Counts WebSocket traffic in the page (works the same in Chromium and WebKit).
 WS_COUNTER = """
@@ -49,7 +49,8 @@ WS_COUNTER = """
 
 RECORDER = """
 (seconds) => new Promise((resolve) => {
-  const gaps = [], drawCalls = [], tris = [];
+  const gaps = [], drawCalls = [], tris = [], progs = [];
+  let progN = window.game.renderer.three.info.programs.length;
   const g = window.game;
   const ws0 = { ...window.__ws };
   // Main-loop JS time per frame (update + render submission): comparable across browsers, unlike frame gaps that sit
@@ -62,12 +63,15 @@ RECORDER = """
     gaps.push(now - last);
     last = now;
     drawCalls.push(g.renderer.stats.drawCalls);
+    // A new GL program during play = a shader compiled on first sight (a hitch).
+    const pn = g.renderer.three.info.programs.length;
+    if (pn !== progN) { progs.push({ atMs: Math.round(now - start), n: pn - progN, frameMs: Math.round(gaps[gaps.length - 1]) }); progN = pn; }
     tris.push(g.renderer.stats.triangles);
     if (now - start < seconds * 1000) requestAnimationFrame(tick);
     else {
       const ws = window.__ws, el = (now - start) / 1000;
       g.frame = frame;
-      resolve({ gaps, drawCalls, tris, work, scale: g.dynamicResolution.scale,
+      resolve({ gaps, drawCalls, tris, work, progs, scale: g.dynamicResolution.scale,
         inBps: (ws.inBytes - ws0.inBytes) / el, outBps: (ws.outBytes - ws0.outBytes) / el,
         inMps: (ws.inMsgs - ws0.inMsgs) / el, outMps: (ws.outMsgs - ws0.outMsgs) / el,
         remotes: g.remote.count ?? 0, phase: g.arcade && g.arcade.phase });
@@ -292,7 +296,9 @@ def measure(srv, pw, args, map_id):
             cdp.send('Profiler.start')
         if args.alloc:
             cdp.send('HeapProfiler.startSampling', {'samplingInterval': 4096, 'includeObjectsCollectedByMajorGC': True,
-                                                     'includeObjectsCollectedByMinorGC': True})
+                                                     # ALLOC_PROMOTED=1: leave out what the scavenger frees, so only allocations that survive
+                                                     # into the old generation (what feeds the major GCs) are counted.
+                                                     'includeObjectsCollectedByMinorGC': not os.environ.get('ALLOC_PROMOTED')})
     if args.diag:
         page.evaluate(MUTATIONS)
     res = page.evaluate(RECORDER, args.seconds)
@@ -320,6 +326,25 @@ def measure(srv, pw, args, map_id):
                 gc_major += n == 'MajorGC'
             elif n in ('UpdateLayoutTree', 'Layout', 'Paint', 'PrePaint', 'Layerize', 'UpdateLayer', 'HitTest'):
                 dom[n] = dom.get(n, 0) + e['dur'] / 1000
+    if cdp:
+        # Long main-thread tasks (>14 ms) and what filled them: the stutter attribution.
+        main = [e for e in events if e.get('ph') == 'X' and main_tid and (e['pid'], e['tid']) == main_tid]
+        for t in sorted((e for e in main if e.get('name') == 'RunTask' and e['dur'] > 14000), key=lambda e: -e['dur'])[:8]:
+            kids = [k for k in main if k is not t and k.get('name') != 'RunTask' and t['ts'] <= k['ts'] and k['ts'] + k['dur'] <= t['ts'] + t['dur'] and k['dur'] > 1500]
+            kids.sort(key=lambda k: -k['dur'])
+            seen, parts = set(), []
+            for k in kids:
+                nm = k['name'] + (':' + str(k.get('args', {}).get('data', {}).get('functionName', '')) if k['name'] == 'FunctionCall' else '')
+                if nm in seen:
+                    continue
+                seen.add(nm)
+                parts.append(f"{nm} {k['dur'] / 1000:.1f}")
+                if len(parts) >= 4:
+                    break
+            print(f"  long task {t['dur'] / 1000:5.1f} ms: " + ', '.join(parts))
+        if os.environ.get('TASKDBG'):
+            for e in sorted(main, key=lambda e: -e['dur'])[:12]:
+                print('  top event', e.get('name'), round(e['dur'] / 1000, 1), str(e.get('args'))[:300] if 'GC' in e.get('name', '') else '')
     lat = page.evaluate("() => { const g = window.game; clearInterval(window.__turn); g.input.down.clear(); }")
     lat = []
     if not args.no_latency:
@@ -342,6 +367,7 @@ def measure(srv, pw, args, map_id):
         ('p95 frame (ms)', f'{pct(gaps, 0.95):.1f}'),
         ('p99 frame (ms)', f'{pct(gaps, 0.99):.1f}'),
         ('worst frame (ms)', f'{max(gaps):.1f}'),
+        ('shaders compiled in play', ', '.join(f"{p['n']}@{p['atMs']}ms({p['frameMs']}ms frame)" for p in res.get('progs', [])) or 'none'),
         ('frame JS mean (ms)', f"{statistics.mean(res['work']):.2f}" if res['work'] else '-'),
         ('frame JS p95 (ms)', f"{pct(res['work'], 0.95):.2f}" if res['work'] else '-'),
         ('long frames > 20 ms', sum(1 for x in gaps if x > 20)),

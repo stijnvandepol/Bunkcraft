@@ -2,6 +2,9 @@ import type * as THREE from 'three';
 
 const ranges = new WeakMap<THREE.BufferAttribute, { start: number; count: number }>();
 const keep = (): void => {};
+function keepSelf<T>(this: T[]): T[] {
+  return this;
+}
 
 /**
  * Marks the first `count` values of a dynamic attribute for upload: the effect of `clearUpdateRanges()` +
@@ -21,6 +24,9 @@ export function uploadPrefix(attr: THREE.BufferAttribute, count: number): void {
     attr.updateRanges.length = 0;
     attr.updateRanges.push(r);
     attr.clearUpdateRanges = keep;
+    // three's updateBuffer() sorts the ranges before merging them; with one range there is nothing to order, but
+    // Array.prototype.sort still allocates a scratch array per call (a dozen attributes per frame).
+    attr.updateRanges.sort = keepSelf;
   }
   r.count = count;
   attr.needsUpdate = true;
