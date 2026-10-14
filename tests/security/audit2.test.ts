@@ -7,6 +7,7 @@ import { EventEmitter } from 'node:events';
 import type { WebSocket as WsType } from 'ws';
 import { AccountService } from '../../server/accounts/AccountService';
 import { weakSecrets } from '../../server/Config';
+import { OPS_CSP, OPS_HTML } from '../../server/OpsPage';
 import { GameServer } from '../../server/GameServer';
 import { PROTOCOL_VERSION, sanitizeChat } from '../../src/net/protocol';
 import { addressKey, blockKey } from '../../server/HttpSecurity';
@@ -99,6 +100,18 @@ describe('A2-09 (hardening): short admin and metrics tokens are reported', () =>
     expect(weakSecrets({ adminToken: 'hunter2', metricsToken: undefined })).toEqual(['ADMIN_TOKEN']);
     expect(weakSecrets({ adminToken: ADMIN, metricsToken: 'short' })).toEqual(['METRICS_TOKEN']);
     expect(weakSecrets({ adminToken: undefined, metricsToken: undefined })).toEqual([]);
+  });
+});
+
+describe('ops dashboard: player-controlled text never becomes HTML (verified, regression guard)', () => {
+  it('the page script has no HTML sinks and the page cannot be framed', async () => {
+    expect(OPS_HTML).not.toMatch(/innerHTML|outerHTML|insertAdjacentHTML|document\.write|\beval\(|new Function|srcdoc/);
+    expect(OPS_CSP).toContain("frame-ancestors 'none'");
+    expect(OPS_CSP).not.toMatch(/'unsafe-inline'|'unsafe-eval'/);
+    t = await startTestServer({ ADMIN_TOKEN: ADMIN });
+    const r = await fetch(`${t.base}/ops`);
+    expect(r.headers.get('x-frame-options')).toBe('DENY');
+    expect(r.headers.get('content-security-policy')).toBe(OPS_CSP);
   });
 });
 
