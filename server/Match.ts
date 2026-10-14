@@ -435,7 +435,10 @@ export class Match {
   private parkRecord(p: MatchPlayer, keep: ParkRequest, now: number): ParkedPlayer {
     return {
       id: p.id, name: p.name, proof: keep.proof, team: p.team, kills: p.kills, deaths: p.deaths, pts: p.pts, streak: p.streak, next: { ...p.next },
-      rank: p.rank, verified: p.verified, ...(p.party ? { party: p.party } : {}), joinSeq: p.joinSeq, wasAlive: p.alive, respawnIn: p.alive ? 0 : Math.max(0, p.respawnAt - now),
+      rank: p.rank, verified: p.verified, ...(p.party ? { party: p.party } : {}), joinSeq: p.joinSeq, wasAlive: p.alive,
+      // A dead player of a round mode waits "until the round is over" (respawnAt Infinity): the mode benches them again if
+      // they come back within that round (onJoin), and a later round must not keep them out.
+      respawnIn: p.alive || !Number.isFinite(p.respawnAt) ? 0 : Math.max(0, p.respawnAt - now),
       inCombat: p.alive && now - p.lastDamageAt < COMBAT_LOG_SECONDS, parkedAt: now, until: now + keep.graceSec,
     };
   }

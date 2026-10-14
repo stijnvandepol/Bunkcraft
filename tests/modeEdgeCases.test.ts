@@ -192,6 +192,24 @@ describe('round modes keep the match for a player whose connection dropped', () 
     expect(s.match.phase).toBe('warmup');
   });
 
+  it('elimination: a player who died, dropped and comes back between rounds plays the next round', () => {
+    const s = started('elimination', 4, 4);
+    const red = [...s.match.players.values()].filter((p) => p.team === 'red');
+    const blue = [...s.match.players.values()].filter((p) => p.team === 'blue');
+    s.advance(ROUND.intermissionSec + ROUND.countdownSec + 0.2);
+    shootDead(s, red[0].id, blue[0].id);
+    s.match.leave(blue[0].id, keep('b'));
+    shootDead(s, red[0].id, blue[1].id);
+    expect(s.match.phase).toBe('roundend');
+    s.advance(ROUND.postSec + 0.2);
+    expect(s.match.phase).toBe('intermission');
+    const back = s.match.join(blue[0].id, blue[0].name, false, { restore: s.match.parked.get(blue[0].id) });
+    s.match.ready(blue[0].id);
+    s.advance(ROUND.intermissionSec + ROUND.countdownSec + 0.2);
+    expect(s.match.phase).toBe('live');
+    expect(back.alive).toBe(true);
+  });
+
   it('infected with two players: a drop does not end the match, the seat holds the survivor', () => {
     const s = live('infected', 2);
     s.match.leave(2, keep('b'));
