@@ -40,7 +40,18 @@ match). Lopende matches houden hun oude image; nieuwe starten op het nieuwe.
 **Gemeten** (lokaal, Docker Desktop op een M1 Pro, image uit deze branch; `scripts/qa/container-smoke.sh` en
 `tests/matchIsolation.test.ts`):
 
-SCALING_MEASUREMENTS
+| Meting | Waarde |
+|---|---|
+| Containerstart (create → `ready`) | 0,40-0,59 s |
+| Lobby aanmaken → `welcome` (warme pool) | 0,27-0,39 s; in-process 0,31 s |
+| Proxy-overhead per round trip (zelfde proces, `scripts/qa/proxy-latency.ts`) | p50 +0,035 ms, p99 +0,05 ms (200 B); +0,04 / +0,06 ms (2 KB) |
+| Ping van de speler zoals de server die meet (Docker Desktop, host → VM) | mediaan 5 ms via de proxy, 4 ms in-process (ruis van de VM-netwerklaag) |
+| Geheugen per match (TDM, 1 speler + 6 bots) | ~50 MB (`docker stats`), limiet 256 MB; lege warme runner ~36 MB |
+| CPU per match | 2-7 % van een core, tick p99 2-5 ms |
+| Control plane herstarten (update) | 2 s; match liep door, adoptie en rejoin op dezelfde plek |
+
+Conclusie: de extra hop is verwaarloosbaar (ruim onder 1 ms), het geheugen per lobby is ~50 MB i.p.v. ~1,5 MB in-process
+(eigen V8-heap per container): dat is de echte prijs van isolatie. Op een CX23 (4 GB) passen zo tientallen lobby's.
 
 **Later:** Survival/Bouwen in containers (chunkgeneratie en grotere state; eerst meten of het nodig is), een eigen proxy die
 de create-body controleert of rootless Docker (SECURITY), rate limits per bezoeker over runners heen (wachtwoordpogingen tellen

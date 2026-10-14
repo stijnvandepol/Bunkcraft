@@ -256,9 +256,10 @@ netwerken (`match`, `docker-api`), zonder internettoegang en zonder gepubliceerd
 | `MATCH_DRIVER` | `docker` | `process` = child processes i.p.v. containers (ontwikkelen en tests, geen limieten) |
 | `INTERNAL_PORT` | `3001` | Interne API van de control plane (nooit publiceren) |
 
-**Resources.** Gemeten (Docker Desktop, M1, zie `docs/research/SCALING.md`): MATCH_MEASUREMENTS. Reken per actieve lobby met
-1 vCPU-reservering als plafond (een lobby gebruikt er meestal ~2-5 % van) en ~MATCH_MEM_MB MB geheugen; de warme pool kost één lege
-container. Op een CX23 (2 vCPU, 4 GB) passen zo ruim 10 lobby's naast de control plane; `MATCH_CPUS` is een plafond, geen
+**Resources.** Gemeten (Docker Desktop, M1 Pro, zie `docs/research/SCALING.md`): een containerstart tot `ready` 0,4-0,6 s (de
+warme pool vangt dat op: lobby aanmaken tot `welcome` 0,3-0,4 s, gelijk aan in-process), een TDM-lobby met 7 spelers (6 bots)
+~50 MB en 2-7 % van een core met tick p99 2-5 ms, een lege warme container ~36 MB. Reken per actieve lobby met 1 vCPU als
+plafond en ~50-80 MB geheugen (256 MB limiet laat ruim marge voor 12 spelers); de warme pool kost één lege container. Op een CX23 (2 vCPU, 4 GB) passen zo ruim 10 lobby's naast de control plane; `MATCH_CPUS` is een plafond, geen
 reservering, dus overboeken mag.
 
 **Beveiliging in het kort** (volledig: `docs/SECURITY.md`, "Een container per lobby"): de control plane praat met Docker via

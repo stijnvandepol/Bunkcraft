@@ -87,10 +87,10 @@ docker inspect --format '{"user":"{{.Config.User}}","readonly":{{.HostConfig.Rea
 if docker exec "$cid" wget -q -T 3 -O /dev/null http://1.1.1.1 2>/dev/null; then echo "match container reached the internet" >&2; exit 1; fi
 echo '{"internet":"blocked"}'
 # The socket proxy: containers yes, everything else no (asked from the control plane, the only one on that network).
-probe() { docker compose exec -T bunkcraft wget -q -O /dev/null -S "$@" 2>&1 | sed -n 's/^ *HTTP\/[0-9.]* \([0-9]*\).*/\1/p' | tail -n1; }
+probe() { docker compose exec -T bunkcraft wget -q -O /dev/null -S "$@" 2>&1 | sed -n 's/^ *HTTP\/[0-9.]* \([0-9]*\).*/\1/p' | tail -n1 || true; }
 c_list="$(probe http://docker-proxy:2375/containers/json)"
 c_images="$(probe http://docker-proxy:2375/images/json)"
-c_exec="$(probe --post-data '{}' --header 'content-type: application/json' "http://docker-proxy:2375/containers/$cid/exec")"
+c_exec="$(probe --post-data "{}" --header "content-type: application/json" "http://docker-proxy:2375/exec/0000/start")"
 c_volumes="$(probe http://docker-proxy:2375/volumes)"
 echo "{\"proxy\":{\"containers\":\"$c_list\",\"images\":\"$c_images\",\"exec\":\"$c_exec\",\"volumes\":\"$c_volumes\"}}"
 [ "$c_list" = 200 ] && [ "$c_images" = 403 ] && [ "$c_exec" = 403 ] && [ "$c_volumes" = 403 ] || { echo "socket proxy allowlist check failed" >&2; exit 1; }

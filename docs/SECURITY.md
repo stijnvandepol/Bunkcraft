@@ -250,6 +250,9 @@ gebruik). Het admin-token gaat nooit naar een runner: de proxy vervangt het in d
   `ContainerSpec.ts` beschermt alleen tegen fouten in onze eigen code, niet tegen een overgenomen control plane. Maatregelen die
   dat wel dichtzetten: Docker rootless of `userns-remap` op de host, of een eigen proxy die de create-body tegen dezelfde
   allowlist controleert (klein, maar dan draait onze code met de socket). Zonder isolatie (`inprocess`) bestaat dit risico niet.
+- Met `POST=1` laat de proxy alle schrijfcalls onder `/containers` door, niet alleen create/start/stop: ook `kill`, `update`
+  (limieten wijzigen) en een exec-instantie aanmaken, voor elke container op de host. Een exec *starten* (`/exec/*/start`) wordt wel
+  geweigerd (`EXEC=0`, gecontroleerd in de smoketest). Ook dit valt onder "overgenomen control plane = host in gevaar".
 - `GET /containers/json` via de proxy ziet alle containers op de host (namen, labels, images), ook die van andere projecten. De
   control plane filtert op het `owner`-label en raakt niets anders aan, maar de informatie is leesbaar.
 - Een gekaapte matchcontainer zit in zijn cgroup en op het interne netwerk, maar kan wel de interne API van de control plane en
