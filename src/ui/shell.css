@@ -345,7 +345,12 @@
 .home-util-row .bc-btn { background: var(--bc-panel); border-color: var(--bc-line); color: var(--bc-text); min-height: calc(var(--u) * 14); }
 .home-util-row .bc-btn:hover:not(:disabled) { background: var(--bc-panel-solid); border-color: var(--bc-line-accent); color: var(--bc-accent); }
 .home-profile-wrap { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: calc(var(--u) * 1.5); }
-.home-account { display: flex; align-items: center; gap: calc(var(--u) * 2.5); padding: 0 calc(var(--u) * 2); font-size: calc(var(--u) * 5); color: var(--bc-dim); }
+.home-account {
+  display: flex; align-items: center; gap: calc(var(--u) * 2.5); padding: calc(var(--u) * 1.5) calc(var(--u) * 3);
+  font-size: calc(var(--u) * 5); color: var(--bc-dim);
+  /* Sits on the bright backdrop, not on a card: a dark pill keeps the text readable on any map. */
+  background: rgba(14, 16, 24, 0.72); border-radius: var(--bc-r);
+}
 .home-account[hidden] { display: none; }
 .home-account-who { font-weight: 600; color: var(--bc-text); margin-right: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .home-profile {
@@ -613,7 +618,7 @@
 /* Forms (a centred column in the survival menus): left-aligned in the shell's column, under the title. */
 .bc .screen-body > div[style*='flex-direction: column'] { align-items: flex-start !important; width: min(calc(var(--u) * 320), 92vw); }
 .bc .screen-body > div[style*='flex-direction: column'] > .hint { text-align: left; }
-.bc .screen-body > div[style*='flex-direction: column'] > .mc-btn { width: calc(var(--u) * 200); justify-content: flex-start; }
+.bc .screen-body > div[style*='flex-direction: column'] > .mc-btn { width: min(calc(var(--u) * 200), 100%); justify-content: flex-start; }
 
 .bc .mc-btn {
   height: auto;
@@ -650,6 +655,9 @@
   user-select: text;
   -webkit-user-select: text;
 }
+/* Account forms: the field fills its column (the base input is a fixed 200 units, too narrow on a phone) and its hint reads left. */
+.bc .acct-field .mc-input { width: 100%; box-sizing: border-box; }
+.bc .acct-field .hint { text-align: left; }
 .bc .mc-input:focus { border-color: var(--bc-accent); box-shadow: 0 0 0 1px var(--bc-accent); }
 .bc .mc-input:focus-visible { outline: calc(var(--u) * 0.6) solid var(--bc-accent); }
 

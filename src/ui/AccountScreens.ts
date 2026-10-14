@@ -11,8 +11,10 @@ const KNOWN = new Set(['network', 'invalid_request', 'username_format', 'usernam
   'name_taken', 'invalid_credentials', 'locked', 'limited', 'full', 'unauthorized', 'already_account', 'account_locked', 'origin', 'disk']);
 
 /** The player-facing text of a failed account call. Wrong password, unknown name and wrong code all read the same on purpose. */
-export function accountErrorText(e: unknown): string {
+export function accountErrorText(e: unknown, passwordOnly = false): string {
   const code = e instanceof AccountError ? e.code : 'network';
+  // Where only a password is asked (change, delete, new code), "wrong username" would be odd.
+  if (passwordOnly && code === 'invalid_credentials') return t('acct.err.password_wrong');
   const key = (KNOWN.has(code) ? `acct.err.${code}` : 'acct.err.invalid_request') as I18nKey;
   return code === 'locked' && e instanceof AccountError ? t(key, Math.max(1, e.retryAfter)) : t(key);
 }
@@ -30,7 +32,7 @@ export class AccountScreens {
   constructor(private readonly stack: ScreenStack, private readonly changed: () => void) {}
 
   private field(label: string, input: HTMLInputElement, hint?: string): HTMLElement {
-    return h('div', { style: 'display: flex; flex-direction: column; gap: calc(var(--u) * 1.5); width: 100%; max-width: calc(var(--u) * 110);' },
+    return h('div', { class: 'acct-field', style: 'display: flex; flex-direction: column; gap: calc(var(--u) * 1.5); width: 100%; max-width: max(calc(var(--u) * 110), min(100%, 360px));' },
       h('div', { class: 'field-label', text: label }), input, hint ? h('div', { class: 'hint', text: hint }) : null);
   }
 
@@ -43,13 +45,13 @@ export class AccountScreens {
   }
 
   /** Runs `action` with the screen locked, shows its error, and calls `ok` when it succeeds. */
-  private submit(error: HTMLElement, buttons: HTMLButtonElement[], action: () => Promise<void>): void {
+  private submit(error: HTMLElement, buttons: HTMLButtonElement[], action: () => Promise<void>, passwordOnly = false): void {
     error.textContent = '';
     for (const b of buttons) b.disabled = true;
     const busy = t('acct.working');
     const label = buttons[0]?.textContent ?? '';
     if (buttons[0]) buttons[0].textContent = busy;
-    action().catch((e: unknown) => { error.textContent = accountErrorText(e); }).finally(() => {
+    action().catch((e: unknown) => { error.textContent = accountErrorText(e, passwordOnly); }).finally(() => {
       for (const b of buttons) b.disabled = false;
       if (buttons[0]) buttons[0].textContent = label;
     });
@@ -175,7 +177,7 @@ export class AccountScreens {
     this.stack.push(screen(t('acct.recoveryTitle'), [
       h('div', { style: COLUMN },
         h('div', { class: 'hint', text: t('acct.recoveryText') }),
-        h('div', { class: 'acct-code', style: 'font-family: monospace; font-size: calc(var(--u) * 9); letter-spacing: 0.08em; user-select: all; padding: calc(var(--u) * 4);', text: codeText }),
+        h('div', { class: 'acct-code', style: 'font-family: monospace; font-size: min(calc(var(--u) * 9), 4.2vw); letter-spacing: 0.08em; user-select: all; padding: calc(var(--u) * 4); overflow-wrap: anywhere;', text: codeText }),
         copy,
       ),
     ], [
@@ -219,7 +221,7 @@ export class AccountScreens {
         await changePassword(old.value, next.value);
         error.textContent = '';
         this.stack.pop();
-      });
+      }, true);
     };
     const save = button(t('common.done'), go, { cls: 'w150 primary' });
     this.onEnter([old, next, next2], go);
@@ -238,7 +240,7 @@ export class AccountScreens {
   private confirmPassword(title: string, text: string, label: string, action: (password: string) => Promise<void>): void {
     const pw = this.secret('current-password');
     const error = h('div', { class: 'error' });
-    const go = () => this.submit(error, [ok], () => action(pw.value));
+    const go = () => this.submit(error, [ok], () => action(pw.value), true);
     const ok = button(label, go, { cls: 'w250 primary' });
     this.onEnter([pw], go);
     this.stack.push(screen(title, [
