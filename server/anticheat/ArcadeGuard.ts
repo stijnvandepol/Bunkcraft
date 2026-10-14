@@ -85,6 +85,11 @@ export class ArcadeGuard {
     return this.players.get(id)?.validator.slideActive ?? false;
   }
 
+  /** Ground contact (floor, liquid or ladder) at the last accepted position report. */
+  grounded(id: number): boolean {
+    return this.players.get(id)?.validator.grounded ?? true;
+  }
+
   /** Seconds between two slides for this player (the perk of this life). */
   setSlideCooldown(id: number, seconds: number): void {
     this.players.get(id)?.validator.setSlideCooldown(seconds);

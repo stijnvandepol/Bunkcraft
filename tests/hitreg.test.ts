@@ -61,7 +61,8 @@ describe('seeded spread: the tracer you see is the bullet the server tests', () 
     s.host.clear();
     const w = weaponDef('rifle')!;
     const n = p1.shotN;
-    s.match.fire(1, { t: 'fire', slot: 0, ox: 0.5, oy: 66.62, oz: 0.5, dx: 0, dy: 0, dz: 1, ads: false, seq: 7, mv: true });
+    s.match.setStance(1, true, false); // the server's own view (position reports), not the claim
+    s.match.fire(1, { t: 'fire', slot: 0, ox: 0.5, oy: 66.62, oz: 0.5, dx: 0, dy: 0, dz: 1, ads: false, seq: 7 });
     const shot = s.host.of('shot')[0];
     // The client's prediction: same seed, same index, same spread rule.
     const rand: [number, number] = [0, 0];

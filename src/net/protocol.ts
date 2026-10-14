@@ -295,8 +295,9 @@ export type ClientMessage =
   /**
    * A shot. `rk`: the server tick (fractional) the shooter's screen showed the other players at (snapshots carry
    * `k`); the server rewinds the targets to exactly that moment, within limits. `seq`: the client's shot counter,
-   * echoed in `ammo` and `hit` (spread seed sync, hit feedback). `mv`/`air`: the shooter was moving / airborne
-   * (spread penalty, see shotSpread).
+   * echoed in `ammo` and `hit` (spread seed sync, hit feedback). `mv`/`air`: the shooter's own claim of moving / airborne;
+   * the server ignores both (it derives the stance from the validated position reports, anticheat/Stance.ts) and only
+   * old clients still send them.
    */
   | { t: 'fire'; slot: 0 | 1 | 2; ox: number; oy: number; oz: number; dx: number; dy: number; dz: number; ads: boolean; rk?: number; seq?: number; mv?: boolean; air?: boolean }
   /**
