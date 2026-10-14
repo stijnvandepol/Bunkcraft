@@ -131,6 +131,33 @@ Gevechten beginnen dichter bij (20-23 tegen 29 blokken) en lange lijnen zijn weg
 bouwen: bots lopen langs de rand tussen lane en midden, dus de lange lijnen zaten niet in de lanes zelf maar op die rand; een
 blokker van 3-4 breed en 7-8 hoog op elke rand bracht `long%` van 11 naar 0. Schermafbeeldingen: `docs/screenshots/maps/{pantry,couch,workshop}-*.png`.
 
+### Reuzenhuis ronde 2: dichte kamer (plafond, schaalhints)
+
+De open lucht en lage muren maakten van het meubilair blokken. Nu zijn de drie kaarten een echte kamer:
+
+- **Engine**: `room?: { ceiling, playHeight }` op `ArenaMapDef`/`FreeArenaMapDef`. `wallHeight` is dan de kamerhoogte (40), de dekkingsopslag
+  loopt door tot `ceiling` (42 lagen i.p.v. `MAX_COVER` = 10) en de laag boven de muur (het plafond) ligt ook over de muurring
+  (`ArenaMap.aboveWall`). `playHeight` (14) is wat `heightAt` (zones, vlaggen) nog als oppervlak telt, zodat wat aan het plafond hangt
+  of tegen de muur zit nooit een oppervlak wordt. Kaarten zonder `room` zijn byte-identiek: `tests/room.test.ts` heeft gouden hashes van
+  alle 17 andere kaarten (genomen voor deze wijziging) en test dat elke roomkaart een dicht plafond heeft. Chunkhoogte 128 en vloer 64
+  geven plaats tot laag 63; de kamer gebruikt 42.
+- **Licht**: nieuw blok `CEILING` (id 234, textuur van calciet, `transparent` + `lightFilter 0`, onzichtbaar in de inventaris). Het is
+  solide (kogels, granaten en spelers stuiten) maar laat skylight rechtdoor vallen, dus de kamer blijft even helder als de open arena;
+  zeelantaarns in het plafond zijn de lichtpanelen en de hanglamp (alleen optisch: blokslicht reikt 15 blokken). Let op: in de preview
+  deed de schaduwpass niet mee (0 shadow-calls); met schaduwen aan werpt het plafond schaduw over de hele kamer (de zon telt dan niet
+  meer mee, ambient/skylight blijft), nog niet apart beoordeeld.
+- **Prestaties** (Chromium `--use-angle=metal`, 1280 × 720, drie standpunten): atomic en pantry halen allebei de 120 FPS-vsync
+  (p50 8,3 ms, p99 10,3 ms); drawcalls 79 (atomic) tegen 54 (pantry), driehoeken 52k tegen 60k. Het plafond is één greedy vlak per chunk.
+- **Schaalhints**: raam met gordijnen en vensterbank, deur met een lichtstreep eronder en paneelnaden, klok, drie posters, plinten,
+  handvatten en ladevoorkant op het aanrecht, stekker van de broodrooster in het stopcontact, en een munt, kroonkurk en potlood op
+  de vloer (pantry), speelgoedblokjes en een sok (couch), een potlood en tl-lichtpanelen (workshop). Props staan buiten de
+  looplijnen: een munt onder de deegrollerbrug zette `first` van 2,5 naar 3,2 s en een kroonkurk/munt bij de vlag brak de vlagtest
+  (`map-flow`/`mapObjectives`), dus die staan nu op randen.
+- **Flow** (`map-flow`, kaartvergelijking met ronde 1): Pantry 2,6/3,7/3,1 s (ronde 1: 2,5/3,6/3,1), Couch 4,6/4,1/3,3 (4,4/4,1/3,3),
+  Workshop 3,4/3,9/3,3 (3,6/3,9/3,3): first/spawn→see/gap, geen verslechtering.
+- Schermafbeeldingen: `docs/screenshots/maps/{pantry,couch,workshop}-{room,ceiling,window,door,...}.png` (`scripts/shots.py`; de
+  `top`-view zit nu onder het plafond, op 39 blokken).
+
 ## Wat nog beter kan
 
 - **Classic** is compact gemaakt (zie boven); echte playtests moeten uitwijzen of de deuren van de bases niet te veel kampeerplekken geven.

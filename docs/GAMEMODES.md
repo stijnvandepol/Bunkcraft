@@ -195,6 +195,11 @@ maar de twee kanten zien er anders uit. Screenshots: `docs/screenshots/maps/<id>
   oostelijke helft is de westelijke 180° gedraaid, met een eigen palet), spawns in een holle kast/fauteuil/gereedschapskist met
   uitgangen noord en zuid, een middenlandmark met een tunnel eronder en een platform erboven, hoge dekking om de paar blokken en
   geen enkele plek op de vijandelijke helft die een spawn ziet (`spawnExposure.test.ts`).
+  Ronde 2: de kamer is dicht. De muren zijn 40 blokken hoog (`wallHeight: 40`) en erboven ligt een plafond (laag 41, blokken
+  `CEILING` met lichtpanelen van zeelantaarns en een hanglamp boven het midden), dus de lucht verdwijnt en alles op speelhoogte
+  (14) leest als meubel op reuzenschaal. Per kaart: raam met gordijnen, deur met een lichtstreep eronder, klok, posters/lijsten,
+  plinten, laden met handvatten en grote alledaagse spullen (munt, kroonkurk, potlood, speelgoedblokjes, sok) in
+  `src/modes/maps/giantRoom.ts`. Engine: `ArenaMapDef.room = { ceiling, playHeight }` (zie `docs/research/MAPS.md`).
   - **Pantry Panic**: een keuken. In het midden een tafel met een rood/wit (west) en blauw/wit (oost) tafelkleed, borden,
     een cornflakesdoos en zoutvaatjes erop; kookboekhellingen van één, twee en drie hoog (stapels boeken) leiden erheen. Langs
     de noordmuur een aanrecht met een gootsteen (het water is ijs), een broodrooster, een messenblok en een stopcontact, bereikbaar

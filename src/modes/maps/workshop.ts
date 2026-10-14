@@ -3,6 +3,7 @@ import { type FreeArenaMapDef, type LayoutBuilder, TEAM } from './ArenaMap';
 import { AIR, jumpPad, turn, turned } from './helpers';
 import { C } from './props';
 import { can, disc, ramp, socket, table } from './giant';
+import { type Wall, ceiling, centerLamp, clock, curtain, doorway, pencil, poster, windowPane } from './giantRoom';
 
 /**
  * "Workbench Run": the players are mice in a normal garage, so the garage is the level. A toy car the size of a
@@ -37,6 +38,9 @@ const BLUE_SHOP: Palette = {
   floorA: C.SMOOTH_STONE, floorB: C.CALCITE, metal: BLOCK.BLUE_WOOL, metal2: C.LAPIS_BLOCK, wood: BLOCK.SPRUCE_PLANKS,
   can1: C.PUMPKIN, can2: BLOCK.WHITE_WOOL, car: BLOCK.BLUE_WOOL, light: C.REDSTONE_BLOCK,
 };
+
+/** The garage is 40 blocks high (the walls); the ceiling is the layer above. */
+const ROOM_H = 40;
 
 const RED_SPAWNS: [number, number][] = [[-31, -6], [-29, -3], [-31, 0], [-29, 3], [-31, 5], [-29, 6]];
 const FFA_WEST: [number, number][] = [[-27, -11], [-19, -9], [-30, 18], [-20, 11], [-14, 2], [-6, -12]];
@@ -156,6 +160,23 @@ function half(b: LayoutBuilder, s: 1 | -1, p: Palette): void {
   box(-11, -9, 5, 7, 1, 2, BLOCK.OAK_PLANKS);
   box(-23, -21, -2, 0, 1, 2, BLOCK.OAK_PLANKS);
   box(-10, -8, 11, 13, 1, 3, BLOCK.OAK_PLANKS);
+  dress(t, p);
+}
+
+/** The room itself: ceiling with strip lights, a window over the bench, a roller door, clock, posters and a few giant things. */
+function dress(t: LayoutBuilder, p: Palette): void {
+  const N: Wall = { axis: 'z', at: -22, dir: 1 }, W: Wall = { axis: 'x', at: -34, dir: 1 }, S: Wall = { axis: 'z', at: 21, dir: -1 };
+  ceiling(t, -34, -1, -22, 21, ROOM_H + 1, [[-26, -14, 2], [-12, -14, 2], [-26, 0, 2], [-26, 14, 2], [-12, 14, 2], [-4, 14, 2], [-4, -14, 2]]);
+  windowPane(t, N, -22, -8, 14, 30, C.IRON_BLOCK);
+  curtain(t, N, -27, -25, 13, 20, p.metal, p.metal2);
+  curtain(t, N, -5, -3, 13, 20, p.metal, p.metal2);
+  doorway(t, W, -19, -10, 30, C.SMOOTH_STONE, C.IRON_BLOCK);
+  clock(t, W, 14, 30, 4, BLOCK.WHITE_WOOL, C.IRON_BLOCK);
+  poster(t, W, 9, 19, 14, 24, C.IRON_BLOCK, BLOCK.WHITE_WOOL, p.metal);
+  poster(t, S, -22, -12, 16, 28, C.COAL_BLOCK, p.metal2, BLOCK.YELLOW_WOOL);
+  poster(t, S, -9, -3, 18, 27, C.IRON_BLOCK, BLOCK.WHITE_WOOL, p.metal);
+  // Giant everyday things: a pencil.
+  pencil(t, -32, -18, 8, true);
 }
 
 export const WORKSHOP: FreeArenaMapDef = {
@@ -165,7 +186,8 @@ export const WORKSHOP: FreeArenaMapDef = {
   description: 'Mice in a giant garage: a toy car, a workbench with a tyre spring board and a steel rack',
   halfX: 34,
   halfZ: 22,
-  wallHeight: 14,
+  wallHeight: ROOM_H,
+  room: { ceiling: ROOM_H + 2, playHeight: 14 },
   wallBlock: C.ANDESITE,
   floorBlock: C.POLISHED_ANDESITE,
   variants: 1,
@@ -188,5 +210,6 @@ export const WORKSHOP: FreeArenaMapDef = {
   build(_variant, b) {
     half(b, 1, RED_SHOP);
     half(b, -1, BLUE_SHOP);
+    centerLamp(b, ROOM_H, 31, 7, C.IRON_BLOCK);
   },
 };

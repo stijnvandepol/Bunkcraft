@@ -3,6 +3,7 @@ import { type FreeArenaMapDef, type LayoutBuilder, TEAM } from './ArenaMap';
 import { AIR, turn, turned } from './helpers';
 import { C } from './props';
 import { disc, ramp, socket, table } from './giant';
+import { type Wall, ceiling, centerLamp, clock, curtain, doorway, poster, sock, toyBrick, windowPane } from './giantRoom';
 
 /**
  * "Couch Canyon": the players are mice in a normal living room. A giant sofa (red half) and a TV unit (the same
@@ -37,6 +38,9 @@ const COOL: Palette = {
   floorA: C.DARK_OAK_PLANKS, floorB: BLOCK.SPRUCE_PLANKS, rug1: BLOCK.BLUE_WOOL, rug2: C.LAPIS_BLOCK, rug3: BLOCK.WHITE_WOOL,
   fabric: BLOCK.BLUE_WOOL, fabric2: C.DIAMOND_BLOCK, wood: C.DARK_OAK_PLANKS, pot: C.COPPER_BLOCK, slipper: BLOCK.GREEN_WOOL,
 };
+
+/** The living room is 40 blocks high (the walls); the ceiling is the layer above. */
+const ROOM_H = 40;
 
 const RED_SPAWNS: [number, number][] = [[-31, -6], [-29, -3], [-31, 0], [-29, 3], [-31, 5], [-29, 6]];
 const FFA_WEST: [number, number][] = [[-27, -11], [-19, -9], [-30, 17], [-20, 11], [-12, -3], [-6, -12]];
@@ -129,6 +133,25 @@ function half(b: LayoutBuilder, s: 1 | -1, p: Palette): void {
   box(-8, -8, -3, 2, 4, 4, C.COAL_BLOCK);
   box(-8, -8, -2, -2, 5, 5, C.REDSTONE_BLOCK);
   box(-4, -3, -4, -4, 4, 5, p.fabric2);
+  dress(t, p);
+}
+
+/** The room itself: ceiling, a window with curtains over the sofa, door, clock, posters and a few giant everyday things. */
+function dress(t: LayoutBuilder, p: Palette): void {
+  const N: Wall = { axis: 'z', at: -22, dir: 1 }, W: Wall = { axis: 'x', at: -34, dir: 1 }, S: Wall = { axis: 'z', at: 21, dir: -1 };
+  ceiling(t, -34, -1, -22, 21, ROOM_H + 1, [[-26, -14, 2], [-12, -14, 2], [-26, 0, 2], [-26, 14, 2], [-12, 14, 2], [-4, 14, 2], [-4, -14, 2]]);
+  windowPane(t, N, -20, -8, 14, 32, BLOCK.WHITE_WOOL);
+  curtain(t, N, -25, -22, 13, 34, p.fabric, p.fabric2);
+  curtain(t, N, -6, -3, 13, 34, p.fabric, p.fabric2);
+  doorway(t, W, 10, 17, 26, p.wood, C.DARK_OAK_PLANKS);
+  clock(t, W, 13, 33, 4, BLOCK.WHITE_WOOL, p.wood);
+  poster(t, W, -20, -12, 16, 28, p.wood, BLOCK.WHITE_WOOL, p.fabric);
+  poster(t, S, -22, -12, 16, 28, C.DARK_OAK_PLANKS, p.fabric2, BLOCK.WHITE_WOOL);
+  poster(t, S, -9, -3, 18, 27, p.wood, C.CALCITE, p.fabric);
+  // Giant everyday things: toy bricks and a sock on the floor.
+  toyBrick(t, -31, -16, 4, 2, 1, BLOCK.RED_WOOL);
+  toyBrick(t, -29, -14, 2, 2, 2, BLOCK.YELLOW_WOOL);
+  sock(t, -23, 3, 6, BLOCK.WHITE_WOOL, p.fabric);
 }
 
 export const COUCH: FreeArenaMapDef = {
@@ -138,7 +161,8 @@ export const COUCH: FreeArenaMapDef = {
   description: 'Mice in a giant living room: tunnels under the sofa, a coffee table on a rug and a TV unit',
   halfX: 34,
   halfZ: 22,
-  wallHeight: 14,
+  wallHeight: ROOM_H,
+  room: { ceiling: ROOM_H + 2, playHeight: 14 },
   wallBlock: C.POLISHED_DIORITE,
   floorBlock: BLOCK.OAK_PLANKS,
   variants: 1,
@@ -161,5 +185,6 @@ export const COUCH: FreeArenaMapDef = {
   build(_variant, b) {
     half(b, 1, WARM);
     half(b, -1, COOL);
+    centerLamp(b, ROOM_H, 31, 7, BLOCK.YELLOW_WOOL);
   },
 };
