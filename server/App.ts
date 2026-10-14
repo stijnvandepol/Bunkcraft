@@ -764,7 +764,10 @@ export async function startServer(config: Config, start: StartOptions = {}): Pro
       return !!given && tokens.some((t) => safeEqual(given, t));
     }
     const addr = req.socket.remoteAddress ?? '';
-    return /^(127\.|::1$|::ffff:127\.)/.test(addr) && !req.headers['x-forwarded-for'];
+    // A tunnel or proxy on this machine (cloudflared, Caddy) connects from loopback too: any proxy header means "not local".
+    const h = req.headers;
+    const proxied = !!(h['x-forwarded-for'] || h['cf-connecting-ip'] || h.forwarded || h['x-real-ip'] || h['true-client-ip'] || h['cf-ray']);
+    return /^(127\.|::1$|::ffff:127\.)/.test(addr) && !proxied;
   }
 
   // connectionsCheckingInterval: Node only checks the timeouts below every 30 s by default.

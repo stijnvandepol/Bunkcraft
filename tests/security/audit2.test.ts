@@ -66,6 +66,18 @@ describe('A2-01: IPv6 clients are limited and blocked per /64', () => {
   });
 });
 
+describe('A2-06: /metrics without a token only for this machine, not for proxied requests', () => {
+  it('a request a local tunnel or proxy forwarded is refused, whatever proxy header it carries', async () => {
+    t = await startTestServer({ TRUST_CLOUDFLARE: '1' });
+    const get = (headers: Record<string, string>) => fetch(`${t!.base}/metrics`, { headers }).then((r) => r.status);
+    expect(await get({})).toBe(200);
+    expect(await get({ 'x-forwarded-for': '203.0.113.1' })).toBe(401);
+    expect(await get({ 'cf-connecting-ip': '203.0.113.1' })).toBe(401);
+    expect(await get({ forwarded: 'for=203.0.113.1' })).toBe(401);
+    expect(await get({ 'x-real-ip': '203.0.113.1' })).toBe(401);
+  });
+});
+
 class FakeSocket extends EventEmitter {
   OPEN = 1;
   readyState = 1;
