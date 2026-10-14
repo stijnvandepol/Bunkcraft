@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# BunkCraft: backup of the whole data directory (main world, every game, bans, player profiles and the token
-# secret profiles/secret.key) from the Docker volume to the host.
+# BunkCraft: backup of the whole data directory (main world, every game, bans, player profiles, player accounts
+# in data/accounts (password hashes: keep the archive private) and the token secret profiles/secret.key) from the Docker volume to the host.
 #
 #   ./scripts/backup.sh [--dest /var/backups/bunkcraft] [--keep 14]
 #
@@ -44,6 +44,10 @@ mv "$file.part" "$file"
 # Profiles (and the secret that signs their tokens) are part of the data directory; say so when they are missing.
 if [ "$(tar -tzf "$file" | grep -c '^data/profiles/secret.key$' || true)" -eq 0 ]; then
   echo "warning: $file has no data/profiles/secret.key (profiles switched off, or PROFILE_SECRET set and kept elsewhere)" >&2
+fi
+# Accounts live in the same data directory; a missing folder only means nobody registered yet (or ACCOUNTS=off).
+if [ "$(tar -tzf "$file" | grep -c '^data/accounts/' || true)" -eq 0 ]; then
+  echo "note: $file has no data/accounts (no player accounts yet, or ACCOUNTS=off)" >&2
 fi
 echo "backup: $file ($(du -h "$file" | cut -f1))"
 

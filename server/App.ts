@@ -19,6 +19,7 @@ import { RateLimiter, bearer, hashPassword, hashToken, newToken, safeEqual } fro
 import { ChunkGenPool } from './chunkgen/ChunkGenPool';
 import { prewarmNavGraphs } from './bots/BotWorld';
 import { ProfileService } from './progression/ProfileService';
+import { AccountService } from './accounts/AccountService';
 import { SkinService } from './skins/SkinService';
 import { SKIN_MAX_BYTES } from '../src/skins/SkinFormat';
 import { PartyService } from './Parties';
@@ -101,6 +102,19 @@ export async function startServer(config: Config): Promise<RunningServer> {
   const profiles = config.roomsEnabled && config.profiles
     ? new ProfileService({ dataDir: config.dataDir, maxProfiles: config.maxProfiles, secret: config.profileSecret })
     : null;
+  // Player accounts (username + password) sit on the profiles: a login is a session token that stands for the account's profile.
+  const accounts = profiles && config.accounts && config.maxAccounts > 0
+    ? new AccountService({
+      dataDir: config.dataDir, maxAccounts: config.maxAccounts, sessionDays: config.accountSessionDays,
+      profiles: {
+        create: (name) => profiles.create(name)?.profile.id ?? null,
+        exists: (id) => !!profiles.get(id),
+        rename: (id, name) => profiles.seen(id, name),
+        remove: (id) => { profiles.get(id) && profiles.remove(id); },
+      },
+    })
+    : null;
+  if (accounts) profiles!.attachAccounts(accounts);
   // Custom player skins hang on the signed profiles: no profiles, no skins.
   const skins = profiles && config.skins
     ? new SkinService({ dataDir: config.dataDir, profiles, maxBytes: config.skinStorageMb * 1048576, uploadsPerHour: config.skinUploadLimit })
@@ -173,11 +187,16 @@ export async function startServer(config: Config): Promise<RunningServer> {
   const partyPollLimit = new RateLimiter(120, 60_000);
   const partyIpLimit = new RateLimiter(900, 60_000);
   const partyActLimit = new RateLimiter(40, 60_000);
+  // Accounts: every call counts against the address; failures and registrations have their own, stricter budgets.
+  const accountLimit = new RateLimiter(40, 60_000);
+  const accountRegisterLimit = new RateLimiter(config.accountRegisterLimit, 3_600_000);
+  const accountFailLimit = new RateLimiter(20, 15 * 60_000);
+  const accountRecoverLimit = new RateLimiter(10, 3_600_000);
   const ipBans = new IpBans(config.dataDir);
   const adminFailures = newAuthLimiter();
   const timers: NodeJS.Timeout[] = [];
   const every = (ms: number, fn: () => void) => { const t = setInterval(fn, ms); t.unref(); timers.push(t); };
-  every(600_000, () => { createLimit.prune(); lookupLimit.prune(); listLimit.prune(); quickLimit.prune(); profileLimit.prune(); profileCreateLimit.prune(); skins?.prune(); partyCreateLimit.prune(); partyJoinLimit.prune(); partyPollLimit.prune(); partyIpLimit.prune(); partyActLimit.prune(); failLimiter.prune(); adminFailures.prune(); });
+  every(600_000, () => { createLimit.prune(); lookupLimit.prune(); listLimit.prune(); quickLimit.prune(); profileLimit.prune(); profileCreateLimit.prune(); accountLimit.prune(); accountRegisterLimit.prune(); accountFailLimit.prune(); accountRecoverLimit.prune(); skins?.prune(); partyCreateLimit.prune(); partyJoinLimit.prune(); partyPollLimit.prune(); partyIpLimit.prune(); partyActLimit.prune(); failLimiter.prune(); adminFailures.prune(); });
   every(5000, () => metrics.rollWindow());
   every(30_000, () => { parties?.sweep(); });
   // Bot navigation for every arena, built in the background before the first lobby needs it.
@@ -263,9 +282,10 @@ export async function startServer(config: Config): Promise<RunningServer> {
         // Largest lobby a game may have (ROOM_MAX_PLAYERS): Realms only offers sizes up to it.
         ...(rooms ? { roomMaxPlayers: config.roomMaxPlayers } : {}),
         // What this server can do beyond the basics; clients hide features an older server lacks.
-        features: { passwords: true, browse: !!rooms, binary: config.binary, realms: !!rooms, profiles: !!profiles, skins: !!skins, party: !!parties },
+        features: { passwords: true, browse: !!rooms, binary: config.binary, realms: !!rooms, profiles: !!profiles, accounts: !!accounts, skins: !!skins, party: !!parties },
       });
     }
+    if (path.startsWith('/api/account/')) return accountApi(req, res, path, ip);
     if (path === '/api/profile' || path.startsWith('/api/profile/')) return profileApi(req, res, path, ip);
     if (!rooms) return json(res, 404, { error: 'Games are disabled on this server' });
     if (path === '/api/party' || path.startsWith('/api/party/')) return partyApi(req, res, url, path, ip);
@@ -474,6 +494,112 @@ export async function startServer(config: Config): Promise<RunningServer> {
       return json(res, 200, { party: r.view, ticket: r.ticket });
     }
     return json(res, 404, { error: 'Not found' });
+  }
+
+  /**
+   * Browser POSTs must come from this site: an Origin header, when there is one, has to match the Host or
+   * ALLOWED_ORIGINS, a cross-site Sec-Fetch-Site is refused, and the body must be JSON (a form cannot send that
+   * without a CORS preflight). The session token travels in the Authorization header, never in a cookie, so
+   * there is no ambient credential for a foreign site to ride on; this check is the second layer.
+   */
+  function sameSitePost(req: IncomingMessage): boolean {
+    const origin = req.headers.origin;
+    if (req.headers['sec-fetch-site'] === 'cross-site') return false;
+    if (origin) {
+      if (config.allowedOrigins.length > 0) return originAllowed(origin, req.headers.host, config.allowedOrigins);
+      try { return new URL(origin).host.toLowerCase() === String(req.headers.host ?? '').toLowerCase(); } catch { return false; }
+    }
+    return true;
+  }
+
+  /**
+   * Player accounts (the token goes in the Authorization header):
+   *   GET  /api/account/me            { account: { name }, profile } of the session token
+   *   POST /api/account/register      { name, password } (a guest profile token in the header becomes the account's profile)
+   *   POST /api/account/login         { name, password, discardGuest? } (409 guest_progress when this browser holds a guest profile with progress)
+   *   POST /api/account/logout        ends the session on the server
+   *   POST /api/account/password      { password, newPassword }
+   *   POST /api/account/recover       { name, code, password } resets the password with the recovery code
+   *   POST /api/account/recovery/new  { password } a new recovery code
+   *   POST /api/account/delete        { password } deletes the account and its profile
+   * Errors are `{ error: <code> }` with a status; a wrong password and an unknown name look the same.
+   */
+  async function accountApi(req: IncomingMessage, res: ServerResponse, path: string, ip: string): Promise<void> {
+    if (!accounts || !profiles) return json(res, 404, { error: 'accounts_disabled' });
+    const limited = (kind: string): void => { metrics.rateLimited(kind); return json(res, 429, { error: 'limited' }, { 'retry-after': '60' }); };
+    if (!accountLimit.take(ip)) return limited('account');
+    const token = bearer(req.headers.authorization);
+    const reply = (r: { error?: string; status?: number; retryAfter?: number }): void => json(
+      res, r.status ?? 400, { error: r.error, ...(r.retryAfter ? { retryAfter: r.retryAfter } : {}) },
+      r.retryAfter ? { 'retry-after': String(r.retryAfter) } : {},
+    );
+    const view = (profileId: string): Record<string, unknown> => ({ account: { name: accounts.nameOf(profileId) }, profile: profiles.get(profileId) });
+    if (path === '/api/account/me' && req.method === 'GET') {
+      const id = token?.startsWith('s1.') ? profiles.verify(token) : null;
+      return id ? json(res, 200, view(id)) : json(res, 401, { error: 'unauthorized' });
+    }
+    if (req.method !== 'POST') return json(res, 404, { error: 'not_found' });
+    if (!sameSitePost(req)) return json(res, 403, { error: 'origin' });
+    if (!String(req.headers['content-type'] ?? '').toLowerCase().startsWith('application/json')) return json(res, 415, { error: 'invalid_request' });
+    let body: Record<string, unknown>;
+    try {
+      const raw = await readBody(req, 1024);
+      body = raw ? JSON.parse(raw) as Record<string, unknown> : {};
+      if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('bad');
+    } catch {
+      return json(res, 400, { error: 'invalid_request' });
+    }
+    const str = (v: unknown, max: number): string => (typeof v === 'string' ? v.slice(0, max) : '');
+    if (path === '/api/account/register') {
+      if (!accountRegisterLimit.allowed(ip)) return limited('account_register');
+      if (token?.startsWith('s1.') && profiles.verify(token)) return json(res, 409, { error: 'already_account' });
+      const guest = token ? profiles.verify(token) : null;
+      const r = await accounts.register(body.name, body.password, guest ?? undefined);
+      if (r.ok || r.error === 'name_taken') accountRegisterLimit.record(ip);
+      if (!r.ok) return reply(r);
+      return json(res, 201, { token: r.token, recovery: r.recovery, ...view(r.profileId) });
+    }
+    if (path === '/api/account/login') {
+      if (!accountFailLimit.allowed(ip)) return limited('account_login');
+      const guestId = token && !token.startsWith('s1.') ? profiles.verify(token) : null;
+      const guest = guestId ? profiles.get(guestId) : null;
+      if (guest && (guest.xp > 0 || guest.totalXp > 0 || guest.prestige > 0) && body.discardGuest !== true) {
+        // No silent merge: the player decides whether the guest progress on this device is dropped.
+        return json(res, 409, { error: 'guest_progress', guest: { name: guest.name, xp: guest.xp, prestige: guest.prestige } });
+      }
+      const r = await accounts.login(str(body.name, 64), str(body.password, 128), token ?? undefined);
+      if (!r.ok) { if (r.error === 'invalid_credentials') accountFailLimit.record(ip); return reply(r); }
+      return json(res, 200, { token: r.token, ...view(r.profileId) });
+    }
+    if (path === '/api/account/logout') {
+      accounts.logout(token);
+      return json(res, 200, {});
+    }
+    if (path === '/api/account/recover') {
+      if (!accountRecoverLimit.allowed(ip)) return limited('account_recover');
+      const r = await accounts.recover(str(body.name, 64), str(body.code, 64), str(body.password, 128));
+      if (!r.ok && r.error === 'invalid_credentials') accountRecoverLimit.record(ip);
+      if (!r.ok) return reply(r);
+      return json(res, 200, { token: r.token, recovery: r.recovery, ...view(r.profileId) });
+    }
+    if (!accountFailLimit.allowed(ip)) return limited('account_login');
+    const failed = (r: { error?: string }): void => { if (r.error === 'invalid_credentials') accountFailLimit.record(ip); };
+    if (path === '/api/account/password') {
+      const r = await accounts.changePassword(token, str(body.password, 128), str(body.newPassword, 128));
+      if (!r.ok) { failed(r); return reply(r); }
+      return json(res, 200, { token: r.token });
+    }
+    if (path === '/api/account/recovery/new') {
+      const r = await accounts.newRecovery(token, str(body.password, 128));
+      if (!r.ok) { failed(r); return reply(r); }
+      return json(res, 200, { recovery: r.recovery });
+    }
+    if (path === '/api/account/delete') {
+      const r = await accounts.remove(token, str(body.password, 128));
+      if (!r.ok) { failed(r); return reply(r); }
+      return json(res, 200, {});
+    }
+    return json(res, 404, { error: 'not_found' });
   }
 
   /**
@@ -785,6 +911,7 @@ export async function startServer(config: Config): Promise<RunningServer> {
         parties?.close();
         // After the games: a match that ended during shutdown has granted its XP.
         profiles?.close();
+        accounts?.close();
         await new Promise((r) => setTimeout(r, reconnectMs ? 300 : 20)); // let the close frames flush
         for (const ws of wss.clients) ws.terminate();
         wss.close();

@@ -67,6 +67,14 @@ export interface Config {
   profileCreateLimit: number;
   /** HMAC secret for profile tokens (PROFILE_SECRET); unset = DATA_DIR/profiles/secret.key. */
   profileSecret?: string;
+  /** Player accounts: username + password on top of profiles (ACCOUNTS, default on; needs profiles). */
+  accounts: boolean;
+  /** Most accounts kept in DATA_DIR/accounts (MAX_ACCOUNTS). */
+  maxAccounts: number;
+  /** New accounts per client address per hour (ACCOUNT_REGISTER_LIMIT). */
+  accountRegisterLimit: number;
+  /** Days a login stays valid without use (ACCOUNT_SESSION_DAYS). */
+  accountSessionDays: number;
   /** Custom player skins (SKINS, default on; needs profiles). Content moderation is the operator's job (docs/SERVER.md). */
   skins: boolean;
   /** Most megabytes of skin files kept in DATA_DIR/skins (SKIN_STORAGE_MB). */
@@ -133,6 +141,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     maxProfiles: Math.max(0, Math.floor(num(env.MAX_PROFILES, 50_000))),
     profileCreateLimit: Math.max(1, Math.floor(num(env.PROFILE_CREATE_LIMIT, 10))),
     profileSecret: env.PROFILE_SECRET || undefined,
+    accounts: flag(env.ACCOUNTS, true),
+    maxAccounts: Math.max(0, Math.floor(num(env.MAX_ACCOUNTS, 20_000))),
+    accountRegisterLimit: Math.max(1, Math.floor(num(env.ACCOUNT_REGISTER_LIMIT, 5))),
+    accountSessionDays: Math.max(1, Math.min(365, num(env.ACCOUNT_SESSION_DAYS, 30))),
     skins: flag(env.SKINS, true),
     skinStorageMb: Math.max(1, num(env.SKIN_STORAGE_MB, 128)),
     skinUploadLimit: Math.max(1, Math.floor(num(env.SKIN_UPLOAD_LIMIT, 5))),

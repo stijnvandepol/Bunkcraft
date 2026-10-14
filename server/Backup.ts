@@ -34,6 +34,9 @@ export function backupFile(src: string, dir: string, keep: number, now = Date.no
 /** Folder inside the backup directory that holds the profile snapshots (a game code is 6 characters, so no clash). */
 export const PROFILES_BACKUP_DIR = 'profiles';
 
+/** Folder inside the backup directory that holds the account snapshots (password hashes: kept private, like the profiles). */
+export const ACCOUNTS_BACKUP_DIR = 'accounts';
+
 /** Newest modification time of a file or of anything below a directory (0 when missing). */
 function newestMtime(path: string): number {
   if (!existsSync(path)) return 0;
@@ -55,8 +58,8 @@ export function listProfileBackups(dir: string): string[] {
  * `<dir>/<timestamp>/` when anything in it changed since the newest snapshot, then keeps the newest `keep`.
  * Profile files are written atomically, so a copy at any moment is consistent. Returns the snapshot name or null.
  */
-export function backupProfiles(dataDir: string, dir: string, keep: number, now = Date.now()): string | null {
-  const src = join(dataDir, 'profiles');
+export function backupProfiles(dataDir: string, dir: string, keep: number, now = Date.now(), sub = 'profiles'): string | null {
+  const src = join(dataDir, sub);
   if (keep <= 0 || !existsSync(src)) return null;
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const existing = listProfileBackups(dir);
@@ -78,6 +81,7 @@ export function backupAll(dataDir: string, backupDir: string, keep: number, now 
   try {
     if (backupFile(join(dataDir, 'world.json'), join(backupDir, 'main'), keep, now)) copied++;
     if (backupProfiles(dataDir, join(backupDir, PROFILES_BACKUP_DIR), keep, now)) copied++;
+    if (backupProfiles(dataDir, join(backupDir, ACCOUNTS_BACKUP_DIR), keep, now, 'accounts')) copied++;
     const roomsDir = join(dataDir, 'rooms');
     if (existsSync(roomsDir)) {
       for (const code of readdirSync(roomsDir)) {
@@ -87,7 +91,7 @@ export function backupAll(dataDir: string, backupDir: string, keep: number, now 
       // Backups of games that no longer exist are kept for 30 days (an accidental delete can be undone), then dropped.
       if (existsSync(backupDir)) {
         for (const code of readdirSync(backupDir)) {
-          if (code === 'main' || code === PROFILES_BACKUP_DIR || existsSync(join(roomsDir, code))) continue;
+          if (code === 'main' || code === PROFILES_BACKUP_DIR || code === ACCOUNTS_BACKUP_DIR || existsSync(join(roomsDir, code))) continue;
           const newest = listBackups(join(backupDir, code))[0];
           const age = newest ? now - statSync(join(backupDir, code, newest)).mtimeMs : Infinity;
           if (age > 30 * 86_400_000) rmSync(join(backupDir, code), { recursive: true, force: true });
