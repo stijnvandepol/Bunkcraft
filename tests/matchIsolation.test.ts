@@ -198,6 +198,20 @@ describe('match runner pool', () => {
     expect(p.count()).toBe(1);
   });
 
+  it('a smaller warm pool also trims warm runners that were still starting (they stop once ready)', async () => {
+    const { driver, p } = pool(2, 4);
+    p.ensureWarm();
+    await flush();
+    expect(p.count('starting')).toBe(2);
+    p.resize(0, 4);
+    await flush();
+    for (const id of driver.started) p.ready(id, 4000, 'v');
+    await flush();
+    expect(p.count('idle')).toBe(0);
+    expect(p.count()).toBe(0);
+    expect(driver.stopped).toHaveLength(2);
+  });
+
   it('starts a runner for a lease when none is warm, and says no at the cap', async () => {
     const { driver, p } = pool(0, 2);
     const a = p.lease()!;

@@ -204,6 +204,8 @@ export class MatchPool {
     this.retryAt = 0;
     log.info('match runner ready', { runner: id, ms: r.readyAt - r.startedAt, warm: !r.leased });
     r.resolve(r);
+    // The warm pool shrank (or the cap went down) while it was starting: a surplus warm runner goes now.
+    if (r.state === 'idle' && (this.warmCount() > this.o.warm || this.runners.size > this.o.max)) void this.release(r.id, 'warm pool resized');
     return r;
   }
 
