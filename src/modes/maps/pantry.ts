@@ -185,9 +185,9 @@ function dress(t: LayoutBuilder, p: Palette): void {
     t.box(x + 2, x + 3, -17, -17, 3, 3, C.IRON_BLOCK);
   }
   // Giant everyday things on the floor.
-  coin(t, -8, -12, 2.6);
+  coin(t, -26, 14, 2.6);
   bottleCap(t, -14, -6, 2.2);
-  pencil(t, -30, 11, 8, true);
+  pencil(t, -31, -16, 10, true);
 }
 
 export const PANTRY: FreeArenaMapDef = {
