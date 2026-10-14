@@ -56,6 +56,12 @@ describe('match container spec', () => {
     ['a restart policy', (b) => { b.HostConfig.RestartPolicy = { Name: 'always' }; }],
     ['an unknown top-level field', (b) => { b.Entrypoint = ['sh', '-c', 'id']; }],
     ['a no-new-privileges opt-out', (b) => { b.HostConfig.SecurityOpt = ['seccomp=unconfined']; }],
+    // Audit A2-04: log files and the in-memory /tmp are host resources too (disk, RAM).
+    ['unbounded container logs', (b) => { b.HostConfig.LogConfig.Config['max-size'] = '500g'; }],
+    ['thousands of log files', (b) => { b.HostConfig.LogConfig.Config['max-file'] = '100000'; }],
+    ['a log size without unit', (b) => { b.HostConfig.LogConfig.Config['max-size'] = '99999999999'; }],
+    ['a huge /tmp', (b) => { b.HostConfig.Tmpfs['/tmp'] = 'rw,noexec,nosuid,size=9999m'; }],
+    ['a long stop timeout', (b) => { b.StopTimeout = 3600; }],
   ];
   for (const [what, change] of unsafe) {
     it(`refuses ${what}`, () => {

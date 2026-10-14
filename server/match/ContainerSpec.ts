@@ -202,7 +202,8 @@ export function validateMatchSpec(spec: ContainerCreate, policy: MatchSpecPolicy
   if (['host', 'bridge', 'default', 'none'].includes(policy.network) || policy.network.startsWith('container:')) fail('network must be the internal match network');
   if (h.ReadonlyRootfs !== true) fail('read-only root filesystem');
   const tmpfs = exactKeys(h.Tmpfs, new Set(['/tmp']), 'Tmpfs');
-  if (typeof tmpfs['/tmp'] !== 'string' || !/^rw,noexec,nosuid,size=\d{1,4}m$/.test(tmpfs['/tmp'])) fail('tmpfs');
+  const tmp = typeof tmpfs['/tmp'] === 'string' ? /^rw,noexec,nosuid,size=(\d{1,3})m$/.exec(tmpfs['/tmp']) : null;
+  if (!tmp || Number(tmp[1]) < 1 || Number(tmp[1]) > 64) fail('tmpfs');
   if (!Array.isArray(h.CapDrop) || h.CapDrop.length !== 1 || h.CapDrop[0] !== 'ALL') fail('capabilities');
   if (!Array.isArray(h.SecurityOpt) || h.SecurityOpt.length !== 1 || h.SecurityOpt[0] !== 'no-new-privileges:true') fail('security options');
   const cpus = Number(h.NanoCpus) / 1e9;
@@ -215,5 +216,9 @@ export function validateMatchSpec(spec: ContainerCreate, policy: MatchSpecPolicy
   if (rp.Name !== 'no') fail('restart policy');
   const lc = exactKeys(h.LogConfig, new Set(['Type', 'Config']), 'LogConfig');
   if (lc.Type !== 'json-file') fail('log driver');
-  exactKeys(lc.Config, new Set(['max-size', 'max-file']), 'LogConfig.Config');
+  // Logs live on the host's disk: at most 5 files of 10 MB per container.
+  const lcc = exactKeys(lc.Config, new Set(['max-size', 'max-file']), 'LogConfig.Config');
+  const size = typeof lcc['max-size'] === 'string' ? /^(\d{1,2})m$/.exec(lcc['max-size']) : null;
+  if (!size || Number(size[1]) < 1 || Number(size[1]) > 10) fail('log size');
+  if (typeof lcc['max-file'] !== 'string' || !/^[1-5]$/.test(lcc['max-file'])) fail('log files');
 }
