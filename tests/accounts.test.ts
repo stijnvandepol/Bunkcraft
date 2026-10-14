@@ -208,3 +208,16 @@ describe('ProfileService with accounts', () => {
     ps.close();
   });
 });
+
+describe('backups', () => {
+  it('copies DATA_DIR/accounts into the backup folder', async () => {
+    const { backupAll } = await import('../server/Backup');
+    const r = await svc.register('Backup_1', 'correct horse battery');
+    if (!r.ok) throw new Error(r.error);
+    const out = join(dir, 'bk');
+    expect(backupAll(dir, out, 3)).toBeGreaterThan(0);
+    const snaps = readdirSync(join(out, 'accounts'));
+    expect(snaps).toHaveLength(1);
+    expect(readdirSync(join(out, 'accounts', snaps[0])).length).toBeGreaterThan(0);
+  });
+});
