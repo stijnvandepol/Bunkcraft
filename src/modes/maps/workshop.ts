@@ -118,6 +118,7 @@ function half(b: LayoutBuilder, s: 1 | -1, p: Palette): void {
   box(-4, -1, -4, -4, 4, 4, BLOCK.GLASS);
   box(-4, -1, 3, 3, 4, 4, BLOCK.GLASS);
   box(-3, -2, -1, 0, 6, 6, C.IRON_BLOCK); // roof rack
+  box(-1, -1, -3, 2, 1, 2, C.IRON_BLOCK); // the drive shaft
   ramp(t, 'x', -14, 1, -2, 1, 3, [C.IRON_BLOCK, p.wood, C.COAL_BLOCK]);
 
   // --- North lane: paint cans, a hose, a crate ----------------------------------------------------
@@ -144,7 +145,17 @@ function half(b: LayoutBuilder, s: 1 | -1, p: Palette): void {
   box(-14, -14, 11, 11, 2, 2, C.IRON_BLOCK);
   box(-24, -17, 12, 12, 1, 1, BLOCK.SPRUCE_PLANKS); // hammer handle
   box(-18, -16, 11, 13, 2, 2, C.IRON_BLOCK);
-  box(-4, -3, 12, 13, 1, 3, C.COAL_BLOCK);
+  box(-20, -18, -6, -4, 1, 3, C.COAL_BLOCK); // oil drums
+  box(-20, -18, -6, -4, 4, 4, C.IRON_BLOCK);
+  box(-4, -2, -12, -9, 1, 7, C.COAL_BLOCK); // stacked drums
+  box(-4, -2, -12, -9, 8, 8, C.IRON_BLOCK);
+  for (const h of [2, 4, 6]) box(-4, -2, -12, -9, h, h, C.IRON_BLOCK);
+  box(-4, -2, 9, 12, 1, 7, C.COAL_BLOCK); // a stack of tyres
+  box(-5, -1, 9, 12, 2, 2, C.COAL_BLOCK);
+  box(-4, -2, 9, 12, 8, 8, p.metal);
+  box(-11, -9, 5, 7, 1, 2, BLOCK.OAK_PLANKS);
+  box(-23, -21, -2, 0, 1, 2, BLOCK.OAK_PLANKS);
+  box(-10, -8, 11, 13, 1, 3, BLOCK.OAK_PLANKS);
 }
 
 export const WORKSHOP: FreeArenaMapDef = {

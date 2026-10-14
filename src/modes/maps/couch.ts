@@ -107,10 +107,21 @@ function half(b: LayoutBuilder, s: 1 | -1, p: Palette): void {
   box(-17, -17, -10, -10, 1, 1, C.HAY);
   box(-22, -21, -7, -6, 1, 2, p.fabric2);
   box(-20, -20, 4, 5, 1, 1, C.HAY);
+  box(-18, -15, 4, 7, 1, 3, p.fabric2); // pouf
+  box(-17, -16, 5, 6, 4, 4, p.fabric2);
+  box(-22, -20, -6, -4, 1, 3, p.fabric);
+  box(-4, -2, -12, -9, 1, 8, BLOCK.BOOKSHELF); // a bookcase
+  box(-4, -2, 9, 12, 1, 8, C.COAL_BLOCK); // a speaker
+  box(-4, -2, 9, 12, 5, 5, C.IRON_BLOCK);
+  box(-3, -3, 9, 9, 2, 3, C.SEA_LANTERN);
+  box(-17, -15, 11, 13, 1, 3, C.TERRACOTTA); // a shoe box
+  box(-12, -10, -7, -5, 1, 2, p.fabric);
+  box(-12, -10, 4, 6, 1, 2, p.fabric);
 
   // --- The coffee table on the rug: popcorn bowl, a can, a remote ---------------------------------------
   table(t, -9, -1, -4, 3, 3, p.wood, p.wood, 2);
   ramp(t, 'x', -15, 1, -1, 2, 3, [BLOCK.WHITE_WOOL, BLOCK.GREEN_WOOL, BLOCK.YELLOW_WOOL]);
+  box(-1, -1, -3, 2, 1, 2, p.fabric2); // a toy box under the table
   disc(t, -6, -1, 2.4, 4, BLOCK.WHITE_WOOL, 1);
   box(-7, -5, -2, 0, 5, 5, C.HAY);
   box(-3, -2, 1, 2, 4, 7, BLOCK.RED_WOOL);
@@ -140,8 +151,8 @@ export const COUCH: FreeArenaMapDef = {
       { name: 'Rug', x: 0, z: 0, r: 5 },
       { name: 'Lamp', x: -16.5, z: -8.5, r: 4 },
       { name: 'Slipper', x: 16.5, z: 8.5, r: 4 },
-      { name: 'Fern', x: -14.5, z: 10.5, r: 4 },
-      { name: 'Remote', x: 14.5, z: -10.5, r: 4 },
+      { name: 'Fern', x: -11.5, z: 11.5, r: 4 },
+      { name: 'Remote', x: 11.5, z: -11.5, r: 4 },
     ],
     dominationZones: [0, 1, 2],
     flags: [{ team: 'red', x: -30.5, z: 15.5 }, { team: 'blue', x: 30.5, z: -15.5 }],
