@@ -92,6 +92,42 @@ describe('traceBlocks (voxel ray march)', () => {
     return max;
   }
 
+  /**
+   * Exact reference: slab-test the ray against every solid unit cube outside the origin voxel. Unlike sampling it cannot
+   * step over a sliver: a ray that clips a block's corner for 1e-5 of its length is found, as the marcher finds it.
+   */
+  function exact(solid: Set<string>, o: number[], d: readonly number[], max: number): number {
+    const start = o.map(Math.floor).join(',');
+    let best = max;
+    for (const key of solid) {
+      if (key === start) continue;
+      const c = key.split(',').map(Number);
+      let t0 = 0, t1 = max;
+      for (let i = 0; i < 3; i++) {
+        if (d[i] === 0) { if (o[i] < c[i] || o[i] > c[i] + 1) { t1 = -1; break; } continue; }
+        const a = (c[i] - o[i]) / d[i], b = (c[i] + 1 - o[i]) / d[i];
+        t0 = Math.max(t0, Math.min(a, b));
+        t1 = Math.min(t1, Math.max(a, b));
+      }
+      if (t0 <= t1 && t0 < best) best = t0;
+    }
+    return best;
+  }
+
+  it('a ray that clips a block corner for a sliver of its length still hits it (regression)', () => {
+    // Found by fast-check (seed -1220522653): origin on a voxel corner (after the property's nudge), the ray leaves the
+    // origin voxel through z and passes through the corner of the block at (0,0,-1) for ~1e-5. The sampler stepped over it.
+    const solid = new Set(['0,0,-1']);
+    const world = { getBlock: (x: number, y: number, z: number) => (solid.has(`${x},${y},${z}`) ? BLOCK.STONE : BLOCK.AIR) };
+    const d = [-0.2733333333333334, 0, -0.9619193775410125];
+    const o = [0.000123, 0.000271, 0.000419];
+    const got = traceBlocks(world, o[0], o[1], o[2], d[0], d[1], d[2], 14);
+    expect(got).toBeCloseTo(o[2] / -d[2], 9);
+    expect(got).toBeCloseTo(exact(solid, o, d, 14), 9);
+    // Exactly on the corner the marcher is deliberately conservative (it takes the z neighbour on a tie).
+    expect(traceBlocks(world, 0, 0, 0, d[0], d[1], d[2], 14)).toBe(0);
+  });
+
   it('matches a brute-force sampler on random worlds and rays', () => {
     const cell = fc.tuple(fc.integer({ min: -6, max: 6 }), fc.integer({ min: -6, max: 6 }), fc.integer({ min: -6, max: 6 }));
     const origin = fc.tuple(clean(-3, 3), clean(-3, 3), clean(-3, 3));
@@ -106,6 +142,8 @@ describe('traceBlocks (voxel ray march)', () => {
       let want = reference(solid, o, d, 14);
       // A ray that only grazes a block corner can slip between two samples: look again, finer.
       if (Math.abs(got - want) > 0.02) want = reference(solid, o, d, 14, 0.00005);
+      // Still apart: the sampler can step over a sub-step sliver of a corner; the exact slab test cannot.
+      if (Math.abs(got - want) > 0.02) want = exact(solid, o, d, 14);
       expect(Math.abs(got - want)).toBeLessThan(0.02);
     }), { numRuns: 500 });
   });
