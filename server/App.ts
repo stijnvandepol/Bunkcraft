@@ -145,9 +145,9 @@ export async function startServer(config: Config, start: StartOptions = {}): Pro
   const matchDriver = config.roomsEnabled && config.matchIsolation === 'container'
     ? start.matchDriver ?? driverFromConfig(config, version, (process.env.LOG_LEVEL ?? 'info').toLowerCase())
     : null;
-  // The Docker gate allows CPU and memory up to MATCH_CPUS and MATCH_MEMORY: the dashboard can only go lower.
+  // The Docker gate allows CPU, memory and containers up to MATCH_CPUS, MATCH_MEMORY and MAX_MATCH_CONTAINERS: the dashboard can only go lower.
   const opsSettings = new OpsSettings(config.dataDir, opsDefaults, matchDriver?.kind === 'docker'
-    ? { matchCpus: { max: config.matchCpus }, matchMemoryMb: { max: config.matchMemoryMb } }
+    ? { matchCpus: { max: config.matchCpus }, matchMemoryMb: { max: config.matchMemoryMb }, maxMatchContainers: { max: config.maxMatchContainers } }
     : {});
   const ops = opsSettings.values;
   const roomMotd = (m: string): string => (m === 'Welcome to BunkCraft!' ? 'Welcome to BunkCraft! Share the game code with your friends.' : m);

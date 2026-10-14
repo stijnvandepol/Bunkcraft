@@ -126,7 +126,7 @@ describe('Docker gate: what passes', () => {
     expect(await d.stats(h)).toBeNull(); // the fake has no numbers; the call itself passed
     await d.stop(h);
     expect(calls.map((c) => `${c.method} ${c.path.split('?')[0]}`)).toEqual([
-      'GET /_ping', 'POST /containers/create', `GET /containers/${OURS}/json`, `POST /containers/${OURS}/start`,
+      'GET /_ping', 'GET /containers/json' /* the container count */, 'POST /containers/create', `GET /containers/${OURS}/json`, `POST /containers/${OURS}/start`,
       'GET /containers/json', `GET /containers/${OURS}/json`, `GET /containers/${OURS}/stats`, `GET /containers/${OURS}/json`, `POST /containers/${OURS}/stop`,
     ]);
   });
@@ -324,5 +324,29 @@ describe('Docker gate: what never reaches the Engine', () => {
     expect(() => new DockerGate({
       upstream: 'unix:///var/run/docker.sock', secret: 'short', host: '127.0.0.1', port: 0, image: IMAGE, network: 'n', owner: 'o', maxCpus: 1, maxMemoryMb: 256, maxPids: 64,
     })).toThrow(/at least 32/);
+  });
+});
+
+describe('Docker gate: container count (audit A2-12)', () => {
+  it('refuses a create once MAX_MATCH_CONTAINERS of ours exist, so a taken-over control plane cannot fill the host', async () => {
+    const capped = new DockerGate({
+      upstream: `http://127.0.0.1:${(engine.address() as AddressInfo).port}`, secret: SECRET, host: '127.0.0.1', port: 0,
+      image: IMAGE, network: 'bunkcraft_match', owner: 'bunkcraft', maxCpus: 1, maxMemoryMb: 256, maxPids: 64, maxContainers: 1,
+    });
+    await capped.start();
+    try {
+      const body = JSON.stringify(spec().body);
+      const status = await new Promise<number>((resolve) => {
+        const req = request({
+          host: '127.0.0.1', port: capped.port, method: 'POST', path: `/containers/create?name=bunkcraft-match-${RUNNER}`,
+          headers: { authorization: `Bearer ${SECRET}`, 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(body)) },
+        }, (res) => { res.resume(); resolve(res.statusCode ?? 0); });
+        req.end(body);
+      });
+      expect(status).toBe(429);
+      expect(engineSaw((c) => c.method === 'POST' && c.path.startsWith('/containers/create'))).toBe(false);
+    } finally {
+      await capped.close();
+    }
   });
 });

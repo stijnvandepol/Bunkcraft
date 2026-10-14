@@ -70,7 +70,7 @@ export function parseMemoryMb(v: string | undefined, dflt: number): number {
  * both read them here, so the spec one builds is exactly the spec the other lets through.
  */
 export function matchSettingsFromEnv(env: NodeJS.ProcessEnv): {
-  matchImage: string; matchNetwork: string; matchOwner: string; matchCpus: number; matchMemoryMb: number; matchPids: number;
+  matchImage: string; matchNetwork: string; matchOwner: string; matchCpus: number; matchMemoryMb: number; matchPids: number; matchMaxContainers: number;
 } {
   return {
     matchImage: env.MATCH_IMAGE ?? '',
@@ -79,6 +79,8 @@ export function matchSettingsFromEnv(env: NodeJS.ProcessEnv): {
     matchCpus: Math.max(0.1, Math.min(8, envNum(env.MATCH_CPUS, 1))),
     matchMemoryMb: Math.max(96, Math.min(4096, parseMemoryMb(env.MATCH_MEMORY, 256))),
     matchPids: Math.max(16, Math.min(1024, Math.floor(envNum(env.MATCH_PIDS, 64)))),
+    // The Docker gate refuses creates beyond it (DockerGate.underCap); the ops dashboard can only go lower.
+    matchMaxContainers: Math.max(1, Math.min(256, Math.floor(envNum(env.MAX_MATCH_CONTAINERS, 16)))),
   };
 }
 

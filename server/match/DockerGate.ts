@@ -46,6 +46,8 @@ export interface DockerGateOptions {
   maxCpus: number;
   maxMemoryMb: number;
   maxPids: number;
+  /** Most match containers of ours (any state) at once: MAX_MATCH_CONTAINERS (default 16). */
+  maxContainers?: number;
 }
 
 const MAX_CREATE_BODY = 64 * 1024;
@@ -109,6 +111,8 @@ export class DockerGate {
   port = 0;
   /** Refused requests (tests, logs). */
   refused = 0;
+  /** Creates run one at a time, so two at once cannot both pass the container count. */
+  private creating: Promise<unknown> = Promise.resolve();
 
   constructor(private readonly o: DockerGateOptions) {
     if (o.secret.length < 32) throw new Error('DOCKER_GATE_SECRET must be at least 32 characters');
@@ -203,6 +207,22 @@ export class DockerGate {
     return { id: c.Id as string, inspect: r };
   }
 
+  /**
+   * Throws unless fewer than maxContainers of our match containers exist (running or not). Every create is checked:
+   * a control plane taken over by an exploit could otherwise start as many as the host holds (CPU and memory are
+   * capped per container, not in total). The control plane's own cap is the same setting.
+   */
+  private async underCap(): Promise<void> {
+    const max = this.o.maxContainers ?? 16;
+    const filters = encodeURIComponent(JSON.stringify({ label: [`${LABEL_ROLE}=match`, `${LABEL_OWNER}=${this.o.owner}`] }));
+    const r = await this.up('GET', `/containers/json?all=true&filters=${filters}`);
+    if (r.status !== 200) throw new Refused(502, `list ${r.status}`);
+    let rows: unknown;
+    try { rows = JSON.parse(r.body.toString('utf8')); } catch { throw new Refused(502, 'list'); }
+    const ours = Array.isArray(rows) ? rows.filter((c: { Labels?: Record<string, unknown> | null } | null) => c?.Labels?.[LABEL_ROLE] === 'match' && c.Labels[LABEL_OWNER] === this.o.owner).length : Infinity;
+    if (ours >= max) throw new Refused(429, `container cap (${max}) reached`);
+  }
+
   // ------------------------------------------------------------------------------------------ requests
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -252,7 +272,12 @@ export class DockerGate {
           throw new Refused(403, e instanceof Error ? e.message : 'spec');
         }
         // Re-serialised: the Engine gets exactly what was validated (no duplicate keys, no second reading).
-        fwd(await this.up('POST', `/containers/create?name=${name}`, Buffer.from(JSON.stringify(spec))));
+        const run = this.creating.then(async () => {
+          await this.underCap();
+          return this.up('POST', `/containers/create?name=${name}`, Buffer.from(JSON.stringify(spec)));
+        });
+        this.creating = run.catch(() => undefined);
+        fwd(await run);
         return;
       }
       const m = /^\/containers\/([^/]+)\/(json|start|stop|stats|logs)$/.exec(path);
@@ -306,5 +331,6 @@ export function gateFromEnv(env: NodeJS.ProcessEnv): DockerGate {
     host: env.DOCKER_GATE_HOST || '0.0.0.0',
     port: Number(env.DOCKER_GATE_PORT || 2375),
     image: m.matchImage, network: m.matchNetwork, owner: m.matchOwner, maxCpus: m.matchCpus, maxMemoryMb: m.matchMemoryMb, maxPids: m.matchPids,
+    maxContainers: m.matchMaxContainers,
   });
 }
