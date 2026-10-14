@@ -61,6 +61,12 @@ volgt de Bunkhosting-huisstijl. Live op https://craft.bunkhosting.nl (Cloudflare
 
 ## 3. Gedaan
 
+- **Spelersaccounts:** gebruikersnaam + wachtwoord (scrypt), herstelcode (eenmalig getoond, alleen hash bewaard), sessietokens die
+  overal werken waar het gasttoken werkte, koppelen van een gastprofiel bij registreren, bevestiging voordat gastvoortgang wordt
+  weggegooid, limieten en uitstel per adres en naam, verwijderen met wachtwoord, back-ups van `data/accounts/`. Zie SERVER.md
+  (Spelersaccounts) en SECURITY.md. Open: unieke spelersnamen in matches voor gasten (nu kan een gast een accountnaam voeren),
+  optioneel e-mailherstel of 2FA, beheerderscommando om een account te verwijderen of te vergrendelen.
+
 **Shooter en platform**
 
 - **Voordeur en look:** home met PLAY, playlist met live spelers, lobby's, privéwedstrijd en spelen met code, profielkaart,

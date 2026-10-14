@@ -292,6 +292,10 @@ limieten per bezoeker werken in plaats van per proxy.
 | `PARTIES` | `on` | Party's: vrienden spelen samen in één lobby op één team (`off` = geen party's; `features.party` in `/api/server`) |
 | `MAX_PARTIES` | `2000` | Party's tegelijk in het geheugen |
 | `PARTY_CREATE_LIMIT` | `20` | Nieuwe party's per bezoeker per uur |
+| `ACCOUNTS` | `on` | Spelersaccounts (gebruikersnaam + wachtwoord) bovenop de profielen, zie [Spelersaccounts](#spelersaccounts). `off` = alleen gastprofielen; `features.accounts` in `/api/server`. Vereist profielen. |
+| `MAX_ACCOUNTS` | `20000` | Maximum aantal accounts in `DATA_DIR/accounts/` (ze worden bij het starten in het geheugen geladen) |
+| `ACCOUNT_REGISTER_LIMIT` | `5` | Nieuwe accounts per adres per uur (een bezette naam telt mee, tegen het aftasten van namen) |
+| `ACCOUNT_SESSION_DAYS` | `30` | Dagen dat een login geldig blijft zonder gebruik (schuift op bij gebruik, harde grens 180 dagen) |
 | `PROFILE_SECRET` | niet gezet | HMAC-geheim voor profieltokens (minstens 16 tekens). Leeg = een willekeurig geheim in `DATA_DIR/profiles/secret.key` (mode 0600). Zet het als meerdere servers dezelfde profielen delen. |
 | `SKINS` | `on` | Eigen spelersskins (zie [Spelersskins](#spelersskins-uploaden-en-moderatie)). `off` = geen uploads, `/skins/…` geeft 404 en `features.skins` is `false`. Vereist profielen. |
 | `SKIN_STORAGE_MB` | `128` | Totale grootte van `DATA_DIR/skins/`; daarna weigert de server nieuwe (niet eerder opgeslagen) skins met `507` |
@@ -386,6 +390,50 @@ weg, getallen begrensd, laatste 10 matches). De ingebouwde back-ups (`BACKUP_KEE
 (met `secret.key`) naar `data/backups/profiles/<tijdstempel>/` zodra er iets veranderd is; `scripts/backup.sh` neemt de hele
 `data/` mee en waarschuwt als `profiles/secret.key` ontbreekt. Terugzetten: stop de server, kopieer een snapshot terug naar
 `data/profiles/`. `PROFILE_SECRET` in de omgeving staat niet in de back-up: bewaar die zelf.
+
+## Spelersaccounts
+
+Zonder account is een speler een **gast**: een profieltoken in de browser. Een **account** (gebruikersnaam + wachtwoord) zet
+dezelfde voortgang op de server, zodat die een gewist browsergeheugen en een ander apparaat overleeft. Een account heeft precies
+een profiel (level, XP, ontgrendelingen, camo's, stats, uitdagingen, skin).
+
+- **Regels:** gebruikersnaam 3-16 tekens (`A-Za-z0-9_`, dezelfde regels als een gamertag, hoofdletterongevoelig uniek, een paar
+  gereserveerde namen zoals `admin`), wachtwoord 8-64 tekens en niet in een kleine lijst veelgebruikte wachtwoorden (`src/modes/progression/AccountRules.ts`,
+  gedeeld met het formulier). Alleen de gebruikersnaam wordt bewaard; geen e-mail, geen IP.
+- **Wachtwoorden:** scrypt met een eigen zout per account (dezelfde helper als de wachtwoorden van games, `server/Security.ts`),
+  constante-tijdsvergelijking, nooit gelogd. Een onbekende naam kost dezelfde scrypt-tijd als een bekende.
+- **Herstelcode:** bij het registreren toont het scherm eenmalig een code van 25 tekens (125 bit, `XXXXX-XXXXX-…`). De server
+  bewaart alleen de SHA-256. Met naam + code + nieuw wachtwoord (`POST /api/account/recover`) reset een speler het wachtwoord; de code is
+  dan verbruikt, een nieuwe wordt getoond en alle sessies eindigen. Een nieuwe code kan ook vanuit het accountscherm (met wachtwoord).
+- **Koppelen:** registreert een gast met een bestaand profiel, dan wordt dat profiel het accountprofiel (niets gaat verloren) en
+  werkt het oude gasttoken niet meer (alleen nog de login). Inloggen op een ander apparaat laadt dat profiel. Heeft de browser
+  daar zelf een gastprofiel met voortgang, dan antwoordt de server `409 guest_progress` en vraagt het scherm of die voortgang weg
+  mag; zonder bevestiging (`discardGuest`) wordt er nooit iets samengevoegd of weggegooid.
+- **Sessies:** na registreren, inloggen of herstellen krijgt de browser een sessietoken `s1.<account>.<geheim>` (192 bit, de server
+  bewaart alleen de SHA-256, hooguit 5 tegelijk). Het staat op dezelfde plek als het gasttoken (`localStorage`, `Authorization: Bearer`)
+  en de profiellaag accepteert het overal waar die een gasttoken accepteert (HTTP, WebSocket-`hello`, party's, rejoin, skins), dus XP en
+  skins volgen het account zonder aparte paden. Verloopt na `ACCOUNT_SESSION_DAYS` zonder gebruik; inloggen draait de sessie
+  (de meegestuurde oude sessie eindigt); uitloggen, wachtwoord wijzigen en herstellen ongeldigen sessies direct op de server.
+- **Verwijderen:** `POST /api/account/delete` met het wachtwoord verwijdert het account en het profielbestand (voortgang, skintoewijzing). De naam komt vrij.
+- **Namen:** met een account volgt de spelersnaam de accountnaam (profielnaam wordt server-side vastgezet; het naamveld van Multiplayer
+  in Build & Survival is dan alleen-lezen).
+
+**HTTP-API** (JSON, body maximaal 1 kB, `Content-Type: application/json` verplicht):
+`GET /api/account/me`, `POST /api/account/register` `{name, password}` (met een gasttoken in de header wordt dat profiel gekoppeld),
+`/login` `{name, password, discardGuest?}`, `/logout`, `/password` `{password, newPassword}`, `/recover` `{name, code, password}`,
+`/recovery/new` `{password}`, `/delete` `{password}`. Fouten zijn `{error: <code>}`; verkeerd wachtwoord, onbekende naam en
+verkeerde herstelcode geven exact hetzelfde antwoord (`401 invalid_credentials`).
+
+**Limieten:** 40 aanroepen per minuut per adres; registreren `ACCOUNT_REGISTER_LIMIT` per uur per adres; 20 mislukte logins per 15 minuten
+per adres; 10 mislukte herstelpogingen per uur per adres; per gebruikersnaam (ook als die niet bestaat) vanaf 5 mislukte pogingen
+een uitstel dat verdubbelt (15 s, 30 s, ... tot 15 min, `429 locked` + `Retry-After`).
+
+**Bestanden:** `DATA_DIR/accounts/<xx>/<id>.json` (map 0700, bestanden 0600, atomair geschreven met tmp + rename; sessies
+met een schuivende verlooptijd gaan binnen 5 s mee). De ingebouwde back-ups (`BACKUP_KEEP`) kopiëren de map naar
+`data/backups/accounts/<tijdstempel>/` zodra er iets veranderd is, en `scripts/backup.sh` neemt `data/accounts` mee in het archief.
+Het archief bevat wachtwoord-hashes: houd `BUNKCRAFT_BACKUP_DIR` privé (het script maakt de map 0700). Terugzetten: stop de server en
+kopieer een snapshot terug naar `data/accounts/`. Zonder `profiles/secret.key` (of `PROFILE_SECRET`) blijven accounts werken: sessietokens
+hangen niet aan dat geheim, alleen gasttokens.
 
 ## Spelersskins: uploaden en moderatie
 
@@ -523,7 +571,8 @@ adressen blokkeren. Onder *Skin reports* staan gemelde skins met een voorbeeld, 
   zelf opnieuw te joinen. Docker stuurt SIGTERM en wacht 10 seconden: ruim genoeg.
 - **Back-ups:** elke `BACKUP_INTERVAL_MIN` minuten een kopie van elke gewijzigde `world.json` naar
   `data/backups/<main|CODE>/<tijdstempel>.json`, de nieuwste `BACKUP_KEEP` blijven. Hetzelfde voor de profielen:
-  `data/profiles/` (profielbestanden + `secret.key`) naar `data/backups/profiles/<tijdstempel>/`. Back-ups van verwijderde games blijven
+  `data/profiles/` (profielbestanden + `secret.key`) naar `data/backups/profiles/<tijdstempel>/`, en `data/accounts/` naar
+  `data/backups/accounts/<tijdstempel>/`. Back-ups van verwijderde games blijven
   30 dagen. De wereld zelf wordt al atomair geschreven (tijdelijk bestand + rename). Is een `world.json` toch onleesbaar, dan
   gebruikt de server de nieuwste leesbare back-up (en bewaart het kapotte bestand als `world.json.corrupt-<tijd>`); zonder
   back-up weigert hij te starten in plaats van de wereld te overschrijven. Terugzetten: kopieer een back-up naar `world.json`

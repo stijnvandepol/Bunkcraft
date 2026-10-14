@@ -165,6 +165,32 @@ schutter (bewust, net als de 0,5 s-regel). De verdenkingsscore is een heuristiek
 spelersdata kalibreren. Geen client-integriteit (een gemodde client kan nog steeds zijn eigen camera automatiseren
 zolang hij de kijkrichting in `pos` meestuurt).
 
+## Spelersaccounts (`server/accounts/`)
+
+Wat een aanvaller kan proberen en wat de server doet:
+
+- **Wachtwoorden raden / credential stuffing:** scrypt (N=16384) per account met eigen zout; per gebruikersnaam een verdubbelend uitstel
+  (vanaf de 5e mislukking, tot 15 minuten) dat ook voor bestaande namen geldt, plus limieten per adres voor aanroepen, mislukte logins,
+  herstelpogingen en registraties. Veelgebruikte wachtwoorden worden bij registreren geweigerd.
+- **Gebruikersnamen aftasten:** inloggen en herstellen geven bij een onbekende naam, een verkeerd wachtwoord en een verkeerde code
+  exact hetzelfde antwoord en dezelfde rekentijd (een onbekende naam hasht tegen een dummy). Registreren verraadt een bezette naam
+  (onvermijdelijk); dat is begrensd door `ACCOUNT_REGISTER_LIMIT` per adres. Dat een naam bestaat is overigens ook zichtbaar in een match.
+- **Gestolen database of back-up:** alleen scrypt-hashes, de SHA-256 van de herstelcode en de SHA-256 van sessiegeheimen; bestanden 0600,
+  mappen 0700. De sessie- en herstelgeheimen hebben genoeg entropie (192 en 125 bit) dat een snelle hash volstaat.
+- **Sessiediefstal:** het sessietoken staat in `localStorage` (net als het gasttoken, een XSS zou het kunnen lezen; de CSP staat geen
+  inline scripts of externe scripts toe) en gaat alleen in de `Authorization`-header, nooit in een URL of cookie. Sessies verlopen,
+  worden bij inloggen gedraaid en kunnen op de server worden ingetrokken; een wachtwoordwijziging of herstel beëindigt alle andere sessies.
+  Het oude gasttoken van een gekoppeld profiel is direct ongeldig.
+- **CSRF:** er is geen cookie of ander ambient credential; daarbovenop weigert elke POST een `Origin` die niet bij de host (of `ALLOWED_ORIGINS`)
+  hoort, een `Sec-Fetch-Site: cross-site`, en een body die geen `application/json` is (een formulier kan dat niet zonder CORS-preflight).
+- **Misbruik van grote invoer:** bodies maximaal 1 kB, velden worden afgekapt, wachtwoorden maximaal 64 tekens (geen stille afkapping).
+- **Race bij registreren:** de controle op naam en profiel en het schrijven gebeuren zonder `await` ertussen; twee gelijktijdige registraties kunnen
+  geen naam of gastprofiel allebei winnen.
+- **Logs:** wachtwoorden, herstelcodes en tokens worden nooit gelogd; "account created/deleted" logt alleen een aantal.
+- **Bekende beperkingen:** geen e-mail, dus wie wachtwoord en herstelcode verliest, verliest het account (bewust: geen PII).
+  Spelersnamen in matches zijn voor gasten nog niet uniek; een gast kan dus dezelfde naam voeren als een account (alleen de rangicoon en
+  voortgang hangen aan het profiel). Geen 2FA.
+
 ## Content-Security-Policy
 
 ```
@@ -235,7 +261,7 @@ Er zijn geen cookies, geen analytics, geen externe fonts of scripts (de CSP laat
 bereikbaar met zijn code.
 
 **Op de server** (`DATA_DIR`): per game een `world.json` met wereldnaam, seed, bewerkingen, en per spelersnaam de laatste positie,
-inventory en statistieken. Dit is geen account en bevat geen e-mail of wachtwoord. Games zonder bezoek worden na
+inventory en statistieken. Een speler zonder account is een anoniem gastprofiel in `DATA_DIR/profiles/`. Wie een account maakt, laat de server zijn gebruikersnaam en een scrypt-hash van het wachtwoord bewaren in `DATA_DIR/accounts/`; er is geen e-mail of ander persoonsgegeven. Een account en zijn profiel kunnen door de speler zelf worden verwijderd (met wachtwoord). Games zonder bezoek worden na
 `ROOM_EXPIRE_DAYS` (standaard 60) verwijderd; een speler die zijn gegevens kwijt wil, vraagt de host zijn game te verwijderen
 (de map `rooms/<CODE>`).
 
