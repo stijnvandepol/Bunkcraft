@@ -251,7 +251,7 @@ bij een nieuwe run) en `DOCKER_GID` (de groep van `/var/run/docker.sock`) in `.e
 | `MATCH_MEMORY` | `256m` | Geheugen per matchcontainer, zonder swap; de V8-heap krijgt 60 % daarvan |
 | `MATCH_PIDS` | `64` | Processen/threads per matchcontainer |
 | `MATCH_WARM_POOL` | `1` | Gestarte, lege containers die klaarstaan |
-| `MAX_MATCH_CONTAINERS` | `16` | Meeste matchcontainers tegelijk (warme meegeteld); daarboven in-process |
+| `MAX_MATCH_CONTAINERS` | `16` | Meeste matchcontainers tegelijk (warme meegeteld); daarboven in-process. Ook de Docker gate weigert creates daarboven (zelfde variabele) |
 | `MATCH_IDLE_GRACE_SEC` | `30` | Zo lang leeft een lege lobby nog |
 | `MATCH_IMAGE` | leeg | Image voor matchcontainers; leeg = het image van de control plane |
 | `MATCH_SECRET` | `DATA_DIR/match-secret.key` | Geheim van de interne API; runners krijgen alleen een afgeleide sleutel |
@@ -650,7 +650,7 @@ elke 3 seconden:
   container stopt gewoon; bij een lobby wordt de XP uitbetaald, de wereld bewaard en krijgen de spelers een reconnect-hint: ze
   komen via dezelfde code terug in een verse container) en **Lobby sluiten**. In-process staan hier de lobby's.
 - **Instellingen** (zonder herstart, bewaard in `DATA_DIR/ops-settings.json`, gaan vóór de `.env`; *Reset* = weer de
-  `.env`-waarde, die er steeds naast staat): `MAX_MATCH_CONTAINERS` (1–256) en `MATCH_WARM_POOL` (0–16) direct (een kleinere
+  `.env`-waarde, die er steeds naast staat): `MAX_MATCH_CONTAINERS` (1–256; in Docker-modus hoogstens de `.env`-waarde) en `MATCH_WARM_POOL` (0–16) direct (een kleinere
   pool stopt overbodige warme containers, containers met een lobby nooit), `MATCH_CPUS` en `MATCH_MEMORY` alleen voor nieuwe
   containers en hoogstens de `.env`-waarde (de Docker gate laat niet meer toe), `MATCH_IDLE_GRACE_SEC` (5–3600) direct, en
   voor nieuwe lobby's `MOTD`, `ROOM_MAX_PLAYERS` (2–16) en `QUICKPLAY_BOTS` (0 = geen bots in quick play). Plus een
@@ -674,7 +674,7 @@ maak dan in Cloudflare een uitzondering (WAF → custom rule *Skip* voor `/api/a
 | `GET rooms/<CODE>/players`, `GET main/players` | spelers met adres en ping |
 | `POST rooms/<CODE>/kick`, `POST main/kick` | `{"name":"..."}` |
 | `POST rooms/<CODE>/close` | iedereen eruit en uit het geheugen; `{"remove":true}` verwijdert ook de data |
-| `GET/POST ip-bans`, `DELETE ip-bans/<ip>` | adressen blokkeren (bewaard in `data/ip-bans.json`); open verbindingen sluiten direct |
+| `GET/POST ip-bans`, `DELETE ip-bans/<ip>` | adressen blokkeren (bewaard in `data/ip-bans.json`; een IPv6-adres blokkeert zijn hele /64, ook als `2001:db8:1:2::/64` in te voeren); open verbindingen sluiten direct |
 | `POST announce` | `{"text":"..."}`: servermelding in de chat van elke game (auto-update waarschuwt zo voor een herstart) |
 | `POST save` | elke geladen wereld nu naar schijf (auto-update doet dit vlak voor de back-up) |
 | `GET skins`, `POST skins/{ban,unban,dismiss,purge}` | skin-meldingen en verboden hashes; `404` bij `SKINS=off` |

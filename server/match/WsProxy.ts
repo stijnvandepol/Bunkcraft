@@ -28,6 +28,8 @@ export interface BridgeOptions {
   connect(first: string): Promise<{ upstream: WebSocket; first?: string }>;
   /** Called once when both sides are closed. */
   onClose?(): void;
+  /** A client that sends no hello within this time is closed (default 10 s, as GameServer.accept does in-process). */
+  helloTimeoutMs?: number;
 }
 
 /** Close codes a peer may send (1005, 1006 and 1015 are reserved for local use). */
@@ -65,6 +67,9 @@ export function bridge(client: WebSocket, opts: BridgeOptions): void {
   let done = false;
   let pingSeq = 0;
   const pending = new Set<string>();
+  // Without it a silent connection held a slot (connection caps) for as long as it answered the keep-alive pings.
+  const helloTimer = setTimeout(() => { if (!started) closeQuietly(client, 1008, 'No hello'); }, opts.helloTimeoutMs ?? 10_000);
+  helloTimer.unref();
 
   const finish = () => {
     if (done) return;
@@ -100,6 +105,7 @@ export function bridge(client: WebSocket, opts: BridgeOptions): void {
     if (upstream) { relay(upstream, client, data, isBinary); return; }
     if (!started) {
       started = true;
+      clearTimeout(helloTimer);
       if (isBinary) { closeQuietly(client, 1008, 'No hello'); return; }
       const first = (Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data as Buffer)).toString('utf8');
       early.push({ data, binary: false });
@@ -123,6 +129,7 @@ export function bridge(client: WebSocket, opts: BridgeOptions): void {
     early.push({ data, binary: isBinary });
   });
   client.on('close', (code, reason) => {
+    clearTimeout(helloTimer);
     if (upstream) closeQuietly(upstream, code, reason.toString());
     finish();
   });

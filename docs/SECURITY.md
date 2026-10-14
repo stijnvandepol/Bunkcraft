@@ -44,8 +44,8 @@ Ernst: **Hoog** = op afstand en zonder voorwaarden uitbuitbaar met groot effect;
 | O-02 | Midden | open | `server/GameServer.ts:423` (`state`), `:490` (`held`), `ServerEntities.drop` | De server kent de inventory niet: een client kan zeggen dat hij een boog, vuurslag of diamanten zwaard vasthoudt, en `drop` laat elk bestaand item uit het niets ontstaan. Valsspelen in survival | Inventory server-side bijhouden (slots valideren bij bouwen, drop en gebruik). Groot werk |
 | O-03 | Midden | open (andere ontwikkelaar: verbindingslimieten) | `server/index.ts` (upgrade) | 300 stille sockets van één IP worden geaccepteerd; elke naam die inlogt krijgt een record in `world.json`, dus een bot met duizenden namen laat het bestand groeien | Limiet per IP en per game; recordlimiet; verwijder records van spelers zonder activiteit |
 | O-04 | Midden | open | `server/GameServer.ts:224` (`save`) | `world.edits` groeit onbeperkt (20 edits/s per speler); het hele bestand wordt elke 30 s synchroon met `writeFileSync` weggeschreven, dus een groot bestand blokkeert de event loop voor alle games | Bovengrens op edits per game of per wereldbestand; asynchroon schrijven; per-chunk opslag |
-| O-05 | Laag | open | `server/index.ts:69` | De zoeklimiet (40/min per adres) wordt gedeeld met WebSocket-verbindingen: wie achter dezelfde NAT (school, mobiel netwerk) zit, kan elkaar blokkeren. Limieten gebruiken het volledige IPv6-adres, dus een /64 geeft onbeperkt "nieuwe" bezoekers | Aparte limiter voor WebSocket; IPv6 op /64 afkappen |
-| O-06 | Laag | open (andere ontwikkelaar: `ALLOWED_ORIGINS`) | `server/index.ts` (upgrade) | De `Origin` van een WebSocket wordt niet gecontroleerd: elke website kan een socket naar een BunkCraft-server openen (ook naar `localhost` of een LAN-server) en erop spelen | Origin-allowlist |
+| O-05 | Laag | deels opgelost (A2-01: IPv6 per /64) | `server/index.ts:69` | De zoeklimiet (40/min per adres) wordt gedeeld met WebSocket-verbindingen: wie achter dezelfde NAT (school, mobiel netwerk) zit, kan elkaar blokkeren. Limieten gebruiken het volledige IPv6-adres, dus een /64 geeft onbeperkt "nieuwe" bezoekers | Aparte limiter voor WebSocket; IPv6 op /64 afkappen |
+| O-06 | Laag | opgelost waar `install.sh` `ALLOWED_ORIGINS` zet (compose-standaard leeg: dan open) | `server/index.ts` (upgrade) | De `Origin` van een WebSocket wordt niet gecontroleerd: elke website kan een socket naar een BunkCraft-server openen (ook naar `localhost` of een LAN-server) en erop spelen | Origin-allowlist |
 | O-07 | Laag | open | `src/net/NetClient.ts`, `src/core/Game.ts` | Een kwaadaardige server (Direct Connect) kan de tab laten vastlopen met enorme `edits`, `blocks` of `ent`-lijsten. Code-uitvoering is niet mogelijk: er is geen `innerHTML`, alle servertekst gaat via `textContent` en de CSP staat geen inline script toe | Lengtes en getalbereiken van serverberichten controleren |
 | O-08 | Laag | open | `src/net/protocol.ts` (`NAME_PATTERN`) | Namen zijn ASCII, dus `Il1` / `O0` lijken op elkaar (`BoB` tegen `B0B`); sessies worden hoofdletterongevoelig vervangen maar records zijn hoofdlettergevoelig | Namen vergelijken na normalisatie |
 | O-09 | Laag | open | `server/Match.ts:256` | In arcade-games bepaalt de client met `ads` zelf of hij met de kleinere spreiding schiet | Server: `ads` alleen toestaan als de speler stilstaat of een zoomtijd heeft gehad |
@@ -63,6 +63,42 @@ kamernamen, MOTD, wereldnamen, packnamen en advancements gebruiken `textContent`
 (instellingen worden gevalideerd, recente games ook) leidt niet tot uitvoering. Invite-links (`?join=`) gaan door
 `normalizeCode` en worden daarna uit de URL gehaald. `npm audit`: 0 kwetsbaarheden; alle 131 pakketten in
 `package-lock.json` hebben `resolved` (npmjs.org) en `integrity`.
+
+## Audit vertrouwensgrenzen (oktober 2026, ronde 2)
+
+Lokaal aangevallen: auth en sessies, ops-dashboard, control plane ↔ runner, Docker gate, WebSocket, paden, PNG, IP-afleiding,
+DoS. Regressietests: `tests/security/audit2.test.ts`, plus `matchIsolation`, `skinServer` en `integration/dockerGate`.
+
+| Id | Ernst | Waar | Wat | Oplossing |
+|---|---|---|---|---|
+| A2-01 | Midden | `HttpSecurity.addressKey`, `App.clientIp`, `IpBans` | Alle limieten per adres (games maken, accounts, admin-auth, verbindingen per IP) en IP-blokkades gebruikten het volledige IPv6-adres: met een eigen /64 onbeperkt "nieuwe" bezoekers | IPv6 telt als zijn /64 (`2001:db8:1:2::/64`); blokkeren accepteert adres of /64 |
+| A2-02 | Midden | `AccountService` | Lockout alleen per naam: één adres hield elk account (ook admins) dicht met één foute poging per 15 minuten | Lockout per naam **en** bron-adres (5); per naam voor iedereen pas na 50 fouten van alle bronnen |
+| A2-03 | Midden | `GameServer.login`, `ControlPlane.identify` | `ADMIN_TOKEN` als `owner` in een `hello` werd zonder limiet vergeleken (HTTP: 20 per 10 min) | `ownerGuesses`: 20 foute owner-tokens per adres per 10 min, daarna wordt er niet meer vergeleken |
+| A2-11 | Midden | `ControlPlane.identify`, `RemoteRoom.rejoinStatus` | Een runner kreeg het profieltoken / de accountsessie van elke speler (hello, rejoin): een overgenomen runner kon accounts (en `/ops` van een admin) overnemen | De runner krijgt `HMAC(secret, runner|token)` en herkent dat via `Ident.th` |
+| A2-13 | Midden | `GameServer.login` | Lobbywachtwoord: limiet gecontroleerd vóór scrypt, fout pas erna geteld: 10 parallelle hellos = 10 pogingen bij limiet 5 | Eén controle tegelijk per game en adres; een fout telt ook als de socket al dicht is |
+| A2-14 | Midden | `App` (account-API) | Zelfde race bij login/registratie/wachtwoord/verwijderen (30 parallel: 21 pogingen bij limiet 20) | Eén wachtwoordcontrole tegelijk per adres, anders 429 |
+| A2-04 | Laag | `validateMatchSpec` | `LogConfig` en `/tmp`-grootte niet begrensd: een overgenomen control plane kon via de gate schijf of RAM van de host vullen | Logs max 5 × 10 MB, `/tmp` max 64 MB |
+| A2-12 | Laag | `DockerGate` | De gate controleerde elke spec, maar niet hoeveel containers er waren | Creates één voor één, 429 vanaf `MAX_MATCH_CONTAINERS` eigen containers; het dashboard kan dat alleen verlagen |
+| A2-05 | Laag | `Internal.cleanStatus` | Heartbeat van een runner ongecontroleerd bewaard: `players: "9999"` werd `"99990"` stoelen, 100 KB lobbynamen met bidi-tekens in de publieke lijst | Elke statusregel wordt met type en grenzen opnieuw opgebouwd |
+| A2-06 | Laag | `App.metricsAllowed` | `/metrics` zonder token vanaf loopback keek alleen naar `X-Forwarded-For`; een tunnel op dezelfde machine met alleen `CF-Connecting-IP` kwam erdoor | Elke proxy-header (`cf-connecting-ip`, `forwarded`, `x-real-ip`, ...) = niet lokaal |
+| A2-07 | Laag | `SkinService.report` | Na 100 melders kon één melder de teller onbeperkt ophogen (en het bestand steeds herschrijven) | Volle lijst: niet meer tellen |
+| A2-08 | Laag | `sanitizeChat`, `Rooms.create` | Bidi-overrides (U+202E), C1-tekens en zero-width in chat, MOTD en lobbynamen (spoofing) | `INVISIBLE_CHARS` weg (ZWJ blijft voor emoji) |
+| A2-10 | Laag | `WsProxy.bridge` | Containerlobby: een verbinding zonder `hello` bleef eeuwig open (in-process: 10 s) en hield verbindingsslots bezet | Ook hier 10 s |
+| A2-09 | Hardening | `Config.weakSecrets` | Kort `ADMIN_TOKEN`/`METRICS_TOKEN` | Foutmelding bij start onder 24 tekens |
+
+Gecontroleerd en in orde: ops-pagina (alleen `textContent`, CSP met hashes, `frame-ancestors 'none'` + `X-Frame-Options`,
+geen tokens in `localStorage`), CSRF (geen cookies; wijzigingen same-site + JSON), CORS alleen voor `ALLOWED_ORIGINS`,
+gelijke antwoorden en rekentijd bij onbekende naam/fout wachtwoord, sessierotatie en intrekking, Docker gate (paden,
+queries, labels + naam, spec-allowlist, `__proto__`/hoofdlettervarianten als onbekende sleutel geweigerd), interne API
+(HMAC per runner, `lobbyOf` i.p.v. wat de runner noemt), PNG-decoder (afmetingen vóór allocatie, `maxOutputLength`),
+diep geneste JSON, `__proto__` in alle JSON-bodies (Maps of `Object.hasOwn`), padnamen (codes, hashes, ids via regex).
+`npm audit --omit=dev`: 0.
+
+Niet concreet gemaakt (bewust zo, of alleen met een overgenomen runner):
+- Een overgenomen runner kan `/internal/save` (max 2 MB) zo vaak sturen als hij wil: schrijfbelasting, alleen voor zijn eigen lobby.
+- Partycodes (5 tekens) zijn per /64 te raden (30/min); wie binnenkomt kan door de leider gekickt worden.
+- Elke admin kan andere admins vergrendelen of de vlag geven/afnemen (geen rangen); `ADMIN_ACCOUNTS` blijft admin zolang de env het zegt.
+- `ALLOWED_ORIGINS` leeg (compose-standaard zonder `install.sh`) laat WebSockets van elke site toe (Direct Connect heeft dat nodig).
 
 ## Arcade: anti-cheat en netcode (`server/anticheat/`)
 

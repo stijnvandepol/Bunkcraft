@@ -13,11 +13,11 @@ import type { ProfileService } from '../progression/ProfileService';
 import { loadSecret } from '../progression/ProfileTokens';
 import type { ArenaSpec, RemoteRooms, Rooms } from '../Rooms';
 import type { RoomServer } from '../RoomServer';
-import { type RateLimiter, passwordFailKey, safeEqual } from '../Security';
+import { type RateLimiter, ownerGuesses, passwordFailKey, safeEqual, tokenMatches } from '../Security';
 import type { SkinService } from '../skins/SkinService';
 import { MATCH_PORT, containerName } from './ContainerSpec';
 import { DockerApi, DockerDriver, type LogLine, type MatchDriver, ProcessDriver } from './Drivers';
-import { type Ident, RUNNER_ID, type RunnerStatus, authHeaders, authRunner, callJson, readJson, runnerKey, sendJson } from './Internal';
+import { type Ident, RUNNER_ID, type RunnerStatus, authHeaders, authRunner, callJson, cleanStatus, readJson, runnerKey, sendJson } from './Internal';
 import { MatchPool, type Runner } from './MatchPool';
 import { type RemoteHost, RemoteRoom } from './RemoteRoom';
 
@@ -148,7 +148,7 @@ export class ControlPlane implements RemoteRooms, RemoteHost {
       const key = runnerKey(this.secret, h.id);
       let status: RunnerStatus | null = null;
       try {
-        status = await callJson<RunnerStatus>(`${url}/internal/status`, authHeaders(h.id, key), undefined, 3000);
+        status = cleanStatus(await callJson<unknown>(`${url}/internal/status`, authHeaders(h.id, key), undefined, 3000));
       } catch (e) {
         log.warn('match container did not answer', { runner: h.id, error: String(e) });
       }
@@ -249,16 +249,26 @@ export class ControlPlane implements RemoteRooms, RemoteHost {
     return createHmac('sha256', this.secret).update(`admin:${id}`).digest('base64url');
   }
 
-  private identFor(room: RemoteRoom, token: unknown, name?: string): Ident {
+  /**
+   * What a runner gets instead of a player's profile token: the token is a credential beyond this lobby (an account
+   * session even opens /ops for an admin), so a runner taken over by an exploit must never see it. The alias is
+   * per runner and per token, and the runner recognises it the usual way (sha256 in Ident.th).
+   */
+  private profileAlias(runnerId: string, token: string): string {
+    return `r1.${createHmac('sha256', this.secret).update(`profile:${runnerId}|${token}`).digest('base64url')}`;
+  }
+
+  private identFor(room: RemoteRoom, token: unknown, name?: string, runnerId = room.runner?.id ?? ''): Ident & { alias?: string } {
     const p = this.o.profiles;
-    const ident: Ident = {};
+    const ident: Ident & { alias?: string } = {};
     if (name !== undefined) {
       ident.name = name;
       ident.reserved = p?.reservedProfile(name) ?? null;
     }
     const pid = p && typeof token === 'string' ? p.verify(token) : null;
     if (pid && p!.get(pid)) {
-      ident.th = hashHex(token as string);
+      ident.alias = this.profileAlias(runnerId, token as string);
+      ident.th = hashHex(ident.alias);
       ident.pid = pid;
       ident.rank = p!.rank(pid);
       ident.skin = this.o.skins?.effective(pid) ?? '';
@@ -267,7 +277,7 @@ export class ControlPlane implements RemoteRooms, RemoteHost {
     return ident;
   }
 
-  identify(room: RemoteRoom, runner: Runner, first: string): { ident: Ident; first?: string } {
+  identify(room: RemoteRoom, runner: Runner, first: string, ip = 'unknown'): { ident: Ident; first?: string } {
     let hello: Record<string, unknown>;
     try {
       hello = JSON.parse(first) as Record<string, unknown>;
@@ -275,19 +285,29 @@ export class ControlPlane implements RemoteRooms, RemoteHost {
       return { ident: {} };
     }
     if (!hello || typeof hello !== 'object' || hello.t !== 'hello') return { ident: {} };
-    const ident = this.identFor(room, hello.profile, typeof hello.name === 'string' ? hello.name.slice(0, 32) : '');
+    const { alias, ...ident } = this.identFor(room, hello.profile, typeof hello.name === 'string' ? hello.name.slice(0, 32) : '', runner.id);
+    // The profile token never reaches the runner: its alias does (or nothing, for a token that proves no profile).
+    const { profile: _token, ...rest } = hello;
+    let out: Record<string, unknown> | null = hello.profile === undefined ? null : { ...rest, ...(alias ? { profile: alias } : {}) };
     const admin = this.o.adminToken;
-    if (admin && typeof hello.owner === 'string' && safeEqual(hello.owner, admin)) {
-      return { ident, first: JSON.stringify({ ...hello, owner: this.adminAlias(runner.id) }) };
-    }
-    return { ident };
+    // Counted per address like in-process (Security.ownerGuesses); a guess the runner gets is checked against its alias and fails there.
+    let isAdmin = false;
+    // The lobby's own owner token is no wrong guess (the runner checks it); it is read only for a hello that carries one.
+    const right = (given: string): boolean => {
+      if (safeEqual(given, admin!)) return (isAdmin = true);
+      const dir = this.lobbies.get(room.code)?.dir;
+      return !!dir && tokenMatches(given, savedOwnerHash(dir));
+    };
+    if (admin && ownerGuesses.matches(hello.owner, ip, right) && isAdmin) out = { ...(out ?? hello), owner: this.adminAlias(runner.id) };
+    return out ? { ident, first: JSON.stringify(out) } : { ident };
   }
 
   passwordBlocked(room: RemoteRoom, ip: string): boolean {
     return !!this.o.failLimiter && !this.o.failLimiter.allowed(passwordFailKey(room.code, ip));
   }
 
-  identOf(room: RemoteRoom, profileToken: unknown): Ident {
+  /** For a runner question about a player (rejoin): the Ident and the alias to send instead of the token. */
+  identOf(room: RemoteRoom, profileToken: unknown): Ident & { alias?: string } {
     return this.identFor(room, profileToken);
   }
 
@@ -352,9 +372,10 @@ export class ControlPlane implements RemoteRooms, RemoteHost {
           return;
         }
         case '/internal/heartbeat': {
-          const r = this.pool.beat(id, body as unknown as RunnerStatus);
+          const st = cleanStatus(body);
+          const r = this.pool.beat(id, st);
           const l = this.lobbyOf(id);
-          if (l && r) l.room.apply(body as unknown as RunnerStatus);
+          if (l && r) l.room.apply(st);
           // A runner nobody knows (a leftover) is told to stop.
           sendJson(res, 200, { stop: !r });
           return;
@@ -607,6 +628,16 @@ export function driverFromConfig(c: {
     api: new DockerApi(c.dockerHost, c.dockerGateSecret), image: c.matchImage, network: c.matchNetwork, controlUrl: c.controlUrl, owner: c.matchOwner,
     cpus: c.matchCpus, memoryMb: c.matchMemoryMb, pids: c.matchPids, logLevel, version: version.replace(/[^0-9A-Za-z.+-]/g, '').slice(0, 64) || 'dev',
   });
+}
+
+/** The owner token hash in a lobby's saved world, if any. */
+function savedOwnerHash(dir: string): string | undefined {
+  try {
+    const w = JSON.parse(readFileSync(join(dir, 'world.json'), 'utf8')) as Record<string, unknown>;
+    return typeof w.ownerHash === 'string' ? w.ownerHash : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** The arena game type in a lobby's saved world, or null (missing, unreadable or not an arena type). */

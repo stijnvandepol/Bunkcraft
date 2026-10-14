@@ -221,8 +221,10 @@ export class SkinService {
       r = { count: 0, first: Date.now(), last: 0, reporters: [], names: [] };
       this.reports.set(hash, r);
     }
-    if (r.reporters.includes(who)) return false;
-    if (r.reporters.length < MAX_REPORTERS) r.reporters.push(who);
+    // A full list cannot tell a new reporter from a repeat: stop counting (100 reports are plenty to act on) rather than
+    // let one player raise the count and rewrite the reports file with every repeat.
+    if (r.reporters.includes(who) || r.reporters.length >= MAX_REPORTERS) return false;
+    r.reporters.push(who);
     r.count++;
     r.last = Date.now();
     if (wearer && !r.names.includes(wearer) && r.names.length < MAX_NAMES) r.names.push(wearer);

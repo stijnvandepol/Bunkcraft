@@ -70,7 +70,7 @@ export function parseMemoryMb(v: string | undefined, dflt: number): number {
  * both read them here, so the spec one builds is exactly the spec the other lets through.
  */
 export function matchSettingsFromEnv(env: NodeJS.ProcessEnv): {
-  matchImage: string; matchNetwork: string; matchOwner: string; matchCpus: number; matchMemoryMb: number; matchPids: number;
+  matchImage: string; matchNetwork: string; matchOwner: string; matchCpus: number; matchMemoryMb: number; matchPids: number; matchMaxContainers: number;
 } {
   return {
     matchImage: env.MATCH_IMAGE ?? '',
@@ -79,6 +79,8 @@ export function matchSettingsFromEnv(env: NodeJS.ProcessEnv): {
     matchCpus: Math.max(0.1, Math.min(8, envNum(env.MATCH_CPUS, 1))),
     matchMemoryMb: Math.max(96, Math.min(4096, parseMemoryMb(env.MATCH_MEMORY, 256))),
     matchPids: Math.max(16, Math.min(1024, Math.floor(envNum(env.MATCH_PIDS, 64)))),
+    // The Docker gate refuses creates beyond it (DockerGate.underCap); the ops dashboard can only go lower.
+    matchMaxContainers: Math.max(1, Math.min(256, Math.floor(envNum(env.MAX_MATCH_CONTAINERS, 16)))),
   };
 }
 
@@ -202,7 +204,8 @@ export function validateMatchSpec(spec: ContainerCreate, policy: MatchSpecPolicy
   if (['host', 'bridge', 'default', 'none'].includes(policy.network) || policy.network.startsWith('container:')) fail('network must be the internal match network');
   if (h.ReadonlyRootfs !== true) fail('read-only root filesystem');
   const tmpfs = exactKeys(h.Tmpfs, new Set(['/tmp']), 'Tmpfs');
-  if (typeof tmpfs['/tmp'] !== 'string' || !/^rw,noexec,nosuid,size=\d{1,4}m$/.test(tmpfs['/tmp'])) fail('tmpfs');
+  const tmp = typeof tmpfs['/tmp'] === 'string' ? /^rw,noexec,nosuid,size=(\d{1,3})m$/.exec(tmpfs['/tmp']) : null;
+  if (!tmp || Number(tmp[1]) < 1 || Number(tmp[1]) > 64) fail('tmpfs');
   if (!Array.isArray(h.CapDrop) || h.CapDrop.length !== 1 || h.CapDrop[0] !== 'ALL') fail('capabilities');
   if (!Array.isArray(h.SecurityOpt) || h.SecurityOpt.length !== 1 || h.SecurityOpt[0] !== 'no-new-privileges:true') fail('security options');
   const cpus = Number(h.NanoCpus) / 1e9;
@@ -215,5 +218,9 @@ export function validateMatchSpec(spec: ContainerCreate, policy: MatchSpecPolicy
   if (rp.Name !== 'no') fail('restart policy');
   const lc = exactKeys(h.LogConfig, new Set(['Type', 'Config']), 'LogConfig');
   if (lc.Type !== 'json-file') fail('log driver');
-  exactKeys(lc.Config, new Set(['max-size', 'max-file']), 'LogConfig.Config');
+  // Logs live on the host's disk: at most 5 files of 10 MB per container.
+  const lcc = exactKeys(lc.Config, new Set(['max-size', 'max-file']), 'LogConfig.Config');
+  const size = typeof lcc['max-size'] === 'string' ? /^(\d{1,2})m$/.exec(lcc['max-size']) : null;
+  if (!size || Number(size[1]) < 1 || Number(size[1]) > 10) fail('log size');
+  if (typeof lcc['max-file'] !== 'string' || !/^[1-5]$/.test(lcc['max-file'])) fail('log files');
 }

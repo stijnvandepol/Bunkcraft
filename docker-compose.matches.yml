@@ -78,6 +78,7 @@ services:
       MATCH_CPUS: ${MATCH_CPUS:-1}
       MATCH_MEMORY: ${MATCH_MEMORY:-256m}
       MATCH_PIDS: ${MATCH_PIDS:-64}
+      MAX_MATCH_CONTAINERS: ${MAX_MATCH_CONTAINERS:-16}
       MATCH_IMAGE: ${MATCH_IMAGE:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     volumes:

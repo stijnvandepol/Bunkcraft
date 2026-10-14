@@ -1,4 +1,4 @@
-import { SECURITY_HEADERS, clientAddress } from './HttpSecurity';
+import { SECURITY_HEADERS, addressKey, clientAddress } from './HttpSecurity';
 import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
 import { type IncomingMessage, type ServerResponse, createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -9,7 +9,7 @@ import { IpBans, adminApi, newAuthLimiter } from './Admin';
 import { OPS_CSP, OPS_HTML } from './OpsPage';
 import { AuditLog, OpsSettings, type OpsValues, authorizeOps } from './Ops';
 import { backupAll } from './Backup';
-import { type Config, backupDirOf } from './Config';
+import { type Config, MIN_TOKEN_LENGTH, backupDirOf, weakSecrets } from './Config';
 import { GameServer } from './GameServer';
 import type { RoomServer } from './RoomServer';
 import { ControlPlane, driverFromConfig } from './match/ControlPlane';
@@ -19,7 +19,7 @@ import { type Gauges, metrics } from './Metrics';
 import { Rooms } from './Rooms';
 import { gameTypeDef, parseGameType } from '../src/modes/GameTypes';
 import { parseListingKind } from '../src/modes/Realms';
-import { RateLimiter, bearer, hashPassword, hashToken, newToken, safeEqual } from './Security';
+import { RateLimiter, bearer, hashPassword, hashToken, newToken, ownerGuesses, safeEqual } from './Security';
 import { ChunkGenPool } from './chunkgen/ChunkGenPool';
 import { prewarmNavGraphs } from './bots/BotWorld';
 import { ProfileService } from './progression/ProfileService';
@@ -102,6 +102,9 @@ export async function startServer(config: Config, start: StartOptions = {}): Pro
   const version = serverVersion();
   const backupDir = backupDirOf(config);
   const failLimiter = new RateLimiter(config.passwordFailLimit, 600_000);
+  // A short admin token can be guessed despite the limits (many addresses): say so loudly.
+  const weak = weakSecrets(config);
+  if (weak.length) log.error(`secret too short: use at least ${MIN_TOKEN_LENGTH} random characters (openssl rand -hex 24)`, { settings: weak });
   // One pool of chunk generation threads for every game (docs/research/SERVER-DEPLOY.md, A); 0 = the main thread does it.
   const genPool = config.chunkWorkers > 0
     ? new ChunkGenPool({ size: config.chunkWorkers, onError: (message) => log.error('chunk generation', { error: message }) })
@@ -142,9 +145,9 @@ export async function startServer(config: Config, start: StartOptions = {}): Pro
   const matchDriver = config.roomsEnabled && config.matchIsolation === 'container'
     ? start.matchDriver ?? driverFromConfig(config, version, (process.env.LOG_LEVEL ?? 'info').toLowerCase())
     : null;
-  // The Docker gate allows CPU and memory up to MATCH_CPUS and MATCH_MEMORY: the dashboard can only go lower.
+  // The Docker gate allows CPU, memory and containers up to MATCH_CPUS, MATCH_MEMORY and MAX_MATCH_CONTAINERS: the dashboard can only go lower.
   const opsSettings = new OpsSettings(config.dataDir, opsDefaults, matchDriver?.kind === 'docker'
-    ? { matchCpus: { max: config.matchCpus }, matchMemoryMb: { max: config.matchMemoryMb } }
+    ? { matchCpus: { max: config.matchCpus }, matchMemoryMb: { max: config.matchMemoryMb }, maxMatchContainers: { max: config.maxMatchContainers } }
     : {});
   const ops = opsSettings.values;
   const roomMotd = (m: string): string => (m === 'Welcome to BunkCraft!' ? 'Welcome to BunkCraft! Share the game code with your friends.' : m);
@@ -252,11 +255,14 @@ export async function startServer(config: Config, start: StartOptions = {}): Pro
   const accountRegisterLimit = new RateLimiter(config.accountRegisterLimit, 3_600_000);
   const accountFailLimit = new RateLimiter(20, 15 * 60_000);
   const accountRecoverLimit = new RateLimiter(10, 3_600_000);
+  /** Addresses with a password check running now (see api: one at a time). */
+  const accountChecks = new Set<string>();
+  const PASSWORD_CALLS = new Set(['/api/account/login', '/api/account/password', '/api/account/recovery/new', '/api/account/delete', '/api/account/register']);
   const ipBans = new IpBans(config.dataDir);
   const adminFailures = newAuthLimiter();
   const timers: NodeJS.Timeout[] = [];
   const every = (ms: number, fn: () => void) => { const t = setInterval(fn, ms); t.unref(); timers.push(t); };
-  every(600_000, () => { createLimit.prune(); lookupLimit.prune(); listLimit.prune(); quickLimit.prune(); profileLimit.prune(); profileCreateLimit.prune(); accountLimit.prune(); accountRegisterLimit.prune(); accountFailLimit.prune(); accountRecoverLimit.prune(); skins?.prune(); partyCreateLimit.prune(); partyJoinLimit.prune(); partyPollLimit.prune(); partyIpLimit.prune(); partyActLimit.prune(); failLimiter.prune(); adminFailures.prune(); });
+  every(600_000, () => { createLimit.prune(); lookupLimit.prune(); listLimit.prune(); quickLimit.prune(); profileLimit.prune(); profileCreateLimit.prune(); accountLimit.prune(); accountRegisterLimit.prune(); accountFailLimit.prune(); accountRecoverLimit.prune(); skins?.prune(); partyCreateLimit.prune(); partyJoinLimit.prune(); partyPollLimit.prune(); partyIpLimit.prune(); partyActLimit.prune(); failLimiter.prune(); adminFailures.prune(); ownerGuesses.prune(); });
   every(5000, () => metrics.rollWindow());
   every(30_000, () => { parties?.sweep(); });
   // Bot navigation for every arena, built in the background before the first lobby needs it.
@@ -279,8 +285,8 @@ export async function startServer(config: Config, start: StartOptions = {}): Pro
   function clientIp(req: IncomingMessage): string {
     // Only the last X-Forwarded-For entry (appended by our own proxy) can be trusted: see HttpSecurity.clientAddress.
     const ip = clientAddress(req.headers['x-forwarded-for'], req.socket.remoteAddress, config.trustProxy, req.headers['cf-connecting-ip'], config.trustCloudflare, config.trustedProxyAddrs);
-    // IPv4 clients of a dual-stack socket show up as ::ffff:1.2.3.4; keep one spelling for limits and blocks.
-    return ip.replace(/^::ffff:/i, '');
+    // One key per client for limits and blocks: IPv4-mapped IPv6 as plain IPv4, IPv6 as its /64 (HttpSecurity.addressKey).
+    return addressKey(ip);
   }
 
   /** CORS for the JSON API, only for origins in ALLOWED_ORIGINS (without the list there are no CORS headers: same-origin only). */
@@ -345,7 +351,21 @@ export async function startServer(config: Config, start: StartOptions = {}): Pro
         features: { passwords: true, browse: !!rooms, binary: config.binary, realms: !!rooms, profiles: !!profiles, accounts: !!accounts, skins: !!skins, party: !!parties },
       });
     }
-    if (path.startsWith('/api/account/')) return accountApi(req, res, path, ip);
+    if (path.startsWith('/api/account/')) {
+      // Calls that check a password (scrypt, async) run one at a time per address: parallel requests would all pass the
+      // failure limits before the first failure is recorded. A browser never sends two at once.
+      if (req.method !== 'POST' || !PASSWORD_CALLS.has(path)) return accountApi(req, res, path, ip);
+      if (accountChecks.has(ip)) {
+        metrics.rateLimited('account_login');
+        return json(res, 429, { error: 'limited' }, { 'retry-after': '1' });
+      }
+      accountChecks.add(ip);
+      try {
+        return await accountApi(req, res, path, ip);
+      } finally {
+        accountChecks.delete(ip);
+      }
+    }
     if (path === '/api/profile' || path.startsWith('/api/profile/')) return profileApi(req, res, path, ip);
     if (!rooms) return json(res, 404, { error: 'Games are disabled on this server' });
     if (path === '/api/party' || path.startsWith('/api/party/')) return partyApi(req, res, url, path, ip);
@@ -631,7 +651,7 @@ export async function startServer(config: Config, start: StartOptions = {}): Pro
         // No silent merge: the player decides whether the guest progress on this device is dropped.
         return json(res, 409, { error: 'guest_progress', guest: { name: guest.name, xp: guest.xp, prestige: guest.prestige } });
       }
-      const r = await accounts.login(str(body.name, 64), str(body.password, 128), token ?? undefined);
+      const r = await accounts.login(str(body.name, 64), str(body.password, 128), token ?? undefined, ip);
       if (!r.ok) { if (r.error === 'invalid_credentials') accountFailLimit.record(ip); return reply(r); }
       return json(res, 200, { token: r.token, ...view(r.profileId) });
     }
@@ -641,7 +661,7 @@ export async function startServer(config: Config, start: StartOptions = {}): Pro
     }
     if (path === '/api/account/recover') {
       if (!accountRecoverLimit.allowed(ip)) return limited('account_recover');
-      const r = await accounts.recover(str(body.name, 64), str(body.code, 64), str(body.password, 128));
+      const r = await accounts.recover(str(body.name, 64), str(body.code, 64), str(body.password, 128), ip);
       if (!r.ok && r.error === 'invalid_credentials') accountRecoverLimit.record(ip);
       if (!r.ok) return reply(r);
       return json(res, 200, { token: r.token, recovery: r.recovery, ...view(r.profileId) });
@@ -649,17 +669,17 @@ export async function startServer(config: Config, start: StartOptions = {}): Pro
     if (!accountFailLimit.allowed(ip)) return limited('account_login');
     const failed = (r: { error?: string }): void => { if (r.error === 'invalid_credentials') accountFailLimit.record(ip); };
     if (path === '/api/account/password') {
-      const r = await accounts.changePassword(token, str(body.password, 128), str(body.newPassword, 128));
+      const r = await accounts.changePassword(token, str(body.password, 128), str(body.newPassword, 128), ip);
       if (!r.ok) { failed(r); return reply(r); }
       return json(res, 200, { token: r.token });
     }
     if (path === '/api/account/recovery/new') {
-      const r = await accounts.newRecovery(token, str(body.password, 128));
+      const r = await accounts.newRecovery(token, str(body.password, 128), ip);
       if (!r.ok) { failed(r); return reply(r); }
       return json(res, 200, { recovery: r.recovery });
     }
     if (path === '/api/account/delete') {
-      const r = await accounts.remove(token, str(body.password, 128));
+      const r = await accounts.remove(token, str(body.password, 128), ip);
       if (!r.ok) { failed(r); return reply(r); }
       return json(res, 200, {});
     }
@@ -764,7 +784,10 @@ export async function startServer(config: Config, start: StartOptions = {}): Pro
       return !!given && tokens.some((t) => safeEqual(given, t));
     }
     const addr = req.socket.remoteAddress ?? '';
-    return /^(127\.|::1$|::ffff:127\.)/.test(addr) && !req.headers['x-forwarded-for'];
+    // A tunnel or proxy on this machine (cloudflared, Caddy) connects from loopback too: any proxy header means "not local".
+    const h = req.headers;
+    const proxied = !!(h['x-forwarded-for'] || h['cf-connecting-ip'] || h.forwarded || h['x-real-ip'] || h['true-client-ip'] || h['cf-ray']);
+    return /^(127\.|::1$|::ffff:127\.)/.test(addr) && !proxied;
   }
 
   // connectionsCheckingInterval: Node only checks the timeouts below every 30 s by default.
@@ -833,7 +856,7 @@ export async function startServer(config: Config, start: StartOptions = {}): Pro
       adminApi({
         token: config.adminToken ?? '', rooms, main, bans: ipBans, skins, accounts, version, gauges, clientIp, readBody, json, control,
         who, audit, settings: rooms ? opsSettings : null,
-        dropIp: (ip) => { for (const c of wss.clients) if ((c as WebSocket & { ip?: string }).ip === ip) c.terminate(); },
+        dropIp: (ip) => { const key = addressKey(ip); for (const c of wss.clients) if ((c as WebSocket & { ip?: string }).ip === key) c.terminate(); },
       }, req, res, url.pathname).catch(() => { if (!res.headersSent) json(res, 500, { error: 'Server error' }); });
       return;
     }

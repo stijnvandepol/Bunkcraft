@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { randomInt } from 'node:crypto';
 import { type GameType, type MapFeature, gameTypeDef, parseGameType } from '../src/modes/GameTypes';
 import { DEFAULT_MAP, MAP_IDS, type MapSetting, getMap, mapFor, parseMapId, parseMapSetting } from '../src/modes/maps';
-import { CODE_ALPHABET, CODE_LENGTH, type MatchPhase, normalizeCode } from '../src/net/protocol';
+import { CODE_ALPHABET, CODE_LENGTH, INVISIBLE_CHARS, type MatchPhase, normalizeCode } from '../src/net/protocol';
 import {
   LOBBY_SIZE_RANGE, type LobbyCandidate, type ListingKind, type ModeStats, REALMS_MODES, filterRooms, partyFits, pickLobby, quickPlayName,
 } from '../src/modes/Realms';
@@ -218,7 +218,7 @@ export class Rooms {
     do {
       code = Array.from({ length: CODE_LENGTH }, () => CODE_ALPHABET[randomInt(CODE_ALPHABET.length)]).join('');
     } while (existsSync(join(this.opts.dataDir, code)));
-    const cleanName = (typeof name === 'function' ? name(code) : name).replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 32) || 'BunkCraft Game';
+    const cleanName = (typeof name === 'function' ? name(code) : name).replace(INVISIBLE_CHARS, '').trim().slice(0, 32) || 'BunkCraft Game';
     const mode = GAME_MODES.includes(gameMode as GameMode) ? parseGameMode(gameMode) : 'survival';
     const cleanSeed = seed?.trim().slice(0, 32) || undefined;
     // Arcade game types ignore the Minecraft game mode and bring their own match settings.

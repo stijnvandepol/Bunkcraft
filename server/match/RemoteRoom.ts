@@ -2,7 +2,7 @@ import { WebSocket } from 'ws';
 import type { GameServer } from '../GameServer';
 import { log } from '../Log';
 import type { RejoinStatus, RoomServer } from '../RoomServer';
-import { type RunnerStatus, authHeaders, callJson, encodeIdent, type Ident } from './Internal';
+import { type RunnerStatus, authHeaders, callJson, cleanStatus, encodeIdent, type Ident } from './Internal';
 import type { Runner } from './MatchPool';
 import { bridge } from './WsProxy';
 
@@ -11,9 +11,10 @@ type Info = ReturnType<GameServer['info']>;
 /** What a RemoteRoom needs from the control plane. */
 export interface RemoteHost {
   /** Who the player of this hello is, and the hello to forward (the admin token swapped for the runner's alias). */
-  identify(room: RemoteRoom, runner: Runner, first: string): { ident: Ident; first?: string };
+  identify(room: RemoteRoom, runner: Runner, first: string, ip?: string): { ident: Ident; first?: string };
   /** The ident for a profile token alone (rejoin checks). */
-  identOf(room: RemoteRoom, profileToken: unknown): Ident;
+  /** `alias`: what the runner gets instead of the profile token (never the token itself). */
+  identOf(room: RemoteRoom, profileToken: unknown): Ident & { alias?: string };
   /** What the players of this room (or only this profile) wear now: profile id → skin hash ('' = none). */
   skinsFor(room: RemoteRoom, profileId?: string): Record<string, string>;
   /** Whether this address used up its wrong passwords for this lobby (the control plane counts them for all runners). */
@@ -79,8 +80,10 @@ export class RemoteRoom implements RoomServer {
   }
 
   /** A heartbeat (or an answer) of the runner. */
-  apply(st: RunnerStatus): void {
+  apply(raw: RunnerStatus): void {
     const before = this.st;
+    // Rebuilt with types and bounds: what a runner says reaches listings, matchmaking and the dashboard (Internal.cleanStatus).
+    const st = cleanStatus(raw);
     this.st = st;
     this.joinedSinceBeat = 0;
     const now = Date.now();
@@ -135,8 +138,9 @@ export class RemoteRoom implements RoomServer {
     try {
       const runner = await this.ready;
       await this.chain;
+      const { alias, ...ident } = this.host.identOf(this, proof.profile);
       return await this.call<RejoinStatus>('/internal/rejoin', {
-        token: proof.token, profile: proof.profile, ident: encodeIdent(this.host.identOf(this, proof.profile)),
+        token: proof.token, ...(alias ? { profile: alias } : {}), ident: encodeIdent(ident),
       }, 3000).then((r) => (runner === this.runner ? r : { state: 'none', secondsLeft: 0 }));
     } catch {
       return { state: 'none', secondsLeft: 0 };
@@ -219,8 +223,8 @@ export class RemoteRoom implements RoomServer {
       connect: async (first) => {
         const runner = await withTimeout(this.ready, 20_000, 'match server did not start');
         await withTimeout(this.chain, 5000, 'match server busy');
-        const { ident, first: rewritten } = this.host.identify(this, runner, first);
         const ip = meta.ip ?? 'unknown';
+        const { ident, first: rewritten } = this.host.identify(this, runner, first, ip);
         const upstream = new WebSocket(`${runner.url.replace(/^http/, 'ws')}/ws`, {
           headers: {
             ...authHeaders(runner.id, runner.key), 'x-bc-ip': ip, 'x-bc-ident': encodeIdent(ident),

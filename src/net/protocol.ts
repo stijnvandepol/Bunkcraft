@@ -505,7 +505,13 @@ export function formatCode(code: string): string {
 
 export const NAME_PATTERN = /^[A-Za-z0-9_]{3,16}$/;
 
+/**
+ * Characters that never belong in shown text: C0/C1 controls, bidi embeddings, overrides and isolates (a right-to-left
+ * override makes "exe.png" read as "gnp.exe"), LRM/RLM, zero-width space and BOM. ZWJ/ZWNJ stay (emoji, scripts).
+ */
+export const INVISIBLE_CHARS = /[\u0000-\u001f\u007f-\u009f\u200b\u200e\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g;
+
 export function sanitizeChat(text: string): string {
-  // Strip control characters and cap the length; rendering always uses textContent.
-  return text.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 256);
+  // Strip control and bidi characters and cap the length; rendering always uses textContent.
+  return text.replace(INVISIBLE_CHARS, '').trim().slice(0, 256);
 }

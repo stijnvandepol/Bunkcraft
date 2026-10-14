@@ -11,7 +11,10 @@ import type { MatchDriver, RunnerHandle } from '../server/match/Drivers';
 import { authRunner, runnerKey, type RunnerStatus } from '../server/match/Internal';
 import { MatchPool, type Runner } from '../server/match/MatchPool';
 import { RemoteRoom, type RemoteHost } from '../server/match/RemoteRoom';
-import { adoptableCode, cleanTally, savedArcadeType } from '../server/match/ControlPlane';
+import { ControlPlane, adoptableCode, cleanTally, savedArcadeType } from '../server/match/ControlPlane';
+import { RunnerProfiles } from '../server/match/MatchRunner';
+import { ProfileService } from '../server/progression/ProfileService';
+import { PROTOCOL_VERSION } from '../src/net/protocol';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -56,6 +59,12 @@ describe('match container spec', () => {
     ['a restart policy', (b) => { b.HostConfig.RestartPolicy = { Name: 'always' }; }],
     ['an unknown top-level field', (b) => { b.Entrypoint = ['sh', '-c', 'id']; }],
     ['a no-new-privileges opt-out', (b) => { b.HostConfig.SecurityOpt = ['seccomp=unconfined']; }],
+    // Audit A2-04: log files and the in-memory /tmp are host resources too (disk, RAM).
+    ['unbounded container logs', (b) => { b.HostConfig.LogConfig.Config['max-size'] = '500g'; }],
+    ['thousands of log files', (b) => { b.HostConfig.LogConfig.Config['max-file'] = '100000'; }],
+    ['a log size without unit', (b) => { b.HostConfig.LogConfig.Config['max-size'] = '99999999999'; }],
+    ['a huge /tmp', (b) => { b.HostConfig.Tmpfs['/tmp'] = 'rw,noexec,nosuid,size=9999m'; }],
+    ['a long stop timeout', (b) => { b.StopTimeout = 3600; }],
   ];
   for (const [what, change] of unsafe) {
     it(`refuses ${what}`, () => {
@@ -282,6 +291,37 @@ describe('match runner pool', () => {
   });
 });
 
+describe('audit A2-11: a runner never sees a player\'s profile token or account session', () => {
+  it('the hello and the rejoin question carry a per-runner alias the runner can still verify', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'bunk-alias-'));
+    const profiles = new ProfileService({ dataDir: dir, maxProfiles: 10, secret: 'alias-test-secret-0123456789' });
+    try {
+      const made = profiles.create('Alice_1')!;
+      const cp = new ControlPlane({
+        dataDir: dir, roomsDir: join(dir, 'rooms'), secret: 'match-secret-for-alias-test-0123', warm: 0, max: 1, internalPort: 0, internalHost: '127.0.0.1',
+        idleGraceSec: 30, roomMaxPlayers: 8, motd: '', binary: true, rejoinGraceSec: 60, version: 't', profiles, skins: null, driver: new FakeDriver(),
+      });
+      const runner = { id: 'abcdef0123456789', key: 'k'.repeat(43), url: 'http://127.0.0.1:1' } as Runner;
+      const room = new RemoteRoom('ABCDEF', cp, Promise.resolve(runner), async () => { throw new Error('no runner'); },
+        { name: 'x', gameType: 'tdm', gameMode: 'survival', players: 0, maxPlayers: 8, scoreLimit: 50, timeLimitSec: 600, locked: false }, () => undefined);
+      const hello = JSON.stringify({ t: 'hello', v: PROTOCOL_VERSION, name: 'Alice_1', profile: made.token });
+      const out = cp.identify(room, runner, hello, '203.0.113.5');
+      const sent = out.first ?? hello;
+      expect(sent).not.toContain(made.token);
+      // The runner (RunnerProfiles) still recognises the player from what it got.
+      const rp = new RunnerProfiles(runner.id, async () => ({}));
+      rp.register(out.ident);
+      expect(rp.verify((JSON.parse(sent) as { profile: string }).profile)).toBe(made.profile.id);
+      // Another runner cannot use the alias.
+      const other = cp.identify(room, { ...runner, id: 'zzzzzz0123456789' } as Runner, hello, '203.0.113.5');
+      expect((JSON.parse(other.first ?? hello) as { profile: string }).profile).not.toBe((JSON.parse(sent) as { profile: string }).profile);
+    } finally {
+      profiles.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('remote room seat accounting', () => {
   const host: RemoteHost = { identify: () => ({ ident: {} }), identOf: () => ({}), passwordBlocked: () => false, skinsFor: () => ({}), gone: () => undefined };
   const status = (o: Partial<RunnerStatus>): RunnerStatus => ({
@@ -307,6 +347,24 @@ describe('remote room seat accounting', () => {
     expect(r.info()).toMatchObject({ gameType: 'tdm', maxPlayers: 4, players: 0 });
     expect(r.maxPlayers).toBe(4);
     expect(r.playerCount).toBe(0);
+  });
+
+  it('audit A2-05: a lying runner cannot put junk into listings, matchmaking or the dashboard', () => {
+    const r = room();
+    const junk = {
+      players: '9999', reservedSeats: -5, botCount: 1e12, listed: 'yes', locked: 1, maxPlayers: Infinity, holds: 5,
+      info: { name: `${'A'.repeat(100_000)}\u202e\u0000`, gameType: 'tdm', maxPlayers: 1e9 }, lobby: 7, teams: { red: 'x', blue: NaN },
+      playerList: [...new Array(5000).fill({ name: 'B'.repeat(5000), ip: { x: 1 } }), 'nope'],
+    } as unknown as RunnerStatus;
+    expect(() => r.apply(junk)).not.toThrow();
+    expect(r.playerCount).toBe(0);
+    expect(r.maxPlayers).toBe(4); // falls back to the lobby's own size
+    expect(r.listed).toBe(false);
+    expect(r.info().name.length).toBeLessThanOrEqual(32);
+    expect(r.info().name).not.toMatch(/[\u0000\u202e]/);
+    expect(r.lobbyStatus()).toBeNull();
+    expect(r.playerList().length).toBeLessThanOrEqual(256);
+    expect(r.playerList()[0].name.length).toBeLessThanOrEqual(32);
   });
 
   it('keeps its own game type whatever the runner reports', () => {
@@ -383,6 +441,19 @@ describe('WebSocket bridge', () => {
     await vi.waitFor(() => expect(got).toHaveLength(3));
     expect(got.map((g) => [g.bin, g.bin ? [...g.data] : g.data.toString()])).toEqual([[false, '{"t":"hello"}'], [true, [1, 2, 3]], [false, 'second']]);
     ws.close();
+  });
+
+  it('audit A2-10: a connection that never says hello is closed, like in-process games do', async () => {
+    const http = createServer();
+    const front = new WebSocketServer({ server: http });
+    let connects = 0;
+    front.on('connection', (client) => bridge(client, { helloTimeoutMs: 100, connect: async () => { connects++; throw new Error('never'); } }));
+    await new Promise<void>((r) => http.listen(0, '127.0.0.1', () => r()));
+    servers.push({ close: () => { front.close(); http.close(); } });
+    const ws = await open(`ws://127.0.0.1:${(http.address() as AddressInfo).port}`);
+    const code = await new Promise<number>((r) => ws.once('close', (c) => r(c)));
+    expect(code).toBe(1008);
+    expect(connects).toBe(0);
   });
 
   it('propagates close codes both ways', async () => {

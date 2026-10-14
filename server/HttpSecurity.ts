@@ -75,6 +75,47 @@ export function addressInList(addr: string | undefined, list: readonly string[])
   return false;
 }
 
+/** The eight 16-bit groups of an IPv6 address (zone id dropped, embedded IPv4 converted), or null. */
+function ipv6Groups(ip: string): number[] | null {
+  let a = ip.split('%')[0];
+  if (isIP(a) !== 6) return null;
+  const v4 = /(\d+\.\d+\.\d+\.\d+)$/.exec(a);
+  if (v4) {
+    const p = v4[1].split('.').map(Number);
+    a = `${a.slice(0, -v4[1].length)}${((p[0] << 8) | p[1]).toString(16)}:${((p[2] << 8) | p[3]).toString(16)}`;
+  }
+  const [head, tail] = a.includes('::') ? a.split('::') : [a, null];
+  const h = head ? head.split(':') : [];
+  const t = tail ? tail.split(':') : [];
+  const fill = tail === null ? [] : new Array<string>(8 - h.length - t.length).fill('0');
+  const groups = [...h, ...fill, ...t].map((g) => parseInt(g, 16));
+  return groups.length === 8 && groups.every((g) => Number.isInteger(g) && g >= 0 && g <= 0xffff) ? groups : null;
+}
+
+/**
+ * The key an address is counted, limited and blocked under. IPv4 (also IPv4-mapped IPv6) as is; IPv6 as its /64
+ * ("2001:db8:1:2::/64"), because one subscriber holds a whole /64 (often a /56) and could otherwise step through
+ * 2^64 "new visitors" past every per-address limit, connection cap and block. A key given back in ("…::/64") stays
+ * the same key, so the ops dashboard can block what it shows. Anything else (a test's "unknown") comes back unchanged.
+ */
+export function addressKey(ip: string): string {
+  const s = ip.trim();
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(s);
+  if (mapped && isIP(mapped[1]) === 4) return mapped[1];
+  if (isIP(s) === 4) return s;
+  const net = s.endsWith('/64') ? s.slice(0, -3) : s;
+  const g = ipv6Groups(net);
+  if (!g) return s;
+  return `${g.slice(0, 4).map((x) => x.toString(16)).join(':')}::/64`;
+}
+
+/** An address (or an /64 key) an admin typed in to block, as its key; null when it is neither. */
+export function blockKey(input: string): string | null {
+  const s = input.trim();
+  if (isIP(s) === 0 && !(s.endsWith('/64') && isIP(s.slice(0, -3)) === 6)) return null;
+  return addressKey(s);
+}
+
 export function clientAddress(
   forwarded: string | string[] | undefined,
   remote: string | undefined,
