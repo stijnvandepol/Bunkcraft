@@ -166,7 +166,7 @@ export const PANTRY: FreeArenaMapDef = {
   halfX: 34,
   halfZ: 22,
   wallHeight: 14,
-  wallBlock: C.CALCITE,
+  wallBlock: C.CUT_SANDSTONE,
   floorBlock: C.CALCITE,
   variants: 1,
   redSpawns: RED_SPAWNS,
