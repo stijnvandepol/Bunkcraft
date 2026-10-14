@@ -71,6 +71,18 @@ export function bearer(header: string | string[] | undefined): string | null {
   return m ? m[1] : null;
 }
 
+/** Failed password attempts: `allowed` before checking a password, `record` after a wrong one (a RateLimiter, or the
+ *  control plane's count seen from a match runner, see MatchRunner). */
+export interface FailCounter {
+  allowed(key: string): boolean;
+  record(key: string): void;
+}
+
+/** The key wrong game passwords are counted under: per game and client address. */
+export function passwordFailKey(game: string, ip: string): string {
+  return `${game}|${ip}`;
+}
+
 /** Sliding-window limiter keyed by client address (shared by the HTTP API and failed logins). */
 export class RateLimiter {
   private readonly hits = new Map<string, number[]>();

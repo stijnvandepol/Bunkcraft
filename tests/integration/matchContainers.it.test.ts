@@ -14,6 +14,7 @@ beforeAll(async () => {
   t = await startTestServer({
     MATCH_ISOLATION: 'container', MATCH_DRIVER: 'process', MATCH_WARM_POOL: '1', MAX_MATCH_CONTAINERS: '8', INTERNAL_PORT: '0',
     INTERNAL_HOST: '127.0.0.1', QUICKPLAY_BOTS: '0', REJOIN_GRACE_SEC: '60', MATCH_IDLE_GRACE_SEC: '5',
+    PASSWORD_FAIL_LIMIT: '3', TRUST_PROXY: '1',
   });
 }, 60_000);
 afterAll(async () => { await t?.stop(); cleanup(t.dir); });
@@ -107,6 +108,30 @@ describe('one match runner per arena lobby', () => {
     l.client.close();
     m.client.close();
   });
+
+  it('counts wrong lobby passwords on the control plane: its limit, and across runners', async () => {
+    const control = t.server.control!;
+    const kickOf = (p: Promise<unknown>) => p.then(() => { throw new Error('expected a kick'); }, (e: { kick?: { reason: string } }) => e.kick!.reason);
+    const { code, ownerToken } = await createRoom(t.base, { gameType: 'tdm', scoreLimit: 50, timeLimitSec: 600, password: 'hunter22' });
+    const runnerOf = () => control.runners().find((r) => r.room === code)?.id;
+    await until(() => !!runnerOf());
+    const first = runnerOf();
+    // PASSWORD_FAIL_LIMIT=3 (the runner used to count on its own, with a fixed 5).
+    for (let i = 0; i < 3; i++) expect(await kickOf(joinGame(t, code, 'cont_guess', { password: `guess${i}` }))).toMatch(/Wrong password/);
+    expect(await kickOf(joinGame(t, code, 'cont_guess', { password: 'hunter22' }))).toMatch(/Too many wrong passwords/);
+    // The owner is never locked out of their own game.
+    const owner = await joinGame(t, code, 'cont_owner', { owner: ownerToken });
+    owner.client.close();
+    // The lobby empties, its runner stops; the next join starts a new runner, and the count is still there.
+    await until(() => runnerOf() === undefined, 90_000);
+    expect(await kickOf(joinGame(t, code, 'cont_guess', { password: 'hunter22' }))).toMatch(/Too many wrong passwords/);
+    expect(runnerOf()).toBeTruthy();
+    expect(runnerOf()).not.toBe(first);
+    // Another address is not affected.
+    const other = await joinGame(t, code, 'cont_other', { password: 'hunter22', headers: { 'x-forwarded-for': '203.0.113.9' } });
+    expect(other.welcome.gameType).toBe('tdm');
+    other.client.close();
+  }, 120_000);
 
   it('stops the runner of an empty lobby after the grace period, and the lobby loads again later', async () => {
     const control = t.server.control!;

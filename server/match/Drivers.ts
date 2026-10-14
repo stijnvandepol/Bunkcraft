@@ -43,13 +43,14 @@ export interface MatchDriver {
 // ---------------------------------------------------------------------------------------------- Docker Engine API
 
 /**
- * A minimal Docker Engine API client. `host` is the socket proxy (http://docker-proxy:2375) or, for a local smoke
- * test, unix:///var/run/docker.sock. Only the calls below exist: create, start, stop, list, inspect, stats, ping.
+ * A minimal Docker Engine API client. `host` is the Docker gate (http://docker-gate:2375, see DockerGate.ts) or, for
+ * a local test, unix:///var/run/docker.sock. Only the calls below exist: create, start, stop, list, inspect, stats,
+ * ping, and the gate's image. `secret` is DOCKER_GATE_SECRET, sent as a bearer token.
  */
 export class DockerApi {
   private readonly base: { socketPath?: string; host?: string; port?: number };
 
-  constructor(host: string) {
+  constructor(host: string, private readonly secret?: string) {
     if (host.startsWith('unix://')) this.base = { socketPath: host.slice(7) };
     else {
       const u = new URL(host);
@@ -65,7 +66,10 @@ export class DockerApi {
       const data = body === undefined ? undefined : Buffer.from(JSON.stringify(body));
       const req = httpRequest({
         ...this.base, method, path, timeout: timeoutMs,
-        headers: { host: 'docker', ...(data ? { 'content-type': 'application/json', 'content-length': String(data.length) } : {}) },
+        headers: {
+          host: 'docker', 'content-length': String(data?.length ?? 0), ...(data ? { 'content-type': 'application/json' } : {}),
+          ...(this.secret ? { authorization: `Bearer ${this.secret}` } : {}),
+        },
       }, (res) => {
         const parts: Buffer[] = [];
         res.on('data', (c: Buffer) => parts.push(c));
@@ -120,12 +124,22 @@ export class DockerApi {
     return r.status === 200 ? r.body : null;
   }
 
+  /** The image the Docker gate lets match containers run, or null when this is not a gate (a plain Engine socket). */
+  async gateImage(): Promise<string | null> {
+    const r = await this.request<{ image?: unknown }>('GET', '/_gate/image', undefined, 3000);
+    if (r.status === 401) throw new Error('the Docker gate refused DOCKER_GATE_SECRET');
+    return r.status === 200 && typeof r.body?.image === 'string' && r.body.image ? r.body.image : null;
+  }
+
   async ping(): Promise<boolean> {
+    let status = 0;
     try {
-      return (await this.request('GET', '/_ping', undefined, 3000)).status === 200;
+      status = (await this.request('GET', '/_ping', undefined, 3000)).status;
     } catch {
       return false;
     }
+    if (status === 401) throw new Error('the Docker gate refused DOCKER_GATE_SECRET');
+    return status === 200;
   }
 }
 
@@ -154,8 +168,11 @@ export class DockerDriver implements MatchDriver {
   }
 
   async init(): Promise<void> {
-    if (!(await this.o.api.ping())) throw new Error('Docker API (socket proxy) not reachable');
+    if (!(await this.o.api.ping())) throw new Error('Docker API (Docker gate) not reachable');
     if (this.o.image) { this.image = this.o.image; return; }
+    // Through the gate: the image it lets through (its own, which is ours: the same image, the same compose update).
+    const gated = await this.o.api.gateImage();
+    if (gated) { this.image = gated; return; }
     // Our own container: its hostname is its short id. Its image id pins match containers to exactly this build, so an
     // update (new image) starts new matches on the new build and a rollback on the old one.
     const self = await this.o.api.inspect(hostname());

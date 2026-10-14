@@ -16,6 +16,8 @@ export interface RemoteHost {
   identOf(room: RemoteRoom, profileToken: unknown): Ident;
   /** What the players of this room (or only this profile) wear now: profile id → skin hash ('' = none). */
   skinsFor(room: RemoteRoom, profileId?: string): Record<string, string>;
+  /** Whether this address used up its wrong passwords for this lobby (the control plane counts them for all runners). */
+  passwordBlocked(room: RemoteRoom, ip: string): boolean;
   /** The runner of this room ended or died: forget the room. */
   gone(room: RemoteRoom): void;
 }
@@ -218,8 +220,12 @@ export class RemoteRoom implements RoomServer {
         const runner = await withTimeout(this.ready, 20_000, 'match server did not start');
         await withTimeout(this.chain, 5000, 'match server busy');
         const { ident, first: rewritten } = this.host.identify(this, runner, first);
+        const ip = meta.ip ?? 'unknown';
         const upstream = new WebSocket(`${runner.url.replace(/^http/, 'ws')}/ws`, {
-          headers: { ...authHeaders(runner.id, runner.key), 'x-bc-ip': meta.ip ?? 'unknown', 'x-bc-ident': encodeIdent(ident) },
+          headers: {
+            ...authHeaders(runner.id, runner.key), 'x-bc-ip': ip, 'x-bc-ident': encodeIdent(ident),
+            'x-bc-pw': this.host.passwordBlocked(this, ip) ? 'blocked' : 'ok',
+          },
           autoPong: false, perMessageDeflate: false, maxPayload: 4 * 1024 * 1024, handshakeTimeout: 5000,
         });
         await new Promise<void>((resolve, reject) => {

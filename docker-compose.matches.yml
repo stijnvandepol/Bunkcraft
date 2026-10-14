@@ -4,23 +4,28 @@
 #
 #   sudo ./scripts/install.sh --match-isolation container        (adds this file to COMPOSE_FILE in .env)
 #   or in .env:  COMPOSE_FILE=docker-compose.yml:docker-compose.matches.yml[:docker-compose.direct.yml]
+#                plus DOCKER_GATE_SECRET (32+ random characters) and DOCKER_GID (group of /var/run/docker.sock)
 #
-# Security model (docs/SECURITY.md, "Socket proxy"): the control plane never sees the Docker socket. It talks to the
-# Engine API through docker-socket-proxy, which only lets container calls through (list, inspect, stats, create,
-# start, stop): no images, networks, volumes, exec or build. The proxy cannot check what is in a create request, so
-# the control plane builds and validates every container spec itself (server/match/ContainerSpec.ts).
+# Security model (docs/SECURITY.md, "Docker gate"): the control plane never sees the Docker socket. It talks to the
+# Engine API through the Docker gate (server/match/DockerGate.ts: the same image, its own small bundle), the only
+# container with the socket. The gate lets through exactly the calls the control plane needs, for our own match
+# containers only: a create must pass the allowlist the control plane builds with (ContainerSpec.ts: our image,
+# non-root, read-only, no capabilities, mounts, devices or ports, the internal network, hard limits); start, stop,
+# inspect and stats only act on containers with our owner label and name. Exec, kill, update, delete, images,
+# volumes, networks, build, events, system: 403. Every call carries DOCKER_GATE_SECRET.
 #
 # Networks:
 #   match       internal (no internet): control plane <-> match containers (game traffic and the internal API)
-#   docker-api  internal: control plane <-> socket proxy, nobody else
+#   docker-api  internal: control plane <-> Docker gate, nobody else
 services:
   bunkcraft:
     depends_on:
-      docker-proxy:
+      docker-gate:
         condition: service_started
     environment:
       MATCH_ISOLATION: ${MATCH_ISOLATION:-container}
-      DOCKER_HOST: http://docker-proxy:2375
+      DOCKER_HOST: http://docker-gate:2375
+      DOCKER_GATE_SECRET: ${DOCKER_GATE_SECRET:?DOCKER_GATE_SECRET is not set (install.sh --match-isolation container writes it to .env)}
       # Fixed name (see networks below), so the control plane can attach match containers to it.
       MATCH_NETWORK: ${MATCH_NETWORK_NAME:-bunkcraft_match}
       # Label on every match container: the control plane only ever lists and adopts containers with it.
@@ -33,7 +38,7 @@ services:
       MATCH_WARM_POOL: ${MATCH_WARM_POOL:-1}
       MAX_MATCH_CONTAINERS: ${MAX_MATCH_CONTAINERS:-16}
       MATCH_IDLE_GRACE_SEC: ${MATCH_IDLE_GRACE_SEC:-30}
-      # Empty = the image this container runs (looked up at start-up): an update moves new matches to the new build.
+      # Empty = the image the gate runs (the same as this one): an update moves new matches to the new build.
       MATCH_IMAGE: ${MATCH_IMAGE:-}
       MATCH_SECRET: ${MATCH_SECRET:-}
     networks:
@@ -41,50 +46,49 @@ services:
       - match
       - docker-api
 
-  docker-proxy:
-    # Pinned by digest: a socket proxy is part of the trust boundary. Update deliberately (docs/SECURITY.md).
-    image: tecnativa/docker-socket-proxy:v0.4.1@sha256:3400c429c5f9e1b21d62130fb93b16e2e772d4fb7695bd52fc2b743800b9fe9e
+  docker-gate:
+    # The same image as the control plane, so an update or a rollback moves both. Build mode:
+    # docker-compose.matches.build.yml points it at bunkcraft:local.
+    image: ${DOCKER_GATE_IMAGE:-${BUNKCRAFT_IMAGE:-ghcr.io/stijnvandepol/bunkcraft}:${BUNKCRAFT_TAG:-latest}}
+    command: ["node", "dist-server/dockerGate.js"]
     restart: unless-stopped
     read_only: true
     tmpfs:
-      - /run
       - /tmp
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
-    mem_limit: 64m
-    pids_limit: 64
+    # Not root: the node user plus the group that owns the socket on this host (install.sh writes DOCKER_GID).
+    user: "1000:1000"
+    group_add:
+      - "${DOCKER_GID:-0}"
+    mem_limit: 96m
+    pids_limit: 32
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
     environment:
-      # Everything off except containers; POST for create/start/stop only.
-      CONTAINERS: 1
-      POST: 1
-      ALLOW_START: 1
-      ALLOW_STOP: 1
-      ALLOW_RESTARTS: 0
-      PING: 1
-      VERSION: 1
-      EVENTS: 0
-      INFO: 0
-      IMAGES: 0
-      NETWORKS: 0
-      VOLUMES: 0
-      EXEC: 0
-      BUILD: 0
-      COMMIT: 0
-      AUTH: 0
-      SECRETS: 0
-      CONFIGS: 0
-      SERVICES: 0
-      TASKS: 0
-      NODES: 0
-      SWARM: 0
-      SYSTEM: 0
-      PLUGINS: 0
-      DISTRIBUTION: 0
-      SESSION: 0
-      LOG_LEVEL: warning
+      DOCKER_GATE_SECRET: ${DOCKER_GATE_SECRET:?DOCKER_GATE_SECRET is not set (install.sh --match-isolation container writes it to .env)}
+      NODE_OPTIONS: --max-old-space-size=48
+      # The same match settings as the control plane: what it builds is exactly what the gate lets through.
+      MATCH_NETWORK: ${MATCH_NETWORK_NAME:-bunkcraft_match}
+      MATCH_OWNER: ${MATCH_OWNER:-bunkcraft}
+      MATCH_CPUS: ${MATCH_CPUS:-1}
+      MATCH_MEMORY: ${MATCH_MEMORY:-256m}
+      MATCH_PIDS: ${MATCH_PIDS:-64}
+      MATCH_IMAGE: ${MATCH_IMAGE:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:2375/_gate/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    # Only the internal network to the control plane: no internet, no published port.
     networks:
       - docker-api
 

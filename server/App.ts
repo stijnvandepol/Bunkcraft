@@ -158,7 +158,7 @@ export async function startServer(config: Config, start: StartOptions = {}): Pro
       warm: config.matchWarmPool, max: config.maxMatchContainers, internalPort: config.internalPort, internalHost: config.internalHost,
       idleGraceSec: config.matchIdleGraceSec, roomMaxPlayers: config.roomMaxPlayers,
       motd: config.motd === 'Welcome to BunkCraft!' ? 'Welcome to BunkCraft! Share the game code with your friends.' : config.motd,
-      binary: config.binary, rejoinGraceSec: config.rejoinGraceSec, adminToken: config.adminToken, version, profiles, skins,
+      binary: config.binary, rejoinGraceSec: config.rejoinGraceSec, adminToken: config.adminToken, version, profiles, skins, failLimiter,
       driver: start.matchDriver ?? driverFromConfig(config, version, (process.env.LOG_LEVEL ?? 'info').toLowerCase()),
     })
     : null;

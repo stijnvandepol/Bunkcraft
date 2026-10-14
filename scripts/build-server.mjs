@@ -3,9 +3,10 @@
  * plain-JS file, so production runs `node dist-server/index.js`: no TypeScript transpiling at start-up,
  * no tsx/esbuild helper process and no node_modules at runtime. The chunk generation thread
  * (server/chunkgen/genWorker.ts) is a second, self-contained bundle next to it, which the server loads by
- * its sibling path (ChunkGenPool.defaultSpawn).
+ * its sibling path (ChunkGenPool.defaultSpawn). The Docker gate (server/dockerGate.ts, MATCH_ISOLATION=container)
+ * is a third, small bundle: the process that holds the Docker socket loads none of the game server.
  *
- *   node scripts/build-server.mjs          # → dist-server/index.js + dist-server/genWorker.js (+ .map)
+ *   node scripts/build-server.mjs          # → dist-server/index.js + genWorker.js + dockerGate.js (+ .map)
  *
  * The server reads its version from ../package.json next to dist-server/, so ship package.json with it.
  * Development keeps `npm run server` (tsx watch) and needs no build.
@@ -22,7 +23,7 @@ rmSync(outdir, { recursive: true, force: true });
 const t0 = performance.now();
 const result = await build({
   absWorkingDir: root,
-  entryPoints: { index: 'server/index.ts', genWorker: 'server/chunkgen/genWorker.ts' },
+  entryPoints: { index: 'server/index.ts', genWorker: 'server/chunkgen/genWorker.ts', dockerGate: 'server/dockerGate.ts' },
   outdir: 'dist-server',
   bundle: true,
   platform: 'node',

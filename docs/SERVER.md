@@ -217,8 +217,10 @@ bunkcraft matches                                                      # matchco
 bunkcraft matches stop                                                 # alle matchcontainers stoppen (spelers vallen eruit)
 ```
 
-`install.sh` voegt `docker-compose.matches.yml` toe aan `COMPOSE_FILE`: een socket proxy (`docker-proxy`) en twee interne
-netwerken (`match`, `docker-api`), zonder internettoegang en zonder gepubliceerde poorten.
+`install.sh` voegt `docker-compose.matches.yml` toe aan `COMPOSE_FILE` (met `--build` ook `docker-compose.matches.build.yml`):
+de Docker gate (`docker-gate`, hetzelfde image met `node dist-server/dockerGate.js`) en twee interne netwerken (`match`,
+`docker-api`), zonder internettoegang en zonder gepubliceerde poorten. Het zet ook `DOCKER_GATE_SECRET` (willekeurig, blijft
+bij een nieuwe run) en `DOCKER_GID` (de groep van `/var/run/docker.sock`) in `.env`.
 
 **Hoe het werkt.**
 
@@ -253,6 +255,8 @@ netwerken (`match`, `docker-api`), zonder internettoegang en zonder gepubliceerd
 | `MATCH_IDLE_GRACE_SEC` | `30` | Zo lang leeft een lege lobby nog |
 | `MATCH_IMAGE` | leeg | Image voor matchcontainers; leeg = het image van de control plane |
 | `MATCH_SECRET` | `DATA_DIR/match-secret.key` | Geheim van de interne API; runners krijgen alleen een afgeleide sleutel |
+| `DOCKER_GATE_SECRET` | (verplicht, `install.sh`) | Geheim tussen control plane en Docker gate, 32+ tekens |
+| `DOCKER_GID` | (`install.sh`) | Groep van `/var/run/docker.sock` op de host; de gate draait als uid 1000 met alleen die groep erbij |
 | `MATCH_DRIVER` | `docker` | `process` = child processes i.p.v. containers (ontwikkelen en tests, geen limieten) |
 | `INTERNAL_PORT` | `3001` | Interne API van de control plane (nooit publiceren) |
 
@@ -263,14 +267,16 @@ plafond en ~50-80 MB geheugen (256 MB limiet laat ruim marge voor 12 spelers); d
 reservering, dus overboeken mag.
 
 **Beveiliging in het kort** (volledig: `docs/SECURITY.md`, "Een container per lobby"): de control plane praat met Docker via
-`docker-socket-proxy` (vastgepind op digest), die alleen container-calls doorlaat; elke containerspec wordt vóór verzending
-tegen een allowlist gecontroleerd (ons image, non-root, read-only, geen capabilities, geen mounts of poorten, alleen het
-interne netwerk, harde limieten); matchcontainers hebben geen internet. De proxy controleert niet wát er in een create-verzoek
-staat: een overgenomen control plane zou via de proxy alsnog een geprivilegieerde container kunnen starten. Draai Docker daarom
-bij voorkeur rootless of met `userns-remap` als je dit aanzet.
+de eigen Docker gate, het enige proces met de socket. Die laat alleen de calls van de driver door en alleen voor onze eigen
+matchcontainers: elke create gaat door dezelfde allowlist als in de control plane (ons image, non-root, read-only, geen
+capabilities, geen mounts of poorten, alleen het interne netwerk, harde limieten), start/stop/inspect/stats alleen op containers
+met ons `owner`-label en onze naam; exec, kill, images, volumes en de rest krijgen 403. Een overgenomen control plane kan dus
+geen geprivilegieerde container maken en niets anders op de host aanraken. Matchcontainers hebben geen internet. Foute
+lobbywachtwoorden telt de control plane, over alle runners heen (`PASSWORD_FAIL_LIMIT`).
 
 **Testen:** `npm test` (unit, nep-Docker-API en een volledige TDM-match met bots door de proxy met child processes) en
-`scripts/qa/container-smoke.sh` (echte Docker: hardening, proxy-allowlist, geen internet, control-plane-update met adoptie en
+`scripts/qa/container-smoke.sh` (echte Docker: hardening, de Docker gate weigert een geprivilegieerde create en elke actie op
+een container die niet van ons is, geen internet, control-plane-update met adoptie en
 rejoin, en een meting tegen in-process). Raakt alleen zijn eigen compose-project `bcsmoke` en poort 38417.
 
 ## Overzicht

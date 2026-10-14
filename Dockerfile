@@ -31,10 +31,11 @@ ARG GIT_SHA=""
 ARG BUILD_NUMBER=""
 ENV GIT_SHA=${GIT_SHA} BUILD_NUMBER=${BUILD_NUMBER}
 # The server reads its version from package.json; dist-server/index.js bundles ws and the shared game code,
-# dist-server/genWorker.js is the chunk generation thread (CHUNK_WORKERS).
+# dist-server/genWorker.js is the chunk generation thread (CHUNK_WORKERS), dist-server/dockerGate.js the Docker gate
+# (MATCH_ISOLATION=container, docker-compose.matches.yml).
 COPY package.json ./
 COPY --from=build /app/dist ./dist
-COPY --from=build /app/dist-server/index.js /app/dist-server/genWorker.js ./dist-server/
+COPY --from=build /app/dist-server/index.js /app/dist-server/genWorker.js /app/dist-server/dockerGate.js ./dist-server/
 # The world (edits, players, time) lives here; the unprivileged "node" user owns it. Mount a volume to keep it.
 COPY --from=build --chown=node:node /out/data /app/data
 VOLUME ["/app/data"]

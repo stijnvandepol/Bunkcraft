@@ -51,6 +51,37 @@ const KEY = /^[A-Za-z0-9_-]{16,128}$/;
 /** User id of "node" in the official Node images. */
 const USER = '1000:1000';
 
+const envNum = (v: string | undefined, dflt: number): number => {
+  const n = Number(v);
+  return v !== undefined && v !== '' && Number.isFinite(n) ? n : dflt;
+};
+
+/** "256m", "1g", "512" (MiB) → MiB. */
+export function parseMemoryMb(v: string | undefined, dflt: number): number {
+  const m = /^\s*(\d+(?:\.\d+)?)\s*([kmg]?)b?\s*$/i.exec(v ?? '');
+  if (!m) return dflt;
+  const n = Number(m[1]);
+  const unit = m[2].toLowerCase();
+  return Math.round(unit === 'g' ? n * 1024 : unit === 'k' ? n / 1024 : n);
+}
+
+/**
+ * The match container settings from the environment. The control plane (Config) and the Docker gate (DockerGate)
+ * both read them here, so the spec one builds is exactly the spec the other lets through.
+ */
+export function matchSettingsFromEnv(env: NodeJS.ProcessEnv): {
+  matchImage: string; matchNetwork: string; matchOwner: string; matchCpus: number; matchMemoryMb: number; matchPids: number;
+} {
+  return {
+    matchImage: env.MATCH_IMAGE ?? '',
+    matchNetwork: env.MATCH_NETWORK || 'bunkcraft_match',
+    matchOwner: (env.MATCH_OWNER || 'bunkcraft').replace(/[^a-zA-Z0-9_.-]/g, '').slice(0, 63) || 'bunkcraft',
+    matchCpus: Math.max(0.1, Math.min(8, envNum(env.MATCH_CPUS, 1))),
+    matchMemoryMb: Math.max(96, Math.min(4096, parseMemoryMb(env.MATCH_MEMORY, 256))),
+    matchPids: Math.max(16, Math.min(1024, Math.floor(envNum(env.MATCH_PIDS, 64)))),
+  };
+}
+
 export function containerName(id: string): string {
   return `bunkcraft-match-${id}`;
 }

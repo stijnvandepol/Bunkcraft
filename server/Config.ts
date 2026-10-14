@@ -3,6 +3,9 @@ import type { GameMode } from '../src/player/GameMode';
 import { parseGameMode } from './GameServer';
 import { chunkWorkerCount } from './chunkgen/ChunkGenPool';
 import { type BotDifficulty, parseBotDifficulty } from './bots/BotSkill';
+import { matchSettingsFromEnv, parseMemoryMb } from './match/ContainerSpec';
+
+export { parseMemoryMb };
 
 /** Everything the server reads from the environment, in one typed place (documented in docs/SERVER.md). */
 export interface Config {
@@ -95,8 +98,10 @@ export interface Config {
   matchIsolation: 'inprocess' | 'container';
   /** How match runners are started (MATCH_DRIVER): Docker containers, or plain child processes (development, tests). */
   matchDriver: 'docker' | 'process';
-  /** Docker Engine API of the socket proxy (DOCKER_HOST): http://host:port, or unix:///path for a local smoke test. */
+  /** Docker Engine API through the Docker gate (DOCKER_HOST): http://host:port, or unix:///path for a local smoke test. */
   dockerHost: string;
+  /** Shared secret the control plane shows the Docker gate (DOCKER_GATE_SECRET; server/match/DockerGate.ts). */
+  dockerGateSecret?: string;
   /** Image for match containers (MATCH_IMAGE); empty = the image of this container (looked up at start-up). */
   matchImage: string;
   /** Docker network match containers join (MATCH_NETWORK): internal, no route to the internet. */
@@ -131,14 +136,6 @@ const num = (v: string | undefined, dflt: number): number => {
   const n = Number(v);
   return v !== undefined && v !== '' && Number.isFinite(n) ? n : dflt;
 };
-/** "256m", "1g", "512" (MiB) → MiB. */
-export function parseMemoryMb(v: string | undefined, dflt: number): number {
-  const m = /^\s*(\d+(?:\.\d+)?)\s*([kmg]?)b?\s*$/i.exec(v ?? '');
-  if (!m) return dflt;
-  const n = Number(m[1]);
-  const unit = m[2].toLowerCase();
-  return Math.round(unit === 'g' ? n * 1024 : unit === 'k' ? n / 1024 : n);
-}
 const list = (v: string | undefined): string[] => (v ?? '').split(/[,\s]+/).map((x) => x.trim()).filter(Boolean);
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -198,12 +195,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     role: env.ROLE === 'match' ? 'match' : 'server',
     matchIsolation: env.MATCH_ISOLATION === 'container' ? 'container' : 'inprocess',
     matchDriver: env.MATCH_DRIVER === 'process' ? 'process' : 'docker',
-    dockerHost: env.DOCKER_HOST || 'http://docker-proxy:2375',
-    matchImage: env.MATCH_IMAGE ?? '',
-    matchNetwork: env.MATCH_NETWORK || 'bunkcraft_match',
-    matchCpus: Math.max(0.1, Math.min(8, num(env.MATCH_CPUS, 1))),
-    matchMemoryMb: Math.max(96, Math.min(4096, parseMemoryMb(env.MATCH_MEMORY, 256))),
-    matchPids: Math.max(16, Math.min(1024, Math.floor(num(env.MATCH_PIDS, 64)))),
+    dockerHost: env.DOCKER_HOST || 'http://docker-gate:2375',
+    ...matchSettingsFromEnv(env),
+    dockerGateSecret: env.DOCKER_GATE_SECRET || undefined,
     matchWarmPool: Math.max(0, Math.min(16, Math.floor(num(env.MATCH_WARM_POOL, 1)))),
     maxMatchContainers: Math.max(1, Math.min(256, Math.floor(num(env.MAX_MATCH_CONTAINERS, 16)))),
     matchIdleGraceSec: Math.max(5, Math.min(3600, num(env.MATCH_IDLE_GRACE_SEC, 30))),
@@ -211,7 +205,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     internalPort: num(env.INTERNAL_PORT, 3001),
     internalHost: env.INTERNAL_HOST || '0.0.0.0',
     controlUrl: env.CONTROL_URL || 'http://bunkcraft:3001',
-    matchOwner: (env.MATCH_OWNER || 'bunkcraft').replace(/[^a-zA-Z0-9_.-]/g, '').slice(0, 63) || 'bunkcraft',
     matchId: env.MATCH_ID ?? '',
     matchToken: env.MATCH_TOKEN ?? '',
     matchPort: num(env.MATCH_PORT, 3100),

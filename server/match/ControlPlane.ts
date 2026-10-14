@@ -13,7 +13,7 @@ import type { ProfileService } from '../progression/ProfileService';
 import { loadSecret } from '../progression/ProfileTokens';
 import type { ArenaSpec, RemoteRooms, Rooms } from '../Rooms';
 import type { RoomServer } from '../RoomServer';
-import { safeEqual } from '../Security';
+import { type RateLimiter, passwordFailKey, safeEqual } from '../Security';
 import type { SkinService } from '../skins/SkinService';
 import { MATCH_PORT } from './ContainerSpec';
 import { DockerApi, DockerDriver, type MatchDriver, ProcessDriver } from './Drivers';
@@ -47,6 +47,8 @@ export interface ControlPlaneOptions {
   version: string;
   profiles: ProfileService | null;
   skins: SkinService | null;
+  /** Wrong game passwords per game and address: the one App counts with, so runners and in-process games share it. */
+  failLimiter?: RateLimiter;
   /** The driver (docker or process); built from the config by `driverFromConfig`. */
   driver: MatchDriver;
   startTimeoutMs?: number;
@@ -107,7 +109,7 @@ export class ControlPlane implements RemoteRooms, RemoteHost {
     const every = (ms: number, fn: () => void) => { const t = setInterval(fn, ms); t.unref(); this.timers.push(t); };
     every(2000, () => { if (this.available) this.pool.sweep(); });
     every(10_000, () => { if (this.available) void this.pool.pollStats(); });
-    // The socket proxy may come up after us (compose starts both at once): keep trying, lobbies run in-process meanwhile.
+    // The Docker gate may come up after us (compose starts both at once): keep trying, lobbies run in-process meanwhile.
     every(5000, () => { if (!this.available) void this.tryInit().then(() => { if (this.available && this.rooms) void this.attach(this.rooms); }); });
     log.info('match isolation: container', {
       driver: this.o.driver.kind, image: this.o.driver.image, warm: this.o.warm, max: this.o.max, internalPort: this.internalPort, available: this.available,
@@ -279,6 +281,10 @@ export class ControlPlane implements RemoteRooms, RemoteHost {
     return { ident };
   }
 
+  passwordBlocked(room: RemoteRoom, ip: string): boolean {
+    return !!this.o.failLimiter && !this.o.failLimiter.allowed(passwordFailKey(room.code, ip));
+  }
+
   identOf(room: RemoteRoom, profileToken: unknown): Ident {
     return this.identFor(room, profileToken);
   }
@@ -356,6 +362,14 @@ export class ControlPlane implements RemoteRooms, RemoteHost {
           const pid = String(body.pid ?? '');
           if (l?.room.pids.has(pid) && typeof body.name === 'string') this.o.profiles?.seen(pid, body.name.slice(0, 16));
           sendJson(res, 200, { ok: true });
+          return;
+        }
+        case '/internal/password-fail': {
+          // Counted under the lobby this control plane gave the runner, never one the runner names.
+          const l = this.lobbyOf(id);
+          const ip = typeof body.ip === 'string' && body.ip.length > 0 && body.ip.length <= 64 ? body.ip : null;
+          if (l && ip) this.o.failLimiter?.record(passwordFailKey(l.room.code, ip));
+          sendJson(res, 200, { ok: !!(l && ip) });
           return;
         }
         case '/internal/skin-report': {
@@ -523,12 +537,12 @@ function cleanOutcome(raw: unknown, room: RemoteRoom): MatchOutcome {
 
 /** The driver MATCH_DRIVER asks for. */
 export function driverFromConfig(c: {
-  matchDriver: 'docker' | 'process'; dockerHost: string; matchImage: string; matchNetwork: string; controlUrl: string; matchOwner: string;
+  matchDriver: 'docker' | 'process'; dockerHost: string; dockerGateSecret?: string; matchImage: string; matchNetwork: string; controlUrl: string; matchOwner: string;
   matchCpus: number; matchMemoryMb: number; matchPids: number;
 }, version: string, logLevel: string): MatchDriver {
   if (c.matchDriver === 'process') return new ProcessDriver({ command: ProcessDriver.defaultCommand(), controlUrl: c.controlUrl, logLevel });
   return new DockerDriver({
-    api: new DockerApi(c.dockerHost), image: c.matchImage, network: c.matchNetwork, controlUrl: c.controlUrl, owner: c.matchOwner,
+    api: new DockerApi(c.dockerHost, c.dockerGateSecret), image: c.matchImage, network: c.matchNetwork, controlUrl: c.controlUrl, owner: c.matchOwner,
     cpus: c.matchCpus, memoryMb: c.matchMemoryMb, pids: c.matchPids, logLevel, version: version.replace(/[^0-9A-Za-z.+-]/g, '').slice(0, 64) || 'dev',
   });
 }
