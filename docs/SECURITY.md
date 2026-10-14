@@ -119,6 +119,16 @@ vechten 120 s, 0 correcties, 0 strafpunten.
 - De richting moet een eenheidsvector zijn (|d| = 1 ± 0,02), anders wordt het schot genegeerd (`aim-vector`).
 - De oorsprong mag hoogstens 0,6 blok van het server-oog liggen, geëxtrapoleerd langs de laatste snelheid over de
   tijd sinds de laatste `pos` (max 0,1 s); anders schiet de server vanuit zijn eigen oog (`origin`).
+- Spreiding: lopen, in de lucht zijn en sliden komen van de server (`Stance.ts`, `Match.setStance`), niet van de `mv`/`air`
+  van het `fire`-bericht (blijven in het protocol voor oude clients, worden genegeerd). Gevoed door de geaccepteerde
+  `pos`-berichten: grondcontact uit de bewegingsvalidator (`ArcadeGuard.grounded`), snelheid uit de positieverschillen
+  (drempel 0,5 b/s, gelijk aan de client), slide uit de geaccepteerde slide-start (hitbox, telt als lopen). Een vlag telt pas
+  als de laatste twee rapportintervallen (~100 ms) het eens zijn: een eerlijke speler die net stopt of landt betaalt nooit voor het
+  rapport dat nog de oude toestand toont (de gunstigste van de twee kanten), maar een valsspeler moet twee volle rapporten
+  stilstaan of op de grond blijven voor de strakke spreiding, en dat doet een echte sprong of ren nooit. Bewust niet
+  teruggespoeld: lag-compensatie geldt de doelen, de eigen toestand van de schutter is die van zijn laatste rapporten.
+  Cheat-bots: stilstaan terwijl hij lucht+lopen claimt geeft gewone spreiding; springen of rennen terwijl hij grond+stil
+  claimt geeft lucht- resp. loopspreiding (`stanceCheats` in `scripts/cheat-bots.ts`; unit: `tests/stance.test.ts`).
 - Lag-compensatie: `min(250 ms, RTT/2 + interpolatievertraging)` (was RTT + 100 ms, max 350 ms).
 - Peeker's advantage: een slachtoffer dat 150 ms vóór het schot al achter dekking stond (gezien vanuit de oorsprong,
   drie lichaamspunten) wordt niet verder teruggespoeld. Test: slachtoffer rent achter dekking, schutter met 200 ms
