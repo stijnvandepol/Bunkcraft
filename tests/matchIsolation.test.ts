@@ -8,14 +8,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WebSocket, WebSocketServer } from 'ws';
 import { type ContainerCreate, LABEL_OWNER, buildMatchSpec, validateMatchSpec } from '../server/match/ContainerSpec';
 import type { MatchDriver, RunnerHandle } from '../server/match/Drivers';
-import { authRunner, runnerKey, type RunnerStatus } from '../server/match/Internal';
+import { authHeaders, authRunner, runnerKey, type RunnerStatus } from '../server/match/Internal';
 import { MatchPool, type Runner } from '../server/match/MatchPool';
 import { RemoteRoom, type RemoteHost } from '../server/match/RemoteRoom';
 import { ControlPlane, adoptableCode, cleanTally, savedArcadeType } from '../server/match/ControlPlane';
-import { RunnerProfiles } from '../server/match/MatchRunner';
+import { RunnerFailCounter, RunnerProfiles } from '../server/match/MatchRunner';
+import { passwordFailKey } from '../server/Security';
 import { ProfileService } from '../server/progression/ProfileService';
 import { PROTOCOL_VERSION } from '../src/net/protocol';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { bridge } from '../server/match/WsProxy';
@@ -322,8 +323,68 @@ describe('audit A2-11: a runner never sees a player\'s profile token or account 
   });
 });
 
+describe('audit A2-16: a runner cannot hammer the disk through /internal/save', () => {
+  it('coalesces saves to one write per interval (the last one wins) and caps the bytes per minute', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'bunk-save-'));
+    const lobbyDir = join(dir, 'rooms', 'ABCDEF');
+    mkdirSync(lobbyDir, { recursive: true });
+    const secret = 'match-secret-for-save-test-0123456';
+    const cp = new ControlPlane({
+      dataDir: dir, roomsDir: join(dir, 'rooms'), secret, warm: 0, max: 1, internalPort: 0, internalHost: '127.0.0.1',
+      idleGraceSec: 30, roomMaxPlayers: 8, motd: '', binary: true, rejoinGraceSec: 60, version: 't', profiles: null, skins: null, driver: new FakeDriver(),
+      saveIntervalMs: 300, saveBytesPerMin: 3 * 1024 * 1024,
+    });
+    await cp.start();
+    const id = 'abcdef0123456789';
+    // A lobby this control plane gave to the runner (normally set by the assignment).
+    (cp as unknown as { lobbies: Map<string, unknown> }).lobbies.set('ABCDEF', { room: { code: 'ABCDEF', runner: { id } }, dir: lobbyDir, gameType: 'tdm' });
+    const writes: string[] = [];
+    const file = join(lobbyDir, 'world.json');
+    const save = (n: number, pad = 0) => fetch(`http://127.0.0.1:${cp.internalPort}/internal/save`, {
+      method: 'POST', headers: { ...authHeaders(id, runnerKey(secret, id)), 'content-type': 'application/json' },
+      body: JSON.stringify({ code: 'ABCDEF', world: JSON.stringify({ gameType: 'tdm', n, pad: 'x'.repeat(pad) }) }),
+    }).then((r) => r.status);
+    try {
+      const watch = setInterval(() => { try { const w = readFileSync(file, 'utf8'); if (writes.at(-1) !== w) writes.push(w); } catch { /* not yet */ } }, 5);
+      for (let n = 1; n <= 20; n++) expect(await save(n)).toBe(200);
+      await new Promise((r) => setTimeout(r, 700));
+      clearInterval(watch);
+      expect(writes.length).toBeLessThanOrEqual(3); // not 20
+      expect(JSON.parse(readFileSync(file, 'utf8')).n).toBe(20); // nothing lost
+      const big = 1024 * 1024;
+      const statuses = [await save(21, big), await save(22, big), await save(23, big), await save(24, big)];
+      expect(statuses).toContain(429);
+    } finally {
+      await cp.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('audit A2-18: wrong lobby passwords in a runner cannot outrun the control plane count', () => {
+  it('connections opened before the reports arrive still stop at the limit', () => {
+    const reported: string[] = [];
+    const fails = new RunnerFailCounter((ip) => reported.push(ip));
+    const key = passwordFailKey('ABCDEF', '203.0.113.4');
+    // An attacker opens four connections at once: each gets the control plane's verdict "3 tries left".
+    for (let i = 0; i < 4; i++) fails.verdict('ABCDEF', '203.0.113.4', '3');
+    let tries = 0;
+    for (let i = 0; i < 4; i++) {
+      if (!fails.allowed(key)) break;
+      tries++;
+      fails.record(key);
+      fails.verdict('ABCDEF', '203.0.113.4', '3'); // a verdict computed before the report landed
+    }
+    expect(tries).toBe(3);
+    expect(reported).toHaveLength(3);
+    // Old control planes say ok/blocked.
+    fails.verdict('ZZZZZZ', '203.0.113.4', 'blocked');
+    expect(fails.allowed(passwordFailKey('ZZZZZZ', '203.0.113.4'))).toBe(false);
+  });
+});
+
 describe('remote room seat accounting', () => {
-  const host: RemoteHost = { identify: () => ({ ident: {} }), identOf: () => ({}), passwordBlocked: () => false, skinsFor: () => ({}), gone: () => undefined };
+  const host: RemoteHost = { identify: () => ({ ident: {} }), identOf: () => ({}), passwordRemaining: () => 5, skinsFor: () => ({}), gone: () => undefined };
   const status = (o: Partial<RunnerStatus>): RunnerStatus => ({
     id: 'r', version: 'v', room: 'ABCDEF', players: 0, reservedSeats: 0, botCount: 0, playersInPlay: 0, listed: true, locked: false, maxPlayers: 4,
     info: { name: 'x', gameType: 'tdm', maxPlayers: 4 }, lobby: null, teams: { red: 0, blue: 0 }, holds: [], playerList: [], tickP99Ms: 0, cpu: 0, rssBytes: 0, heapBytes: 0, ...o,

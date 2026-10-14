@@ -199,6 +199,11 @@ export class AccountService {
     return [...this.adminNames].filter((k) => !this.store.byName(k));
   }
 
+  /** Whether an account name is in ADMIN_ACCOUNTS (the owner's accounts: no other admin may lock, delete or de-admin them). */
+  isOwnerName(name: unknown): boolean {
+    return typeof name === 'string' && this.adminNames.has(usernameKey(name.slice(0, 32)));
+  }
+
   isAdmin(a: AccountRec): boolean {
     return a.admin === true || this.adminNames.has(a.key);
   }

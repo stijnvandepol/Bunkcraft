@@ -85,6 +85,10 @@ DoS. Regressietests: `tests/security/audit2.test.ts`, plus `matchIsolation`, `sk
 | A2-08 | Laag | `sanitizeChat`, `Rooms.create` | Bidi-overrides (U+202E), C1-tekens en zero-width in chat, MOTD en lobbynamen (spoofing) | `INVISIBLE_CHARS` weg (ZWJ blijft voor emoji) |
 | A2-10 | Laag | `WsProxy.bridge` | Containerlobby: een verbinding zonder `hello` bleef eeuwig open (in-process: 10 s) en hield verbindingsslots bezet | Ook hier 10 s |
 | A2-09 | Hardening | `Config.weakSecrets` | Kort `ADMIN_TOKEN`/`METRICS_TOKEN` | Foutmelding bij start onder 24 tekens |
+| A2-15 | Midden | `Parties`, `src/modes/Party.ts` | Partycodes van 5 tekens (~25 bit) waren met 2000 parties per /64 binnen uren te raden; een lid dat de kroon kreeg terwijl de maker weg was, kon de maker kicken | Codes van 10 tekens (~50 bit), getoond als `K7QM2-8XHTQ`; joinen 10/min per adres; de maker is niet te kicken |
+| A2-16 | Laag | `ControlPlane` (`/internal/save`) | Een runner kon onbeperkt vaak 2 MB laten wegschrijven | Hoogstens één schrijfactie per 5 s per runner (de nieuwste wint, bij einde altijd weggeschreven), max 16 MB per minuut (429) |
+| A2-17 | Midden | `Admin.ts` (accounts) | Elke admin kon de eigenaar (`ADMIN_ACCOUNTS`) en zichzelf vergrendelen, verwijderen, de-adminnen of een herstelcode geven (overname) | Voor admin-sessies 403 (en audit) op `ADMIN_ACCOUNTS`-namen en het eigen account; het `ADMIN_TOKEN` mag het wel |
+| A2-18 | Laag | `RunnerFailCounter`, `RemoteRoom` | Containerlobby: de runner kreeg alleen blocked/ok en fouten gingen async terug, dus tegelijk geopende verbindingen konden de wachtwoordlimiet overlopen (ook een flaky test) | De control plane stuurt het aantal resterende pogingen; de runner houdt het laagste en telt eigen fouten af |
 
 Gecontroleerd en in orde: ops-pagina (alleen `textContent`, CSP met hashes, `frame-ancestors 'none'` + `X-Frame-Options`,
 geen tokens in `localStorage`), CSRF (geen cookies; wijzigingen same-site + JSON), CORS alleen voor `ALLOWED_ORIGINS`,
@@ -92,12 +96,10 @@ gelijke antwoorden en rekentijd bij onbekende naam/fout wachtwoord, sessierotati
 queries, labels + naam, spec-allowlist, `__proto__`/hoofdlettervarianten als onbekende sleutel geweigerd), interne API
 (HMAC per runner, `lobbyOf` i.p.v. wat de runner noemt), PNG-decoder (afmetingen vóór allocatie, `maxOutputLength`),
 diep geneste JSON, `__proto__` in alle JSON-bodies (Maps of `Object.hasOwn`), padnamen (codes, hashes, ids via regex).
-`npm audit --omit=dev`: 0.
+`npm audit --omit=dev`: 0. `scripts/security/server-attacks.mjs` tegen een verse build: 32/32.
 
 Niet concreet gemaakt (bewust zo, of alleen met een overgenomen runner):
-- Een overgenomen runner kan `/internal/save` (max 2 MB) zo vaak sturen als hij wil: schrijfbelasting, alleen voor zijn eigen lobby.
-- Partycodes (5 tekens) zijn per /64 te raden (30/min); wie binnenkomt kan door de leider gekickt worden.
-- Elke admin kan andere admins vergrendelen of de vlag geven/afnemen (geen rangen); `ADMIN_ACCOUNTS` blijft admin zolang de env het zegt.
+- Admins onderling (zonder `ADMIN_ACCOUNTS`) hebben geen rangen: een admin kan een andere gewone admin vergrendelen of de vlag afnemen.
 - `ALLOWED_ORIGINS` leeg (compose-standaard zonder `install.sh`) laat WebSockets van elke site toe (Direct Connect heeft dat nodig).
 
 ## Arcade: anti-cheat en netcode (`server/anticheat/`)

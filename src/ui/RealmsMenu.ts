@@ -441,7 +441,7 @@ export class RealmsMenu {
   /** A code or invite link typed on the home screen. */
   private joinTyped(raw: string): void {
     const c = normalizeCode(raw);
-    // A party code (five characters, or a ?party= link) typed into the same box joins that party.
+    // A party code (ten characters, or a ?party= link) typed into the same box joins that party.
     if (!c && this.partyOn && normalizePartyCode(raw)) { void this.joinParty(raw); return; }
     if (!c) { this.say(t('realms.join.bad'), true); return; }
     const name = validSavedName();

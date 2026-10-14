@@ -9,6 +9,8 @@ import { AccountService } from '../../server/accounts/AccountService';
 import { weakSecrets } from '../../server/Config';
 import { OPS_CSP, OPS_HTML } from '../../server/OpsPage';
 import { GameServer } from '../../server/GameServer';
+import { PartyService } from '../../server/Parties';
+import { formatPartyCode, normalizePartyCode } from '../../src/modes/Party';
 import { RateLimiter, hashPassword } from '../../server/Security';
 import { PROTOCOL_VERSION, sanitizeChat } from '../../src/net/protocol';
 import { addressKey, blockKey } from '../../server/HttpSecurity';
@@ -186,6 +188,67 @@ describe('A2-14: parallel account logins cannot run past the per-address failure
     const from = { 'cf-connecting-ip': '203.0.113.88' };
     const all = await Promise.all(Array.from({ length: 30 }, (_, i) => post('/api/account/login', { name: `Nobody_${i}`, password: 'wrong wrong wrong' }, from)));
     expect(all.filter((r) => r.status === 401).length).toBeLessThanOrEqual(20);
+  }, 60_000);
+});
+
+describe('A2-15: party codes cannot be guessed, and a joiner cannot throw the founder out', () => {
+  it('a party code carries at least 48 bits and still reads as two short groups', () => {
+    const svc = new PartyService();
+    const made = svc.create('lead_er', 'tdm');
+    if (!made.ok) throw new Error(made.message);
+    const code = made.view.code;
+    expect(code.length * Math.log2(31)).toBeGreaterThanOrEqual(48);
+    expect(formatPartyCode(code)).toMatch(/^[A-Z0-9]{5}-[A-Z0-9]{5}$/);
+    expect(normalizePartyCode(formatPartyCode(code).toLowerCase())).toBe(code);
+    expect(normalizePartyCode(code.slice(0, 5))).toBeNull();
+  });
+
+  it('a member who got the crown while the founder was away cannot kick the founder', () => {
+    let now = 1_000_000;
+    const svc = new PartyService({ now: () => now });
+    const lead = svc.create('lead_er', 'tdm');
+    if (!lead.ok) throw new Error(lead.message);
+    const joiner = svc.join(lead.view.code, 'stranger', undefined);
+    if (!joiner.ok) throw new Error(joiner.message);
+    now += 25_000; // founder idle past LEADER_AWAY_MS, the joiner keeps polling
+    const v = svc.view(joiner.token);
+    if (!v.ok) throw new Error(v.message);
+    expect(v.view.leader).toBe(joiner.view.me);
+    expect(svc.kick(joiner.token, lead.view.me)).toMatchObject({ ok: false, error: 'forbidden' });
+  });
+
+  it('joining by code is limited to 10 per minute per address', async () => {
+    t = await startTestServer({ TRUST_CLOUDFLARE: '1' });
+    const from = { 'cf-connecting-ip': '203.0.113.99' };
+    const codes = await Promise.all(Array.from({ length: 12 }, (_, i) => post('/api/party/join', { code: `AAAAA${i}`, name: 'Guess_er' }, from)));
+    expect(codes.filter((r) => r.status === 429).length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('A2-17: an admin cannot take out the owner (ADMIN_ACCOUNTS) or themselves', () => {
+  const PW = 'correct horse battery';
+  it('lock, delete, de-admin, recovery and logout of a protected account are refused and audited', async () => {
+    const first = await startTestServer({ ADMIN_TOKEN: ADMIN });
+    const dir = first.dir;
+    t = first;
+    for (const name of ['Owner_1', 'Mod_1', 'Player_1']) expect((await post('/api/account/register', { name, password: PW })).status).toBe(201);
+    expect((await post('/api/admin/accounts/admin', { name: 'Mod_1', admin: true }, { authorization: `Bearer ${ADMIN}` })).status).toBe(200);
+    await first.stop();
+    t = await startTestServer({ ADMIN_TOKEN: ADMIN, ADMIN_ACCOUNTS: 'Owner_1' }, dir);
+    const mod = (await post('/api/account/login', { name: 'Mod_1', password: PW })).body.token as string;
+    const ops = (path: string, body: unknown) => post(`/api/ops${path}`, body, { authorization: `Bearer ${mod}`, origin: t!.base });
+    for (const [path, body] of [
+      ['/accounts/lock', { name: 'Owner_1' }], ['/accounts/delete', { name: 'owner_1' }], ['/accounts/admin', { name: 'Owner_1', admin: false }],
+      ['/accounts/recovery', { name: 'Owner_1' }], ['/accounts/logout', { name: 'Owner_1' }],
+      ['/accounts/lock', { name: 'Mod_1' }], ['/accounts/admin', { name: 'Mod_1', admin: false }], ['/accounts/delete', { name: 'Mod_1' }],
+    ] as const) expect([path, (await ops(path, body)).status]).toEqual([path, 403]);
+    // Ordinary moderation still works, and the token (the operator) is not restricted.
+    expect((await ops('/accounts/lock', { name: 'Player_1' })).status).toBe(200);
+    expect((await post('/api/admin/accounts/admin', { name: 'Mod_1', admin: false }, { authorization: `Bearer ${ADMIN}` })).status).toBe(200);
+    const audit = await fetch(`${t.base}/api/admin/audit`, { headers: { authorization: `Bearer ${ADMIN}` } }).then((r) => r.json()) as { entries: { who: string; status: number }[] };
+    expect(audit.entries.filter((e) => e.who === 'Mod_1' && e.status === 403).length).toBe(8);
+    // Still logged in and still admin: the owner.
+    expect((await post('/api/account/login', { name: 'Owner_1', password: PW })).status).toBe(200);
   }, 60_000);
 });
 

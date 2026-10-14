@@ -107,6 +107,12 @@ export class RateLimiter {
     return (this.hits.get(key) ?? []).filter((t) => now - t < this.windowMs).length < this.limit;
   }
 
+  /** How many more the key may do in the window (does not count). */
+  remaining(key: string): number {
+    const now = Date.now();
+    return Math.max(0, this.limit - (this.hits.get(key) ?? []).filter((t) => now - t < this.windowMs).length);
+  }
+
   record(key: string): void {
     const now = Date.now();
     const recent = (this.hits.get(key) ?? []).filter((t) => now - t < this.windowMs);

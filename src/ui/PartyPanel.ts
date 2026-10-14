@@ -1,4 +1,4 @@
-import { type PartyMemberView, type PartyView, partyLink } from '../modes/Party';
+import { type PartyMemberView, type PartyView, formatPartyCode, partyLink } from '../modes/Party';
 import { parseRank } from '../modes/progression/Levels';
 import { h } from './dom';
 import { t } from './i18n';
@@ -130,7 +130,7 @@ export class PartyPanel {
       h('div', { class: 'bc-eyebrow' }, iconEl('users'), h('span', { text: t('party.title') }),
         h('span', { class: 'party-count', text: t('party.count', v.members.length, v.max) })),
       h('div', { class: 'party-head' },
-        h('span', { class: 'party-code', 'aria-label': `${t('party.code')} ${v.code.split('').join(' ')}`, text: v.code }),
+        h('span', { class: 'party-code', 'aria-label': `${t('party.code')} ${v.code.split('').join(' ')}`, text: formatPartyCode(v.code) }),
         h('span', { class: 'party-head-actions' }, copy, leave)),
       list,
       h('div', { class: `party-foot${me && ready >= here.length ? ' all' : ''}`, text: foot }),

@@ -243,10 +243,10 @@ export async function startServer(config: Config, start: StartOptions = {}): Pro
   // Profiles: reading and changing one is cheap; creating one writes a file, so it has its own hourly limit.
   const profileLimit = new RateLimiter(60, 60_000);
   const profileCreateLimit = new RateLimiter(config.profileCreateLimit, 3_600_000);
-  // Parties: a party code is 5 characters, so guessing is limited per address; polling is limited per member (a
+  // Parties: a party code has ~50 bits (10 characters) and joining is limited per address on top; polling is limited per member (a
   // household shares an address, so the per-address limit for polls is generous) and so are the leader's actions.
   const partyCreateLimit = new RateLimiter(config.partyCreateLimit, 3_600_000);
-  const partyJoinLimit = new RateLimiter(30, 60_000);
+  const partyJoinLimit = new RateLimiter(10, 60_000);
   const partyPollLimit = new RateLimiter(120, 60_000);
   const partyIpLimit = new RateLimiter(900, 60_000);
   const partyActLimit = new RateLimiter(40, 60_000);

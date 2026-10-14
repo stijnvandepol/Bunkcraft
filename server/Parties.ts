@@ -34,6 +34,8 @@ interface Ticket { id: number; code: string; gameType: GameType; key: string; ex
 
 interface Party {
   id: string;
+  /** The member who made the party: nobody can kick them, also not a member who got the crown while they were away. */
+  founder: string;
   code: string;
   leader: string;
   mode: GameType;
@@ -89,9 +91,10 @@ export class PartyService {
     if (this.parties.size >= this.maxParties) return fail('unavailable', 'There are too many parties right now, try again later');
     if (profileId) this.leaveProfile(profileId);
     const now = this.now();
-    const party: Party = { id: randomBytes(6).toString('hex'), code: this.freshCode(), leader: '', mode, members: [], seq: 1, ticket: null, ticketSeq: 0 };
+    const party: Party = { id: randomBytes(6).toString('hex'), code: this.freshCode(), leader: '', founder: '', mode, members: [], seq: 1, ticket: null, ticketSeq: 0 };
     const { member, token } = this.addMember(party, clean, profileId, now);
     party.leader = member.id;
+    party.founder = member.id;
     this.parties.set(party.id, party);
     this.byCode.set(party.code, party);
     return { ok: true, token, view: this.viewOf(party, member, now) };
@@ -138,6 +141,7 @@ export class PartyService {
     if (hit.party.leader !== hit.member.id) return fail('forbidden', 'Only the party leader can remove players');
     const target = hit.party.members.find((m) => m.id === memberId);
     if (!target || target === hit.member) return fail('not_found', 'That player is not in the party');
+    if (target.id === hit.party.founder) return fail('forbidden', 'The player who made the party cannot be removed');
     this.kicked.set(target.tokenHash, this.now());
     this.removeMember(hit.party, target);
     return { ok: true };

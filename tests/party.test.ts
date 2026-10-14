@@ -32,12 +32,13 @@ function party(svc: PartyService, n: number): { code: string; tokens: string[]; 
 }
 
 describe('party codes', () => {
-  it('are five characters from the lobby alphabet, tolerant of case, dashes, spaces and links', () => {
-    expect(normalizePartyCode('k7qm2')).toBe('K7QM2');
-    expect(normalizePartyCode(' K7-QM2 ')).toBe('K7QM2');
-    expect(normalizePartyCode(partyLink('https://bunkcraft.example', 'K7QM2'))).toBe('K7QM2');
+  it('are ten characters from the lobby alphabet, tolerant of case, dashes, spaces and links', () => {
+    expect(normalizePartyCode('k7qm28xhtq')).toBe('K7QM28XHTQ');
+    expect(normalizePartyCode(' K7QM2-8XHTQ ')).toBe('K7QM28XHTQ');
+    expect(normalizePartyCode(partyLink('https://bunkcraft.example', 'K7QM28XHTQ'))).toBe('K7QM28XHTQ');
     expect(normalizePartyCode('K7QM2X')).toBeNull(); // a lobby code is not a party code
-    expect(normalizePartyCode('K7QI2')).toBeNull(); // I is not in the alphabet
+    expect(normalizePartyCode('K7QM2')).toBeNull(); // the old, guessable length
+    expect(normalizePartyCode('K7QI28XHTQ')).toBeNull(); // I is not in the alphabet
     expect(normalizePartyCode('')).toBeNull();
   });
 });

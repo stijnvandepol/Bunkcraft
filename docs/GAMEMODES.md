@@ -48,7 +48,7 @@ Vrienden groeperen zich in een **party** (maximaal 6) en spelen samen. Op de hom
 
 - **Maken en joinen:** *Party maken* geeft een code van 5 tekens (alfabet van de lobbycodes zonder I, L, O, 0, 1) en een
   link (`/?party=CODE`, knop *Link kopiëren*). Iemand anders typt de code in het partyveld (of in het gewone codeveld op de home:
-  vijf tekens of een `?party=`-link betekent party, zes tekens een lobby) of opent de link. Een lobbycode en een partycode
+  tien tekens (getoond als `K7QM2-8XHTQ`, niet te raden) of een `?party=`-link betekent party, zes tekens een lobby) of opent de link. Een lobbycode en een partycode
   zijn dus nooit te verwarren.
 - **Paneel:** per lid het rang-icoon (level of prestige, een gast heeft er geen), de naam, een kroon voor de leider en een
   chip: *Klaar* / *Niet klaar* / *Offline* / *In een potje*. De leider heeft per lid twee knoppen: leider maken en
