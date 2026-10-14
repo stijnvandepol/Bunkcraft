@@ -180,6 +180,15 @@ describe('A2-13: parallel hellos cannot run past the wrong-password limit', () =
   });
 });
 
+describe('A2-14: parallel account logins cannot run past the per-address failure limit', () => {
+  it('30 simultaneous wrong logins from one address get at most 20 password checks', async () => {
+    t = await startTestServer({ TRUST_CLOUDFLARE: '1' });
+    const from = { 'cf-connecting-ip': '203.0.113.88' };
+    const all = await Promise.all(Array.from({ length: 30 }, (_, i) => post('/api/account/login', { name: `Nobody_${i}`, password: 'wrong wrong wrong' }, from)));
+    expect(all.filter((r) => r.status === 401).length).toBeLessThanOrEqual(20);
+  }, 60_000);
+});
+
 describe('A2-02: one address cannot lock somebody else out of their account', () => {
   const PW = 'correct horse battery';
 

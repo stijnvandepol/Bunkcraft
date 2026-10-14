@@ -255,6 +255,9 @@ export async function startServer(config: Config, start: StartOptions = {}): Pro
   const accountRegisterLimit = new RateLimiter(config.accountRegisterLimit, 3_600_000);
   const accountFailLimit = new RateLimiter(20, 15 * 60_000);
   const accountRecoverLimit = new RateLimiter(10, 3_600_000);
+  /** Addresses with a password check running now (see api: one at a time). */
+  const accountChecks = new Set<string>();
+  const PASSWORD_CALLS = new Set(['/api/account/login', '/api/account/password', '/api/account/recovery/new', '/api/account/delete', '/api/account/register']);
   const ipBans = new IpBans(config.dataDir);
   const adminFailures = newAuthLimiter();
   const timers: NodeJS.Timeout[] = [];
@@ -348,7 +351,21 @@ export async function startServer(config: Config, start: StartOptions = {}): Pro
         features: { passwords: true, browse: !!rooms, binary: config.binary, realms: !!rooms, profiles: !!profiles, accounts: !!accounts, skins: !!skins, party: !!parties },
       });
     }
-    if (path.startsWith('/api/account/')) return accountApi(req, res, path, ip);
+    if (path.startsWith('/api/account/')) {
+      // Calls that check a password (scrypt, async) run one at a time per address: parallel requests would all pass the
+      // failure limits before the first failure is recorded. A browser never sends two at once.
+      if (req.method !== 'POST' || !PASSWORD_CALLS.has(path)) return accountApi(req, res, path, ip);
+      if (accountChecks.has(ip)) {
+        metrics.rateLimited('account_login');
+        return json(res, 429, { error: 'limited' }, { 'retry-after': '1' });
+      }
+      accountChecks.add(ip);
+      try {
+        return await accountApi(req, res, path, ip);
+      } finally {
+        accountChecks.delete(ip);
+      }
+    }
     if (path === '/api/profile' || path.startsWith('/api/profile/')) return profileApi(req, res, path, ip);
     if (!rooms) return json(res, 404, { error: 'Games are disabled on this server' });
     if (path === '/api/party' || path.startsWith('/api/party/')) return partyApi(req, res, url, path, ip);
