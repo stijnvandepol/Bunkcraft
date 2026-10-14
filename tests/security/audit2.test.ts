@@ -6,6 +6,7 @@ import { WebSocket } from 'ws';
 import { EventEmitter } from 'node:events';
 import type { WebSocket as WsType } from 'ws';
 import { AccountService } from '../../server/accounts/AccountService';
+import { weakSecrets } from '../../server/Config';
 import { GameServer } from '../../server/GameServer';
 import { PROTOCOL_VERSION, sanitizeChat } from '../../src/net/protocol';
 import { addressKey, blockKey } from '../../server/HttpSecurity';
@@ -90,6 +91,14 @@ describe('A2-08: no bidi overrides or invisible characters in chat and game name
     expect(made.status).toBe(201);
     const info = await fetch(`${t.base}/api/rooms/${made.body.code as string}`).then((r) => r.json()) as { name: string };
     expect(info.name).toBe('Niceemag');
+  });
+});
+
+describe('A2-09 (hardening): short admin and metrics tokens are reported', () => {
+  it('weakSecrets names the settings below 24 characters', () => {
+    expect(weakSecrets({ adminToken: 'hunter2', metricsToken: undefined })).toEqual(['ADMIN_TOKEN']);
+    expect(weakSecrets({ adminToken: ADMIN, metricsToken: 'short' })).toEqual(['METRICS_TOKEN']);
+    expect(weakSecrets({ adminToken: undefined, metricsToken: undefined })).toEqual([]);
   });
 });
 

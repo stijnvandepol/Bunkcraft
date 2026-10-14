@@ -9,7 +9,7 @@ import { IpBans, adminApi, newAuthLimiter } from './Admin';
 import { OPS_CSP, OPS_HTML } from './OpsPage';
 import { AuditLog, OpsSettings, type OpsValues, authorizeOps } from './Ops';
 import { backupAll } from './Backup';
-import { type Config, backupDirOf } from './Config';
+import { type Config, MIN_TOKEN_LENGTH, backupDirOf, weakSecrets } from './Config';
 import { GameServer } from './GameServer';
 import type { RoomServer } from './RoomServer';
 import { ControlPlane, driverFromConfig } from './match/ControlPlane';
@@ -102,6 +102,9 @@ export async function startServer(config: Config, start: StartOptions = {}): Pro
   const version = serverVersion();
   const backupDir = backupDirOf(config);
   const failLimiter = new RateLimiter(config.passwordFailLimit, 600_000);
+  // A short admin token can be guessed despite the limits (many addresses): say so loudly.
+  const weak = weakSecrets(config);
+  if (weak.length) log.error(`secret too short: use at least ${MIN_TOKEN_LENGTH} random characters (openssl rand -hex 24)`, { settings: weak });
   // One pool of chunk generation threads for every game (docs/research/SERVER-DEPLOY.md, A); 0 = the main thread does it.
   const genPool = config.chunkWorkers > 0
     ? new ChunkGenPool({ size: config.chunkWorkers, onError: (message) => log.error('chunk generation', { error: message }) })

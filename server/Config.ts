@@ -140,6 +140,17 @@ const num = (v: string | undefined, dflt: number): number => {
 };
 const list = (v: string | undefined): string[] => (v ?? '').split(/[,\s]+/).map((x) => x.trim()).filter(Boolean);
 
+/** Shortest ADMIN_TOKEN / METRICS_TOKEN that is safe against online guessing from many addresses (24 random characters). */
+export const MIN_TOKEN_LENGTH = 24;
+
+/** The secret settings that are too short to be safe (the server warns at start-up; `openssl rand -hex 24` makes a good one). */
+export function weakSecrets(c: Pick<Config, 'adminToken' | 'metricsToken'>): string[] {
+  const out: string[] = [];
+  if (c.adminToken !== undefined && c.adminToken.length < MIN_TOKEN_LENGTH) out.push('ADMIN_TOKEN');
+  if (c.metricsToken !== undefined && c.metricsToken.length < MIN_TOKEN_LENGTH) out.push('METRICS_TOKEN');
+  return out;
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const guard = (env.INVENTORY_GUARD ?? 'enforce').toLowerCase();
   return {
