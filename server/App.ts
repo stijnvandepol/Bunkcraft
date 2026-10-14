@@ -1,4 +1,4 @@
-import { SECURITY_HEADERS, clientAddress } from './HttpSecurity';
+import { SECURITY_HEADERS, addressKey, clientAddress } from './HttpSecurity';
 import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
 import { type IncomingMessage, type ServerResponse, createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -279,8 +279,8 @@ export async function startServer(config: Config, start: StartOptions = {}): Pro
   function clientIp(req: IncomingMessage): string {
     // Only the last X-Forwarded-For entry (appended by our own proxy) can be trusted: see HttpSecurity.clientAddress.
     const ip = clientAddress(req.headers['x-forwarded-for'], req.socket.remoteAddress, config.trustProxy, req.headers['cf-connecting-ip'], config.trustCloudflare, config.trustedProxyAddrs);
-    // IPv4 clients of a dual-stack socket show up as ::ffff:1.2.3.4; keep one spelling for limits and blocks.
-    return ip.replace(/^::ffff:/i, '');
+    // One key per client for limits and blocks: IPv4-mapped IPv6 as plain IPv4, IPv6 as its /64 (HttpSecurity.addressKey).
+    return addressKey(ip);
   }
 
   /** CORS for the JSON API, only for origins in ALLOWED_ORIGINS (without the list there are no CORS headers: same-origin only). */
@@ -833,7 +833,7 @@ export async function startServer(config: Config, start: StartOptions = {}): Pro
       adminApi({
         token: config.adminToken ?? '', rooms, main, bans: ipBans, skins, accounts, version, gauges, clientIp, readBody, json, control,
         who, audit, settings: rooms ? opsSettings : null,
-        dropIp: (ip) => { for (const c of wss.clients) if ((c as WebSocket & { ip?: string }).ip === ip) c.terminate(); },
+        dropIp: (ip) => { const key = addressKey(ip); for (const c of wss.clients) if ((c as WebSocket & { ip?: string }).ip === key) c.terminate(); },
       }, req, res, url.pathname).catch(() => { if (!res.headersSent) json(res, 500, { error: 'Server error' }); });
       return;
     }

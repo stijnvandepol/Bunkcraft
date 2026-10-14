@@ -1,7 +1,6 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { join } from 'node:path';
-import { isIP } from 'node:net';
 import { cpus, freemem, loadavg, totalmem } from 'node:os';
 import { normalizeCode, sanitizeChat } from '../src/net/protocol';
 import { isSkinHash } from '../src/skins/SkinFormat';
@@ -16,6 +15,7 @@ import { type AuditLog, type OpsIdentity, type OpsSettings, auditDetail } from '
 import { MAX_LOG_TAIL } from './match/Drivers';
 import type { SkinService } from './skins/SkinService';
 import { RateLimiter } from './Security';
+import { blockKey } from './HttpSecurity';
 
 /** Blocked client addresses (server-wide), persisted in DATA_DIR/ip-bans.json. */
 export class IpBans {
@@ -25,7 +25,8 @@ export class IpBans {
   constructor(dataDir: string) {
     this.file = join(dataDir, 'ip-bans.json');
     try {
-      if (existsSync(this.file)) for (const ip of JSON.parse(readFileSync(this.file, 'utf8')) as string[]) this.ips.add(ip);
+      // Stored as keys (an IPv6 address blocks its /64, HttpSecurity.addressKey); older files held plain addresses.
+      if (existsSync(this.file)) for (const ip of JSON.parse(readFileSync(this.file, 'utf8')) as string[]) { const k = typeof ip === 'string' ? blockKey(ip) : null; if (k) this.ips.add(k); }
     } catch (e) {
       log.error('ip-bans.json unreadable', { error: String(e) });
     }
@@ -40,12 +41,12 @@ export class IpBans {
   }
 
   add(ip: string): void {
-    this.ips.add(ip);
+    this.ips.add(blockKey(ip) ?? ip);
     this.save();
   }
 
   remove(ip: string): boolean {
-    const had = this.ips.delete(ip);
+    const had = this.ips.delete(blockKey(ip) ?? ip);
     if (had) this.save();
     return had;
   }
@@ -307,8 +308,8 @@ export async function adminApi(ctx: AdminContext, req: IncomingMessage, res: Ser
   if (parts[0] === 'ip-bans') {
     if (method === 'GET' && parts.length === 1) return json(res, 200, { ips: ctx.bans.list() });
     if (method === 'POST' && parts.length === 1) {
-      const ip = String((await body()).ip ?? '').trim();
-      if (!isIP(ip)) return json(res, 400, { error: 'Not an IP address' });
+      const ip = blockKey(String((await body()).ip ?? ''));
+      if (!ip) return json(res, 400, { error: 'Not an IP address' });
       ctx.bans.add(ip);
       ctx.dropIp?.(ip);
       log.warn('admin ip ban', { ip });
