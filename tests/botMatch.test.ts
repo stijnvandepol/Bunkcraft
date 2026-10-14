@@ -115,6 +115,34 @@ describe('bots play full matches', () => {
     }
   });
 
+  it('search and destroy: bots plant the bomb and defuse it (the mode\'s objectives drive them)', () => {
+    const l = lobby('snd', 'quarter', { scoreLimit: 6, timeLimitSec: 120, fill: 9 });
+    const w = watch(l);
+    const kinds = new Map<string, number>();
+    const event = l.match.event.bind(l.match);
+    l.match.event = (kind, ...rest) => { kinds.set(kind, (kinds.get(kind) ?? 0) + 1); event(kind, ...rest); };
+    l.join('Tester');
+    l.run(10 + 300);
+    expect(kinds.get('bomb-planted') ?? 0).toBeGreaterThan(0);
+    expect(w.cheats).toEqual([]);
+    expect(w.origin).toBe(0);
+  });
+
+  it('kill confirmed and infected: bots pick tags up, the infected hunt and survivors run', () => {
+    for (const type of ['killconfirmed', 'infected'] as const) {
+      const l = lobby(type, 'atomic', { scoreLimit: 500, timeLimitSec: 600 });
+      const w = watch(l);
+      const kinds = new Map<string, number>();
+      const event = l.match.event.bind(l.match);
+      l.match.event = (kind, ...rest) => { kinds.set(kind, (kinds.get(kind) ?? 0) + 1); event(kind, ...rest); };
+      l.join('Tester');
+      l.run(10 + 120);
+      if (type === 'killconfirmed') expect((kinds.get('tag-confirmed') ?? 0) + (kinds.get('tag-denied') ?? 0), type).toBeGreaterThan(5);
+      else expect(kinds.get('infected') ?? 0, type).toBeGreaterThan(0);
+      expect(w.cheats, type).toEqual([]);
+    }
+  });
+
   it('gun game: bots climb the ladder', () => {
     const l = lobby('gungame', 'classic', { difficulty: 'hard' });
     const w = watch(l);

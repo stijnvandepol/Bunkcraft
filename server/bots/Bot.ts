@@ -7,6 +7,7 @@ import { PHYSICS } from '../../src/player/Physics';
 import { type ClientMessage, type ModeState, SNAP_FLAG_ADS, type ServerMessage } from '../../src/net/protocol';
 import { type BlockQuery, traceBlocks } from '../Combat';
 import type { Match, MatchPlayer } from '../Match';
+import type { BotGoal } from '../modes/ModeLogic';
 import { BotAim, wrapAngle, yawPitchOf } from './BotAim';
 import { BotMover } from './BotMover';
 import { type BotSkill, NOTICE_NEAR } from './BotSkill';
@@ -423,6 +424,9 @@ export class Bot {
   private objective(now: number, me: MatchPlayer): { node: number; key: string; urgent: boolean } | null {
     const mode = this.env.mode;
     const g = this.env.graph, m = this.mover;
+    // Modes that say what a player should do (search and destroy, kill confirmed, infected, king of the hill).
+    const logic = this.env.match.logic;
+    if (logic.objectives) return this.goalObjective(now, me, logic.objectives(this.env.match, me));
     if (!mode || !me.team) return null;
     if (mode.kind === 'zones') {
       const zones = mode.zones;
@@ -486,6 +490,63 @@ export class Bot {
       return { node: g.nodeAt(enemy.x, enemy.y, enemy.z), key: `ctf:take:${enemy.status}`, urgent: Math.hypot(enemy.x - m.x, enemy.z - m.z) < 8 };
     }
     return null;
+  }
+
+  /**
+   * The mode's goals for this player (ModeLogic.objectives, best first): stand in a capture or defuse area (shuffling
+   * inside it, like on a zone), stay near a place to defend, walk over a pickup, go after a player, or keep away from one.
+   */
+  private goalObjective(now: number, me: MatchPlayer, goals: BotGoal[]): { node: number; key: string; urgent: boolean } | null {
+    if (goals.length === 0) return null;
+    let best = goals[0];
+    for (const gl of goals) if (gl.priority > best.priority) best = gl;
+    const g = this.env.graph, m = this.mover;
+    const dist = Math.hypot(best.x - me.x, best.z - me.z);
+    const inside = dist < best.r && Math.abs(me.y - best.y) < 2;
+    switch (best.kind) {
+      case 'capture':
+      case 'defuse': {
+        const key = `${best.kind}:${Math.round(best.x)},${Math.round(best.z)}`;
+        if (this.goalKey !== key || this.goalNode < 0 || (inside && !m.hasRoute && now > this.goalUntil)) {
+          this.setGoal(this.spotNear(best.x, best.y, best.z, Math.max(0.5, best.r - 1)), key, now, true, 3 + this.env.rng() * 3);
+        }
+        return { node: this.goalNode, key, urgent: inside || dist < best.r + 6 };
+      }
+      case 'defend': {
+        const key = `defend:${Math.round(best.x)},${Math.round(best.z)}`;
+        if (this.goalKey !== key || this.goalNode < 0 || now > this.goalUntil) {
+          this.setGoal(this.spotNear(best.x, best.y, best.z, Math.max(2, best.r + 4)), key, now, true, 6 + this.env.rng() * 6);
+        }
+        return { node: this.goalNode, key, urgent: false };
+      }
+      case 'pickup':
+        return { node: g.nodeAt(best.x, best.y, best.z), key: `pickup:${Math.round(best.x)},${Math.round(best.z)}`, urgent: dist < 8 };
+      case 'hunt': {
+        const key = `hunt:${best.target ?? 0}`;
+        if (this.goalKey !== key || this.goalNode < 0 || now > this.goalUntil) this.setGoal(g.nodeAt(best.x, best.y, best.z), key, now, true, 1);
+        return { node: this.goalNode, key, urgent: false };
+      }
+      case 'flee': {
+        if (dist > best.r * 2) return null; // far enough: just play
+        if (this.goalKey !== 'flee' || this.goalNode < 0 || now > this.goalUntil || !m.hasRoute) {
+          this.setGoal(this.awayFrom(best.x, best.z), 'flee', now, true, 3);
+        }
+        return { node: this.goalNode, key: 'flee', urgent: dist < best.r };
+      }
+      default: return null;
+    }
+  }
+
+  /** A main-area node far from (x, z), a few candidates; the furthest wins. */
+  private awayFrom(x: number, z: number): number {
+    const g = this.env.graph, rng = this.env.rng;
+    let best = -1, bestD = -1;
+    for (let i = 0; i < 8; i++) {
+      const n = g.coreList[Math.floor(rng() * g.coreList.length)];
+      const d = Math.hypot(g.nx[n] - x, g.nz[n] - z);
+      if (d > bestD) { bestD = d; best = n; }
+    }
+    return best;
   }
 
   /** Reload when empty or calm, switch to the sidearm when the primary runs dry up close. */
