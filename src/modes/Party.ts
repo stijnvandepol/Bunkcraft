@@ -12,8 +12,17 @@ import { CODE_ALPHABET } from '../net/protocol';
 
 /** Most people in one party. */
 export const MAX_PARTY = 6;
-/** Party codes are shorter than lobby codes (6) so the two can be told apart when typed into the same box. */
-export const PARTY_CODE_LENGTH = 5;
+/**
+ * Party codes are the only key to a party (anyone with it can join), so they must not be guessable: 10 characters of
+ * the 31-letter lobby alphabet (~50 bits). Shown and shared as two groups of five ("K7QM2-8XHTQ"); a lobby code has
+ * 6 characters, so the two are still told apart when typed into the same box.
+ */
+export const PARTY_CODE_LENGTH = 10;
+
+/** "K7QM28XHTQ" → "K7QM2-8XHTQ": easier to read, type and say. normalizePartyCode accepts both. */
+export function formatPartyCode(code: string): string {
+  return code.length === PARTY_CODE_LENGTH ? `${code.slice(0, 5)}-${code.slice(5)}` : code;
+}
 const PARTY_CODE_PATTERN = new RegExp(`^[${CODE_ALPHABET}]{${PARTY_CODE_LENGTH}}$`);
 
 /** Normalises user input ("k7qm2", " K7Q-M2 ", an invite link with ?party=) to a party code, or null. */

@@ -9,6 +9,8 @@ import { AccountService } from '../../server/accounts/AccountService';
 import { weakSecrets } from '../../server/Config';
 import { OPS_CSP, OPS_HTML } from '../../server/OpsPage';
 import { GameServer } from '../../server/GameServer';
+import { PartyService } from '../../server/Parties';
+import { formatPartyCode, normalizePartyCode } from '../../src/modes/Party';
 import { RateLimiter, hashPassword } from '../../server/Security';
 import { PROTOCOL_VERSION, sanitizeChat } from '../../src/net/protocol';
 import { addressKey, blockKey } from '../../server/HttpSecurity';
@@ -187,6 +189,40 @@ describe('A2-14: parallel account logins cannot run past the per-address failure
     const all = await Promise.all(Array.from({ length: 30 }, (_, i) => post('/api/account/login', { name: `Nobody_${i}`, password: 'wrong wrong wrong' }, from)));
     expect(all.filter((r) => r.status === 401).length).toBeLessThanOrEqual(20);
   }, 60_000);
+});
+
+describe('A2-15: party codes cannot be guessed, and a joiner cannot throw the founder out', () => {
+  it('a party code carries at least 48 bits and still reads as two short groups', () => {
+    const svc = new PartyService();
+    const made = svc.create('lead_er', 'tdm');
+    if (!made.ok) throw new Error(made.message);
+    const code = made.view.code;
+    expect(code.length * Math.log2(31)).toBeGreaterThanOrEqual(48);
+    expect(formatPartyCode(code)).toMatch(/^[A-Z0-9]{5}-[A-Z0-9]{5}$/);
+    expect(normalizePartyCode(formatPartyCode(code).toLowerCase())).toBe(code);
+    expect(normalizePartyCode(code.slice(0, 5))).toBeNull();
+  });
+
+  it('a member who got the crown while the founder was away cannot kick the founder', () => {
+    let now = 1_000_000;
+    const svc = new PartyService({ now: () => now });
+    const lead = svc.create('lead_er', 'tdm');
+    if (!lead.ok) throw new Error(lead.message);
+    const joiner = svc.join(lead.view.code, 'stranger', undefined);
+    if (!joiner.ok) throw new Error(joiner.message);
+    now += 25_000; // founder idle past LEADER_AWAY_MS, the joiner keeps polling
+    const v = svc.view(joiner.token);
+    if (!v.ok) throw new Error(v.message);
+    expect(v.view.leader).toBe(joiner.view.me);
+    expect(svc.kick(joiner.token, lead.view.me)).toMatchObject({ ok: false, error: 'forbidden' });
+  });
+
+  it('joining by code is limited to 10 per minute per address', async () => {
+    t = await startTestServer({ TRUST_CLOUDFLARE: '1' });
+    const from = { 'cf-connecting-ip': '203.0.113.99' };
+    const codes = await Promise.all(Array.from({ length: 12 }, (_, i) => post('/api/party/join', { code: `AAAAA${i}`, name: 'Guess_er' }, from)));
+    expect(codes.filter((r) => r.status === 429).length).toBeGreaterThanOrEqual(2);
+  });
 });
 
 describe('A2-02: one address cannot lock somebody else out of their account', () => {

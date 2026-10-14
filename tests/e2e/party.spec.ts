@@ -49,7 +49,7 @@ test('party: two friends group up, the leader plays and both land in one lobby o
   await a.keyboard.press('Enter');
   await expect(a.locator('.home-party[data-party="on"]')).toBeVisible();
   const code = (await a.locator('.party-code').textContent())!.trim();
-  expect(code).toMatch(/^[A-Z0-9]{5}$/);
+  expect(code).toMatch(/^[A-Z0-9]{5}-[A-Z0-9]{5}$/);
   await expect(members(a)).toHaveCount(1);
   await expect(a.locator('.party-member.leader.you .party-crown')).toBeVisible();
   await expect(a.locator('.party-member .rank-badge')).toHaveCount(1);

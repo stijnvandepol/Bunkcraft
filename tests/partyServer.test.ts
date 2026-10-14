@@ -70,7 +70,7 @@ describe('parties over the API', () => {
     const lead = await new Player(t, 'lead_one').makeProfile();
     await lead.create();
     const code = lead.view.code;
-    expect(code).toMatch(/^[A-Z0-9]{5}$/);
+    expect(code).toMatch(/^[A-Z0-9]{10}$/);
     const a = await new Player(t, 'friend_a').makeProfile();
     const b = await new Player(t, 'friend_b').makeProfile();
     await a.join(code);
