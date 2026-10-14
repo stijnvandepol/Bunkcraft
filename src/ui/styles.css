@@ -812,7 +812,7 @@ html, body {
 .chat-suggest > div { color: #aaa; line-height: calc(var(--s) * 9); }
 .chat-suggest > div.sel { color: #ffff55; }
 
-.nametags { position: absolute; inset: 0; pointer-events: none; z-index: 4; overflow: hidden; }
+.nametags { position: absolute; inset: 0; pointer-events: none; z-index: 4; overflow: hidden; contain: layout style paint; }
 .nametag {
   position: absolute;
   left: 0;
@@ -947,7 +947,7 @@ html, body {
 }
 
 /* Hit marker: four diagonal ticks. */
-.arc-aim { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; }
+.arc-aim { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; contain: layout style; }
 /* Hit marker: an X of four bars starting a small gap away from the aim point (GUI-scaled, whole pixels). */
 .arc-hit { position: absolute; left: 50%; top: 50%; width: 0; height: 0; opacity: 0; --hl: calc(var(--s) * 5); --hw: max(2px, calc(var(--s) * 1)); --hg: calc(var(--s) * 3); }
 .arc-hit i {

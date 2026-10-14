@@ -34,7 +34,51 @@ function sortBackToFront(a: RenderItem, b: RenderItem): number {
   return a.id < b.id ? -1 : 1;
 }
 
-const FLASH_COLOR = new THREE.Color(0.78, 0.82, 1.0);
+/** Lists up to this long are sorted by insertion (no allocation); longer ones fall back to the native sort. */
+const INSERTION_SORT_MAX = 96;
+
+/**
+ * Sorts a render list in place. V8's Array.prototype.sort allocates a scratch array on every call, and three.js calls it
+ * three times per render() (opaque, transmissive, transparent): main pass, hand pass, shadow pass. The comparators are
+ * total orders (the id breaks ties), so an insertion sort gives exactly the order the native sort would.
+ */
+function sortList(a: RenderItem[], cmp: (x: RenderItem, y: RenderItem) => number): void {
+  const n = a.length;
+  if (n < 2) return;
+  if (n > INSERTION_SORT_MAX) { a.sort(cmp); return; }
+  for (let i = 1; i < n; i++) {
+    const v = a[i];
+    let j = i - 1;
+    while (j >= 0 && cmp(a[j], v) > 0) { a[j + 1] = a[j]; j--; }
+    a[j + 1] = v;
+  }
+}
+
+interface PatchableList {
+  opaque: RenderItem[]; transmissive: RenderItem[]; transparent: RenderItem[];
+  sort(o?: (a: RenderItem, b: RenderItem) => number, t?: (a: RenderItem, b: RenderItem) => number): void;
+}
+
+/** Gives every render list three.js hands out the allocation-free sort above. */
+function patchRenderListSort(three: THREE.WebGLRenderer): void {
+  const lists = three.renderLists as unknown as { get(scene: THREE.Object3D, depth: number): PatchableList };
+  const get = lists.get.bind(lists);
+  const seen = new WeakSet<object>();
+  lists.get = (scene, depth) => {
+    const l = get(scene, depth);
+    if (!seen.has(l)) {
+      seen.add(l);
+      l.sort = (o, t) => {
+        sortList(l.opaque, o ?? sortFrontToBack);
+        sortList(l.transmissive, t ?? sortBackToFront);
+        sortList(l.transparent, t ?? sortBackToFront);
+      };
+    }
+    return l;
+  };
+}
+
+const FLASH_COLOR =new THREE.Color(0.78, 0.82, 1.0);
 
 export interface FrameStats {
   drawCalls: number;
@@ -94,6 +138,7 @@ export class Renderer {
     // three.js' own comparators return doubles, which V8 boxes into heap numbers on every compare.
     this.three.setOpaqueSort(sortFrontToBack);
     this.three.setTransparentSort(sortBackToFront);
+    patchRenderListSort(this.three);
     this.three.outputColorSpace = THREE.LinearSRGBColorSpace; // shaders output display-ready colours
     this.three.setClearColor(0x000000, 1);
 
