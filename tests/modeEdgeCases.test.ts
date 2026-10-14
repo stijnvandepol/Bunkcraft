@@ -111,3 +111,24 @@ describe('mode clocks stand still while only kept seats are left', () => {
     expect(st2.switchIn).toBeLessThanOrEqual(st.switchIn + 0.1);
   });
 });
+
+describe('hardpoint edge cases', () => {
+  it('a hill that moved on is nobody\'s: its old owner does not show on the next-hill marker', () => {
+    const s = live('hardpoint', 2);
+    const P = gameTypeDef('hardpoint').params!;
+    const red = [...s.match.players.values()].find((p) => p.team === 'red')!;
+    const blue = [...s.match.players.values()].find((p) => p.team === 'blue')!;
+    const z0 = s.match.map.zones[0];
+    place(s, blue.id, -40, 65, -40);
+    place(s, red.id, z0.x, z0.y, z0.z);
+    s.advance(1);
+    const st = s.host.of('mode').at(-1)!.state;
+    if (st.kind !== 'zones') throw new Error('zones');
+    expect(st.zones[0].owner).toBe('red');
+    s.advance((P.rotateSec ?? 60) + 0.5);
+    const gap = s.host.of('mode').at(-1)!.state;
+    if (gap.kind !== 'zones') throw new Error('zones');
+    expect(gap.gap).toBe(true);
+    expect(gap.zones.every((z) => z.owner === '')).toBe(true);
+  });
+});

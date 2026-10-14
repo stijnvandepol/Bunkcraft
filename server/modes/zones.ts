@@ -105,6 +105,9 @@ export class ZonesLogic extends BaseLogic {
   /** Moves the hill on after `rotateSec`, with a pause of `gapSec` in between. */
   private rotate(m: Match, now: number, rotateSec: number, gapSec: number): void {
     if (this.hill >= 0 && now >= this.hillEnd) {
+      // The old hill is nobody's now (its marker would otherwise keep the last owner's colour until it is live again).
+      const old = this.runs[this.hill];
+      if (old) { old.owner = ''; old.contested = false; old.red = old.blue = 0; }
       this.hill = -1;
       this.gapEnd = now + gapSec;
       m.markModeDirty();
