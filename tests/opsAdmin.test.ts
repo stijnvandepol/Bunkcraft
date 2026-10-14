@@ -20,7 +20,7 @@ afterEach(async () => {
 });
 
 async function start(env: Record<string, string> = {}, dir?: string): Promise<TestServer> {
-  const t = await startTestServer({ ADMIN_ACCOUNTS: 'Stijn', ACCOUNT_REGISTER_LIMIT: '100', ADMIN_TOKEN: TOKEN, ...env }, dir);
+  const t = await startTestServer({ ACCOUNT_REGISTER_LIMIT: '100', ADMIN_TOKEN: TOKEN, ...env }, dir);
   stoppers.push(t);
   return t;
 }
@@ -41,10 +41,18 @@ async function register(t: TestServer, name: string): Promise<string> {
   return r.body.token as string;
 }
 
+/** Registers a normal account and makes it an admin through the token API (the persistent flag). Returns its session. */
+async function registerAdmin(t: TestServer, name: string): Promise<string> {
+  const session = await register(t, name);
+  const r = await call(t, 'POST', '/api/admin/accounts/admin', TOKEN, { name, admin: true });
+  expect(r.status).toBe(200);
+  return session;
+}
+
 describe('ops API: who gets in', () => {
   it('lets an ADMIN_ACCOUNTS account in with its session (name case-insensitive), refuses a normal account', async () => {
     const t = await start();
-    const admin = await register(t, 'stijn');
+    const admin = await registerAdmin(t, 'stijn');
     const player = await register(t, 'Player1');
     const who = await call(t, 'GET', '/api/ops/whoami', admin);
     expect(who.status).toBe(200);
@@ -71,12 +79,12 @@ describe('ops API: who gets in', () => {
   });
 
   it('refuses a logged-out session (401) and a locked account (403 while a session survives, 401 once ended)', async () => {
-    const t = await start({ ADMIN_ACCOUNTS: 'Stijn,Second' });
-    const a = await register(t, 'Stijn');
+    const t = await start();
+    const a = await registerAdmin(t, 'Stijn');
     expect((await call(t, 'POST', '/api/account/logout', a, {})).status).toBe(200);
     expect((await call(t, 'GET', '/api/ops/overview', a)).status).toBe(401);
 
-    const b = await register(t, 'Second');
+    const b = await registerAdmin(t, 'Second');
     expect((await call(t, 'GET', '/api/ops/overview', b)).status).toBe(200);
     // A lock flag next to a live session (an edited account file): still no entry.
     const store = (t.server as unknown as { profiles: { accounts: { store: { byName(k: string): { locked?: boolean } } } } }).profiles.accounts.store;
@@ -89,7 +97,7 @@ describe('ops API: who gets in', () => {
   });
 
   it('a persistent admin flag (CLI: bunkcraft account admin <name> on) works without ADMIN_ACCOUNTS and can be withdrawn', async () => {
-    const t = await start({ ADMIN_ACCOUNTS: '' });
+    const t = await start();
     const s = await register(t, 'Helper');
     expect((await call(t, 'GET', '/api/ops/overview', s)).status).toBe(403);
     const on = await call(t, 'POST', '/api/admin/accounts/admin', TOKEN, { name: 'helper', admin: true });
@@ -105,7 +113,7 @@ describe('ops API: who gets in', () => {
 
   it('rate limits failures per address like the admin token (then 429, even for a good session)', async () => {
     const t = await start();
-    const admin = await register(t, 'Stijn');
+    const admin = await registerAdmin(t, 'Stijn');
     let last = 0;
     for (let i = 0; i < 22; i++) last = (await call(t, 'GET', '/api/ops/overview', `s1.${'A'.repeat(22)}.${String(i).padStart(32, 'x')}`)).status;
     expect(last).toBe(429);
@@ -114,7 +122,7 @@ describe('ops API: who gets in', () => {
 
   it('refuses cross-site changes, and browser sessions must send JSON', async () => {
     const t = await start();
-    const admin = await register(t, 'Stijn');
+    const admin = await registerAdmin(t, 'Stijn');
     expect((await call(t, 'POST', '/api/ops/save', admin, {}, { origin: 'https://evil.example' })).status).toBe(403);
     expect((await call(t, 'POST', '/api/ops/save', admin, {}, { 'sec-fetch-site': 'cross-site' })).status).toBe(403);
     expect((await call(t, 'POST', '/api/ops/save', TOKEN, {}, { origin: 'https://evil.example' })).status).toBe(403);
@@ -127,7 +135,7 @@ describe('ops API: who gets in', () => {
 
   it('writes every change to the audit log with the admin who did it', async () => {
     const t = await start();
-    const admin = await register(t, 'Stijn');
+    const admin = await registerAdmin(t, 'Stijn');
     await call(t, 'POST', '/api/ops/announce', admin, { text: 'Restart in 5 minutes' });
     await call(t, 'POST', '/api/ops/settings', TOKEN, { values: { motd: 'Hello' } });
     await call(t, 'GET', '/api/ops/overview', admin);
@@ -135,6 +143,7 @@ describe('ops API: who gets in', () => {
     expect(audit.body.entries.map((e: { who: string; action: string; status: number }) => [e.who, e.action, e.status])).toEqual([
       ['admin token', 'POST settings', 200],
       ['Stijn', 'POST announce', 200],
+      ['admin token', 'POST accounts/admin', 200],
     ]);
     expect(audit.body.entries[1].detail).toContain('text=Restart in 5 minutes');
   });
@@ -148,10 +157,42 @@ describe('ops API: who gets in', () => {
   });
 });
 
+describe('ADMIN_ACCOUNTS', () => {
+  it('cannot be registered while unclaimed (409 name_taken), nor through a look-alike; a claimed name grants admin (case-insensitive)', async () => {
+    // Unclaimed: the exact name, another case, a homoglyph / separator look-alike all fail.
+    const t = await start({ ADMIN_ACCOUNTS: 'Stijn' });
+    for (const name of ['Stijn', 'stijn', 'STIJN', 'St1jn', 'Sti_jn']) {
+      const r = await call(t, 'POST', '/api/account/register', undefined, { name, password: PW });
+      expect(r.status, name).toBe(409);
+      expect(r.body.error, name).toBe('name_taken');
+    }
+    // An unrelated name still registers.
+    expect((await call(t, 'POST', '/api/account/register', undefined, { name: 'Player1', password: PW })).status).toBe(201);
+
+    // The account exists first (a server without the list), then the restart with ADMIN_ACCOUNTS lists it.
+    const dir = t.dir;
+    await t.stop();
+    stoppers.splice(stoppers.indexOf(t), 1);
+    const plain = await start({}, dir);
+    const session = await register(plain, 'stijn');
+    expect((await call(plain, 'GET', '/api/ops/overview', session)).status).toBe(403);
+    await plain.stop();
+    stoppers.splice(stoppers.indexOf(plain), 1);
+    const listed = await start({ ADMIN_ACCOUNTS: 'STIJN' }, dir);
+    expect((await call(listed, 'GET', '/api/ops/whoami', session)).body).toMatchObject({ who: 'stijn', via: 'account' });
+    expect((await call(listed, 'GET', '/api/ops/overview', session)).status).toBe(200);
+    expect((await call(listed, 'GET', '/api/account/me', session)).body.account).toEqual({ name: 'stijn', admin: true });
+    // Still not registerable twice, and a normal account stays a normal account.
+    expect((await call(listed, 'POST', '/api/account/register', undefined, { name: 'Stijn', password: PW })).status).toBe(409);
+    const player = await call(listed, 'POST', '/api/account/login', undefined, { name: 'Player1', password: PW });
+    expect((await call(listed, 'GET', '/api/ops/overview', player.body.token as string)).status).toBe(403);
+  });
+});
+
 describe('ops settings', () => {
   it('validates ranges, applies at once (no restart), persists, and resets to the env value', async () => {
     const t = await start({ ROOM_MAX_PLAYERS: '12', QUICKPLAY_BOTS: '8', MOTD: 'From env' });
-    const admin = await register(t, 'Stijn');
+    const admin = await registerAdmin(t, 'Stijn');
     const bad: Record<string, unknown>[] = [
       { roomMaxPlayers: 1 }, { roomMaxPlayers: 17 }, { roomMaxPlayers: 8.5 }, { quickPlayBots: -1 }, { motd: '' }, { motd: 42 },
       { matchWarmPool: 17 }, { maxMatchContainers: 0 }, { matchCpus: 9 }, { matchMemoryMb: 64 }, { matchIdleGraceSec: 1 }, { nope: 1 },

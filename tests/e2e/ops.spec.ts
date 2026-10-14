@@ -2,11 +2,12 @@ import type { Page } from '@playwright/test';
 import { expect, openTitle, test } from './fixtures';
 
 /**
- * The ops dashboard: an account in ADMIN_ACCOUNTS (playwright.config.ts) gets the admin link on the home screen, which
+ * The ops dashboard: an account with the admin flag (granted through ADMIN_TOKEN, playwright.config.ts) gets the admin link on the home screen, which
  * opens /ops in a new tab, logged in through the game's own session; the overview shows the running lobby, and a
  * setting changed there reaches the server at once. A normal account sees no link and the dashboard turns it away.
  */
 const PW = 'correct horse battery';
+const ADMIN_TOKEN = 'e2e-admin-token-0123456789abcdef'; // same as playwright.config.ts
 
 /** Registers an account through the API and makes it this browser's session (what the account screen does). */
 async function registerAndAdopt(page: Page, name: string): Promise<string> {
@@ -22,6 +23,8 @@ async function registerAndAdopt(page: Page, name: string): Promise<string> {
 test('ops: an admin account opens the dashboard from the home screen, sees the lobby and changes a setting', async ({ page, context, consoleErrors }) => {
   await openTitle(page);
   await registerAndAdopt(page, 'E2e_Admin');
+  const grant = await page.request.post('/api/admin/accounts/admin', { headers: { authorization: `Bearer ${ADMIN_TOKEN}` }, data: { name: 'E2e_Admin', admin: true } });
+  expect(grant.status()).toBe(200);
   // A running lobby to find in the dashboard.
   const code = await page.evaluate(async () => {
     const res = await fetch('/api/rooms', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Ops E2E', gameType: 'tdm', scoreLimit: 50, timeLimitSec: 600 }) });

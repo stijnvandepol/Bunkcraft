@@ -15,10 +15,13 @@ beforeAll(async () => {
   t = await startTestServer({
     MATCH_ISOLATION: 'container', MATCH_DRIVER: 'process', MATCH_WARM_POOL: '1', MAX_MATCH_CONTAINERS: '6', INTERNAL_PORT: '0',
     INTERNAL_HOST: '127.0.0.1', QUICKPLAY_BOTS: '0', REJOIN_GRACE_SEC: '60', MATCH_IDLE_GRACE_SEC: '30',
-    ADMIN_TOKEN: TOKEN, ADMIN_ACCOUNTS: 'Stijn', ACCOUNT_REGISTER_LIMIT: '100',
+    ADMIN_TOKEN: TOKEN, ACCOUNT_REGISTER_LIMIT: '100',
   });
   const reg = await fetch(`${t.base}/api/account/register`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Stijn', password: 'correct horse battery' }) });
   session = ((await reg.json()) as { token: string }).token;
+  // Admin through the persistent flag (an unclaimed ADMIN_ACCOUNTS name cannot be registered).
+  const adm = await fetch(`${t.base}/api/admin/accounts/admin`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` }, body: JSON.stringify({ name: 'Stijn', admin: true }) });
+  if (adm.status !== 200) throw new Error(`could not make the test account an admin: ${adm.status}`);
 }, 60_000);
 afterAll(async () => { await t?.stop(); cleanup(t.dir); });
 

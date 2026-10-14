@@ -69,8 +69,8 @@ export default defineConfig({
         STATIC_DIR: 'tests/e2e', LOG_LEVEL: 'warn',
         // Quick play lobbies stay human-only: the flows count players and wait in the warm-up (server bots are tested apart).
         QUICKPLAY_BOTS: '0',
-        // ops.spec.ts: this account (registered by the test) may use the ops dashboard.
-        ADMIN_ACCOUNTS: 'E2e_Admin', ACCOUNT_REGISTER_LIMIT: '1000',
+        // ops.spec.ts: the test registers a normal account and makes it an admin through this token (an unclaimed ADMIN_ACCOUNTS name cannot be registered).
+        ADMIN_TOKEN: 'e2e-admin-token-0123456789abcdef', ACCOUNT_REGISTER_LIMIT: '1000',
       },
     },
     {
