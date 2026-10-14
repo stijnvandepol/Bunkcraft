@@ -6,6 +6,17 @@ export const ARENA_FLOOR_Y = 64;
 export const QUADRANT = 48;
 /** Tallest cover/roof in blocks above the floor (the wall has its own height). */
 export const MAX_COVER = 10;
+/**
+ * A roofed room ("giant house" maps): the walls are `wallHeight` high and the builder may draw up to `ceiling` blocks
+ * above the floor (the ceiling layer sits above the walls, over the whole arena including the wall ring), so a map
+ * can fill the space with a ceiling, lamps, curtains and tall furniture. Maps without a room keep MAX_COVER.
+ */
+export interface Room {
+  /** Highest layer (above the floor) the builder can fill; the ceiling layer is wallHeight + 1 ≤ this. */
+  ceiling: number;
+  /** Cover up to this height counts as "the play space": surface queries (heightAt, zones) ignore what hangs above it. */
+  playHeight: number;
+}
 /** Placeholder block resolved to red wool on the left half (x < 0) and blue wool on the right half. */
 export const TEAM = 254;
 
@@ -66,6 +77,8 @@ export interface ArenaMapDef {
   halfX: number;
   halfZ: number;
   wallHeight: number;
+  /** Room maps (see `Room`): cover storage taller than MAX_COVER, up to a ceiling above the walls. */
+  room?: Room;
   wallBlock: number;
   floorBlock: number;
   /** The seed picks one of this many cover layouts. */
@@ -95,6 +108,8 @@ export interface FreeArenaMapDef {
   halfX: number;
   halfZ: number;
   wallHeight: number;
+  /** Room maps (see `Room`): cover storage taller than MAX_COVER, up to a ceiling above the walls. */
+  room?: Room;
   wallBlock: number;
   floorBlock: number;
   variants: number;
@@ -143,6 +158,10 @@ export class ArenaMap {
   readonly name: string;
   readonly description: string;
   readonly wallHeight: number;
+  /** Room maps: the layers the builder can fill and the height of the play space (see `Room`). */
+  readonly room: Room | null;
+  /** Layers of cover storage per column (MAX_COVER, or the room's ceiling). */
+  readonly cover: number;
   readonly variants: number;
   /** x in [minX, maxX), z in [minZ, maxZ). */
   readonly bounds: { minX: number; maxX: number; minZ: number; maxZ: number };
@@ -165,6 +184,8 @@ export class ArenaMap {
     this.name = def.name;
     this.description = def.description;
     this.wallHeight = def.wallHeight;
+    this.room = def.room ?? null;
+    this.cover = def.room ? def.room.ceiling : MAX_COVER;
     this.variants = def.variants;
     this.bounds = { minX: -def.halfX, maxX: def.halfX, minZ: -def.halfZ, maxZ: def.halfZ };
     this.objectives = def.objectives;
@@ -267,7 +288,8 @@ export class ArenaMap {
     let l = this.layouts[variant];
     if (l) return l;
     if (this.free) return (this.layouts[variant] = this.freeLayout(this.free, variant));
-    const cells = new Uint8Array(QUADRANT * QUADRANT * MAX_COVER);
+    const cells = new Uint8Array(QUADRANT * QUADRANT * this.cover);
+    const cover = this.cover;
     const floor = new Uint8Array(QUADRANT * QUADRANT).fill(this.quadrant!.floorBlock);
     const clampU = (n: number) => Math.max(0, Math.min(QUADRANT - 1, n));
     l = { cells, floor };
@@ -275,7 +297,7 @@ export class ArenaMap {
       box: (u0, u1, v0, v1, h0, h1, id) => {
         for (let u = clampU(u0); u <= clampU(u1); u++) {
           for (let v = clampU(v0); v <= clampU(v1); v++) {
-            for (let h = Math.max(1, h0); h <= Math.min(MAX_COVER, h1); h++) cells[(u * QUADRANT + v) * MAX_COVER + h - 1] = id;
+            for (let h = Math.max(1, h0); h <= Math.min(cover, h1); h++) cells[(u * QUADRANT + v) * cover + h - 1] = id;
           }
         }
       },
@@ -290,7 +312,8 @@ export class ArenaMap {
   /** Full-arena storage for a free-form map: column index (x − minX) · depth + (z − minZ). */
   private freeLayout(def: FreeArenaMapDef, variant: number): Layout {
     const w = def.halfX * 2, d = def.halfZ * 2;
-    const cells = new Uint8Array(w * d * MAX_COVER);
+    const cells = new Uint8Array(w * d * this.cover);
+    const cover = this.cover;
     const floor = new Uint8Array(w * d).fill(def.floorBlock);
     const cx = (n: number) => Math.max(0, Math.min(w - 1, n + def.halfX));
     const cz = (n: number) => Math.max(0, Math.min(d - 1, n + def.halfZ));
@@ -298,7 +321,7 @@ export class ArenaMap {
       box: (x0, x1, z0, z1, h0, h1, id) => {
         for (let x = cx(Math.min(x0, x1)); x <= cx(Math.max(x0, x1)); x++) {
           for (let z = cz(Math.min(z0, z1)); z <= cz(Math.max(z0, z1)); z++) {
-            for (let h = Math.max(1, h0); h <= Math.min(MAX_COVER, h1); h++) cells[(x * d + z) * MAX_COVER + h - 1] = id;
+            for (let h = Math.max(1, h0); h <= Math.min(cover, h1); h++) cells[(x * d + z) * cover + h - 1] = id;
           }
         }
       },
@@ -327,10 +350,15 @@ export class ArenaMap {
     }
     const h = y - ARENA_FLOOR_Y;
     const def = this.quadrant!;
-    if (u === def.halfX - 1 || v === def.halfZ - 1) return h <= def.wallHeight ? def.wallBlock : BLOCK.AIR;
-    if (h > MAX_COVER) return BLOCK.AIR;
-    const id = lay.cells[(u * QUADRANT + v) * MAX_COVER + h - 1];
+    if (u === def.halfX - 1 || v === def.halfZ - 1) return h <= def.wallHeight ? def.wallBlock : this.aboveWall(lay.cells, (u * QUADRANT + v) * this.cover, h);
+    if (h > this.cover) return BLOCK.AIR;
+    const id = lay.cells[(u * QUADRANT + v) * this.cover + h - 1];
     return id === TEAM ? team : id;
+  }
+
+  /** Above the wall ring: air, except on a room map where the ceiling layer runs over the ring too. */
+  private aboveWall(cells: Uint8Array, base: number, h: number): number {
+    return this.room && h <= this.cover ? cells[base + h - 1] : BLOCK.AIR;
   }
 
   private freeBlockAt(variant: number, x: number, y: number, z: number): number {
@@ -343,16 +371,17 @@ export class ArenaMap {
       return f === TEAM ? team : f;
     }
     const h = y - ARENA_FLOOR_Y;
-    if (x === b.minX || x === b.maxX - 1 || z === b.minZ || z === b.maxZ - 1) return h <= def.wallHeight ? def.wallBlock : BLOCK.AIR;
-    if (h > MAX_COVER) return BLOCK.AIR;
-    const id = lay.cells[col * MAX_COVER + h - 1];
+    if (x === b.minX || x === b.maxX - 1 || z === b.minZ || z === b.maxZ - 1) return h <= def.wallHeight ? def.wallBlock : this.aboveWall(lay.cells, col * this.cover, h);
+    if (h > this.cover) return BLOCK.AIR;
+    const id = lay.cells[col * this.cover + h - 1];
     return id === TEAM ? team : id;
   }
 
   /** Top solid block of a column (the y of the surface block). */
   heightAt(variant: number, x: number, z: number): number {
     const bx = Math.floor(x), bz = Math.floor(z);
-    for (let y = ARENA_FLOOR_Y + this.wallHeight; y >= 0; y--) {
+    const scanTop = this.room ? Math.min(this.wallHeight, this.room.playHeight) : this.wallHeight;
+    for (let y = ARENA_FLOOR_Y + scanTop; y >= 0; y--) {
       if (this.blockAt(variant, bx, y, bz) !== BLOCK.AIR) return y;
     }
     return 0;

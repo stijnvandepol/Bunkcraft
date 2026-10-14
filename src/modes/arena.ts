@@ -32,7 +32,7 @@ export class ArenaGenerator {
     if (biomesOut) biomesOut.fill(BIOME.PLAINS);
     const ox = cx * CHUNK_SIZE, oz = cz * CHUNK_SIZE;
     const b = this.map.bounds;
-    const top = Math.min(CHUNK_HEIGHT - 1, ARENA_FLOOR_Y + this.map.wallHeight);
+    const top = Math.min(CHUNK_HEIGHT - 1, ARENA_FLOOR_Y + Math.max(this.map.wallHeight, this.map.room?.ceiling ?? 0));
     for (let z = 0; z < CHUNK_SIZE; z++) {
       for (let x = 0; x < CHUNK_SIZE; x++) {
         const wx = ox + x, wz = oz + z;

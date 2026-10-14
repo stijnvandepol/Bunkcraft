@@ -214,6 +214,12 @@ export const BLOCK = {
   GRINDSTONE: 252,
   /** Arcade maps: a floor block that launches whoever stands on it straight up (see player/ArcadeMove.ts). */
   JUMP_PAD: 253,
+  /**
+   * Arcade room maps: a ceiling tile. Solid, looks like calcite, but lets sky light fall straight through (a cutout
+   * block with light filter 0) so the interior of a roofed room stays as bright as the open arena. Append-only
+   * content ids stay below this (checked in tests/content.test.ts).
+   */
+  CEILING: 234,
   /** Sentinel returned for blocks in chunks that are not loaded (treated as solid). */
   UNLOADED: 255,
 } as const;
@@ -323,6 +329,7 @@ export const BLOCK_DEFS: BlockDef[] = [
   cube(B.TNT, 'tnt', 'TNT', { top: 'tnt_top', bottom: 'tnt_bottom', side: 'tnt_side' }, 0, 'grass'),
   // One texture layer of its own (the array is nearly full): iron sides.
   cube(B.JUMP_PAD, 'jump_pad', 'Jump Pad', { top: 'jump_pad', bottom: 'iron_block', side: 'iron_block' }, -1, 'metal', { light: 7, inInventory: false }),
+  cube(B.CEILING, 'ceiling_tile', 'Ceiling Tile', { all: 'calcite' }, -1, 'stone', { transparent: true, inInventory: false }),
 ];
 
 // Doors: the lower half uses the "side" texture slot and the upper half the "top" slot; the wood is the variant.
