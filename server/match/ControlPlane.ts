@@ -53,7 +53,14 @@ export interface ControlPlaneOptions {
   driver: MatchDriver;
   startTimeoutMs?: number;
   beatTimeoutMs?: number;
+  /** Shortest time between two writes of one runner's world (default 5 s); saves in between are coalesced. */
+  saveIntervalMs?: number;
+  /** Most world bytes one runner may send per minute (default 16 MB); beyond it saves get 429. */
+  saveBytesPerMin?: number;
 }
+
+/** Per runner: when its world was last written, the save waiting for the interval, and what it sent in the last minute. */
+interface SaveState { last: number; timer: NodeJS.Timeout | null; pending: { dir: string; world: string } | null; sent: { at: number; bytes: number }[] }
 
 const MAX_WORLD_BYTES = 2 * 1024 * 1024;
 const GRANT_MEMORY = 20_000;
@@ -74,6 +81,7 @@ export class ControlPlane implements RemoteRooms, RemoteHost {
   /** Runners an admin stopped whose match is still winding down (XP settled, world sent back). */
   private readonly draining = new Set<string>();
   internalPort = 0;
+  private readonly saves = new Map<string, SaveState>();
 
   /** Runner id → the lobby this control plane assigned to it (DATA_DIR/match-runners.json; read back after a restart). */
   private assignments: Record<string, string> = Object.create(null) as Record<string, string>;
@@ -319,7 +327,52 @@ export class ControlPlane implements RemoteRooms, RemoteHost {
     return out;
   }
 
+  /** Bytes a runner may still send this minute (a taken-over runner must not turn its saves into a disk hammer). */
+  private saveBudget(id: string, bytes: number): boolean {
+    const now = Date.now();
+    const st = this.saveState(id);
+    st.sent = st.sent.filter((x) => now - x.at < 60_000);
+    if (st.sent.reduce((n, x) => n + x.bytes, 0) + bytes > (this.o.saveBytesPerMin ?? 16 * 1024 * 1024)) return false;
+    st.sent.push({ at: now, bytes });
+    return true;
+  }
+
+  private saveState(id: string): SaveState {
+    let st = this.saves.get(id);
+    if (!st) { st = { last: 0, timer: null, pending: null, sent: [] }; this.saves.set(id, st); }
+    return st;
+  }
+
+  /** At most one write per interval per runner; a save in between replaces the waiting one (the newest wins). */
+  private queueSave(id: string, dir: string, world: string): void {
+    const st = this.saveState(id);
+    st.pending = { dir, world };
+    if (st.timer) return;
+    const wait = st.last + (this.o.saveIntervalMs ?? 5000) - Date.now();
+    if (wait <= 0) { this.flushSave(id); return; }
+    st.timer = setTimeout(() => this.flushSave(id), wait);
+    st.timer.unref();
+  }
+
+  private flushSave(id: string): void {
+    const st = this.saves.get(id);
+    if (!st) return;
+    if (st.timer) { clearTimeout(st.timer); st.timer = null; }
+    const p = st.pending;
+    st.pending = null;
+    if (!p) return;
+    st.last = Date.now();
+    try { this.putWorld(p.dir, p.world); } catch (e) { log.error('match world not saved', { runner: id, error: String(e) }); }
+  }
+
+  /** Writes what is waiting and forgets the runner's save state (its lobby is over, or we stop). */
+  private endSaves(id: string): void {
+    this.flushSave(id);
+    this.saves.delete(id);
+  }
+
   gone(room: RemoteRoom): void {
+    if (room.runner) this.endSaves(room.runner.id);
     const l = this.lobbies.get(room.code);
     if (l?.room === room) this.lobbies.delete(room.code);
     if (room.runner) this.draining.delete(room.runner.id);
@@ -340,10 +393,18 @@ export class ControlPlane implements RemoteRooms, RemoteHost {
   /** A runner's save. Its game type must stay the lobby's: a runner must not turn a lobby into a sandbox world that
    *  the control plane would then load in-process after a restart. */
   private writeWorld(dir: string, world: unknown, gameType: GameType): void {
+    this.checkWorld(world, gameType);
+    this.putWorld(dir, world as string);
+  }
+
+  private checkWorld(world: unknown, gameType: GameType): asserts world is string {
     if (typeof world !== 'string' || world.length > MAX_WORLD_BYTES) throw new Error('bad world');
     const w = JSON.parse(world) as unknown;
     if (!w || typeof w !== 'object' || Array.isArray(w)) throw new Error('bad world');
     if ((w as Record<string, unknown>).gameType !== gameType) throw new Error('bad world: game type changed');
+  }
+
+  private putWorld(dir: string, world: string): void {
     const file = join(dir, 'world.json');
     writeFileSync(`${file}.tmp`, world);
     renameSync(`${file}.tmp`, file);
@@ -404,7 +465,9 @@ export class ControlPlane implements RemoteRooms, RemoteHost {
         case '/internal/save': {
           const l = this.lobbyOf(id);
           if (!l || body.code !== l.room.code) { sendJson(res, 403, { error: 'not your lobby' }); return; }
-          this.writeWorld(l.dir, body.world, l.gameType);
+          if (!this.saveBudget(id, typeof body.world === 'string' ? body.world.length : 0)) { sendJson(res, 429, { error: 'too many saves' }); return; }
+          this.checkWorld(body.world, l.gameType);
+          this.queueSave(id, l.dir, body.world);
           sendJson(res, 200, { ok: true });
           return;
         }
@@ -559,6 +622,7 @@ export class ControlPlane implements RemoteRooms, RemoteHost {
 
   /** The control plane stops (update or restart): lobbies keep running in their containers for the next one. */
   async close(): Promise<void> {
+    for (const id of [...this.saves.keys()]) this.endSaves(id);
     this.timers.forEach(clearInterval);
     this.timers = [];
     await this.pool.close();
