@@ -631,7 +631,7 @@ export async function startServer(config: Config, start: StartOptions = {}): Pro
         // No silent merge: the player decides whether the guest progress on this device is dropped.
         return json(res, 409, { error: 'guest_progress', guest: { name: guest.name, xp: guest.xp, prestige: guest.prestige } });
       }
-      const r = await accounts.login(str(body.name, 64), str(body.password, 128), token ?? undefined);
+      const r = await accounts.login(str(body.name, 64), str(body.password, 128), token ?? undefined, ip);
       if (!r.ok) { if (r.error === 'invalid_credentials') accountFailLimit.record(ip); return reply(r); }
       return json(res, 200, { token: r.token, ...view(r.profileId) });
     }
@@ -641,7 +641,7 @@ export async function startServer(config: Config, start: StartOptions = {}): Pro
     }
     if (path === '/api/account/recover') {
       if (!accountRecoverLimit.allowed(ip)) return limited('account_recover');
-      const r = await accounts.recover(str(body.name, 64), str(body.code, 64), str(body.password, 128));
+      const r = await accounts.recover(str(body.name, 64), str(body.code, 64), str(body.password, 128), ip);
       if (!r.ok && r.error === 'invalid_credentials') accountRecoverLimit.record(ip);
       if (!r.ok) return reply(r);
       return json(res, 200, { token: r.token, recovery: r.recovery, ...view(r.profileId) });
@@ -649,17 +649,17 @@ export async function startServer(config: Config, start: StartOptions = {}): Pro
     if (!accountFailLimit.allowed(ip)) return limited('account_login');
     const failed = (r: { error?: string }): void => { if (r.error === 'invalid_credentials') accountFailLimit.record(ip); };
     if (path === '/api/account/password') {
-      const r = await accounts.changePassword(token, str(body.password, 128), str(body.newPassword, 128));
+      const r = await accounts.changePassword(token, str(body.password, 128), str(body.newPassword, 128), ip);
       if (!r.ok) { failed(r); return reply(r); }
       return json(res, 200, { token: r.token });
     }
     if (path === '/api/account/recovery/new') {
-      const r = await accounts.newRecovery(token, str(body.password, 128));
+      const r = await accounts.newRecovery(token, str(body.password, 128), ip);
       if (!r.ok) { failed(r); return reply(r); }
       return json(res, 200, { recovery: r.recovery });
     }
     if (path === '/api/account/delete') {
-      const r = await accounts.remove(token, str(body.password, 128));
+      const r = await accounts.remove(token, str(body.password, 128), ip);
       if (!r.ok) { failed(r); return reply(r); }
       return json(res, 200, {});
     }

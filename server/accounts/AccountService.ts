@@ -26,8 +26,10 @@ export interface AccountOptions {
   sessionDays?: number;
   /** Hard cap on one session whatever its use (default 180 days). */
   sessionMaxDays?: number;
-  /** Failed attempts per name before the lockout starts (default 5). */
+  /** Failed attempts per name and source address before that source is locked out of the name (default 5). */
   lockAfter?: number;
+  /** Failed attempts per name, from any source, before the name is locked for everybody (default 50): a distributed guess. */
+  lockAfterName?: number;
   /** First lockout in ms; doubles with every further failure up to 15 minutes (default 15 s). */
   lockBaseMs?: number;
   profiles: ProfileHooks;
@@ -90,7 +92,7 @@ export class AccountService {
     this.store = new AccountStore(join(o.dataDir, 'accounts'));
     this.opts = {
       maxAccounts: o.maxAccounts, sessionDays: o.sessionDays ?? 30, sessionMaxDays: o.sessionMaxDays ?? 180,
-      lockAfter: o.lockAfter ?? 5, lockBaseMs: o.lockBaseMs ?? 15_000, profiles: o.profiles,
+      lockAfter: o.lockAfter ?? 5, lockAfterName: o.lockAfterName ?? 50, lockBaseMs: o.lockBaseMs ?? 15_000, profiles: o.profiles,
     };
     this.timer = setInterval(() => { this.store.flush(); this.prune(); }, 5000);
     this.timer.unref();
@@ -111,16 +113,35 @@ export class AccountService {
 
   // ----- lockout -----
 
-  private lockLeft(key: string, now: number): number {
-    const f = this.fails.get(key);
-    return f && f.until > now ? Math.ceil((f.until - now) / 1000) : 0;
+  /**
+   * Failures are counted twice: per name and source address (`<key>|<from>`, locked after `lockAfter`) and per name
+   * (`<key>`, locked after `lockAfterName`). One address guessing a name only locks itself out: it cannot keep the
+   * owner (or an admin) from logging in elsewhere, which a per-name-only lockout let anyone do with one try per 15
+   * minutes. A guess spread over many addresses still locks the name for everybody.
+   */
+  private lockLeft(key: string, now: number, from = ''): number {
+    let left = 0;
+    for (const k of [`${key}|${from}`, key]) {
+      const f = this.fails.get(k);
+      if (f && f.until > now) left = Math.max(left, Math.ceil((f.until - now) / 1000));
+    }
+    return left;
   }
 
-  private failed(key: string, now: number): void {
+  private failed(key: string, now: number, from = ''): void {
+    this.bump(`${key}|${from}`, now, this.opts.lockAfter);
+    this.bump(key, now, this.opts.lockAfterName);
+  }
+
+  private clearFails(key: string, from = ''): void {
+    this.fails.delete(`${key}|${from}`);
+  }
+
+  private bump(key: string, now: number, after: number): void {
     const f = this.fails.get(key) ?? { n: 0, until: 0, last: now };
     f.n++;
     f.last = now;
-    if (f.n >= this.opts.lockAfter) f.until = now + Math.min(15 * 60_000, this.opts.lockBaseMs * 2 ** (f.n - this.opts.lockAfter));
+    if (f.n >= after) f.until = now + Math.min(15 * 60_000, this.opts.lockBaseMs * 2 ** (f.n - after));
     this.fails.set(key, f);
     if (this.fails.size > 20_000) { for (const k of this.fails.keys()) { this.fails.delete(k); if (this.fails.size <= 15_000) break; } }
   }
@@ -247,26 +268,27 @@ export class AccountService {
   }
 
   /** Checks a password for a name; the same work and the same answer whether the name exists or not. */
-  private async check(key: string, name: unknown, password: unknown, now: number): Promise<AccountRec | AccountFail> {
-    const left = this.lockLeft(key, now);
+  private async check(key: string, name: unknown, password: unknown, now: number, from = ''): Promise<AccountRec | AccountFail> {
+    const left = this.lockLeft(key, now, from);
     if (left > 0) return fail(429, 'locked', left);
     const a = typeof name === 'string' ? this.store.byName(usernameKey(name)) : undefined;
     const pw = typeof password === 'string' ? password : '';
     const ok = await verifyPassword(pw, a ? a.pass : await this.dummyHash());
     if (!a || !ok) {
-      this.failed(key, now);
+      this.failed(key, now, from);
       return fail(401, 'invalid_credentials');
     }
     if (a.locked) return fail(403, 'account_locked');
-    this.fails.delete(key);
+    this.clearFails(key, from);
     return a;
   }
 
   /** Logs in: a new session (rotation: the session the browser presented, if any, is ended). */
-  async login(name: unknown, password: unknown, oldToken?: string): Promise<AccountOk<SessionInfo> | AccountFail> {
+  /** `from`: the client's address key (failures lock that source out of the name first, see lockLeft). */
+  async login(name: unknown, password: unknown, oldToken?: string, from = ''): Promise<AccountOk<SessionInfo> | AccountFail> {
     const now = Date.now();
     const key = `l|${typeof name === 'string' ? usernameKey(name.slice(0, 32)) : ''}`;
-    const a = await this.check(key, name, password, now);
+    const a = await this.check(key, name, password, now, from);
     if ('ok' in a) return a;
     const old = this.find(oldToken);
     if (old && old.a.id === a.id) a.sessions = a.sessions.filter((s) => s !== old.s);
@@ -283,13 +305,13 @@ export class AccountService {
     return !this.persist(f.a);
   }
 
-  async changePassword(token: unknown, oldPassword: unknown, newPassword: unknown): Promise<AccountOk<{ token: string }> | AccountFail> {
+  async changePassword(token: unknown, oldPassword: unknown, newPassword: unknown, from = ''): Promise<AccountOk<{ token: string }> | AccountFail> {
     const f = this.find(token);
     if (!f || f.s.exp <= Date.now()) return fail(401, 'unauthorized');
     const bad = checkPassword(newPassword, f.a.name);
     if (bad) return fail(400, bad);
     const now = Date.now();
-    const a = await this.check(`l|${f.a.key}`, f.a.name, oldPassword, now);
+    const a = await this.check(`l|${f.a.key}`, f.a.name, oldPassword, now, from);
     if ('ok' in a) return a;
     a.pass = await hashPassword(newPassword as string);
     a.passChanged = Date.now();
@@ -299,17 +321,17 @@ export class AccountService {
   }
 
   /** Resets the password with the recovery code; the code is spent and a new one comes back. All sessions end. */
-  async recover(name: unknown, code: unknown, newPassword: unknown): Promise<AccountOk<SessionInfo & { recovery: string }> | AccountFail> {
+  async recover(name: unknown, code: unknown, newPassword: unknown, from = ''): Promise<AccountOk<SessionInfo & { recovery: string }> | AccountFail> {
     const now = Date.now();
     const nm = typeof name === 'string' ? name.slice(0, 32) : '';
     const key = `r|${usernameKey(nm)}`;
-    const left = this.lockLeft(key, now);
+    const left = this.lockLeft(key, now, from);
     if (left > 0) return fail(429, 'locked', left);
     const a = this.store.byName(usernameKey(nm));
     const given = hashRecovery(typeof code === 'string' ? code : '');
     const want = a ? a.recovery : sha256('bunkcraft-recovery|none');
     if (!a || !safeEqual(given, want) || normalizeRecoveryCode(code).length !== 25) {
-      this.failed(key, now);
+      this.failed(key, now, from);
       return fail(401, 'invalid_credentials');
     }
     if (a.locked) return fail(403, 'account_locked');
@@ -320,17 +342,17 @@ export class AccountService {
     const fresh = newRecoveryCode();
     a.recovery = hashRecovery(fresh);
     a.sessions = [];
-    this.fails.delete(key);
-    this.fails.delete(`l|${a.key}`);
+    this.clearFails(key, from);
+    this.clearFails(`l|${a.key}`, from);
     const token = this.issue(a, now);
     return this.persist(a) ?? { ok: true, token, profileId: a.profile, name: a.name, recovery: fresh };
   }
 
   /** A fresh recovery code (the old one stops working); needs the password. */
-  async newRecovery(token: unknown, password: unknown): Promise<AccountOk<{ recovery: string }> | AccountFail> {
+  async newRecovery(token: unknown, password: unknown, from = ''): Promise<AccountOk<{ recovery: string }> | AccountFail> {
     const f = this.find(token);
     if (!f || f.s.exp <= Date.now()) return fail(401, 'unauthorized');
-    const a = await this.check(`l|${f.a.key}`, f.a.name, password, Date.now());
+    const a = await this.check(`l|${f.a.key}`, f.a.name, password, Date.now(), from);
     if ('ok' in a) return a;
     const fresh = newRecoveryCode();
     a.recovery = hashRecovery(fresh);
@@ -338,10 +360,10 @@ export class AccountService {
   }
 
   /** Deletes the account and its profile (level, XP, skin assignment) after a password check. */
-  async remove(token: unknown, password: unknown): Promise<AccountOk<object> | AccountFail> {
+  async remove(token: unknown, password: unknown, from = ''): Promise<AccountOk<object> | AccountFail> {
     const f = this.find(token);
     if (!f || f.s.exp <= Date.now()) return fail(401, 'unauthorized');
-    const a = await this.check(`l|${f.a.key}`, f.a.name, password, Date.now());
+    const a = await this.check(`l|${f.a.key}`, f.a.name, password, Date.now(), from);
     if ('ok' in a) return a;
     this.store.delete(a.id);
     this.opts.profiles.remove(a.profile);
@@ -418,8 +440,7 @@ export class AccountService {
     const fresh = newRecoveryCode();
     a.recovery = hashRecovery(fresh);
     a.sessions = [];
-    this.fails.delete(`r|${a.key}`);
-    this.fails.delete(`l|${a.key}`);
+    for (const k of [...this.fails.keys()]) if (k === `r|${a.key}` || k === `l|${a.key}` || k.startsWith(`r|${a.key}|`) || k.startsWith(`l|${a.key}|`)) this.fails.delete(k);
     log.info('account moderated', { action: 'recovery' });
     return this.persist(a) ?? { ok: true, name: a.name, recovery: fresh };
   }

@@ -1,5 +1,9 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
+import { AccountService } from '../../server/accounts/AccountService';
 import { addressKey, blockKey } from '../../server/HttpSecurity';
 import { cleanup, startTestServer, type TestServer } from '../helpers/serverHarness';
 
@@ -56,4 +60,37 @@ describe('A2-01: IPv6 clients are limited and blocked per /64', () => {
     expect((await post('/api/admin/ip-bans', { ip: '2001:db8:7:8::/64' }, { authorization: `Bearer ${ADMIN}` })).status).toBe(200);
     expect(await upgradeStatus(`${t.wsBase}/ws`, { 'cf-connecting-ip': '2001:db8:7:8::99' })).toBe(403);
   });
+});
+
+describe('A2-02: one address cannot lock somebody else out of their account', () => {
+  const PW = 'correct horse battery';
+
+  it('unit: the guessing source is locked, the owner elsewhere is not; many sources lock the name for all', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'bunk-acc-'));
+    let n = 0;
+    const svc = new AccountService({
+      dataDir: dir, maxAccounts: 10, lockBaseMs: 1000,
+      profiles: { create: () => `p${n++}`, exists: () => true, rename: () => undefined, remove: () => undefined },
+    });
+    try {
+      await svc.register('Target_01', PW);
+      for (let i = 0; i < 6; i++) await svc.login('Target_01', 'nope nope nope', undefined, 'attacker');
+      expect(await svc.login('Target_01', PW, undefined, 'attacker')).toMatchObject({ status: 429, error: 'locked' });
+      expect(await svc.login('Target_01', PW, undefined, 'owner')).toMatchObject({ ok: true });
+      for (let i = 0; i < 60; i++) await svc.login('Target_01', 'nope nope nope', undefined, `bot${i}`);
+      expect(await svc.login('Target_01', PW, undefined, 'owner')).toMatchObject({ status: 429, error: 'locked' });
+    } finally {
+      svc.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it('server: failures from one address do not stop the owner logging in from another', async () => {
+    t = await startTestServer({ TRUST_CLOUDFLARE: '1' });
+    const from = (ip: string) => ({ 'cf-connecting-ip': ip });
+    expect((await post('/api/account/register', { name: 'Victim_1', password: PW }, from('198.51.100.1'))).status).toBe(201);
+    for (let i = 0; i < 8; i++) await post('/api/account/login', { name: 'Victim_1', password: 'wrong wrong wrong' }, from('203.0.113.66'));
+    expect((await post('/api/account/login', { name: 'Victim_1', password: PW }, from('203.0.113.66'))).status).toBe(429);
+    expect((await post('/api/account/login', { name: 'victim_1', password: PW }, from('198.51.100.1'))).status).toBe(200);
+  }, 60_000);
 });
