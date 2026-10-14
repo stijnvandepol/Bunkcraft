@@ -78,7 +78,7 @@ function patchRenderListSort(three: THREE.WebGLRenderer): void {
   };
 }
 
-const FLASH_COLOR =new THREE.Color(0.78, 0.82, 1.0);
+const FLASH_COLOR = new THREE.Color(0.78, 0.82, 1.0);
 
 export interface FrameStats {
   drawCalls: number;
