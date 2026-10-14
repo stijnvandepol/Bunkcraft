@@ -27,8 +27,9 @@ volgt de Bunkhosting-huisstijl. Live op https://craft.bunkhosting.nl (Cloudflare
    (nu alleen `*-darwin`, dus in CI wordt de pixelvergelijking overgeslagen).
 
 3b. **Container per lobby live zetten (S, beslissing Stijn).** `MATCH_ISOLATION=container` is gebouwd en getest (SERVER.md
-   "Een container per lobby", research/SCALING.md), standaard uit. Vóór aanzetten: rootless Docker of `userns-remap` op de VPS
-   (of een eigen create-filterende proxy, SECURITY.md), `MATCH_CPUS`/`MAX_MATCH_CONTAINERS` kiezen bij de VPS-maat, een week
+   "Een container per lobby", research/SCALING.md), standaard uit. De socket zit achter de eigen Docker gate (alleen onze
+   containerspec, alleen onze containers) en wachtwoordpogingen tellen weer centraal. Vóór aanzetten: `MATCH_CPUS`/`MAX_MATCH_CONTAINERS`
+   kiezen bij de VPS-maat (rootless Docker of `userns-remap` is een optionele extra laag), een week
    `bunkcraft_match_*` meekijken. Daarna: autoupdate niet meer laten wachten op een rustig moment, Survival in containers pas na meting.
 
 **Daarna (product)**

@@ -14,7 +14,7 @@ import { log } from '../Log';
 import { metrics } from '../Metrics';
 import type { ArenaSpec } from '../Rooms';
 import type { ProfileBackend, SkinBackend } from '../RoomServer';
-import { RateLimiter } from '../Security';
+import { type FailCounter, passwordFailKey } from '../Security';
 import { type Ident, type RunnerStatus, authByKey, authHeaders, callJson, decodeIdent, readJson, sendJson } from './Internal';
 
 /**
@@ -122,6 +122,33 @@ export class RunnerProfiles implements ProfileBackend, SkinBackend {
   }
 }
 
+/**
+ * Wrong lobby passwords, as the control plane counts them. The count lives there, one for the whole server (like the
+ * in-process limiter, and it survives this runner): the control plane sends its verdict for the player's address with
+ * every connection (`x-bc-pw`), and every wrong password goes back to it (`/internal/password-fail`).
+ */
+export class RunnerFailCounter implements FailCounter {
+  private readonly blocked = new Map<string, boolean>();
+
+  constructor(private readonly report: (ip: string) => void) {}
+
+  /** The control plane's verdict for this game and address, set when the connection opens (before its hello). */
+  verdict(game: string, ip: string, blocked: boolean): void {
+    const key = passwordFailKey(game, ip);
+    this.blocked.delete(key);
+    this.blocked.set(key, blocked);
+    while (this.blocked.size > MAX_IDENTS) this.blocked.delete(this.blocked.keys().next().value!);
+  }
+
+  allowed(key: string): boolean {
+    return this.blocked.get(key) !== true;
+  }
+
+  record(key: string): void {
+    this.report(key.slice(key.indexOf('|') + 1));
+  }
+}
+
 export interface RunningRunner {
   port: number;
   /** Ends the lobby (XP settled, world sent back) and stops listening; the caller exits. */
@@ -137,6 +164,9 @@ export async function startMatchRunner(config: Config): Promise<RunningRunner> {
   const control = config.controlUrl.replace(/\/+$/, '');
   const call = (path: string, body: unknown, timeoutMs = 5000) => callJson(`${control}${path}`, headers, body, timeoutMs);
   const profiles = new RunnerProfiles(id, call);
+  const fails = new RunnerFailCounter((ip) => {
+    call('/internal/password-fail', { ip }, 3000).catch((e: unknown) => log.warn('password failure not reported', { error: String(e) }));
+  });
   const baseDir = join(process.env.MATCH_TMP || tmpdir(), `bunkcraft-match-${id}`);
 
   let game: GameServer | null = null;
@@ -207,7 +237,7 @@ export async function startMatchRunner(config: Config): Promise<RunningRunner> {
       maxPlayers: Math.max(2, Math.min(64, Math.floor(Number(body.maxPlayers) || 12))),
       // The real admin token never leaves the control plane: its proxy swaps it for this runner's alias.
       adminToken: typeof body.adminAlias === 'string' && body.adminAlias.length >= 24 ? body.adminAlias : undefined,
-      failLimiter: new RateLimiter(5, 600_000),
+      failLimiter: fails,
       inventoryGuard: config.inventoryGuard, binary: body.binary !== false, genPool: null,
       profiles: body.profiles === true ? profiles : null,
       skins: body.skins === true ? profiles : null,
@@ -279,6 +309,7 @@ export async function startMatchRunner(config: Config): Promise<RunningRunner> {
     const ip = typeof req.headers['x-bc-ip'] === 'string' ? req.headers['x-bc-ip'].slice(0, 64) : 'unknown';
     const ident = decodeIdent(req.headers['x-bc-ident']);
     if (ident) profiles.register(ident);
+    if (code) fails.verdict(code, ip, req.headers['x-bc-pw'] === 'blocked');
     const g = game;
     wss.handleUpgrade(req, socket, head, (ws) => g.accept(ws, { ip }));
   });

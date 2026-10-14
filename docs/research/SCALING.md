@@ -17,7 +17,7 @@ Wat er is (`server/match/`):
 | Match runner | `MatchRunner.ts` | Zelfde image, `ROLE=match`: precies één lobby (Match, bots, anticheat, hitreg), geen statische bestanden, geen profielopslag |
 | Gateway | `WsProxy.ts` | `/ws/<CODE>` door de control plane naar de runner: frames 1-op-1, backpressure, ping/pong door (lag-compensatie meet de speler), sluitcodes |
 | Pool | `MatchPool.ts` | starting → idle (warm) → assigned → stopping; warme pool, cap, start- en heartbeat-timeouts, backoff, adoptie na herstart |
-| Orkestratie | `Drivers.ts`, `ContainerSpec.ts` | Docker Engine API via `docker-socket-proxy`, één gevalideerde containerspec; of child processes (`MATCH_DRIVER=process`) |
+| Orkestratie | `Drivers.ts`, `ContainerSpec.ts`, `DockerGate.ts` | Docker Engine API via de eigen Docker gate (controleert elke create tegen dezelfde allowlist, raakt alleen eigen containers), één gevalideerde containerspec; of child processes (`MATCH_DRIVER=process`) |
 
 De open vragen uit §1 zijn zo beantwoord:
 
@@ -53,10 +53,10 @@ match). Lopende matches houden hun oude image; nieuwe starten op het nieuwe.
 Conclusie: de extra hop is verwaarloosbaar (ruim onder 1 ms), het geheugen per lobby is ~50 MB i.p.v. ~1,5 MB in-process
 (eigen V8-heap per container): dat is de echte prijs van isolatie. Op een CX23 (4 GB) passen zo tientallen lobby's.
 
-**Later:** Survival/Bouwen in containers (chunkgeneratie en grotere state; eerst meten of het nodig is), een eigen proxy die
-de create-body controleert of rootless Docker (SECURITY), rate limits per bezoeker over runners heen (wachtwoordpogingen tellen
-nu per runner), autoupdate zonder op een rustig moment te wachten (matches overleven het nu), en meerdere hosts (dan wordt de
-control plane een echte scheduler).
+**Later:** Survival/Bouwen in containers (chunkgeneratie en grotere state; eerst meten of het nodig is), rootless Docker als
+extra laag onder de Docker gate (SECURITY), autoupdate zonder op een rustig moment te wachten (matches overleven het nu), en
+meerdere hosts (dan wordt de control plane een echte scheduler). Opgelost: de eigen create-filterende proxy (`DockerGate.ts`) en
+wachtwoordpogingen die de control plane telt in plaats van elke runner apart.
 
 ## Kort antwoord
 

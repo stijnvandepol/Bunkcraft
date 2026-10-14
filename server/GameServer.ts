@@ -48,7 +48,7 @@ import { BotManager, type BotSettings, parseBotSettings } from './bots/BotManage
 import { arenaGraph } from './bots/BotWorld';
 import { MatchProgress } from './progression/MatchProgress';
 import type { ProfileBackend, SkinBackend } from './RoomServer';
-import { type RateLimiter, hashIp, newToken, safeEqual, tokenMatches, verifyPassword, hashToken } from './Security';
+import { type FailCounter, hashIp, newToken, passwordFailKey, safeEqual, tokenMatches, verifyPassword, hashToken } from './Security';
 
 const TICK_MS = 50; // 20 ticks per second, like Minecraft
 const DAY_SECONDS = 1200;
@@ -254,8 +254,8 @@ export interface ServerOptions {
   moderated?: boolean;
   /** Server administrator token: whoever sends it as `owner` is op in every game. */
   adminToken?: string;
-  /** Failed password attempts per client address (shared by all games). */
-  failLimiter?: RateLimiter;
+  /** Failed password attempts per client address (shared by all games; in a match runner: the control plane's). */
+  failLimiter?: FailCounter;
   /** Where Backup.ts keeps copies of world.json; used to recover from a corrupt file. */
   backupDir?: string;
   /** Inventory checks for survival games: enforce (default), warn (log only) or off. */
@@ -942,7 +942,7 @@ export class GameServer {
     // Password: refuse before doing any work when this address failed too often for THIS game (per game, so one
     // housemate's typos in one game do not lock the whole household out of every other game).
     const limiter = this.opts.failLimiter;
-    const limitKey = `${this.opts.label ?? 'main'}|${ip}`;
+    const limitKey = passwordFailKey(this.opts.label ?? 'main', ip);
     if (limiter && !limiter.allowed(limitKey)) {
       metrics.rateLimited('password');
       return kick('Too many wrong passwords. Try again in a few minutes.', 'password');

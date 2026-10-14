@@ -44,7 +44,7 @@
 #                        'bunkcraft autoupdate on|off' changes it later
 #   --autoupdate-interval SPAN   how often to look for a new build (AUTOUPDATE_INTERVAL, default 5min)
 #   --match-isolation M  inprocess (default): arena matches run in the game server itself; container: one
-#                        container per lobby, started through a socket proxy (MATCH_ISOLATION, kept in .env;
+#                        container per lobby, started through the Docker gate (MATCH_ISOLATION, kept in .env;
 #                        docs/SERVER.md "Een container per lobby")
 #   --no-start           prepare everything but do not pull/build/start the containers
 #   --dry-run            print what would happen, change nothing (works without root)
@@ -337,8 +337,17 @@ if [ -n "$INTERVAL_ARG" ]; then set_env AUTOUPDATE_INTERVAL "$INTERVAL_ARG" 1; e
 COMPOSE_FILES=docker-compose.yml
 [ "$MODE" = build ] && COMPOSE_FILES="$COMPOSE_FILES:docker-compose.build.yml"
 [ "$PROXY" = none ] && COMPOSE_FILES="$COMPOSE_FILES:docker-compose.direct.yml"
-# One container per lobby: the socket proxy, the internal networks and the control plane settings.
-[ "$ISOLATION" = container ] && COMPOSE_FILES="$COMPOSE_FILES:docker-compose.matches.yml"
+# One container per lobby: the Docker gate, the internal networks and the control plane settings.
+if [ "$ISOLATION" = container ]; then
+  COMPOSE_FILES="$COMPOSE_FILES:docker-compose.matches.yml"
+  [ "$MODE" = build ] && COMPOSE_FILES="$COMPOSE_FILES:docker-compose.matches.build.yml"
+  # The control plane shows this to the Docker gate on every call (kept across re-runs).
+  set_env DOCKER_GATE_SECRET "$(token)"
+  # The gate runs as the node user plus the group that owns the Docker socket (no root in the container).
+  sock_gid="$(stat -c %g /var/run/docker.sock 2>/dev/null || true)"
+  if [[ "$sock_gid" =~ ^[0-9]+$ ]]; then set_env DOCKER_GID "$sock_gid" 1
+  elif [ "$DRY" = 0 ]; then warn "could not read the group of /var/run/docker.sock: set DOCKER_GID in $ENV_FILE yourself"; fi
+fi
 set_env MATCH_ISOLATION "$ISOLATION" 1
 if [ "$COMPOSE_FILES" != docker-compose.yml ]; then set_env COMPOSE_FILE "$COMPOSE_FILES" 1; else unset_env COMPOSE_FILE; fi
 say ".env ready ($ENV_FILE, mode 600): ${CPUS} CPU, ${CONTAINER_MB} MB for the game server"

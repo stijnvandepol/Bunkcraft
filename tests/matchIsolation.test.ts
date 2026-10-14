@@ -242,7 +242,7 @@ describe('match runner pool', () => {
 });
 
 describe('remote room seat accounting', () => {
-  const host: RemoteHost = { identify: () => ({ ident: {} }), identOf: () => ({}), skinsFor: () => ({}), gone: () => undefined };
+  const host: RemoteHost = { identify: () => ({ ident: {} }), identOf: () => ({}), passwordBlocked: () => false, skinsFor: () => ({}), gone: () => undefined };
   const status = (o: Partial<RunnerStatus>): RunnerStatus => ({
     id: 'r', version: 'v', room: 'ABCDEF', players: 0, reservedSeats: 0, botCount: 0, playersInPlay: 0, listed: true, locked: false, maxPlayers: 4,
     info: { name: 'x', gameType: 'tdm', maxPlayers: 4 }, lobby: null, teams: { red: 0, blue: 0 }, holds: [], playerList: [], tickP99Ms: 0, cpu: 0, rssBytes: 0, heapBytes: 0, ...o,

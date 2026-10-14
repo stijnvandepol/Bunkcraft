@@ -1,0 +1,11 @@
+# Build mode with one container per lobby: the Docker gate runs the image built from this checkout, like the game
+# server (docker-compose.build.yml). install.sh adds this file to COMPOSE_FILE when both --build and
+# --match-isolation container are on.
+services:
+  docker-gate:
+    image: bunkcraft:local
+    build:
+      context: .
+      args:
+        GIT_SHA: ${GIT_SHA:-}
+    pull_policy: never

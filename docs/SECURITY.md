@@ -215,7 +215,7 @@ Wat een aanvaller kan proberen en wat de server doet:
   De naamcontrole geldt bij het inloggen in een game; een gast die al in een lopende match zat blijft tot zijn volgende login. Parties tonen
   alleen een gamertag en geen vinkje. Geen 2FA.
 
-## Een container per lobby: socket proxy en matchcontainers (`server/match/`)
+## Een container per lobby: Docker gate en matchcontainers (`server/match/`)
 
 Alleen met `MATCH_ISOLATION=container` (standaard uit). De control plane start voor elke arenalobby een matchcontainer via de
 Docker Engine API. Wie de Docker-API heeft, heeft in de praktijk root op de host; daarom is dit deel opgebouwd uit lagen.
@@ -224,16 +224,38 @@ Docker Engine API. Wie de Docker-API heeft, heeft in de praktijk root op de host
 
 | Onderdeel | Ziet | Kan |
 |---|---|---|
-| `docker-proxy` (tecnativa/docker-socket-proxy, vastgepind op digest) | `/var/run/docker.sock` (read-only mount) | Alleen container-calls doorlaten: list, inspect, stats, create, start, stop. Images, netwerken, volumes, exec, build, swarm, system: 403 |
-| Control plane (`bunkcraft`) | De proxy op het interne netwerk `docker-api`, de matchcontainers op `match` | Containers maken uit één vaste spec (`ContainerSpec.ts`), starten, stoppen, en alleen containers met het eigen `owner`-label lijsten en adopteren |
+| `docker-gate` (eigen code, `server/match/DockerGate.ts`, zelfde image, eigen bundle `dist-server/dockerGate.js`) | `/var/run/docker.sock` (als uid 1000 met alleen de groep van de socket), het interne netwerk `docker-api` | Precies de calls die de control plane nodig heeft, alleen voor onze eigen matchcontainers (zie hieronder). Al het andere: 403 |
+| Control plane (`bunkcraft`) | De gate op `docker-api` (met `DOCKER_GATE_SECRET`), de matchcontainers op `match` | Containers maken uit één vaste spec (`ContainerSpec.ts`), starten, stoppen, en alleen containers met het eigen `owner`-label lijsten en adopteren |
 | Matchcontainer (`ROLE=match`) | Alleen het interne netwerk `match` (geen internet, geen gepubliceerde poort) | Zijn eigen lobby draaien en de interne API van de control plane aanroepen met zijn eigen sleutel |
 
+**De Docker gate.** Het enige proces met de socket; klein (20 KiB gebundeld), geen game-code. Wat hij doorlaat:
+
+| Call | Voorwaarde |
+|---|---|
+| `GET /_ping`, `GET /_gate/image` | Geen. `/_gate/image` geeft het image dat matchcontainers moeten draaien (`MATCH_IMAGE`, anders het image van de gate zelf: hetzelfde als de control plane) |
+| `GET /containers/json` | De gate zet zelf het filter (`role=match`, `owner=<MATCH_OWNER>`) en filtert de rijen nog eens: andere containers op de host zijn onzichtbaar |
+| `POST /containers/create?name=bunkcraft-match-<id>` | Body max 64 KB, JSON, door **dezelfde** `validateMatchSpec` als de control plane (image moet exact het toegestane zijn, owner-label, naam, limieten uit dezelfde env-variabelen); daarna opnieuw geserialiseerd doorgestuurd, dus Docker krijgt precies wat gecontroleerd is |
+| `GET .../json`, `POST .../start`, `POST .../stop?t=0-30`, `GET .../stats?stream=false` | Eerst een inspect: alleen als de container ons `role`- en `owner`-label heeft **en** de naam `bunkcraft-match-<runner-label>`; daarna op het volledige id |
+
+Al het andere is 403: exec, kill, update, delete, restart, attach, archive, logs, images, build, volumes, networks, events,
+info, system, swarm, plugins, secrets. Paden worden niet gedecodeerd maar geweigerd zodra er iets buiten `[A-Za-z0-9/_.-]` in
+staat, of een leeg, `.`- of `..`-segment; alleen een voorvoegsel `/v1.NN` wordt weggehaald. Queryparameters worden opnieuw
+opgebouwd uit de paar toegestane (dubbele of onbekende: 403), headers van de client gaan nooit door, een body bij iets anders
+dan create wordt geweigerd (ook chunked). Elke call draagt `Authorization: Bearer <DOCKER_GATE_SECRET>` (`install.sh` zet een
+willekeurige waarde in `.env`; vergeleken met `safeEqual`); zonder geheim van 32+ tekens start de gate niet. De container zelf:
+uid 1000 plus alleen de groep van de socket (`DOCKER_GID`), read-only, `cap_drop: ALL`, `no-new-privileges`, 96 MB, 32 pids,
+alleen het interne netwerk `docker-api` (geen internet, geen poort). Getest in `tests/integration/dockerGate.it.test.ts` (tegen
+een nep-Engine: geprivilegieerde create, ander image, bind mounts, host-netwerk, `CapAdd`, devices, vreemde en nagemaakte
+containers, exec, padtrucs, versievoorvoegsels, te grote bodies, geen of fout geheim) en in `scripts/qa/container-smoke.sh`
+(echte Docker: geprivilegieerde create en stop/kill/inspect van de control plane-container worden geweigerd, er ontstaat niets).
+
 **De containerspec.** Er gaat nooit spelersinvoer in: de lobby krijgt een runner pas na het starten, via de interne API. De spec is
-ons image (standaard het image-id van de draaiende control plane), gebruiker `1000:1000`, read-only root met alleen een kleine
-`/tmp` (noexec), `CapDrop: ALL`, `no-new-privileges`, geen mounts, devices of poorten, alleen het interne netwerk, harde limieten
-(`MATCH_CPUS`, `MATCH_MEMORY` zonder swap, `MATCH_PIDS`), `AutoRemove`. `validateMatchSpec` controleert dat vlak vóór het versturen
-nog eens met een allowlist (exacte sleutels en env-variabelen, geen `Binds`, `Privileged`, `CapAdd`, host-netwerk, root, onbekende
-velden); `tests/matchIsolation.test.ts` heeft voor elk geval een test die moet falen.
+ons image (standaard het image-id van de gate, hetzelfde image als de control plane), gebruiker `1000:1000`, read-only root met
+alleen een kleine `/tmp` (noexec), `CapDrop: ALL`, `no-new-privileges`, geen mounts, devices of poorten, alleen het interne
+netwerk, harde limieten (`MATCH_CPUS`, `MATCH_MEMORY` zonder swap, `MATCH_PIDS`), `AutoRemove`. `validateMatchSpec` controleert
+dat met een allowlist (exacte sleutels en env-variabelen, geen `Binds`, `Privileged`, `CapAdd`, host-netwerk, root, onbekende
+velden), in de control plane vlak vóór het versturen én in de gate; `tests/matchIsolation.test.ts` heeft voor elk geval een
+test die moet falen.
 
 **Interne API.** Luistert op `INTERNAL_PORT` (3001) en wordt niet gepubliceerd. Elke runner krijgt `MATCH_TOKEN =
 HMAC(MATCH_SECRET, runner-id)`, nooit het geheim zelf; hij kan dus alleen voor zichzelf spreken. Wat een runner zegt, wordt
@@ -243,21 +265,22 @@ eenmalig per grant-id, met geklemde tallies (`cleanTally`) en de modus uit de lo
 (`DATA_DIR/match-runners.json`), nooit voor wat de runner opgeeft (`adoptableCode`: canonieke code, binnen de rooms-map, niet al in
 gebruik). Het admin-token gaat nooit naar een runner: de proxy vervangt het in de `hello` door een alias per runner.
 
-**Wat er overblijft (beslissen vóór live).**
+**Wachtwoordpogingen.** Foute lobbywachtwoorden telt de control plane, met dezelfde limiter als in-process (`PASSWORD_FAIL_LIMIT`
+per 10 minuten, per game en adres). Bij elke verbinding geeft de proxy de runner zijn oordeel mee (`x-bc-pw`), de runner meldt
+elk fout wachtwoord terug (`/internal/password-fail`); de control plane telt dat onder de lobby die híj de runner gaf, nooit
+onder een code die de runner noemt. De telling overleeft dus een nieuwe runner voor dezelfde lobby, en de eigenaar blijft er
+altijd in (die controle blijft in de runner). Getest in `tests/integration/matchContainers.it.test.ts`.
 
-- De socket proxy filtert op pad en methode, **niet op de inhoud** van `POST /containers/create`. Wie code-uitvoering krijgt in de
-  control plane, kan via de proxy een container met `Privileged` en een host-mount maken: dat is root op de host. De validatie in
-  `ContainerSpec.ts` beschermt alleen tegen fouten in onze eigen code, niet tegen een overgenomen control plane. Maatregelen die
-  dat wel dichtzetten: Docker rootless of `userns-remap` op de host, of een eigen proxy die de create-body tegen dezelfde
-  allowlist controleert (klein, maar dan draait onze code met de socket). Zonder isolatie (`inprocess`) bestaat dit risico niet.
-- Met `POST=1` laat de proxy alle schrijfcalls onder `/containers` door, niet alleen create/start/stop: ook `kill`, `update`
-  (limieten wijzigen) en een exec-instantie aanmaken, voor elke container op de host. Een exec *starten* (`/exec/*/start`) wordt wel
-  geweigerd (`EXEC=0`, gecontroleerd in de smoketest). Ook dit valt onder "overgenomen control plane = host in gevaar".
-- `GET /containers/json` via de proxy ziet alle containers op de host (namen, labels, images), ook die van andere projecten. De
-  control plane filtert op het `owner`-label en raakt niets anders aan, maar de informatie is leesbaar.
+**Wat er overblijft.**
+
+- De gate is onze eigen code met de socket: een fout erin is een fout in de grens. Hij is daarom klein, zonder afhankelijkheden
+  buiten Node en de gedeelde spec-validatie, en volledig getest; rootless Docker of `userns-remap` op de host blijft een
+  zinvolle extra laag, maar is geen voorwaarde meer.
+- Een overgenomen control plane kan via de gate nog steeds matchcontainers van deze installatie maken (tot de limieten),
+  starten en stoppen: lobby's verstoren, niet de host overnemen of andere containers aanraken.
 - Een gekaapte matchcontainer zit in zijn cgroup en op het interne netwerk, maar kan wel de interne API van de control plane en
-  andere matchcontainers op dat netwerk bereiken (die vragen allemaal hun eigen sleutel). Wachtwoordpogingen per adres tellen per
-  runner, niet meer over alle games samen.
+  andere matchcontainers op dat netwerk bereiken (die vragen allemaal hun eigen sleutel). Hij kan foute wachtwoorden melden
+  voor adressen in zijn eigen lobby (wat hij met een kick ook al kon), niet voor andere lobby's.
 
 ## Content-Security-Policy
 
