@@ -1,6 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { join } from 'node:path';
-import { type AccountIssue, checkPassword, checkUsername, usernameKey } from '../../src/modes/progression/AccountRules';
+import { type AccountIssue, checkPassword, checkUsername, identityKey, usernameKey } from '../../src/modes/progression/AccountRules';
 import { log } from '../Log';
 import { hashPassword, safeEqual, verifyPassword } from '../Security';
 import { type AccountRec, AccountStore, type SessionRec } from './AccountStore';
@@ -82,6 +82,8 @@ export class AccountService {
   private dummy: Promise<string> | null = null;
   /** ADMIN_ACCOUNTS (lower-case names): admins besides the accounts with the persistent `admin` flag. */
   private adminNames = new Set<string>();
+  /** identityKey of every ADMIN_ACCOUNTS name: an unclaimed one (and its look-alikes) cannot be registered. */
+  private adminIdents = new Set<string>();
   private readonly opts: Required<Omit<AccountOptions, 'profiles' | 'dataDir'>> & { profiles: ProfileHooks };
 
   constructor(o: AccountOptions) {
@@ -165,10 +167,13 @@ export class AccountService {
 
   /** ADMIN_ACCOUNTS: these account names (case-insensitive, exact) are admins as long as the setting lists them. */
   setAdminNames(names: string[]): void {
-    this.adminNames = new Set(names.map((n) => usernameKey(n.trim())).filter((n) => n.length > 0));
+    const list = names.map((n) => n.trim()).filter((n) => n.length > 0);
+    this.adminNames = new Set(list.map((n) => usernameKey(n)));
+    this.adminIdents = new Set(list.map((n) => identityKey(n)));
   }
 
-  /** Names in ADMIN_ACCOUNTS that no account holds yet: whoever registers such a name becomes an admin. */
+  /** Names in ADMIN_ACCOUNTS that no account holds yet. Registering them is refused (register), so a stranger cannot
+   *  claim admin rights by being first: create the account before listing it, or use the persistent admin flag. */
   unclaimedAdminNames(): string[] {
     return [...this.adminNames].filter((k) => !this.store.byName(k));
   }
@@ -218,6 +223,7 @@ export class AccountService {
     if (bad) return fail(400, bad);
     const uname = name as string;
     if (this.store.byIdentity(uname)) return fail(409, 'name_taken');
+    if (this.adminIdents.has(identityKey(uname))) return fail(409, 'name_taken');
     if (this.store.count >= this.opts.maxAccounts) return fail(503, 'full');
     const pass = await hashPassword(password as string);
     // Everything from here is synchronous: two simultaneous registrations cannot both win a name or a profile.

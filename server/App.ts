@@ -131,7 +131,7 @@ export async function startServer(config: Config, start: StartOptions = {}): Pro
     accounts.setAdminNames(config.adminAccounts);
     // An ADMIN_ACCOUNTS name nobody registered yet would make its first registrant an admin: say so loudly.
     const unclaimed = accounts.unclaimedAdminNames();
-    if (unclaimed.length) log.warn('ADMIN_ACCOUNTS names no account holds yet: whoever registers them becomes an admin', { names: unclaimed });
+    if (unclaimed.length) log.warn('ADMIN_ACCOUNTS names no account holds yet: they cannot be registered (create the account first, then list it)', { names: unclaimed });
   }
   // Run-time settings of the ops dashboard (DATA_DIR/ops-settings.json) over the environment.
   const opsDefaults: OpsValues = {

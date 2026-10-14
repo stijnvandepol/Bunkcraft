@@ -623,8 +623,8 @@ De hoofdwereld krijgt operators via `OPS` (namen, gebonden via de sleutel) of vi
 - **Een admin-account** (aanbevolen): log in met je gewone BunkCraft-account. Een account is admin als het in
   `ADMIN_ACCOUNTS` staat (bijv. `ADMIN_ACCOUNTS=Stijn` in `.env`, daarna `bunkcraft restart`) of als het de vaste
   admin-vlag heeft: `bunkcraft account admin Stijn on` (direct actief, geen herstart; `off` trekt hem weer in). Registreer
-  het account eerst in het spel: een naam in `ADMIN_ACCOUNTS` die nog niemand heeft, maakt de eerste die hem registreert
-  admin (de server waarschuwt daarvoor in de log bij het starten). De vlag via de CLI heeft dat risico niet.
+  het account eerst in het spel: een naam in `ADMIN_ACCOUNTS` die nog niemand heeft (of een look-alike ervan) kan niet
+  geregistreerd worden, zodat niemand admin wordt door als eerste die naam te nemen (de server meldt zulke namen in de log).
 - **`ADMIN_TOKEN`** als bearer-token: voor de CLI (`bunkcraft account …`, auto-update) en als noodingang op het dashboard.
 
 Elke aanvraag wordt gecontroleerd: het token in constante tijd (`timingSafeEqual` over SHA-256), een sessie zoals overal
