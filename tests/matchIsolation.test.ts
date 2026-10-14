@@ -11,7 +11,7 @@ import type { MatchDriver, RunnerHandle } from '../server/match/Drivers';
 import { authRunner, runnerKey, type RunnerStatus } from '../server/match/Internal';
 import { MatchPool, type Runner } from '../server/match/MatchPool';
 import { RemoteRoom, type RemoteHost } from '../server/match/RemoteRoom';
-import { adoptableCode, cleanTally } from '../server/match/ControlPlane';
+import { adoptableCode, cleanTally, savedArcadeType } from '../server/match/ControlPlane';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -266,6 +266,31 @@ describe('remote room seat accounting', () => {
     expect(r.info()).toMatchObject({ gameType: 'tdm', maxPlayers: 4, players: 0 });
     expect(r.maxPlayers).toBe(4);
     expect(r.playerCount).toBe(0);
+  });
+
+  it('keeps its own game type whatever the runner reports', () => {
+    const r = room();
+    r.apply(status({ info: { name: 'x', gameType: 'survival', maxPlayers: 4 } }));
+    expect(r.info().gameType).toBe('tdm');
+  });
+});
+
+describe('savedArcadeType', () => {
+  it('reads an arena type from the world file and refuses anything else', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'bc-type-'));
+    try {
+      expect(savedArcadeType(dir)).toBeNull(); // no file
+      writeFileSync(join(dir, 'world.json'), JSON.stringify({ gameType: 'tdm' }));
+      expect(savedArcadeType(dir)).toBe('tdm');
+      writeFileSync(join(dir, 'world.json'), JSON.stringify({ gameType: 'survival' }));
+      expect(savedArcadeType(dir)).toBeNull();
+      writeFileSync(join(dir, 'world.json'), JSON.stringify({ gameType: 'nonsense' }));
+      expect(savedArcadeType(dir)).toBeNull();
+      writeFileSync(join(dir, 'world.json'), '{broken');
+      expect(savedArcadeType(dir)).toBeNull();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

@@ -61,7 +61,7 @@ const TALLY_CAP = 10_000;
 export class ControlPlane implements RemoteRooms, RemoteHost {
   readonly pool: MatchPool;
   private readonly secret: Buffer;
-  private readonly lobbies = new Map<string, { room: RemoteRoom; dir: string }>();
+  private readonly lobbies = new Map<string, { room: RemoteRoom; dir: string; gameType: GameType }>();
   private readonly grants = new Map<string, unknown>();
   private rooms: Rooms | null = null;
   private internal: Server | null = null;
@@ -150,7 +150,9 @@ export class ControlPlane implements RemoteRooms, RemoteHost {
       }
       // Only the lobby this control plane itself gave the runner (recorded at assign time), never what the runner says.
       const code = status ? adoptableCode(this.assignments[h.id], status.room, this.o.roomsDir, taken, (c) => rooms.isLoaded(c)) : null;
-      if (!status || !code) {
+      // The game type comes from the world file this control plane wrote, never from the runner.
+      const gameType = code ? savedArcadeType(join(this.o.roomsDir, code)) : null;
+      if (!status || !code || !gameType) {
         // A warm runner of the previous control plane (maybe an older image), one we cannot talk to, or one whose story
         // does not match our records.
         if (status?.room && status.room !== this.assignments[h.id]) log.warn('match container claims a lobby it was not given', { runner: h.id });
@@ -161,9 +163,9 @@ export class ControlPlane implements RemoteRooms, RemoteHost {
       taken.add(code);
       const runner = this.pool.adopt(h, url, { ...status, room: code });
       const dir = join(this.o.roomsDir, code);
-      const room = RemoteRoom.adopted(code, this, runner, () => this.rooms?.metaChanged(code));
+      const room = RemoteRoom.adopted(code, this, runner, gameType, () => this.rooms?.metaChanged(code));
       room.apply(status);
-      this.lobbies.set(code, { room, dir });
+      this.lobbies.set(code, { room, dir, gameType });
       rooms.adopt(code, room);
     }
     // Records of runners that are gone.
@@ -209,8 +211,9 @@ export class ControlPlane implements RemoteRooms, RemoteHost {
       log.warn('match container cap reached: lobby runs in-process', { code, max: this.o.max });
       return null;
     }
-    const room = new RemoteRoom(code, this, lease, (r) => this.assign(r, code, dir, payload), fallback, onMeta);
-    this.lobbies.set(code, { room, dir });
+    const gameType = fallback.gameType;
+    const room = new RemoteRoom(code, this, lease, (r) => this.assign(r, code, dir, gameType, payload), fallback, onMeta);
+    this.lobbies.set(code, { room, dir, gameType });
     return room;
   }
 
@@ -223,7 +226,7 @@ export class ControlPlane implements RemoteRooms, RemoteHost {
     }
   }
 
-  private async assign(r: Runner, code: string, dir: string, payload: { spec?: ArenaSpec; world?: string }): Promise<RunnerStatus> {
+  private async assign(r: Runner, code: string, dir: string, gameType: GameType, payload: { spec?: ArenaSpec; world?: string }): Promise<RunnerStatus> {
     this.assignments[r.id] = code;
     this.saveAssignments();
     const res = await callJson<{ status: RunnerStatus; world: string }>(`${r.url}/internal/assign`, authHeaders(r.id, r.key), {
@@ -231,7 +234,7 @@ export class ControlPlane implements RemoteRooms, RemoteHost {
       maxPlayers: this.o.roomMaxPlayers, motd: this.o.motd, binary: this.o.binary, rejoinGraceSec: this.o.rejoinGraceSec,
       profiles: !!this.o.profiles, skins: !!this.o.skins, adminAlias: this.adminAlias(r.id),
     }, 10_000);
-    this.writeWorld(dir, res.world);
+    this.writeWorld(dir, res.world, gameType);
     return res.status;
   }
 
@@ -300,15 +303,18 @@ export class ControlPlane implements RemoteRooms, RemoteHost {
     }
   }
 
-  private lobbyOf(runnerId: string): { room: RemoteRoom; dir: string } | null {
+  private lobbyOf(runnerId: string): { room: RemoteRoom; dir: string; gameType: GameType } | null {
     for (const l of this.lobbies.values()) if (l.room.runner?.id === runnerId) return l;
     return null;
   }
 
-  private writeWorld(dir: string, world: unknown): void {
+  /** A runner's save. Its game type must stay the lobby's: a runner must not turn a lobby into a sandbox world that
+   *  the control plane would then load in-process after a restart. */
+  private writeWorld(dir: string, world: unknown, gameType: GameType): void {
     if (typeof world !== 'string' || world.length > MAX_WORLD_BYTES) throw new Error('bad world');
     const w = JSON.parse(world) as unknown;
     if (!w || typeof w !== 'object' || Array.isArray(w)) throw new Error('bad world');
+    if ((w as Record<string, unknown>).gameType !== gameType) throw new Error('bad world: game type changed');
     const file = join(dir, 'world.json');
     writeFileSync(`${file}.tmp`, world);
     renameSync(`${file}.tmp`, file);
@@ -360,7 +366,7 @@ export class ControlPlane implements RemoteRooms, RemoteHost {
         case '/internal/save': {
           const l = this.lobbyOf(id);
           if (!l || body.code !== l.room.code) { sendJson(res, 403, { error: 'not your lobby' }); return; }
-          this.writeWorld(l.dir, body.world);
+          this.writeWorld(l.dir, body.world, l.gameType);
           sendJson(res, 200, { ok: true });
           return;
         }
@@ -525,4 +531,16 @@ export function driverFromConfig(c: {
     api: new DockerApi(c.dockerHost), image: c.matchImage, network: c.matchNetwork, controlUrl: c.controlUrl, owner: c.matchOwner,
     cpus: c.matchCpus, memoryMb: c.matchMemoryMb, pids: c.matchPids, logLevel, version: version.replace(/[^0-9A-Za-z.+-]/g, '').slice(0, 64) || 'dev',
   });
+}
+
+/** The arena game type in a lobby's saved world, or null (missing, unreadable or not an arena type). */
+export function savedArcadeType(dir: string): GameType | null {
+  try {
+    const w = JSON.parse(readFileSync(join(dir, 'world.json'), 'utf8')) as Record<string, unknown>;
+    if (typeof w.gameType !== 'string') return null;
+    const type = parseGameType(w.gameType);
+    return type === w.gameType && gameTypeDef(type).arcade ? type : null;
+  } catch {
+    return null;
+  }
 }

@@ -67,8 +67,8 @@ export class RemoteRoom implements RoomServer {
   }
 
   /** A room adopted from a runner that already runs it. */
-  static adopted(code: string, host: RemoteHost, runner: Runner, onMeta: () => void): RemoteRoom {
-    const room = new RemoteRoom(code, host, Promise.resolve(runner), async () => runner.status!, (runner.status?.info ?? null) as Info, onMeta);
+  static adopted(code: string, host: RemoteHost, runner: Runner, gameType: Info['gameType'], onMeta: () => void): RemoteRoom {
+    const room = new RemoteRoom(code, host, Promise.resolve(runner), async () => runner.status!, { ...(runner.status?.info as Info), gameType }, onMeta);
     return room;
   }
 
@@ -116,7 +116,8 @@ export class RemoteRoom implements RoomServer {
   get listed(): boolean { return this.st?.listed ?? false; }
   get locked(): boolean { return this.st?.locked ?? !!this.fallback?.locked; }
   get maxPlayers(): number { return this.st?.maxPlayers || this.fallback?.maxPlayers || 0; }
-  info(): Info { return { ...((this.st?.info as Info | null) ?? this.fallback), players: this.playerCount }; }
+  /** The game type is the control plane's (set at create/load), never what the runner reports. */
+  info(): Info { return { ...((this.st?.info as Info | null) ?? this.fallback), gameType: this.fallback.gameType, players: this.playerCount }; }
   lobbyStatus(): ReturnType<GameServer['lobbyStatus']> { return (this.st?.lobby as ReturnType<GameServer['lobbyStatus']>) ?? null; }
 
   teamLoad(): ReturnType<GameServer['teamLoad']> {
