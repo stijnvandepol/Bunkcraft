@@ -1,5 +1,6 @@
 import { createHmac } from 'node:crypto';
 import { type IncomingMessage, type ServerResponse, request as httpRequest } from 'node:http';
+import { INVISIBLE_CHARS } from '../../src/net/protocol';
 import { safeEqual } from '../Security';
 
 /**
@@ -141,7 +142,7 @@ const obj = (v: unknown): Record<string, unknown> | null => (v && typeof v === '
 const count = (v: unknown, max: number): number => (typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.min(max, Math.floor(v))) : 0);
 const real = (v: unknown, max: number): number => (typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.min(max, v)) : 0);
 /** Text a runner reports that ends up in listings and the ops dashboard: no control or bidi characters, capped. */
-const text = (v: unknown, max: number): string => (typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f-\u009f​-‏‪-‮⁦-⁩﻿]/g, '').slice(0, max) : '');
+const text = (v: unknown, max: number): string => (typeof v === 'string' ? v.replace(INVISIBLE_CHARS, '').slice(0, max) : '');
 
 /** Most players or seats a runner can report for one lobby (lobbies hold at most 16; generous headroom). */
 const MAX_REPORTED = 256;

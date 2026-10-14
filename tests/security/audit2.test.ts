@@ -7,7 +7,7 @@ import { EventEmitter } from 'node:events';
 import type { WebSocket as WsType } from 'ws';
 import { AccountService } from '../../server/accounts/AccountService';
 import { GameServer } from '../../server/GameServer';
-import { PROTOCOL_VERSION } from '../../src/net/protocol';
+import { PROTOCOL_VERSION, sanitizeChat } from '../../src/net/protocol';
 import { addressKey, blockKey } from '../../server/HttpSecurity';
 import { cleanup, startTestServer, type TestServer } from '../helpers/serverHarness';
 
@@ -75,6 +75,21 @@ describe('A2-06: /metrics without a token only for this machine, not for proxied
     expect(await get({ 'cf-connecting-ip': '203.0.113.1' })).toBe(401);
     expect(await get({ forwarded: 'for=203.0.113.1' })).toBe(401);
     expect(await get({ 'x-real-ip': '203.0.113.1' })).toBe(401);
+  });
+});
+
+describe('A2-08: no bidi overrides or invisible characters in chat and game names', () => {
+  it('sanitizeChat drops C1 controls, bidi overrides/isolates and zero-width characters', () => {
+    expect(sanitizeChat('hi \u202egnp.exe\u202c there\u0085\u200b\u2066x\u2069\ufeff')).toBe('hi gnp.exe therex');
+    expect(sanitizeChat('héllo wörld 日本 🙂')).toBe('héllo wörld 日本 🙂');
+  });
+
+  it('a game name cannot carry a right-to-left override into the public list', async () => {
+    t = await startTestServer();
+    const made = await post('/api/rooms', { name: 'Nice\u202eemag\u200b', listed: true });
+    expect(made.status).toBe(201);
+    const info = await fetch(`${t.base}/api/rooms/${made.body.code as string}`).then((r) => r.json()) as { name: string };
+    expect(info.name).toBe('Niceemag');
   });
 });
 
