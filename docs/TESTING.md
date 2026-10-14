@@ -77,8 +77,10 @@ lijst onschuldige meldingen). WebKit (Safari-engine) draait de tests met `@webki
 
 **Screenshot-baselines** staan in `tests/e2e/baselines/<browser>-<os>/`. De eerste run op een platform schrijft ze
 (en die run faalt één keer met "writing actual"); daarna wordt er vergeleken met een tolerantie van 3–4 % pixels.
-In CI wordt de vergelijking overgeslagen zolang er voor `linux` geen baselines zijn; om ze toe te voegen: draai de
-suite op Linux (bijvoorbeeld in de Playwright-container) en commit `tests/e2e/baselines/*-linux/`.
+De Linux-baselines (`*-linux`, de vergelijking in CI) komen uit de officiële Playwright-image op `linux/amd64` + Ubuntu 24.04,
+dezelfde combinatie als `ubuntu-latest`: `scripts/qa/linux-baselines.sh` (Docker nodig; kopieert de repo, de host blijft schoon)
+maakt ze opnieuw voor `smoke` en `realms` (`SPECS="..."` overschrijft dat). Commit daarna `tests/e2e/baselines/*-linux/`.
+CI slaat de pixelvergelijking alleen nog over voor een browser/OS-combinatie zonder map (zie `noBaselines` in de config).
 Bewust een scherm veranderd? `npx playwright test -c tests/e2e/playwright.config.ts --update-snapshots`.
 
 ## Performance en bundelgrootte

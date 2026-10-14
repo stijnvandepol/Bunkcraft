@@ -19,6 +19,17 @@ export function accountErrorText(e: unknown, passwordOnly = false): string {
   return code === 'locked' && e instanceof AccountError ? t(key, Math.max(1, e.retryAfter)) : t(key);
 }
 
+/**
+ * Focuses the first field of a freshly opened dialog, once it is in the DOM. Never takes the focus from an input the
+ * player (or an autofill) already moved to: a late focus() would otherwise swallow what is typed into the next field.
+ */
+function focusFirst(input: HTMLInputElement): void {
+  window.setTimeout(() => {
+    // A button (the one that opened the dialog) or nothing has focus: take it. A field that already has it keeps it.
+    if (!(document.activeElement instanceof HTMLInputElement)) input.focus();
+  }, 0);
+}
+
 function screen(title: string, body: (Node | null)[], footer: (Node | null)[]): HTMLDivElement {
   return menuScreen(title, body, footer, { cls: 'bc' });
 }
@@ -90,7 +101,7 @@ export class AccountScreens {
       button(t('common.cancel'), () => this.stack.pop(), { cls: 'w150' }),
       create,
     ]));
-    window.setTimeout(() => name.focus(), 0);
+    focusFirst(name);
   }
 
   showLogin(): void {
@@ -127,7 +138,7 @@ export class AccountScreens {
       button(t('common.cancel'), () => this.stack.pop(), { cls: 'w150' }),
       enter,
     ]));
-    window.setTimeout(() => name.focus(), 0);
+    focusFirst(name);
   }
 
   private confirmDiscard(e: AccountError, discard: () => void): void {
@@ -166,7 +177,7 @@ export class AccountScreens {
       button(t('common.cancel'), () => this.stack.pop(), { cls: 'w150' }),
       reset,
     ]));
-    window.setTimeout(() => (prefill ? code : name).focus(), 0);
+    focusFirst((prefill ? code : name));
   }
 
   /** The one-time recovery code. The only button that leaves the screen says the player saved it. */
@@ -233,7 +244,7 @@ export class AccountScreens {
         error,
       ),
     ], [button(t('common.cancel'), () => this.stack.pop(), { cls: 'w150' }), save]));
-    window.setTimeout(() => old.focus(), 0);
+    focusFirst(old);
   }
 
   /** A screen that wants the password again before a sensitive action. */
@@ -246,6 +257,6 @@ export class AccountScreens {
     this.stack.push(screen(title, [
       h('div', { style: COLUMN }, h('div', { class: 'hint', text: text }), this.field(t('acct.password'), pw), error),
     ], [button(t('common.cancel'), () => this.stack.pop(), { cls: 'w150' }), ok]));
-    window.setTimeout(() => pw.focus(), 0);
+    focusFirst(pw);
   }
 }

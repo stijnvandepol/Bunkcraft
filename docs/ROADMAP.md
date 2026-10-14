@@ -23,8 +23,10 @@ volgt de Bunkhosting-huisstijl. Live op https://craft.bunkhosting.nl (Cloudflare
    (`scripts/qa/weapon-glitch.py`) en per kaart de looplijnen. Uitkomst: balanswijzigingen in `Balance.ts`, Classic compacter
    of uit de rotatie, Villa/Terminus/Harbor Yard inkorten of jump pads op de lange routes.
 3. **Controleren dat deploy en CI stabiel zijn (S).** Na de laatste CI-verharding (Vitest `retry: 2`, deterministische
-   anticheat-walk) een week meekijken of er nog flaky tests zijn; Linux-baselines voor de e2e-screenshots toevoegen
-   (nu alleen `*-darwin`, dus in CI wordt de pixelvergelijking overgeslagen).
+   anticheat-walk) een week meekijken of er nog flaky tests zijn. Gedaan: de flaky accounts-e2e (run 128) was een echte
+   focus-race (de late `focus()` van de dialoog verhuisde de tekst van het wachtwoord- naar het naamveld; fix in
+   `AccountScreens.focusFirst`, test per poging met unieke namen, 30x `--repeat-each` groen) en de Linux-baselines
+   voor de e2e-screenshots staan er nu (`scripts/qa/linux-baselines.sh`), dus CI vergelijkt pixels ook op Linux.
 
 3b. **Container per lobby live zetten (S, beslissing Stijn).** `MATCH_ISOLATION=container` is gebouwd en getest (SERVER.md
    "Een container per lobby", research/SCALING.md), standaard uit. De socket zit achter de eigen Docker gate (alleen onze
