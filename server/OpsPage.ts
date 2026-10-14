@@ -84,7 +84,7 @@ tr:last-child td { border-bottom: 0; }
 tbody tr:hover td { background: var(--bc-fill); }
 tr.sel td { background: rgba(0,219,231,.06); }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
-td .row { flex-wrap: nowrap; }
+td .row { flex-wrap: wrap; min-width: 180px; }
 .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; border: 1px solid currentColor; }
 .s-assigned { color: var(--bc-ok); } .s-warm { color: var(--bc-accent); } .s-starting { color: var(--bc-info); }
 .s-draining, .s-stopping { color: var(--bc-warn); } .s-process { color: var(--bc-dim); }
