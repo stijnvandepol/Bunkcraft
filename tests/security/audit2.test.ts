@@ -225,6 +225,33 @@ describe('A2-15: party codes cannot be guessed, and a joiner cannot throw the fo
   });
 });
 
+describe('A2-17: an admin cannot take out the owner (ADMIN_ACCOUNTS) or themselves', () => {
+  const PW = 'correct horse battery';
+  it('lock, delete, de-admin, recovery and logout of a protected account are refused and audited', async () => {
+    const first = await startTestServer({ ADMIN_TOKEN: ADMIN });
+    const dir = first.dir;
+    t = first;
+    for (const name of ['Owner_1', 'Mod_1', 'Player_1']) expect((await post('/api/account/register', { name, password: PW })).status).toBe(201);
+    expect((await post('/api/admin/accounts/admin', { name: 'Mod_1', admin: true }, { authorization: `Bearer ${ADMIN}` })).status).toBe(200);
+    await first.stop();
+    t = await startTestServer({ ADMIN_TOKEN: ADMIN, ADMIN_ACCOUNTS: 'Owner_1' }, dir);
+    const mod = (await post('/api/account/login', { name: 'Mod_1', password: PW })).body.token as string;
+    const ops = (path: string, body: unknown) => post(`/api/ops${path}`, body, { authorization: `Bearer ${mod}`, origin: t!.base });
+    for (const [path, body] of [
+      ['/accounts/lock', { name: 'Owner_1' }], ['/accounts/delete', { name: 'owner_1' }], ['/accounts/admin', { name: 'Owner_1', admin: false }],
+      ['/accounts/recovery', { name: 'Owner_1' }], ['/accounts/logout', { name: 'Owner_1' }],
+      ['/accounts/lock', { name: 'Mod_1' }], ['/accounts/admin', { name: 'Mod_1', admin: false }], ['/accounts/delete', { name: 'Mod_1' }],
+    ] as const) expect([path, (await ops(path, body)).status]).toEqual([path, 403]);
+    // Ordinary moderation still works, and the token (the operator) is not restricted.
+    expect((await ops('/accounts/lock', { name: 'Player_1' })).status).toBe(200);
+    expect((await post('/api/admin/accounts/admin', { name: 'Mod_1', admin: false }, { authorization: `Bearer ${ADMIN}` })).status).toBe(200);
+    const audit = await fetch(`${t.base}/api/admin/audit`, { headers: { authorization: `Bearer ${ADMIN}` } }).then((r) => r.json()) as { entries: { who: string; status: number }[] };
+    expect(audit.entries.filter((e) => e.who === 'Mod_1' && e.status === 403).length).toBe(8);
+    // Still logged in and still admin: the owner.
+    expect((await post('/api/account/login', { name: 'Owner_1', password: PW })).status).toBe(200);
+  }, 60_000);
+});
+
 describe('A2-02: one address cannot lock somebody else out of their account', () => {
   const PW = 'correct horse battery';
 

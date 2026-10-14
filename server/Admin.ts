@@ -279,6 +279,19 @@ export async function adminApi(ctx: AdminContext, req: IncomingMessage, res: Ser
   if (parts[0] === 'accounts') {
     const accounts = ctx.accounts;
     if (!accounts) return json(res, 404, { error: 'Accounts are disabled' });
+    // An admin account may not take out the owner (ADMIN_ACCOUNTS) or itself: no lock, delete, logout, new recovery code
+    // (that would hand over the account) or removal of the admin flag. The ADMIN_TOKEN (the operator) may. Refusals are
+    // audited like every change (the json wrapper above).
+    if (method === 'POST' && parts.length === 2 && ctx.who?.via === 'account' && ['lock', 'delete', 'logout', 'recovery', 'admin'].includes(parts[1])) {
+      const b = await body();
+      const target = typeof b.name === 'string' ? b.name.trim().toLowerCase() : '';
+      const self = target !== '' && target === ctx.who.who.toLowerCase();
+      const grant = parts[1] === 'admin' && b.admin === true;
+      if (!grant && (self || accounts.isOwnerName(b.name))) {
+        log.warn('ops: protected account', { who: ctx.who.who, action: parts[1], self });
+        return json(res, 403, { error: self ? 'You cannot do that to your own account' : 'This account is an owner (ADMIN_ACCOUNTS): only the admin token can change it' });
+      }
+    }
     if (parts.length === 1 && method === 'GET') {
       const q = new URL(req.url ?? '/', 'http://x').searchParams.get('q') ?? '';
       return json(res, 200, { count: accounts.count, accounts: accounts.adminList(q.slice(0, 32)) });
