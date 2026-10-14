@@ -783,7 +783,7 @@ export async function startServer(config: Config, start: StartOptions = {}): Pro
       if (!config.adminToken) return json(res, 404, { error: 'Admin is disabled' });
       if (!authorizeAdmin({ token: config.adminToken, clientIp, json, failures: adminFailures }, req, res)) return;
       adminApi({
-        token: config.adminToken, rooms, main, bans: ipBans, skins, accounts, version, gauges, clientIp, readBody, json,
+        token: config.adminToken, rooms, main, bans: ipBans, skins, accounts, version, gauges, clientIp, readBody, json, control,
         dropIp: (ip) => { for (const c of wss.clients) if ((c as WebSocket & { ip?: string }).ip === ip) c.terminate(); },
       }, req, res, url.pathname).catch(() => { if (!res.headersSent) json(res, 500, { error: 'Server error' }); });
       return;

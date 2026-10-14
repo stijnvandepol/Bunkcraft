@@ -215,6 +215,47 @@ Wat een aanvaller kan proberen en wat de server doet:
   De naamcontrole geldt bij het inloggen in een game; een gast die al in een lopende match zat blijft tot zijn volgende login. Parties tonen
   alleen een gamertag en geen vinkje. Geen 2FA.
 
+## Een container per lobby: socket proxy en matchcontainers (`server/match/`)
+
+Alleen met `MATCH_ISOLATION=container` (standaard uit). De control plane start voor elke arenalobby een matchcontainer via de
+Docker Engine API. Wie de Docker-API heeft, heeft in de praktijk root op de host; daarom is dit deel opgebouwd uit lagen.
+
+**Wie mag wat.**
+
+| Onderdeel | Ziet | Kan |
+|---|---|---|
+| `docker-proxy` (tecnativa/docker-socket-proxy, vastgepind op digest) | `/var/run/docker.sock` (read-only mount) | Alleen container-calls doorlaten: list, inspect, stats, create, start, stop. Images, netwerken, volumes, exec, build, swarm, system: 403 |
+| Control plane (`bunkcraft`) | De proxy op het interne netwerk `docker-api`, de matchcontainers op `match` | Containers maken uit één vaste spec (`ContainerSpec.ts`), starten, stoppen, en alleen containers met het eigen `owner`-label lijsten en adopteren |
+| Matchcontainer (`ROLE=match`) | Alleen het interne netwerk `match` (geen internet, geen gepubliceerde poort) | Zijn eigen lobby draaien en de interne API van de control plane aanroepen met zijn eigen sleutel |
+
+**De containerspec.** Er gaat nooit spelersinvoer in: de lobby krijgt een runner pas na het starten, via de interne API. De spec is
+ons image (standaard het image-id van de draaiende control plane), gebruiker `1000:1000`, read-only root met alleen een kleine
+`/tmp` (noexec), `CapDrop: ALL`, `no-new-privileges`, geen mounts, devices of poorten, alleen het interne netwerk, harde limieten
+(`MATCH_CPUS`, `MATCH_MEMORY` zonder swap, `MATCH_PIDS`), `AutoRemove`. `validateMatchSpec` controleert dat vlak vóór het versturen
+nog eens met een allowlist (exacte sleutels en env-variabelen, geen `Binds`, `Privileged`, `CapAdd`, host-netwerk, root, onbekende
+velden); `tests/matchIsolation.test.ts` heeft voor elk geval een test die moet falen.
+
+**Interne API.** Luistert op `INTERNAL_PORT` (3001) en wordt niet gepubliceerd. Elke runner krijgt `MATCH_TOKEN =
+HMAC(MATCH_SECRET, runner-id)`, nooit het geheim zelf; hij kan dus alleen voor zichzelf spreken. Wat een runner zegt, wordt
+behandeld als van een half-vertrouwde partij: XP alleen voor profielen die de control plane zelf in die lobby heeft binnengelaten,
+eenmalig per grant-id, met geklemde tallies (`cleanTally`) en de modus uit de lobby zelf; `world.json` alleen voor de eigen lobby
+(max 2 MB, geldige JSON). Na een herstart adopteert de control plane een runner alleen voor de lobby die hij hem zelf gaf
+(`DATA_DIR/match-runners.json`), nooit voor wat de runner opgeeft (`adoptableCode`: canonieke code, binnen de rooms-map, niet al in
+gebruik). Het admin-token gaat nooit naar een runner: de proxy vervangt het in de `hello` door een alias per runner.
+
+**Wat er overblijft (beslissen vóór live).**
+
+- De socket proxy filtert op pad en methode, **niet op de inhoud** van `POST /containers/create`. Wie code-uitvoering krijgt in de
+  control plane, kan via de proxy een container met `Privileged` en een host-mount maken: dat is root op de host. De validatie in
+  `ContainerSpec.ts` beschermt alleen tegen fouten in onze eigen code, niet tegen een overgenomen control plane. Maatregelen die
+  dat wel dichtzetten: Docker rootless of `userns-remap` op de host, of een eigen proxy die de create-body tegen dezelfde
+  allowlist controleert (klein, maar dan draait onze code met de socket). Zonder isolatie (`inprocess`) bestaat dit risico niet.
+- `GET /containers/json` via de proxy ziet alle containers op de host (namen, labels, images), ook die van andere projecten. De
+  control plane filtert op het `owner`-label en raakt niets anders aan, maar de informatie is leesbaar.
+- Een gekaapte matchcontainer zit in zijn cgroup en op het interne netwerk, maar kan wel de interne API van de control plane en
+  andere matchcontainers op dat netwerk bereiken (die vragen allemaal hun eigen sleutel). Wachtwoordpogingen per adres tellen per
+  runner, niet meer over alle games samen.
+
 ## Content-Security-Policy
 
 ```

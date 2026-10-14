@@ -103,18 +103,29 @@ export class ControlPlane implements RemoteRooms, RemoteHost {
     this.internalPort = (this.internal.address() as AddressInfo).port;
     // Child processes reach this API on loopback, at the port it really got.
     if (this.o.driver instanceof ProcessDriver) this.o.driver.controlUrl = `http://127.0.0.1:${this.internalPort}`;
-    try {
-      await this.o.driver.init();
-      this.available = true;
-    } catch (e) {
-      log.error('match containers unavailable: arena lobbies run in this process', { driver: this.o.driver.kind, error: e instanceof Error ? e.message : String(e) });
-    }
+    await this.tryInit();
     const every = (ms: number, fn: () => void) => { const t = setInterval(fn, ms); t.unref(); this.timers.push(t); };
-    every(2000, () => this.pool.sweep());
-    every(10_000, () => void this.pool.pollStats());
+    every(2000, () => { if (this.available) this.pool.sweep(); });
+    every(10_000, () => { if (this.available) void this.pool.pollStats(); });
+    // The socket proxy may come up after us (compose starts both at once): keep trying, lobbies run in-process meanwhile.
+    every(5000, () => { if (!this.available) void this.tryInit().then(() => { if (this.available && this.rooms) void this.attach(this.rooms); }); });
     log.info('match isolation: container', {
       driver: this.o.driver.kind, image: this.o.driver.image, warm: this.o.warm, max: this.o.max, internalPort: this.internalPort, available: this.available,
     });
+  }
+
+  private initFailures = 0;
+
+  private async tryInit(): Promise<void> {
+    try {
+      await this.o.driver.init();
+      this.available = true;
+      if (this.initFailures > 0) log.info('match containers available', { driver: this.o.driver.kind, image: this.o.driver.image });
+    } catch (e) {
+      if (this.initFailures++ === 0) {
+        log.error('match containers unavailable: arena lobbies run in this process until the driver works', { driver: this.o.driver.kind, error: e instanceof Error ? e.message : String(e) });
+      }
+    }
   }
 
   /** Hooks into Rooms: adopts the lobbies runners still run (a control plane update), then fills the warm pool. */

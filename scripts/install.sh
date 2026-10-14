@@ -43,6 +43,9 @@
 #   --no-autoupdate      do not deploy new builds of the channel by itself (AUTOUPDATE=off in .env);
 #                        'bunkcraft autoupdate on|off' changes it later
 #   --autoupdate-interval SPAN   how often to look for a new build (AUTOUPDATE_INTERVAL, default 5min)
+#   --match-isolation M  inprocess (default): arena matches run in the game server itself; container: one
+#                        container per lobby, started through a socket proxy (MATCH_ISOLATION, kept in .env;
+#                        docs/SERVER.md "Een container per lobby")
 #   --no-start           prepare everything but do not pull/build/start the containers
 #   --dry-run            print what would happen, change nothing (works without root)
 #   -h, --help
@@ -58,6 +61,7 @@ IMAGE_ARG="${BUNKCRAFT_IMAGE:-}"
 MODE=""   # build | pull | "" (keep what .env says; pull on a fresh install)
 FIREWALL=1 SWAP=1 BACKUPS=1 START=1 DRY=0
 AUTOUPDATE_ARG="" INTERVAL_ARG=""
+ISOLATION_ARG="${MATCH_ISOLATION:-}"
 PROXY="${PROXY:-}" BIND_ARG="${BIND_ADDR:-}" PORT_ARG="${BUNKCRAFT_PORT:-}" TRUST_FROM_ARG="${TRUSTED_PROXY_ADDRS:-}"
 ORIG_ARGS=("$@")
 
@@ -94,6 +98,8 @@ while [ $# -gt 0 ]; do
     --autoupdate) AUTOUPDATE_ARG=on; shift ;;
     --autoupdate-interval) INTERVAL_ARG="${2:?--autoupdate-interval needs a value}"; shift 2 ;;
     --autoupdate-interval=*) INTERVAL_ARG="${1#*=}"; shift ;;
+    --match-isolation) ISOLATION_ARG="${2:?--match-isolation needs a value}"; shift 2 ;;
+    --match-isolation=*) ISOLATION_ARG="${1#*=}"; shift ;;
     --no-start) START=0; shift ;;
     --dry-run) DRY=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -142,6 +148,12 @@ PREV_PROXY="$(env_value PROXY)"
 case "$PROXY" in
   caddy|none) ;;
   *) die "--proxy '$PROXY': use caddy or none." ;;
+esac
+# Match isolation: argument, else .env, else in-process (the proven default).
+ISOLATION="${ISOLATION_ARG:-$(env_value MATCH_ISOLATION)}"; ISOLATION="${ISOLATION:-inprocess}"
+case "$ISOLATION" in
+  inprocess|container) ;;
+  *) die "--match-isolation '$ISOLATION': use inprocess or container." ;;
 esac
 BIND_ADDR="${BIND_ARG:-$(env_value BIND_ADDR)}"; BIND_ADDR="${BIND_ADDR:-127.0.0.1}"
 GAME_PORT="${PORT_ARG:-$(env_value BUNKCRAFT_PORT)}"; GAME_PORT="${GAME_PORT:-3000}"
@@ -325,6 +337,9 @@ if [ -n "$INTERVAL_ARG" ]; then set_env AUTOUPDATE_INTERVAL "$INTERVAL_ARG" 1; e
 COMPOSE_FILES=docker-compose.yml
 [ "$MODE" = build ] && COMPOSE_FILES="$COMPOSE_FILES:docker-compose.build.yml"
 [ "$PROXY" = none ] && COMPOSE_FILES="$COMPOSE_FILES:docker-compose.direct.yml"
+# One container per lobby: the socket proxy, the internal networks and the control plane settings.
+[ "$ISOLATION" = container ] && COMPOSE_FILES="$COMPOSE_FILES:docker-compose.matches.yml"
+set_env MATCH_ISOLATION "$ISOLATION" 1
 if [ "$COMPOSE_FILES" != docker-compose.yml ]; then set_env COMPOSE_FILE "$COMPOSE_FILES" 1; else unset_env COMPOSE_FILE; fi
 say ".env ready ($ENV_FILE, mode 600): ${CPUS} CPU, ${CONTAINER_MB} MB for the game server"
 

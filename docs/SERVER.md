@@ -204,6 +204,74 @@ een fout automatisch terug. Zelf terugdraaien: `bunkcraft rollback`. Bestaande C
 `bunkcraft update` na deze wijziging zet `PROXY=caddy` en `COMPOSE_PROFILES=caddy` in `.env` (Caddy is nu een compose-profiel;
 zonder die regel start `docker compose up -d` alleen de game).
 
+### Een container per lobby
+
+Standaard (`MATCH_ISOLATION=inprocess`) draaien alle games in één Node-proces. Met `MATCH_ISOLATION=container` wordt de
+game-server een **control plane** en krijgt elke arenalobby een eigen **matchcontainer** (zelfde image, `ROLE=match`) met
+eigen CPU- en geheugenbudget. Een zware lobby of een GC-pauze raakt dan de andere lobby's niet meer, en een update van de
+control plane laat lopende matches doorspelen. Survival/Bouwen blijft in de control plane (zie ROADMAP).
+
+```bash
+sudo ./scripts/install.sh --proxy none --match-isolation container   # zet het aan (blijft in .env), terug met --match-isolation inprocess
+bunkcraft matches                                                      # matchcontainers, CPU en geheugen
+bunkcraft matches stop                                                 # alle matchcontainers stoppen (spelers vallen eruit)
+```
+
+`install.sh` voegt `docker-compose.matches.yml` toe aan `COMPOSE_FILE`: een socket proxy (`docker-proxy`) en twee interne
+netwerken (`match`, `docker-api`), zonder internettoegang en zonder gepubliceerde poorten.
+
+**Hoe het werkt.**
+
+- Spelers verbinden alleen met de control plane (één domein, één tunnel). Die stuurt `/ws/<CODE>` door naar de juiste
+  matchcontainer over het interne netwerk: frames ongewijzigd (tekst en binair), met backpressure, ping/pong doorgegeven
+  (de lag-compensatie meet dus de echte ping van de speler) en sluitcodes beide kanten op.
+- Profielen, accounts, XP, party's, skins, de roomlijst, matchmaking, rejoin-aanbod en `/admin` blijven in de control plane.
+  Een matchcontainer heeft geen profielopslag: wie een speler is (profiel, rang, skin) geeft de control plane mee bij de
+  verbinding, en XP wordt aan het eind van de match door de control plane toegekend (eenmalig per grant).
+- Een **warme pool** (`MATCH_WARM_POOL`, standaard 1) houdt een gestarte container klaar, zodat Quick Play niet op een
+  containerstart wacht. Een lege lobby (geen spelers, geen bewaarde rejoin-plekken, geen party-holds) stopt na
+  `MATCH_IDLE_GRACE_SEC`; de lobby zelf blijft op schijf en start bij de volgende join in een nieuwe container.
+- **Limiet:** `MAX_MATCH_CONTAINERS` (warme meegeteld). Is die bereikt, dan draait een nieuwe lobby gewoon in de control plane
+  (zoals zonder isolatie). Spelers merken niets; `/admin` en `bunkcraft_match_inprocess_fallback_total` tellen het. Gekozen boven
+  "server vol": spelen gaat voor isolatie.
+- **Updates:** `bunkcraft update` en de autoupdate-timer werken zoals altijd. De nieuwe control plane adopteert de lopende
+  matchcontainers (alleen de lobby die hij ze zelf gaf, zie SECURITY.md); spelers verliezen kort de verbinding en komen via
+  rejoin terug op hun plek met hun score. Lopende matches houden hun oude image tot ze leeg zijn; nieuwe lobby's starten op het
+  nieuwe image (standaard het image-id van de control plane zelf). Rollback werkt hetzelfde.
+- Komt de control plane niet terug, dan stopt een matchcontainer zonder spelers na 5 minuten zelf.
+
+**Instellingen** (in `.env`):
+
+| Variabele | Standaard | Betekenis |
+|---|---|---|
+| `MATCH_ISOLATION` | `inprocess` | `container` = een container per arenalobby (`install.sh --match-isolation`) |
+| `MATCH_CPUS` | `1` | CPU per matchcontainer (harde limiet) |
+| `MATCH_MEMORY` | `256m` | Geheugen per matchcontainer, zonder swap; de V8-heap krijgt 60 % daarvan |
+| `MATCH_PIDS` | `64` | Processen/threads per matchcontainer |
+| `MATCH_WARM_POOL` | `1` | Gestarte, lege containers die klaarstaan |
+| `MAX_MATCH_CONTAINERS` | `16` | Meeste matchcontainers tegelijk (warme meegeteld); daarboven in-process |
+| `MATCH_IDLE_GRACE_SEC` | `30` | Zo lang leeft een lege lobby nog |
+| `MATCH_IMAGE` | leeg | Image voor matchcontainers; leeg = het image van de control plane |
+| `MATCH_SECRET` | `DATA_DIR/match-secret.key` | Geheim van de interne API; runners krijgen alleen een afgeleide sleutel |
+| `MATCH_DRIVER` | `docker` | `process` = child processes i.p.v. containers (ontwikkelen en tests, geen limieten) |
+| `INTERNAL_PORT` | `3001` | Interne API van de control plane (nooit publiceren) |
+
+**Resources.** Gemeten (Docker Desktop, M1, zie `docs/research/SCALING.md`): MATCH_MEASUREMENTS. Reken per actieve lobby met
+1 vCPU-reservering als plafond (een lobby gebruikt er meestal ~2-5 % van) en ~MATCH_MEM_MB MB geheugen; de warme pool kost één lege
+container. Op een CX23 (2 vCPU, 4 GB) passen zo ruim 10 lobby's naast de control plane; `MATCH_CPUS` is een plafond, geen
+reservering, dus overboeken mag.
+
+**Beveiliging in het kort** (volledig: `docs/SECURITY.md`, "Een container per lobby"): de control plane praat met Docker via
+`docker-socket-proxy` (vastgepind op digest), die alleen container-calls doorlaat; elke containerspec wordt vóór verzending
+tegen een allowlist gecontroleerd (ons image, non-root, read-only, geen capabilities, geen mounts of poorten, alleen het
+interne netwerk, harde limieten); matchcontainers hebben geen internet. De proxy controleert niet wát er in een create-verzoek
+staat: een overgenomen control plane zou via de proxy alsnog een geprivilegieerde container kunnen starten. Draai Docker daarom
+bij voorkeur rootless of met `userns-remap` als je dit aanzet.
+
+**Testen:** `npm test` (unit, nep-Docker-API en een volledige TDM-match met bots door de proxy met child processes) en
+`scripts/qa/container-smoke.sh` (echte Docker: hardening, proxy-allowlist, geen internet, control-plane-update met adoptie en
+rejoin, en een meting tegen in-process). Raakt alleen zijn eigen compose-project `bcsmoke` en poort 38417.
+
 ## Overzicht
 
 Eén Node.js-proces serveert de game (de gebouwde `dist/`) **en** de multiplayer-server

@@ -50,6 +50,11 @@ export const ADMIN_HTML = `<!doctype html>
     <div class="cards" id="stats"></div>
     <h2>Games</h2>
     <div class="wrap"><table id="rooms"><thead><tr><th>Code</th><th>Name</th><th>Type</th><th>Players</th><th>Flags</th><th></th></tr></thead><tbody></tbody></table></div>
+    <section id="matches" hidden>
+      <h2>Match containers</h2>
+      <div class="mute" id="matchinfo"></div>
+      <div class="wrap"><table id="matchtable"><thead><tr><th>Runner</th><th>State</th><th>Game</th><th>Players</th><th>CPU</th><th>Memory</th><th>Tick p99</th><th>Up</th><th>Version</th></tr></thead><tbody></tbody></table></div>
+    </section>
     <h2>Blocked addresses</h2>
     <form id="banform" class="row"><input id="banip" placeholder="IP address" size="24" aria-label="IP address"><button type="submit">Block</button></form>
     <ul id="bans" class="players"></ul>
@@ -155,6 +160,22 @@ export const ADMIN_HTML = `<!doctype html>
     if (!bans.ips.length) ul.append(el('li', 'None', 'mute'));
   }
 
+  function renderMatches(m) {
+    $('matches').hidden = m.isolation !== 'container';
+    if (m.isolation !== 'container') return;
+    var avg = m.counters.startMs.length ? Math.round(m.counters.startMs.reduce(function (a, b) { return a + b; }, 0) / m.counters.startMs.length) : 0;
+    $('matchinfo').textContent = 'Driver ' + m.driver + ', ' + m.runners.length + ' runners, start ' + avg + ' ms on average, ' +
+      m.counters.startFailures + ' failed starts, ' + m.counters.deaths + ' lost, ' + m.fallbacks + ' lobbies in-process (cap or no driver).';
+    var body = $('matchtable').tBodies[0]; body.textContent = '';
+    m.runners.forEach(function (r) {
+      var tr = el('tr');
+      tr.append(el('td', r.id.slice(0, 8)), el('td', r.state + (r.adopted ? ' (adopted)' : '')), el('td', r.room || '-'), el('td', r.players),
+        el('td', Math.round(r.cpu * 100) + '%'), el('td', mb(r.memBytes) + (r.memLimitBytes ? ' / ' + mb(r.memLimitBytes) : '')),
+        el('td', r.tickP99Ms.toFixed(2) + ' ms'), el('td', fmtTime(r.uptimeSec)), el('td', r.version, 'mute'));
+      body.append(tr);
+    });
+  }
+
   function renderSkins(s) {
     $('skins').hidden = false;
     $('skininfo').textContent = s.count + ' skins stored, ' + (s.bytes / 1048576).toFixed(1) + ' of ' + Math.round(s.maxBytes / 1048576) + ' MB. A banned skin is never served again.';
@@ -210,10 +231,12 @@ export const ADMIN_HTML = `<!doctype html>
     if (!token) return Promise.resolve();
     // The skins list is optional: a server with SKINS=off answers 404 and the section stays hidden.
     var skins = api('GET', '/skins').catch(function () { return null; });
-    return Promise.all([api('GET', '/stats'), api('GET', '/rooms'), api('GET', '/ip-bans'), skins]).then(function (r) {
+    var matches = api('GET', '/matches').catch(function () { return { isolation: 'inprocess', runners: [] }; });
+    return Promise.all([api('GET', '/stats'), api('GET', '/rooms'), api('GET', '/ip-bans'), skins, matches]).then(function (r) {
       $('err').textContent = ''; $('app').hidden = false; $('logout').hidden = false;
       render(r[0], r[1], r[2]);
       if (r[3]) renderSkins(r[3]); else $('skins').hidden = true;
+      renderMatches(r[4]);
       // Accounts load once (a search result must not jump every 5 seconds, and a recovery code must stay on screen).
       if ($('accounts').hidden && !accountsTried) { accountsTried = true; loadAccounts(); }
     }, function (e) { fail(e); if (e.message === 'Wrong token') signOut(); });

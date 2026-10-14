@@ -8,6 +8,7 @@ import type { AccountService } from './accounts/AccountService';
 import type { GameServer } from './GameServer';
 import { log } from './Log';
 import { type Gauges, metrics } from './Metrics';
+import type { ControlPlane } from './match/ControlPlane';
 import type { Rooms } from './Rooms';
 import type { SkinService } from './skins/SkinService';
 import { RateLimiter, bearer, safeEqual } from './Security';
@@ -67,6 +68,8 @@ export interface AdminContext {
   json(res: ServerResponse, status: number, body: unknown): void;
   /** Close the open connections of a just-blocked address. */
   dropIp?(ip: string): void;
+  /** MATCH_ISOLATION=container: the match runners (null in-process). */
+  control?: ControlPlane | null;
 }
 
 /** 20 wrong tokens per address per 10 minutes, then 429: the token cannot be brute-forced over HTTP. */
@@ -115,6 +118,12 @@ export async function adminApi(ctx: AdminContext, req: IncomingMessage, res: Ser
       main: ctx.main ? { name: ctx.main.name, players: ctx.main.playerCount } : null,
       rooms: ctx.rooms?.adminList() ?? [],
     });
+  }
+  // Match containers: state, lobby, CPU, memory and tick p99 per runner (from heartbeats and Docker stats).
+  if (parts[0] === 'matches' && parts.length === 1 && method === 'GET') {
+    const c = ctx.control;
+    if (!c) return json(res, 200, { isolation: 'inprocess', runners: [] });
+    return json(res, 200, { isolation: 'container', driver: c.pool.driver.kind, image: c.pool.driver.image, fallbacks: c.fallbacks, counters: c.pool.counters, runners: c.runners() });
   }
   if (parts[0] === 'main' && ctx.main) {
     if (parts[1] === 'players' && method === 'GET') return json(res, 200, { players: ctx.main.playerList() });

@@ -70,6 +70,9 @@ export class MatchPool {
   readonly counters: PoolCounters = { starts: 0, startFailures: 0, deaths: 0, capped: 0, startMs: [] };
   private closed = false;
   private readonly now: () => number;
+  /** Failed starts in a row, and no new warm start before `retryAt` (a broken image or proxy must not spin). */
+  private failStreak = 0;
+  private retryAt = 0;
 
   constructor(private readonly o: PoolOptions) {
     this.now = o.now ?? Date.now;
@@ -94,7 +97,7 @@ export class MatchPool {
   }
 
   ensureWarm(): void {
-    if (this.closed) return;
+    if (this.closed || this.now() < this.retryAt) return;
     while (this.warmCount() < this.o.warm && this.runners.size < this.o.max) this.start(false);
   }
 
@@ -126,7 +129,9 @@ export class MatchPool {
   private fail(r: Runner, e: Error): void {
     if (this.runners.get(r.id) !== r) return;
     this.counters.startFailures++;
-    log.error('match runner failed to start', { runner: r.id, error: e.message });
+    this.failStreak++;
+    this.retryAt = this.now() + Math.min(60_000, 1000 * 2 ** Math.min(6, this.failStreak - 1));
+    log.error('match runner failed to start', { runner: r.id, error: e.message, retryInMs: this.retryAt - this.now() });
     this.runners.delete(r.id);
     r.reject(e);
     if (r.handle) void this.o.driver.stop(r.handle).catch(() => undefined);
@@ -172,6 +177,8 @@ export class MatchPool {
     this.counters.startMs.push(r.readyAt - r.startedAt);
     if (this.counters.startMs.length > 20) this.counters.startMs.shift();
     r.state = r.leased ? 'assigned' : 'idle';
+    this.failStreak = 0;
+    this.retryAt = 0;
     log.info('match runner ready', { runner: id, ms: r.readyAt - r.startedAt, warm: !r.leased });
     r.resolve(r);
     return r;

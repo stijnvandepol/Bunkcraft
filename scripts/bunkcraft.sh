@@ -15,6 +15,8 @@
 #   bunkcraft account <lock|unlock|logout|delete|recovery|list> [name]
 #                          player account moderation through the admin API (needs ADMIN_TOKEN; 'delete' asks first,
 #                          'recovery' prints a new recovery code once: only after the owner proved who they are)
+#   bunkcraft matches      match containers (MATCH_ISOLATION=container): lobby, image, CPU and memory
+#   bunkcraft matches stop stop every match container of this install (their players are disconnected)
 #   bunkcraft deploy       the auto-update flow now, also when AUTOUPDATE=off (push deploys over SSH)
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")/.."
@@ -143,6 +145,27 @@ case "${1:-status}" in
       case "$yn" in y|Y|yes) ;; *) echo "cancelled"; exit 1 ;; esac
     fi
     server_check account "$action" ${name:+"$name"}
+    ;;
+  matches)
+    # Only containers with our owner label: never anything else on this host.
+    owner="$(setting MATCH_OWNER bunkcraft)"
+    filter=(--filter "label=nl.bunkhosting.bunkcraft.role=match" --filter "label=nl.bunkhosting.bunkcraft.owner=$owner")
+    case "${2:-list}" in
+      list)
+        docker ps "${filter[@]}" --format 'table {{.Names}}\t{{.Status}}\t{{.Label "nl.bunkhosting.bunkcraft.version"}}'
+        ids="$(docker ps -q "${filter[@]}")"
+        # shellcheck disable=SC2086
+        [ -z "$ids" ] || docker stats --no-stream $ids
+        ;;
+      stop)
+        ids="$(docker ps -q "${filter[@]}")"
+        [ -z "$ids" ] && { echo "no match containers"; exit 0; }
+        read -r -p "Stop $(echo "$ids" | wc -w | tr -d ' ') match container(s)? Their players are disconnected. [y/N] " yn
+        # shellcheck disable=SC2086
+        case "$yn" in y|Y|yes) docker stop $ids >/dev/null && echo stopped ;; *) echo "cancelled"; exit 1 ;; esac
+        ;;
+      *) echo "usage: bunkcraft matches [list|stop]" >&2; exit 2 ;;
+    esac
     ;;
   # Push deploys (GitHub Actions over SSH, docs/SERVER.md) run exactly this, through a forced command.
   deploy) shift; exec ./scripts/autoupdate.sh --force --wait-lock "$@" ;;
