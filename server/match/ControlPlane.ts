@@ -17,7 +17,7 @@ import { type RateLimiter, ownerGuesses, passwordFailKey, safeEqual, tokenMatche
 import type { SkinService } from '../skins/SkinService';
 import { MATCH_PORT, containerName } from './ContainerSpec';
 import { DockerApi, DockerDriver, type LogLine, type MatchDriver, ProcessDriver } from './Drivers';
-import { type Ident, RUNNER_ID, type RunnerStatus, authHeaders, authRunner, callJson, readJson, runnerKey, sendJson } from './Internal';
+import { type Ident, RUNNER_ID, type RunnerStatus, authHeaders, authRunner, callJson, cleanStatus, readJson, runnerKey, sendJson } from './Internal';
 import { MatchPool, type Runner } from './MatchPool';
 import { type RemoteHost, RemoteRoom } from './RemoteRoom';
 
@@ -148,7 +148,7 @@ export class ControlPlane implements RemoteRooms, RemoteHost {
       const key = runnerKey(this.secret, h.id);
       let status: RunnerStatus | null = null;
       try {
-        status = await callJson<RunnerStatus>(`${url}/internal/status`, authHeaders(h.id, key), undefined, 3000);
+        status = cleanStatus(await callJson<unknown>(`${url}/internal/status`, authHeaders(h.id, key), undefined, 3000));
       } catch (e) {
         log.warn('match container did not answer', { runner: h.id, error: String(e) });
       }
@@ -360,9 +360,10 @@ export class ControlPlane implements RemoteRooms, RemoteHost {
           return;
         }
         case '/internal/heartbeat': {
-          const r = this.pool.beat(id, body as unknown as RunnerStatus);
+          const st = cleanStatus(body);
+          const r = this.pool.beat(id, st);
           const l = this.lobbyOf(id);
-          if (l && r) l.room.apply(body as unknown as RunnerStatus);
+          if (l && r) l.room.apply(st);
           // A runner nobody knows (a leftover) is told to stop.
           sendJson(res, 200, { stop: !r });
           return;

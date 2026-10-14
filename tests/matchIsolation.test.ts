@@ -301,6 +301,24 @@ describe('remote room seat accounting', () => {
     expect(r.playerCount).toBe(0);
   });
 
+  it('audit A2-05: a lying runner cannot put junk into listings, matchmaking or the dashboard', () => {
+    const r = room();
+    const junk = {
+      players: '9999', reservedSeats: -5, botCount: 1e12, listed: 'yes', locked: 1, maxPlayers: Infinity, holds: 5,
+      info: { name: `${'A'.repeat(100_000)}‮\u0000`, gameType: 'tdm', maxPlayers: 1e9 }, lobby: 7, teams: { red: 'x', blue: NaN },
+      playerList: [...new Array(5000).fill({ name: 'B'.repeat(5000), ip: { x: 1 } }), 'nope'],
+    } as unknown as RunnerStatus;
+    expect(() => r.apply(junk)).not.toThrow();
+    expect(r.playerCount).toBe(0);
+    expect(r.maxPlayers).toBe(4); // falls back to the lobby's own size
+    expect(r.listed).toBe(false);
+    expect(r.info().name.length).toBeLessThanOrEqual(32);
+    expect(r.info().name).not.toMatch(/[\u0000‮]/);
+    expect(r.lobbyStatus()).toBeNull();
+    expect(r.playerList().length).toBeLessThanOrEqual(256);
+    expect(r.playerList()[0].name.length).toBeLessThanOrEqual(32);
+  });
+
   it('keeps its own game type whatever the runner reports', () => {
     const r = room();
     r.apply(status({ info: { name: 'x', gameType: 'survival', maxPlayers: 4 } }));

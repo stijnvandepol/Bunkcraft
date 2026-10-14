@@ -2,7 +2,7 @@ import { WebSocket } from 'ws';
 import type { GameServer } from '../GameServer';
 import { log } from '../Log';
 import type { RejoinStatus, RoomServer } from '../RoomServer';
-import { type RunnerStatus, authHeaders, callJson, encodeIdent, type Ident } from './Internal';
+import { type RunnerStatus, authHeaders, callJson, cleanStatus, encodeIdent, type Ident } from './Internal';
 import type { Runner } from './MatchPool';
 import { bridge } from './WsProxy';
 
@@ -79,8 +79,10 @@ export class RemoteRoom implements RoomServer {
   }
 
   /** A heartbeat (or an answer) of the runner. */
-  apply(st: RunnerStatus): void {
+  apply(raw: RunnerStatus): void {
     const before = this.st;
+    // Rebuilt with types and bounds: what a runner says reaches listings, matchmaking and the dashboard (Internal.cleanStatus).
+    const st = cleanStatus(raw);
     this.st = st;
     this.joinedSinceBeat = 0;
     const now = Date.now();

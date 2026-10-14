@@ -136,3 +136,43 @@ export interface RunnerStatus {
   rssBytes: number;
   heapBytes: number;
 }
+
+const obj = (v: unknown): Record<string, unknown> | null => (v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : null);
+const count = (v: unknown, max: number): number => (typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.min(max, Math.floor(v))) : 0);
+const real = (v: unknown, max: number): number => (typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.min(max, v)) : 0);
+/** Text a runner reports that ends up in listings and the ops dashboard: no control or bidi characters, capped. */
+const text = (v: unknown, max: number): string => (typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f-\u009f​-‏‪-‮⁦-⁩﻿]/g, '').slice(0, max) : '');
+
+/** Most players or seats a runner can report for one lobby (lobbies hold at most 16; generous headroom). */
+const MAX_REPORTED = 256;
+
+/**
+ * A runner's status (heartbeat, assignment answer, adoption) as the control plane keeps it. A runner is only half
+ * trusted (see ControlPlane): what it says goes into public listings, matchmaking and the ops dashboard, so every
+ * field is rebuilt here with its type and bounds; nothing else of the body is kept.
+ */
+export function cleanStatus(raw: unknown): RunnerStatus {
+  const s = obj(raw) ?? {};
+  const info = obj(s.info);
+  const lobby = obj(s.lobby);
+  const teams = obj(s.teams);
+  return {
+    id: text(s.id, 24), version: text(s.version, 64), room: typeof s.room === 'string' ? text(s.room, 16) : null,
+    players: count(s.players, MAX_REPORTED), reservedSeats: count(s.reservedSeats, MAX_REPORTED), botCount: count(s.botCount, MAX_REPORTED),
+    playersInPlay: count(s.playersInPlay, MAX_REPORTED), listed: s.listed === true, locked: s.locked === true, maxPlayers: count(s.maxPlayers, MAX_REPORTED),
+    info: info ? {
+      name: text(info.name, 32), gameMode: text(info.gameMode, 16), gameType: text(info.gameType, 16), players: count(info.players, MAX_REPORTED),
+      maxPlayers: count(info.maxPlayers, MAX_REPORTED), scoreLimit: count(info.scoreLimit, 1e6), timeLimitSec: count(info.timeLimitSec, 1e6), locked: info.locked === true,
+      ...(typeof info.map === 'string' ? { map: text(info.map, 32) } : {}),
+    } : null,
+    lobby: lobby ? { phase: text(lobby.phase, 16), timeLeft: real(lobby.timeLeft, 1e6), progress: real(lobby.progress, 1), map: text(lobby.map, 32) } : null,
+    teams: teams ? { red: count(teams.red, MAX_REPORTED), blue: count(teams.blue, MAX_REPORTED) } : null,
+    holds: Array.isArray(s.holds) ? s.holds.slice(0, 64).filter((h): h is string => typeof h === 'string' && h.length <= 128) : [],
+    playerList: Array.isArray(s.playerList) ? s.playerList.slice(0, MAX_REPORTED).map(obj).filter((p): p is Record<string, unknown> => !!p).map((p) => ({
+      id: count(p.id, 2 ** 31), name: text(p.name, 32), ip: text(p.ip, 64), op: p.op === true, pingMs: count(p.pingMs, 1e6),
+      ...(typeof p.suspicion === 'number' ? { suspicion: count(p.suspicion, 100) } : {}),
+      ...(typeof p.strikes === 'number' ? { strikes: real(p.strikes, 1e6) } : {}),
+    })) : [],
+    tickP99Ms: real(s.tickP99Ms, 1e6), cpu: real(s.cpu, 1024), rssBytes: count(s.rssBytes, 2 ** 50), heapBytes: count(s.heapBytes, 2 ** 50),
+  };
+}
