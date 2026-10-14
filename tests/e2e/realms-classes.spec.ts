@@ -21,9 +21,9 @@ async function quickPlay(page: Page, name: string, mode = 'tdm'): Promise<void> 
   await forcePlaying(page);
 }
 
-const selectedIn = (page: Page, column: number) => page.locator('.arc-cac-col').nth(column).locator('.arc-cac-item.selected');
+const selectedIn = (page: Page, field: string) => page.locator(`.arc-loadout .arc-cac-item.selected[data-field="${field}"]`);
 
-test('create-a-class: a picked preset shows in the editor, applies at once in the warm-up, and the chat stays out of the menu', async ({ page }) => {
+test('create-a-class: a template fills the equipped class, shows in the editor, applies at once in the warm-up, and the chat stays out of the menu', async ({ page }) => {
   test.setTimeout(120_000);
   await quickPlay(page, 'cac_e2e');
   // The welcome lines are in the chat at this point.
@@ -32,17 +32,17 @@ test('create-a-class: a picked preset shows in the editor, applies at once in th
   await expect(page.locator('.arc-loadout')).toBeVisible();
   // Before the fix the chat lines were drawn over the editor columns.
   await expect(page.locator('.chat')).toBeHidden();
-  await page.locator('.arc-loadout .arc-chip', { hasText: 'Breacher' }).click();
-  // Before the fix the editor kept showing the old custom class (Assault Rifle) after a preset pick.
-  await expect(selectedIn(page, 0)).toHaveText(/Shotgun/);
-  await expect(selectedIn(page, 2)).toHaveText(/Pistol/);
-  await expect(selectedIn(page, 3)).toHaveText(/Ninja/);
+  await page.locator('.arc-loadout .cac-preset', { hasText: 'Breacher' }).click();
+  // Before the fix the editor kept showing the old class (Assault Rifle) after a preset pick.
+  await expect(selectedIn(page, 'primary')).toHaveText(/Shotgun/);
+  await expect(selectedIn(page, 'secondary')).toHaveText(/Pistol/);
+  await expect(selectedIn(page, 'perk')).toHaveText(/Ninja/);
   // Warm-up: no fighting, so the note does not promise "next life".
   await expect(page.locator('.arc-loadout-note')).toHaveText('Applies now');
-  // Editing starts from the shown class: a new optic keeps the shotgun and becomes the custom class.
-  await page.locator('.arc-cac-col').nth(1).locator('.arc-cac-item', { hasText: 'Red Dot' }).click();
-  await expect(selectedIn(page, 0)).toHaveText(/Shotgun/);
-  await expect(page.locator('.arc-chip.custom')).toHaveClass(/selected/);
+  // Editing changes the equipped class: a new optic keeps the shotgun.
+  await page.locator('.arc-loadout .arc-cac-item[data-field="optic"]', { hasText: 'Red Dot' }).click();
+  await expect(selectedIn(page, 'primary')).toHaveText(/Shotgun/);
+  await expect(page.locator('.arc-loadout .cac-slot.selected')).toContainText('Breacher');
   await page.locator('.arc-loadout button.mc-btn').click();
   await forcePlaying(page);
   await play(page, 500);

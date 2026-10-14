@@ -56,10 +56,14 @@ export function spreadPixels(spreadDeg: number, fovDeg: number, height: number):
 export const SPREAD_MOVING = { hip: 1.3, ads: 1.08 } as const;
 export const SPREAD_AIR = { hip: 1.4, ads: 1.25 } as const;
 
-/** Cone half-angle (degrees) for the current stance: aiming tightens it, moving and air loosen it (hip fire more than aimed). */
-export function currentSpread(w: WeaponDef, ads: number, moving: boolean, airborne: boolean): number {
+/**
+ * Cone half-angle (degrees) for the current stance: aiming tightens it, moving and air loosen it (hip fire more than aimed).
+ * `hipMul` / `adsMul` scale the hip and aimed cones (attachments: the laser, the vertical grip; see Weapons.hipSpreadMul).
+ */
+export function currentSpread(w: WeaponDef, ads: number, moving: boolean, airborne: boolean, hipMul = 1, adsMul = 1): number {
   const a = Math.min(1, Math.max(0, ads));
-  const base = w.spread + (w.adsSpread - w.spread) * a;
+  const hip = w.spread * hipMul, aimed = w.adsSpread * adsMul;
+  const base = hip + (aimed - hip) * a;
   const move = moving ? SPREAD_MOVING.hip + (SPREAD_MOVING.ads - SPREAD_MOVING.hip) * a : 1;
   const air = airborne ? SPREAD_AIR.hip + (SPREAD_AIR.ads - SPREAD_AIR.hip) * a : 1;
   return base * move * air;

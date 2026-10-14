@@ -672,6 +672,7 @@ export async function startServer(config: Config, start: StartOptions = {}): Pro
    *   GET  /api/profile          the profile of the token (401 without a valid one)
    *   POST /api/profile/equip    { title?, card?, camos?: { weapon: camo } } within the unlocks
    *   POST /api/profile/prestige next prestige at the level cap
+   *   POST /api/profile/classes  { classes: [...], sel } the Create-a-Class book (shape and size checked, then cleaned)
    * XP is never accepted from a client: only finished matches grant it (MatchProgress).
    */
   async function profileApi(req: IncomingMessage, res: ServerResponse, path: string, ip: string): Promise<void> {
@@ -712,6 +713,10 @@ export async function startServer(config: Config, start: StartOptions = {}): Pro
     if (path === '/api/profile/equip') {
       const r = profiles.equip(own.id, { title: body.title, card: body.card, camos: body.camos });
       return r!.ok ? json(res, 200, { profile: r!.profile }) : json(res, 409, { error: 'Not unlocked yet', profile: r!.profile });
+    }
+    if (path === '/api/profile/classes') {
+      const r = profiles.classes(own.id, body);
+      return r!.ok ? json(res, 200, { classes: r!.profile.classes }) : json(res, 400, { error: 'Bad class book' });
     }
     if (path === '/api/profile/prestige') {
       const p = profiles.prestige(own.id);

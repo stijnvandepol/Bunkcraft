@@ -431,7 +431,7 @@ Alles is aan te passen in *Options → Controls → Key Binds* (categorie **Arca
 | Chat | T |
 | HUD verbergen | F1 |
 
-Op het doodscherm kies je met 1–9 de klasse voor je volgende leven (8 presets en je Custom-klasse); binnen 3 s na je
+Op het doodscherm kies je met 1–5 een van je vijf opgeslagen klassen voor je volgende leven; binnen 3 s na je
 spawn en vóór je eerste schot gaat een nieuwe klasse direct in. Esc opent het pauzemenu;
 de match loopt op de server gewoon door.
 
@@ -602,7 +602,10 @@ van de richtfactor (`BOLT_PRECISION`): één precies schot door een zwaaiende sc
 
 ## Klassen (Create-a-Class)
 
-Een klasse is **primair wapen + optiek + secundair wapen + één perk** (`ClassSpec` in `src/modes/Loadouts.ts`):
+Een klasse is **primair wapen + optiek + twee attachments (greep, laser) + secundair wapen + twee perks**
+(`ClassSpec` in `src/modes/Loadouts.ts`; perks en attachments samen heten een `Kit` in `src/modes/Weapons.ts`). Je hebt
+**vijf opgeslagen klassen** met een eigen naam (`src/modes/ClassBook.ts`), te bewerken vanaf de home (**Create-a-Class**
+in de navigatie) en in de match (B); het is één component (`src/ui/ClassEditor.ts`) in beide.
 
 | Optiek | Effect |
 |---|---|
@@ -612,35 +615,78 @@ Een klasse is **primair wapen + optiek + secundair wapen + één perk** (`ClassS
 | Combat Scope | 2–2,5× prismavizier (rifle 2,2×, burst 2,2×, LMG 2×, battle 2,3×, DMR 2×, semi-auto 2,4×, lever 2,2×): een bredere lens met een dunne vignet en een oplichtende chevron, **geen sway**; 0,05 s trager richten op een wapen dat er niet voor gebouwd is. |
 | Scope | Vergroting per wapen (DMR 2,2×, Semi-Auto 3×, Bolt-Action 4,5×, Anti-Materiel 6,3×), zwarte scope-overlay met mil-dots; het wapen verdwijnt uit beeld als je volledig richt. Sway, de eerste ~0,45 s maar 20% (quickscope); **Shift ingedrukt = adem inhouden** (4 s stil, daarna 2,5 s naar adem happen met meer sway). Vijanden zien een **glinstering** als je door een scope naar ze kijkt. |
 
-| Perk | Effect |
-|---|---|
-| Extended Mags | +40% magazijn op beide geweren |
-| Quickdraw | 40% sneller richten, wapenwissel twee keer zo snel (ook op de server) |
-| Ninja | Je voetstappen zijn voor anderen alleen dichtbij (≤ 7 m) te horen in plaats van tot 26 m |
-| Suppressor | Demper op het wapen: stille "thwip", tot 24 m hoorbaar, klein mondingsvuur; 20% korter schadebereik |
-| Lightfoot | 8% sneller te voet (ook in het snelheidsbudget van de server), slide-cooldown 0,65 s in plaats van 0,9 s |
+| Attachment (slot) | Effect | Level |
+|---|---|---|
+| Laser (`rail`) | Spreiding vanuit de heup ×0,7 (gericht onveranderd) | 2 |
+| Vertical Grip (`under`) | Terugslag ×0,75 (klim en zijwaarts), gerichte spreiding ×0,85, richttijd ×1,08 | 3 |
+| Angled Grip (`under`) | Richttijd ×0,85, terugslag ×1,1 | 5 |
 
-- **Presets als quick picks:** Assault (rifle + red dot, pistol, Quickdraw), Rusher (SMG, machine pistol, Ninja), Breacher
-  (shotgun, pistol, Ninja), Support (LMG + holo, pistol, Extended Mags), Marksman (DMR + scope, revolver), Burst (burst + holo,
-  pistol, Suppressor), Sniper (bolt-action, machine pistol, Quickdraw), Scout (SMG, pistol, Lightfoot: slide erin, mes of
-  spray, slide eruit).
-- **Menu (B):** de presets bovenaan (1–7), daaronder de **Custom**-klasse (8) met per kolom primair, optiek (optieken die het
-  wapen niet kan dragen zijn grijs), secundair en perk, plus de stats van het gekozen wapen. Elke wijziging maakt de klasse je
-  Custom-klasse en bewaart hem in `localStorage` (`bunkcraft.arcadeClass`); de laatst gekozen klasse (`bunkcraft.arcadeClass.last`)
-  gaat bij het joinen meteen naar de server. Op het doodscherm kies je met 1–8.
-- **Server:** bericht `loadout { primary, secondary?, optic?, perk? }`. Elk veld wordt gecontroleerd (`validateClass`): onbekend
-  of niet toegestaan → standaard (rifle, iron, pistol, geen perk); een optiek die het wapen niet kan dragen wordt de standaardoptiek
-  van dat wapen. Een klasse gaat direct in (`gear`) **buiten een live ronde** (warm-up, aftellen, tussen rondes) en in een live
-  ronde **binnen 3 s na je spawn en vóór je eerste schot**, anders bij je volgende leven. De regel staat één keer in
-  `classApplies` (`src/modes/Loadouts.ts`); het menu zegt er per situatie bij wanneer je keuze ingaat. Het menu toont de
-  gekozen klasse in de editor; aanpassen begint vanaf die klasse en maakt er je Custom-klasse van. `spawn`/`gear` dragen `optic` en `perk`; `holds` draagt `optic`, `sup` (demper) en `quiet` (Ninja) zodat
-  anderen het juiste model, de demper en de glinstering zien en je stappen goed horen.
-- **Gun Game** houdt zijn vaste ladder (geen klassen, geen perks). De ladder begint met de rifle (eerste kill duurde met de
+Attachments zitten alleen op het primaire wapen (`attachAllowed`): de shotgun neemt er geen (zijn spreiding is zijn bereik),
+grendelwapens geen greep, wapens die om een scope gebouwd zijn (semi-auto, bolt-action, anti-materiel) geen laser. De
+effecten zijn vermenigvuldigers in `ATTACHMENTS` (`Weapons.ts`) en werken op client en server hetzelfde: de spreiding gaat
+via `shotSpread(…, hipMul, adsMul)` in het oordeel van de server (`Slot.hipMul/adsMul` in `server/Match.ts`), de richttijd
+via `adsTimeFor` in de server-ADS-blend, de terugslag in de `RecoilState` van de client (en `BotAim.recoil` in de duelsim).
+
+| Perk | Categorie | Effect |
+|---|---|---|
+| Extended Mags | wapen | +40% magazijn op beide geweren |
+| Quickdraw | wapen | 40% sneller richten, wapenwissel twee keer zo snel (ook op de server) |
+| Suppressor | wapen | Demper op het wapen: stille "thwip", tot 24 m hoorbaar, klein mondingsvuur; 20% korter schadebereik |
+| Ninja | veld | Je voetstappen zijn voor anderen alleen dichtbij (≤ 7 m) te horen in plaats van tot 26 m |
+| Lightfoot | veld | 8% sneller te voet (ook in het snelheidsbudget van de server), slide-cooldown 0,65 s in plaats van 0,9 s |
+
+Twee perks moeten uit **verschillende categorieën** komen (`perksCompatible`): één wapenperk en één veldperk. In de editor
+zijn de perks uit de categorie van je eerste perk in de tweede kolom grijs; een nieuwe eerste perk uit de categorie van de
+tweede maakt die tweede leeg.
+
+- **Sjablonen:** de presets vullen de klasse die je bewerkt (naam erbij, tenzij je hem zelf een naam gaf): Assault (rifle +
+  red dot, pistol, Quickdraw), Rusher (SMG + laser, machine pistol, Ninja), Breacher (shotgun, pistol, Ninja), Support (LMG +
+  holo + vertical grip, pistol, Extended Mags), Marksman (DMR + scope, revolver), Burst (burst + holo, pistol, Suppressor),
+  Sniper (bolt-action, machine pistol, Quickdraw), Scout (SMG, pistol, Lightfoot). Een nieuw boek begint met Assault,
+  Breacher, Scout en twee standaardklassen (allemaal open op level 1).
+- **Editor:** bovenaan de vijf klassen (klikken = uitrusten en bewerken), daaronder de sjablonen en (alleen op de home) de
+  naam, dan de kolommen primair, optiek, attachments (greep + rail), secundair en perks (1 + 2), en de stats van het wapen
+  met optiek, perks en attachments (richttijd, spreiding vanuit de heup, terugslag). Wat het wapen niet kan dragen is grijs,
+  wat op slot zit rood met het level.
+- **Opslag:** het boek (`{ classes: [5 × klasse + naam], sel }`) hoort bij je Realms-profiel: `POST /api/profile/classes`
+  (vorm en grootte gecontroleerd met `bookShapeOk`: hooguit 5 objecten met alleen strings, ≤ 2 KB; daarna `sanitizeBook`,
+  onbekend wordt standaard). `src/net/ClassBookStore.ts` houdt een kopie in `localStorage` (`bunkcraft.arcadeClasses`),
+  bewaart een wijziging meteen lokaal en na 0,6 s op de server, en neemt het boek van de server over als het profiel er een
+  heeft; een gast zonder profiel houdt alleen de lokale kopie. **Migratie:** de oude enkele Custom-klasse
+  (`bunkcraft.arcadeClass`) wordt klasse 1; een laatst gekozen preset (`bunkcraft.arcadeClass.last`) wordt klasse 2 en blijft
+  uitgerust. Het eerste profiel zonder boek krijgt zo het gemigreerde boek van de browser.
+- **Server:** bericht `loadout { primary, secondary?, optic?, perk?, perk2?, att?: { under?, rail? } }`. De oude velden blijven
+  mild (`validateClass` / `lockClass`: onbekend, niet toegestaan of op slot → standaard), zodat oude clients en bots werken.
+  De nieuwe velden zijn **streng** (`parseExtras` in `Unlocks.ts`, `Match.setLoadout`): een onbekend attachment-slot, een
+  attachment in het verkeerde slot of op een wapen dat het niet neemt, een attachment of tweede perk boven je level, of twee
+  perks uit één categorie weigeren het hele bericht; je volgende klasse verandert niet en de client krijgt
+  `classReject { reason }` (de editor toont het). Weggelaten velden houden de huidige keuze waar die nog past. Een klasse gaat
+  direct in (`gear`) **buiten een live ronde** (warm-up, aftellen, tussen rondes) en in een live ronde **binnen 3 s na je
+  spawn en vóór je eerste schot**, anders bij je volgende leven (`classApplies` in `src/modes/Loadouts.ts`). `spawn`/`gear`
+  dragen `optic`, `perk`, `perk2`, `under` en `rail`; `holds` draagt `optic`, `sup` (demper) en `quiet` (Ninja).
+- **Bots** sturen geen `perk2`/`att` en spelen dus zonder attachments en met één perk, zoals voorheen.
+- **Gun Game** houdt zijn vaste ladder (geen klassen, geen perks, geen attachments). De ladder begint met de rifle (eerste kill duurde met de
   shotgun op grote kaarten > 50 s, zie `docs/qa/ARCADE.md`), bevat alle 14 vuurwapens (19 treden) en eindigt op one-hit wapens
   (`GUN_GAME_FINALE`): shotgun, revolver, Bolt-Action Sniper, dan het mes (één steek) dat wint.
 
+**Balans van de attachments** (`npx tsx scripts/ttk-matrix.ts --attachments`, model in `Balance.ts`; duelsim met
+`npx tsx scripts/ttk-sim.ts 80 --effect=rail:laser` en `--att=under:vgrip,rail:laser`). Het zijn side-grades, geen
+TTK-sprong; `tests/createAClass.test.ts` bewaakt dat geen attachment de realistische TTK op 5/20/35 m meer dan 25% verlaagt
+of 15% verhoogt.
+
+| Attachment | Realistische TTK (model) | Duelsim (gemiddelde mens, 80 rondes) |
+|---|---|---|
+| Laser | Geen verschil vanaf 7 m (het model richt daar al); alleen hip fire dichtbij wordt strakker | Winstaandeel 33–67% tegen hetzelfde wapen zonder, binnen de ruis (controle zonder attachments: 28–56%) |
+| Vertical Grip | +1–2% (trager richten) tot 20 m; SMG op 35 m 1314 → 1088 ms (−17%) | 36–54%, binnen de ruis |
+| Angled Grip | −3 tot −4% op 10–90 m (sneller richten) | 31–60%, binnen de ruis |
+
+Met greep en laser aan beide kanten (`--att=under:vgrip,rail:laser`) blijven de mediane TTK's per wapen in dezelfde band als
+zonder (rifle 433–833 ms, SMG 467–767 ms, LMG 600–900 ms) en kwamen er geen extra kills onder 250 ms bij (1 per tabel, net
+als zonder).
+
 Screenshots: `docs/screenshots/arcade/` (`scripts/qa/weapon-shots.py`): `rifle-reddot-ads.png`, `rifle-holo-ads.png`,
-`lmg-holo-ads.png`, `sniper-scope.png`, `dmr-scope-breath.png`, `class-menu.png`, `model-*.png`.
+`lmg-holo-ads.png`, `sniper-scope.png`, `dmr-scope-breath.png`, `class-menu.png`, `model-*.png`; Create-a-Class op de home en in
+de match: `cac-home.png`, `cac-match.png` (`tests/e2e/create-a-class.spec.ts` met `E2E_SHOTS_DIR`).
 
 ## Voortgang (XP, levels, ontgrendelingen)
 
@@ -657,9 +703,10 @@ Je voortgang blijft na herladen bewaard en telt in elke lobby op dezelfde server
   (iedereen van het team in de zone), hardpoint 5 per seconde in de heuvel, match uitgespeeld 250, winst +400, gelijkspel
   +150. Maximaal 6000 per match; uitdagingen komen erbovenop. Wie halverwege vertrekt houdt de XP tot dan, zonder bonus.
 - **Ontgrendelingen** (`Unlocks.ts`): level 1 heeft al assault rifle, SMG, shotgun, pistool, red dot, Extended Mags,
-  Quickdraw en Ninja (de presets Assault en Breacher). Daarna: 2 holo, 3 machine pistol, 4 DMR, 5 LMG, 6 scope,
-  7 suppressor, 8 burst rifle, 9 revolver, 10 semi-auto sniper, 12 bolt-action sniper. Create-a-Class toont wat op slot
-  zit grijs met het level (`Lv 7`); de server zet een vergrendeld onderdeel terug naar de standaard.
+  Quickdraw, Ninja en Lightfoot (de presets Assault, Breacher en Scout). Daarna: 2 holo en laser, 3 machine pistol en
+  vertical grip, 4 DMR, 5 LMG en angled grip, 6 scope, 7 suppressor, 8 burst rifle, 9 revolver, 10 semi-auto sniper,
+  12 bolt-action sniper. Create-a-Class toont wat op slot zit met het level (`Lv 7`); de server zet een vergrendeld wapen,
+  optiek of eerste perk terug naar de standaard en weigert een vergrendeld attachment of tweede perk (`classReject`).
 - **Wapen-XP en camo's** (`Camos.ts`): elk wapen krijgt XP voor kills (100), headshots (25) en assists (30), tot
   wapenlevel 25. Camo's (procedurele kleurpatronen op het voxelmodel, `src/rendering/WeaponCamo.ts`): Woodland (2),
   Desert (4), Arctic (6), Urban (8), Tiger (10), Crimson (13), Cobalt (16), Gold (20), Diamond (25). Kiezen in de

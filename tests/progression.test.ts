@@ -109,17 +109,18 @@ describe('unlocks', () => {
     expect(isUnlocked('primary', 'sniper', { level: 1, prestige: 1 })).toBe(true);
   });
 
+  const NONE = { under: 'none', rail: 'none', perk2: 'none' } as const;
   it('lockClass replaces only the locked fields', () => {
     const r1 = { level: 1, prestige: 0 };
     expect(lockClass({ primary: 'sniper', optic: 'scope', secondary: 'revolver', perk: 'suppressor' }, r1))
-      .toEqual({ primary: 'rifle', optic: 'iron', secondary: 'pistol', perk: 'none' });
+      .toEqual({ ...NONE, primary: 'rifle', optic: 'iron', secondary: 'pistol', perk: 'none' });
     expect(lockClass({ primary: 'smg', optic: 'holo', secondary: 'pistol', perk: 'extmag' }, r1))
-      .toEqual({ primary: 'smg', optic: 'iron', secondary: 'pistol', perk: 'extmag' });
+      .toEqual({ ...NONE, primary: 'smg', optic: 'iron', secondary: 'pistol', perk: 'extmag' });
     expect(lockClass({ primary: 'smg', optic: 'holo', secondary: 'mpistol', perk: 'quickdraw' }, { level: 3, prestige: 0 }))
-      .toEqual({ primary: 'smg', optic: 'holo', secondary: 'mpistol', perk: 'quickdraw' });
+      .toEqual({ ...NONE, primary: 'smg', optic: 'holo', secondary: 'mpistol', perk: 'quickdraw' });
     // A scope-only weapon that is unlocked keeps its scope even before the scope unlock (it has no other sights).
     expect(lockClass({ primary: 'sniper', optic: 'scope', secondary: 'pistol', perk: 'none' }, { level: 12, prestige: 0 }).optic).toBe('scope');
-    expect(lockClass('garbage', r1)).toEqual({ primary: 'rifle', optic: 'iron', secondary: 'pistol', perk: 'none' });
+    expect(lockClass('garbage', r1)).toEqual({ ...NONE, primary: 'rifle', optic: 'iron', secondary: 'pistol', perk: 'none' });
   });
 
   it('presets unlock along the way; a new player already has two', () => {
@@ -130,7 +131,7 @@ describe('unlocks', () => {
 
   it('unlocksBetween lists what a level-up brings', () => {
     const got = unlocksBetween(3, 5, 0).map((u) => `${u.kind}:${u.id}`);
-    expect(got).toEqual(['primary:dmr', 'primary:lmg']);
+    expect(got).toEqual(['primary:dmr', 'primary:lmg', 'attachment:agrip']);
     expect(unlocksBetween(9, 10, 0).map((u) => u.id)).toEqual(expect.arrayContaining(['semisniper', 'soldier']));
     expect(unlocksBetween(5, 5, 0)).toEqual([]);
   });

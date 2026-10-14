@@ -12,7 +12,7 @@ import { partyTeamed } from '../src/modes/Party';
 import { GAME_MODES, type GameMode, hasSurvivalRules } from '../src/player/GameMode';
 import { BINARY_VERSION, BINARY_VERSION_SHOT, BINARY_VERSION_SNAP_Q, BINARY_VERSION_SNAP_TICK, encodeBinary, encodeShot, encodeSnap, encodeSnapQ } from '../src/net/binary';
 import { ARCADE_TICK_HZ, ARCADE_TICK_MAX, ARCADE_TICK_MIN, arcadeInterpDelay, arcadeMaxSpeed } from '../src/modes/ArcadeLogic';
-import { HITBOX, perkMoveSpeed } from '../src/modes/Weapons';
+import { HITBOX, hasPerk, perkMoveSpeed } from '../src/modes/Weapons';
 import { POSE, poseEye, slideCooldown } from '../src/player/ArcadeMove';
 import { decodeData } from '../src/items/ItemRegistry';
 import { BLOCK, getBlockDef } from '../src/world/BlockRegistry';
@@ -1411,9 +1411,12 @@ export class GameServer {
       case 'loadout': {
         if (!s.actions.take()) return;
         const req = { primary: optStr(msg.primary) ?? '', secondary: optStr(msg.secondary), optic: optStr(msg.optic), perk: optStr(msg.perk) };
-        // Realms unlocks: a locked weapon, optic or perk falls back to the default (the client shows them locked).
+        // Realms unlocks: a locked weapon, optic or perk falls back to the default (the client shows them locked); a locked
+        // attachment or second perk, an unknown attachment slot or two perks of one category refuse the request.
         const c = this.progress ? this.progress.lockClass(s.id, req) : req;
-        return match.setLoadout(s.id, c.primary, c.secondary, c.optic, c.perk);
+        const problem = match.setLoadout(s.id, c.primary, c.secondary, c.optic, c.perk, { perk2: msg.perk2, att: msg.att, rank: this.progress?.rankOf(s.id) });
+        if (problem) this.send(s, { t: 'classReject', reason: problem });
+        return;
       }
       case 'block':
         // Nobody builds in an arcade game: roll the client's guess back.
@@ -1453,8 +1456,8 @@ export class GameServer {
         // The weapon in the hands sets the pace; the mode may change it (a flag carrier is slower, the infected faster),
         // and so does the perk (Lightfoot).
         const mul = this.match.logic.speedMul?.(this.match, p) ?? 1;
-        this.guard!.setMoveSpeed(s.id, p.slots[p.slot].def.moveSpeed * mul * perkMoveSpeed(p.perk), now / 1000);
-        this.guard!.setSlideCooldown(s.id, slideCooldown(p.perk === 'lightfoot'));
+        this.guard!.setMoveSpeed(s.id, p.slots[p.slot].def.moveSpeed * mul * perkMoveSpeed(p), now / 1000);
+        this.guard!.setSlideCooldown(s.id, slideCooldown(hasPerk(p, 'lightfoot')));
       }
       const step = typeof m.step === 'number' ? m.step : undefined, slide = typeof m.sl === 'number' ? m.sl : undefined;
       const r = outside ? this.guard!.flag(s.id, 'bounds', 2, now / 1000) : this.guard!.move(s.id, m.x, m.y, m.z, now / 1000, step, slide);
@@ -1504,7 +1507,7 @@ export class GameServer {
     if (s.flags & SNAP_FLAG_SLIDE && this.guard?.sliding(s.id)) return POSE.SLIDE_HEIGHT;
     if (s.flags & SNAP_FLAG_CROUCH && s.flags & 4) {
       const p = this.match?.players.get(s.id);
-      const max = arcadeMaxSpeed(p ? p.slots[p.slot].def.moveSpeed * perkMoveSpeed(p.perk) : 1);
+      const max = arcadeMaxSpeed(p ? p.slots[p.slot].def.moveSpeed * perkMoveSpeed(p) : 1);
       if (Math.hypot(s.velX, s.velZ) <= max * POSE.CROUCH_SPEED * 1.25 + 0.5) return POSE.CROUCH_HEIGHT;
     }
     return HITBOX.height;

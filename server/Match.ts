@@ -1,12 +1,15 @@
 import { type ArenaMap, DEFAULT_MAP, type Spawn, getMap, mapFor, parseMapId } from '../src/modes/maps';
 import { type GameTypeDef, type MapFeature, type Team, gameTypeDef } from '../src/modes/GameTypes';
 import {
-  DEFAULT_PRIMARY, DEFAULT_SECONDARY, type OpticId, PLAYER_MAX_HEALTH, type PerkId, REGEN_DELAY, REGEN_PER_SECOND,
-  HITBOX, type WeaponDef, adsTimeFor, damageAt, fireInterval, magazineFor, opticFor, rangeMulFor, reloadTimeFor, switchDelayFor, weaponDef,
+  DEFAULT_PRIMARY, DEFAULT_SECONDARY, type Kit, NO_KIT, type OpticId, PLAYER_MAX_HEALTH, type PerkId, REGEN_DELAY, REGEN_PER_SECOND,
+  HITBOX, type RailId, type UnderId, type WeaponDef, adsSpreadMul, adsTimeFor, damageAt, fireInterval, hasPerk, hipSpreadMul, magazineFor,
+  opticFor, rangeMulFor, reloadTimeFor, switchDelayFor, weaponDef,
 } from '../src/modes/Weapons';
 import { adsClassOf, adsStep } from '../src/modes/AimMath';
 import { POSE } from '../src/player/ArcadeMove';
-import { CLASS_SWAP_WINDOW, type ClassSpec, DEFAULT_CLASS, calmPhase, validateClass } from '../src/modes/Loadouts';
+import { CLASS_SWAP_WINDOW, type ClassSpec, DEFAULT_CLASS, calmPhase, railFor, underFor, validateClass } from '../src/modes/Loadouts';
+import type { Rank } from '../src/modes/progression/Levels';
+import { type LoadoutProblem, parseExtras } from '../src/modes/progression/Unlocks';
 import type {
   ClientMessage, MatchInfo, MatchPhase, ModeEventKind, RosterEntry, ServerMessage,
 } from '../src/net/protocol';
@@ -137,6 +140,9 @@ interface Slot {
   cap: number;
   /** Falloff distance multiplier (suppressor). */
   rangeMul: number;
+  /** Hip-fire and aimed spread multipliers (attachments on the primary: laser, vertical grip). */
+  hipMul: number;
+  adsMul: number;
   nextFireAt: number;
   /** 0 when not reloading. */
   reloadDoneAt: number;
@@ -172,11 +178,14 @@ export interface MatchPlayer {
   lastHpSent: number;
   respawnAt: number;
   protectedUntil: number;
-  /** Weapons of this life (primary with its optic, secondary, perk) and the class chosen for the next. */
+  /** Weapons of this life (primary with its optic and attachments, secondary, two perks) and the class chosen for the next. */
   primary: string;
   secondary: string;
   optic: OpticId;
   perk: PerkId;
+  perk2: PerkId;
+  under: UnderId;
+  rail: RailId;
   next: ClassSpec;
   /** When this life began and whether a shot went out in it (early class swap). */
   spawnedAt: number;
@@ -352,9 +361,10 @@ export class Match {
       id, name, team, kills: restore?.kills ?? 0, deaths: restore?.deaths ?? 0, pts: restore?.pts ?? 0, joinSeq: restore?.joinSeq ?? ++this.joinCounter,
       x: 0, y: 0, z: 0, yaw: 0, pitch: 0, alive: false, health: PLAYER_MAX_HEALTH,
       lastDamageAt: -1e9, lastHpSent: PLAYER_MAX_HEALTH, respawnAt: 0, protectedUntil: 0,
-      primary: DEFAULT_PRIMARY, secondary: DEFAULT_SECONDARY, optic: 'iron', perk: 'none', next: restore ? { ...restore.next } : { ...DEFAULT_CLASS },
+      primary: DEFAULT_PRIMARY, secondary: DEFAULT_SECONDARY, optic: 'iron', perk: 'none', perk2: 'none', under: 'none', rail: 'none',
+      next: restore ? { ...restore.next } : { ...DEFAULT_CLASS },
       spawnedAt: now, firedThisLife: false, streak: restore?.streak ?? 0,
-      slots: [newSlot(DEFAULT_PRIMARY, 'none'), newSlot(DEFAULT_SECONDARY, 'none'), newSlot('knife', 'none')], slot: 0,
+      slots: [newSlot(DEFAULT_PRIMARY, NO_KIT), newSlot(DEFAULT_SECONDARY, NO_KIT), newSlot('knife', NO_KIT)], slot: 0,
       switchReadyAt: 0, adsOn: false, adsT: 0, adsAt: 0, history: Array.from({ length: HISTORY_SIZE }, () => ({ t: 0, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, h: HITBOX.height })), historyHead: 0, historyCount: 0,
       spreadSeed: Math.floor(this.host.random() * 0x100000000) >>> 0, shotN: 0, moving: false, airborne: false,
       height: HITBOX.height,
@@ -508,16 +518,30 @@ export class Match {
   }
 
   /**
-   * The class for the next life (Create-a-Class). Every field is validated: an unknown or disallowed one
-   * becomes the default (a missing secondary/optic/perk keeps the current choice, for older clients).
+   * The class for the next life (Create-a-Class). The older fields are validated leniently: an unknown or disallowed one
+   * becomes the default (a missing secondary/optic/perk keeps the current choice, for older clients). The newer ones in
+   * `extra` are strict (Unlocks.parseExtras): an unknown attachment slot, an attachment the primary does not take or the
+   * rank has not unlocked, or a second perk from the first perk's category refuses the whole request; the problem is
+   * returned and nothing changes. Left out, they keep the current choice where it still fits. `extra.rank` absent =
+   * everything unlocked (the connection layer passes the profile's rank).
    * Outside a live round, or within CLASS_SWAP_WINDOW seconds of spawning and before the first shot, it applies at once.
    */
-  setLoadout(id: number, primary: string, secondary?: string, optic?: string, perk?: string): void {
+  setLoadout(id: number, primary: string, secondary?: string, optic?: string, perk?: string,
+    extra: { perk2?: unknown; att?: unknown; rank?: Rank } = {}): LoadoutProblem | null {
     const p = this.players.get(id);
-    if (!p) return;
+    if (!p) return null;
     const keepOptic = optic === undefined && primary === p.next.primary;
-    p.next = validateClass({
+    const base = validateClass({
       primary, secondary: secondary ?? p.next.secondary, optic: keepOptic ? p.next.optic : optic, perk: perk ?? p.next.perk,
+    });
+    const ex = parseExtras(base.primary, base.perk, extra.perk2, extra.att, extra.rank);
+    if (!ex.ok) return ex.problem;
+    // validateClass drops what no longer fits (the old grip on a new bolt action, the old second perk of the new perk's category).
+    p.next = validateClass({
+      ...base,
+      perk2: ex.perk2 ?? p.next.perk2,
+      under: ex.under ?? underFor(base.primary, p.next.under),
+      rail: ex.rail ?? railFor(base.primary, p.next.rail),
     });
     const now = this.host.now();
     // Outside a live round nobody fights (warm-up, waiting for players, countdown, between rounds): any
@@ -525,10 +549,11 @@ export class Match {
     const calm = calmPhase(this.phase);
     const fresh = !p.firedThisLife && now - p.spawnedAt <= CLASS_SWAP_WINDOW;
     if (p.alive && (calm || fresh) && this.phase !== 'ended' && !this.logic.loadoutFor?.(this, p)) {
-      this.equip(p, p.next.primary, p.next.secondary, 'knife', p.next.optic, p.next.perk);
+      this.equip(p, p.next.primary, p.next.secondary, 'knife', p.next.optic, p.next);
       p.switchReadyAt = now + SWITCH_DELAY;
       this.sendGear(p);
     }
+    return null;
   }
 
   /** What other players see of a player's hands: the weapon, its optic and suppressor, and the Ninja perk. */
@@ -536,25 +561,28 @@ export class Match {
     const w = p.slots[p.slot].def;
     const msg: Extract<ServerMessage, { t: 'holds' }> = { t: 'holds', id: p.id, weapon: w.id };
     if (p.slot === 0 && p.optic !== 'iron') msg.optic = p.optic;
-    if (p.perk === 'suppressor' && w.slot !== 'melee') msg.sup = 1;
-    if (p.perk === 'ninja') msg.quiet = 1;
+    if (hasPerk(p, 'suppressor') && w.slot !== 'melee') msg.sup = 1;
+    if (hasPerk(p, 'ninja')) msg.quiet = 1;
     return msg;
   }
 
-  /** New weapon slots (full magazines) for a class; the primary in hand. */
-  private equip(p: MatchPlayer, primary: string, secondary: string, melee: string, optic: string | undefined, perk: PerkId): void {
+  /** New weapon slots (full magazines) for a class; the primary in hand. `kit`: perks and attachments (NO_KIT for mode gear). */
+  private equip(p: MatchPlayer, primary: string, secondary: string, melee: string, optic: string | undefined, kit: Readonly<Kit>): void {
     p.primary = primary;
     p.secondary = secondary;
     p.optic = opticFor(weaponDef(primary) ?? weaponDef(DEFAULT_PRIMARY)!, optic);
-    p.perk = perk;
-    p.slots = [newSlot(primary, perk), newSlot(secondary, perk), newSlot(melee, perk)];
+    p.perk = kit.perk;
+    p.perk2 = kit.perk2;
+    p.under = underFor(primary, kit.under);
+    p.rail = railFor(primary, kit.rail);
+    p.slots = [newSlot(primary, p), newSlot(secondary, p), newSlot(melee, p)];
     p.slot = 0;
     this.adsReset(p);
   }
 
   /** Tells the player and everyone else about new gear mid-life. */
   private sendGear(p: MatchPlayer): void {
-    this.host.send(p.id, { t: 'gear', primary: p.primary, secondary: p.secondary, optic: p.optic, perk: p.perk });
+    this.host.send(p.id, { t: 'gear', primary: p.primary, secondary: p.secondary, optic: p.optic, perk: p.perk, ...gearExtras(p) });
     for (let i = 0; i < 3; i++) this.host.send(p.id, { t: 'ammo', slot: i as 0 | 1 | 2, mag: p.slots[i].mag, reloading: false });
     this.host.broadcast(this.holds(p), p.id);
   }
@@ -574,7 +602,7 @@ export class Match {
       }
     }
     p.slot = slot;
-    p.switchReadyAt = now + switchDelayFor(p.perk, SWITCH_DELAY);
+    p.switchReadyAt = now + switchDelayFor(p, SWITCH_DELAY);
     this.adsReset(p); // the sights go down at once with a new weapon in the hands
     this.host.broadcast(this.holds(p));
   }
@@ -597,7 +625,7 @@ export class Match {
     const w = p.slots[p.slot].def;
     const optic = p.slot === 0 ? p.optic : w.optics[0];
     const dt = Math.max(0, now - p.adsAt) + (p.adsOn ? slack : 0);
-    return adsStep(p.adsT, dt, p.adsOn, adsTimeFor(w, optic, p.perk), adsClassOf(w));
+    return adsStep(p.adsT, dt, p.adsOn, adsTimeFor(w, optic, p), adsClassOf(w));
   }
 
   /** Puts the sights up or down at `now` (the progress so far is kept, so a flick up and down gains nothing). */
@@ -657,7 +685,7 @@ export class Match {
    */
   giveGear(p: MatchPlayer, primary: string, secondary?: string, melee?: string): void {
     // Mode gear (gun game): the weapon's default optic and no perk.
-    this.equip(p, primary, secondary ?? p.secondary, melee ?? 'knife', undefined, 'none');
+    this.equip(p, primary, secondary ?? p.secondary, melee ?? 'knife', undefined, NO_KIT);
     p.switchReadyAt = this.host.now() + SWITCH_DELAY;
     this.sendGear(p);
   }
@@ -710,7 +738,7 @@ export class Match {
     if (this.sliding(p)) this.adsReset(p);
     // Moving / airborne are the server's own derivation (a slide moves fast by definition); the `mv` / `air` claims of
     // the message are ignored (kept in the protocol for old clients).
-    const spread = shotSpread(w, this.adsBlend(p, now, ADS_SLACK), p.moving || this.sliding(p), p.airborne);
+    const spread = shotSpread(w, this.adsBlend(p, now, ADS_SLACK), p.moving || this.sliding(p), p.airborne, s.hipMul, s.adsMul);
 
     // Lag compensation: targets are tested where this shooter saw them. The client says which server tick its
     // screen showed (`rk`); without it (older clients) the round trip plus the interpolation delay estimates it.
@@ -1129,8 +1157,8 @@ export class Match {
     p.lastDamageAt = -1e9;
     p.protectedUntil = now + (this.def.respawn?.protectionSec ?? SPAWN_PROTECTION);
     const kit = this.logic.loadoutFor?.(this, p);
-    if (kit) this.equip(p, kit.primary, kit.secondary ?? DEFAULT_SECONDARY, kit.melee ?? 'knife', undefined, 'none');
-    else this.equip(p, p.next.primary, p.next.secondary, 'knife', p.next.optic, p.next.perk);
+    if (kit) this.equip(p, kit.primary, kit.secondary ?? DEFAULT_SECONDARY, kit.melee ?? 'knife', undefined, NO_KIT);
+    else this.equip(p, p.next.primary, p.next.secondary, 'knife', p.next.optic, p.next);
     p.switchReadyAt = 0;
     p.spawnedAt = now;
     p.firedThisLife = false;
@@ -1146,7 +1174,7 @@ export class Match {
     this.host.moveTo(p.id, p.x, p.y, p.z);
     this.host.send(p.id, {
       t: 'spawn', x: p.x, y: p.y, z: p.z, yaw: p.yaw, team: p.team, primary: p.primary, secondary: p.secondary, optic: p.optic, perk: p.perk, health: p.health,
-      ss: p.spreadSeed,
+      ss: p.spreadSeed, ...gearExtras(p),
     });
     for (let i = 0; i < 3; i++) this.host.send(p.id, { t: 'ammo', slot: i as 0 | 1 | 2, mag: p.slots[i].mag, reloading: false, sn: p.shotN });
   }
@@ -1287,10 +1315,22 @@ export function tallyVotes(options: number, votes: Iterable<number>): number {
   return best;
 }
 
-function newSlot(id: string, perk: PerkId): Slot {
+function newSlot(id: string, kit: Readonly<Kit>): Slot {
   const def = weaponDef(id) ?? weaponDef(DEFAULT_PRIMARY)!;
-  const cap = magazineFor(def, perk);
-  return { def, mag: cap, cap, rangeMul: rangeMulFor(def, perk), nextFireAt: 0, reloadDoneAt: 0, burstShots: 0, burstStart: 0 };
+  const cap = magazineFor(def, kit);
+  return {
+    def, mag: cap, cap, rangeMul: rangeMulFor(def, kit), hipMul: hipSpreadMul(def, kit), adsMul: adsSpreadMul(def, kit),
+    nextFireAt: 0, reloadDoneAt: 0, burstShots: 0, burstStart: 0,
+  };
+}
+
+/** The second perk and the attachments for `spawn` / `gear` (only what is set: older clients ignore them). */
+function gearExtras(p: Kit): { perk2?: string; under?: string; rail?: string } {
+  const out: { perk2?: string; under?: string; rail?: string } = {};
+  if (p.perk2 !== 'none') out.perk2 = p.perk2;
+  if (p.under !== 'none') out.under = p.under;
+  if (p.rail !== 'none') out.rail = p.rail;
+  return out;
 }
 
 function isSlot(v: unknown): v is 0 | 1 | 2 {

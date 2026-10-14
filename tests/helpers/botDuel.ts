@@ -1,5 +1,6 @@
 import { ARENA_FLOOR_Y } from '../../src/modes/maps';
 import { BLOCK } from '../../src/world/BlockRegistry';
+import { attachAllowed, weaponDef } from '../../src/modes/Weapons';
 import type { ServerMessage } from '../../src/net/protocol';
 import { Match, type MatchHost } from '../../server/Match';
 import { Bot, type BotEnv } from '../../server/bots/Bot';
@@ -36,7 +37,7 @@ export interface DuelResult { a: number; b: number; draws: number; kills: KillSa
  * draw). Real `Match` combat (spread, damage falloff, hitboxes, recoil kicks) and the real bot code
  * (noticing, strafing, aim, fire discipline); the same class for both, so only the skill differs.
  */
-export function duel(a: BotSkill, b: BotSkill, o: { rounds: number; seed: number; primary?: string; primaryB?: string; optic?: string; dist?: number }): DuelResult {
+export function duel(a: BotSkill, b: BotSkill, o: { rounds: number; seed: number; primary?: string; primaryB?: string; optic?: string; dist?: number; att?: Record<string, string>; attB?: Record<string, string> }): DuelResult {
   const rng = seeded(o.seed);
   yardGraph ??= new NavGraph({ getBlock: yard, bounds: { minX: -HALF - 1, maxX: HALF + 1, minZ: -HALF - 1, maxZ: HALF + 1 }, inBounds: (x, z) => Math.abs(x) < HALF - 1 && Math.abs(z) < HALF - 1, floorY: ARENA_FLOOR_Y, maxHeight: 3 });
   let now = 1000;
@@ -76,7 +77,14 @@ export function duel(a: BotSkill, b: BotSkill, o: { rounds: number; seed: number
         case 'fire': match.fire(id, msg); break;
         case 'reload': match.reload(id, msg.slot); break;
         case 'weapon': match.switchWeapon(id, msg.slot); break;
-        case 'loadout': match.setLoadout(id, (id === 2 ? o.primaryB : undefined) ?? o.primary ?? 'rifle', 'pistol', o.optic ?? 'reddot', 'none'); break;
+        case 'loadout': {
+          // Attachments per side (balance sims): a weapon that does not take one gets none rather than a refused class.
+          const primary = (id === 2 ? o.primaryB : undefined) ?? o.primary ?? 'rifle';
+          const att = (id === 2 ? o.attB : o.att) ?? {};
+          const fit = Object.fromEntries(Object.entries(att).filter(([, v]) => attachAllowed(weaponDef(primary)!, v)));
+          match.setLoadout(id, primary, 'pistol', o.optic ?? 'reddot', 'none', { att: fit });
+          break;
+        }
         default: break;
       }
     },

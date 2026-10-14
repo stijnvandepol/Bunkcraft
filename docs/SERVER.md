@@ -440,7 +440,8 @@ browser bewaart het in `localStorage` per serverhost (`bunkcraft.profile.<host>`
 - **API** (token in de `Authorization: Bearer`-header, nooit in een URL):
   `POST /api/profile` (`{name}`; het profiel van het token, of een nieuw profiel + token met `201`),
   `GET /api/profile`, `POST /api/profile/equip` (`{title?, card?, camos?}`; alleen wat ontgrendeld is, anders `409`),
-  `POST /api/profile/prestige` (alleen op level 55). Limieten: 60 verzoeken per minuut en `PROFILE_CREATE_LIMIT` nieuwe
+  `POST /api/profile/prestige` (alleen op level 55), `POST /api/profile/classes` (`{classes, sel}`: de vijf Create-a-Class-klassen;
+  vorm en grootte gecontroleerd, anders `400`, inhoud opgeschoond, zie GAMEMODES §Klassen). Limieten: 60 verzoeken per minuut en `PROFILE_CREATE_LIMIT` nieuwe
   profielen per uur per adres. `GET /api/server` meldt `features.profiles`.
 - **XP is server-authoritative.** Er bestaat geen bericht waarmee een client XP kan geven. De client stuurt het token mee
   in `hello` (`profile`); de server telt tijdens een live match kills, assists, headshots, treffers, vlaggen en zones

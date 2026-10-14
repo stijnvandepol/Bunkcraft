@@ -5,9 +5,11 @@
  * The analytic table of scripts/ttk-matrix.ts is the design aid; this is the check against what the bots really do.
  *
  *   npx tsx scripts/ttk-sim.ts [rounds=60] [--ranges=5,12,20,35,50] [--profile=average|skilled|veteran] [--weapons=rifle,smg]
+ *     [--att=under:vgrip,rail:laser]   attachments on both sides (a weapon that does not take one goes without)
+ *     [--effect=rail:laser]           win share of a weapon with the attachments against the same weapon without, per range
  */
 import { BOT_SKILLS } from '../server/bots/BotSkill';
-import { PRIMARY_WEAPONS } from '../src/modes/Weapons';
+import { PRIMARY_WEAPONS, attachAllowed, weaponDef } from '../src/modes/Weapons';
 import { duel } from '../tests/helpers/botDuel';
 import { HUMAN_AVERAGE, HUMAN_SKILLED } from '../tests/helpers/humanProfiles';
 
@@ -18,8 +20,27 @@ const RANGES = opt('ranges', '5,12,20,35,50').split(',').map(Number);
 const PROFILE = { average: HUMAN_AVERAGE, skilled: HUMAN_SKILLED, veteran: BOT_SKILLS.veteran }[opt('profile', 'average') as 'average'] ?? HUMAN_AVERAGE;
 const WEAPONS = opt('weapons', PRIMARY_WEAPONS.join(',')).split(',');
 const VERSUS = process.argv.includes('--versus');
+const attOpt = (k: string): Record<string, string> => Object.fromEntries(opt(k, '').split(',').filter(Boolean).map((kv) => kv.split(':') as [string, string]));
+const ATT = attOpt('att');
+const EFFECT = attOpt('effect');
 const q = (xs: number[], p: number) => { const s = [...xs].sort((a, b) => a - b); return s.length ? s[Math.min(s.length - 1, Math.floor(s.length * p))] : NaN; };
 const ms = (v: number) => (Number.isFinite(v) ? String(Math.round(v * 1000)) : '-');
+
+if (Object.keys(EFFECT).length) {
+  // The effect of attachments: the same weapon with them (A) against without (B), same skill, per range.
+  console.log(`win share with ${opt('effect', '')} vs without (${ROUNDS} rounds per cell, ${opt('profile', 'average')}); median TTK ms with / without`);
+  console.log('weapon'.padEnd(12) + RANGES.map((r) => `${r}m`.padStart(18)).join(''));
+  for (const w of WEAPONS) {
+    if (!Object.values(EFFECT).some((a) => attachAllowed(weaponDef(w)!, a))) continue;
+    const cells = RANGES.map((dist, i) => {
+      const r = duel(PROFILE, PROFILE, { rounds: ROUNDS, seed: 300 + i, primary: w, primaryB: w, optic: 'iron', dist, att: EFFECT });
+      const ttk = (k: number) => q(r.kills.filter((x) => x.chained && x.killer === k).map((x) => x.ttk), 0.5);
+      return `${(r.a / Math.max(1, r.a + r.b) * 100).toFixed(0)}% ${ms(ttk(0))}/${ms(ttk(1))}`.padStart(18);
+    });
+    console.log(w.padEnd(12) + cells.join(''));
+  }
+  process.exit(0);
+}
 
 if (VERSUS) {
   // Win share of the row weapon against the column weapon (same skill on both sides) at the chosen range (default: random 10-40 blocks).
@@ -28,7 +49,7 @@ if (VERSUS) {
   console.log(''.padEnd(12) + WEAPONS.map((w) => w.slice(0, 6).padStart(7)).join('') + '   mean');
   const shares = WEAPONS.map(() => WEAPONS.map(() => NaN));
   for (let i = 0; i < WEAPONS.length; i++) for (let j = i + 1; j < WEAPONS.length; j++) {
-    const r = duel(PROFILE, PROFILE, { rounds: ROUNDS, seed: 500 + i * 31 + j, primary: WEAPONS[i], primaryB: WEAPONS[j], optic: 'iron', dist });
+    const r = duel(PROFILE, PROFILE, { rounds: ROUNDS, seed: 500 + i * 31 + j, primary: WEAPONS[i], primaryB: WEAPONS[j], optic: 'iron', dist, att: ATT, attB: ATT });
     shares[i][j] = r.a / Math.max(1, r.a + r.b); shares[j][i] = 1 - shares[i][j];
   }
   WEAPONS.forEach((w, i) => {
@@ -42,7 +63,7 @@ console.log('weapon'.padEnd(12) + RANGES.map((r) => `${r}m`.padStart(26)).join('
 const fast: string[] = [];
 for (const w of WEAPONS) {
   const cells = RANGES.map((dist, i) => {
-    const r = duel(PROFILE, PROFILE, { rounds: ROUNDS, seed: 100 + i, primary: w, primaryB: w, optic: 'iron', dist });
+    const r = duel(PROFILE, PROFILE, { rounds: ROUNDS, seed: 100 + i, primary: w, primaryB: w, optic: 'iron', dist, att: ATT, attB: ATT });
     const t = r.kills.filter((k) => k.chained).map((k) => k.ttk), h = r.kills.map((k) => k.hits);
     const sub250 = t.filter((x) => x < 0.25).length;
     if (sub250 && !['sniper', 'antimat', 'shotgun', 'semisniper', 'lever', 'revolver'].includes(w)) fast.push(`${w}@${dist}m ${sub250}/${t.length} under 250 ms`);

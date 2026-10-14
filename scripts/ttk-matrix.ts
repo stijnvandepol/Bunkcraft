@@ -6,11 +6,12 @@
  *   npx tsx scripts/ttk-matrix.ts 15 30          # chosen distances
  *   npx tsx scripts/ttk-matrix.ts --aim=0.6      # human aim factor (share of shots whose centre is on the body)
  *   npx tsx scripts/ttk-matrix.ts --summary      # one table: realistic TTK per range, best per column marked, niches
+ *   npx tsx scripts/ttk-matrix.ts --attachments  # realistic TTK without -> with each attachment (Create-a-Class)
  */
 import {
   BALANCE_RANGES, BODY_RADIUS, DEFAULT_AIM, HIP_RANGE, killsPerMag, perfectTtk, realisticTtk, spreadHit,
 } from '../src/modes/Balance';
-import { PLAYER_MAX_HEALTH, WEAPONS, fireMode } from '../src/modes/Weapons';
+import { ATTACHMENTS, type AttachmentId, NO_KIT, PLAYER_MAX_HEALTH, WEAPONS, attachAllowed, fireMode } from '../src/modes/Weapons';
 
 const fmt = (v: number, w = 6): string => (Number.isFinite(v) ? String(v) : '-').padStart(w);
 
@@ -22,6 +23,17 @@ function main(): void {
   const guns = WEAPONS.filter((w) => w.slot !== 'melee');
 
   console.log(`Health ${PLAYER_MAX_HEALTH}, aim factor ${aim}, body radius ${BODY_RADIUS} blocks, hip fire up to ${HIP_RANGE} blocks (beyond: ADS time added).\n`);
+
+  if (args.includes('--attachments')) {
+    for (const att of Object.keys(ATTACHMENTS) as AttachmentId[]) {
+      const kit = { ...NO_KIT, [ATTACHMENTS[att].slot]: att };
+      console.log(`--- ${ATTACHMENTS[att].name}: realistic TTK ms without -> with`);
+      for (const w of guns.filter((g) => attachAllowed(g, att))) {
+        console.log(w.name.padEnd(20) + ranges.map((d) => `${fmt(realisticTtk(w, d, aim).ms, 0)}->${fmt(realisticTtk(w, d, aim, kit).ms, 0)}`.padStart(13)).join(''));
+      }
+    }
+    return;
+  }
 
   console.log('--- Realistic TTK (ms, body, ADS time included past hip range); * = fastest primary at that range');
   console.log('weapon'.padEnd(20) + 'mode'.padStart(6) + 'mag'.padStart(5) + 'ads'.padStart(6) + 'move'.padStart(6) + ranges.map((d) => `${d}m`.padStart(8)).join('') + '  kills/mag@20');

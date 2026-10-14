@@ -1,6 +1,6 @@
 import { DAILY_POOL, type ChallengeDef, WEEKLY_POOL } from '../modes/progression/Challenges';
 import type { Unlock } from '../modes/progression/Unlocks';
-import { OPTICS, type OpticId, PERKS, type PerkId, weaponDef } from '../modes/Weapons';
+import { ATTACHMENTS, type AttachmentId, OPTICS, type OpticId, PERKS, type PerkId, weaponDef } from '../modes/Weapons';
 import { type I18nKey, t } from './i18n';
 
 /** "Get 10 kills with an SMG" in the current language. */
@@ -19,6 +19,7 @@ export function unlockName(u: Pick<Unlock, 'kind' | 'id'>): string {
     case 'primary':
     case 'secondary': return weaponDef(u.id)?.name ?? u.id;
     case 'optic': return OPTICS[u.id as OpticId]?.name ?? u.id;
+    case 'attachment': return ATTACHMENTS[u.id as AttachmentId]?.name ?? u.id;
     case 'perk': return PERKS[u.id as PerkId]?.name ?? u.id;
     case 'title': return t(`ptitle.${u.id}` as I18nKey);
     case 'card': return t(`card.${u.id}` as I18nKey);

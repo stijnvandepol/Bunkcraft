@@ -9,13 +9,14 @@ import {
 } from '../modes/AimMath';
 import { type GameTypeDef, type Team, TEAM_COLORS, gameTypeDef } from '../modes/GameTypes';
 import { eventView, localizeServerText, modeSpeedMul, phaseBanner, teamWinTitle } from '../modes/ModeView';
+import { type ClassSpec, DEFAULT_CLASS, classApplies, loadoutMessage, railFor, underFor, validateClass } from '../modes/Loadouts';
+import { type ClassBook, CLASS_SLOTS, equipped } from '../modes/ClassBook';
 import {
-  type ClassSpec, DEFAULT_CLASS, LAST_CLASS_STORAGE_KEY, LOADOUT_PRESETS, classApplies, loadSavedClass, saveClass, validateClass,
-} from '../modes/Loadouts';
-import {
-  AIM_CLIMB, DEFAULT_PRIMARY, DEFAULT_SECONDARY, HITBOX, type OpticId, PLAYER_MAX_HEALTH, RESPAWN_SECONDS, type WeaponDef, adsTimeFor, fireInterval,
-  isMagnified, isPerk, magazineFor, opticFor, opticZoomLevels, perkMoveSpeed, reloadTimeFor, switchDelayFor, weaponDef,
+  AIM_CLIMB, DEFAULT_PRIMARY, DEFAULT_SECONDARY, HITBOX, type OpticId, PLAYER_MAX_HEALTH, RESPAWN_SECONDS, type WeaponDef, adsSpreadMul, adsTimeFor,
+  fireInterval, hasPerk, hipSpreadMul, isMagnified, isPerk, magazineFor, opticFor, opticZoomLevels, perkMoveSpeed, perksCompatible, recoilMul,
+  reloadTimeFor, switchDelayFor, weaponDef,
 } from '../modes/Weapons';
+import { classBook, onClassBook, setClassBook } from '../net/ClassBookStore';
 import { magnification } from '../ui/ScopeReticles';
 import { poseHeight, slideCooldown } from '../player/ArcadeMove';
 import { type ClientMessage, type MatchInfo, type MatchPhase, type ModeState, type RosterEntry, SNAP_FLAG_ADS, SNAP_FLAG_CROUCH, SNAP_FLAG_SLIDE, type ServerMessage } from '../net/protocol';
@@ -127,10 +128,6 @@ const RANGE_FINDER_MAX = 400;
 /** Per remote player: footstep bookkeeping and what the server told about their gear. */
 interface RemoteGear { x: number; z: number; y: number; acc: number; quiet: boolean; optic: OpticId; known: boolean }
 
-function storage(): Storage | null {
-  try { return window.localStorage; } catch { return null; }
-}
-
 /** Glint texture: a hot white core with a cross flare (drawn once). */
 function glintTexture(): THREE.CanvasTexture {
   const c = document.createElement('canvas');
@@ -206,10 +203,11 @@ export class ArcadeSession {
 
   health = PLAYER_MAX_HEALTH;
   team: Team | '' = '';
-  /** The class of this life (server's word), the one the server holds for the next life, and the saved custom class. */
+  /** The class of this life (server's word), the one sent to the server for the next life, and the saved classes. */
   private cls: ClassSpec = { ...DEFAULT_CLASS };
   private nextClass: ClassSpec = { ...DEFAULT_CLASS };
-  private custom: ClassSpec = { ...DEFAULT_CLASS };
+  private book: ClassBook;
+  private readonly offBook: () => void;
   private slot: Slot = 0;
   private prevSlot: Slot = 1;
   private readonly weaponIds: [string, string, string] = [DEFAULT_PRIMARY, DEFAULT_SECONDARY, 'knife'];
@@ -355,9 +353,17 @@ export class ArcadeSession {
     });
     this.players.set(d.selfId, { name: d.selfName, team: '' });
     this.surfaceAt = surfaceLookup(d.getBlock);
-    this.custom = loadSavedClass(storage()) ?? { ...DEFAULT_CLASS };
-    this.hud.setCustomClass(this.custom);
-    this.hud.onClass = (c, custom) => this.chooseClass(c, custom);
+    // Create-a-Class: the saved classes (profile or browser); an edit or another class tab sends the equipped class.
+    this.book = classBook();
+    this.hud.setBook(this.book);
+    this.hud.onBook = (b, changed) => {
+      setClassBook(b);
+      if (changed && this.def.loadout !== 'ladder') this.sendClass(equipped(this.book));
+    };
+    this.offBook = onClassBook((b) => {
+      this.book = b;
+      this.hud.setBook(b);
+    });
     const tex = glintTexture();
     for (let i = 0; i < MAX_GLINTS; i++) {
       const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: false }));
@@ -366,11 +372,8 @@ export class ArcadeSession {
       this.glintSprites.push(s);
       this.glints.add(s);
     }
-    // The class chosen last time (any game) goes to the server at once: it applies right after spawning.
-    if (this.def.loadout !== 'ladder') {
-      const last = loadSavedClass(storage(), LAST_CLASS_STORAGE_KEY);
-      if (last) this.sendClass(last);
-    }
+    // The equipped class (chosen on the home screen or in the last game) goes to the server at once: it applies right after spawning.
+    if (this.def.loadout !== 'ladder') this.sendClass(equipped(this.book));
     this.hud.setHealth(this.health);
     this.equipSlot(0, false);
     this.fillAmmo();
@@ -385,12 +388,12 @@ export class ArcadeSession {
   get speedMultiplier(): number {
     // The mode's factor (a flag carrier is slower, the infected faster) comes from the server's mode state and our team.
     const mode = modeSpeedMul(this.def, this.modeState, this.team, this.d.selfId);
-    return ARCADE_SPEED_MULT * this.weapon.moveSpeed * perkMoveSpeed(this.cls.perk) * (1 - 0.2 * this.ads) * mode;
+    return ARCADE_SPEED_MULT * this.weapon.moveSpeed * perkMoveSpeed(this.cls) * (1 - 0.2 * this.ads) * mode;
   }
 
   /** Seconds between two slides (the Lightfoot perk shortens it; the server checks the same number). */
   get slideCooldown(): number {
-    return slideCooldown(this.cls.perk === 'lightfoot');
+    return slideCooldown(hasPerk(this.cls, 'lightfoot'));
   }
 
   readonly airAccel = ARCADE_AIR_ACCEL;
@@ -509,6 +512,7 @@ export class ArcadeSession {
       case 'matchend': this.onMatchEnd(msg, now); break;
       case 'holds': this.onHolds(msg); break;
       case 'gear': this.onGear(msg); break;
+      case 'classReject': this.hud.setClassRejected(msg.reason); break;
       case 'mode': this.onMode(msg.state); break;
       case 'event': this.onEvent(msg, now); break;
       case 'vote': this.lobby.setVote(msg); this.refreshEnd(); break; // the vote panel takes room from the board
@@ -621,7 +625,7 @@ export class ArcadeSession {
     this.firedThisLife = false;
     this.endSpectate();
     this.hud.setDeath(null);
-    this.applyGear(msg.primary, msg.secondary, msg.optic, msg.perk);
+    this.applyGear(msg);
     this.seeded = msg.ss !== undefined;
     this.spreadSeed = msg.ss ?? 0;
     this.health = msg.health;
@@ -648,17 +652,19 @@ export class ArcadeSession {
 
   /** The mode swapped our weapons while we live (gun game level): new primary/secondary, full magazines, primary in hand. */
   private onGear(msg: Extract<ServerMessage, { t: 'gear' }>): void {
-    this.applyGear(msg.primary, msg.secondary, msg.optic, msg.perk);
+    this.applyGear(msg);
     this.fillAmmo();
     this.equipSlot(0, false);
     this.d.audio.playSpawn();
   }
 
-  /** The server's word on our weapons (spawn, gear): primary, secondary, optic and perk. */
-  private applyGear(primary: string, secondary: string | undefined, optic: string | undefined, perk: string | undefined): void {
-    const p = weaponDef(primary) ? primary : DEFAULT_PRIMARY;
-    const s = secondary && weaponDef(secondary) ? secondary : this.cls.secondary || DEFAULT_SECONDARY;
-    this.cls = { primary: p, secondary: s, optic: opticFor(weaponDef(p)!, optic), perk: isPerk(perk) ? perk : 'none' };
+  /** The server's word on our weapons (spawn, gear): primary, secondary, optic, perks and attachments. */
+  private applyGear(g: Extract<ServerMessage, { t: 'gear' }> | Extract<ServerMessage, { t: 'spawn' }>): void {
+    const p = weaponDef(g.primary) ? g.primary : DEFAULT_PRIMARY;
+    const s = g.secondary && weaponDef(g.secondary) ? g.secondary : this.cls.secondary || DEFAULT_SECONDARY;
+    const perk = isPerk(g.perk) ? g.perk : 'none';
+    const perk2 = isPerk(g.perk2) && perksCompatible(perk, g.perk2) ? g.perk2 : 'none';
+    this.cls = { primary: p, secondary: s, optic: opticFor(weaponDef(p)!, g.optic), perk, perk2, under: underFor(p, g.under), rail: railFor(p, g.rail) };
     this.weaponIds[0] = p;
     this.weaponIds[1] = s;
   }
@@ -892,7 +898,7 @@ export class ArcadeSession {
   private fillAmmo(): void {
     for (let i = 0; i < 3; i++) {
       const def = weaponDef(this.weaponIds[i])!;
-      this.ammo[i].mag = magazineFor(def, this.cls.perk);
+      this.ammo[i].mag = magazineFor(def, this.cls);
       this.ammo[i].reloading = false;
     }
     this.pending = 0;
@@ -912,8 +918,8 @@ export class ArcadeSession {
     this.adsBlend.reset();
     this.adsInput.reset();
     const w = this.weapon;
-    const equip = switchDelayFor(this.cls.perk, EQUIP_SEC);
-    this.viewmodel.setWeapon(w, this.optic, this.cls.perk === 'suppressor');
+    const equip = switchDelayFor(this.cls, EQUIP_SEC);
+    this.viewmodel.setWeapon(w, this.optic, hasPerk(this.cls, 'suppressor'));
     this.viewmodel.setEquipTime(equip);
     this.hud.setWeapon(w);
     this.refreshSlots();
@@ -936,26 +942,26 @@ export class ArcadeSession {
   private sendClass(c: ClassSpec): void {
     // Within the Realms unlocks (the server checks the same table; guests have the starting kit).
     this.nextClass = lockClass(c, currentRank());
-    const n = this.nextClass;
-    this.d.send({ t: 'loadout', primary: n.primary, secondary: n.secondary, optic: n.optic, perk: n.perk });
-    this.hud.markClass(n);
+    this.d.send(loadoutMessage(this.nextClass));
   }
 
-  /** A class from the menu or the death screen; the custom class is saved too, and the choice is remembered. */
-  chooseClass(c: ClassSpec, custom: boolean): void {
+  /** Equips saved class `i` (death screen keys 1-5) and sends it. */
+  chooseSlot(i: number): void {
+    if (this.def.loadout === 'ladder' || i < 0 || i >= this.book.classes.length || i === this.book.sel) return;
+    setClassBook({ classes: this.book.classes, sel: i });
+    this.sendClass(equipped(this.book));
+  }
+
+  /** Sends any class for the next life without touching the saved classes (QA scripts and tests drive this). */
+  chooseClass(c: unknown, _custom = false): void {
     if (this.def.loadout === 'ladder') return;
-    if (custom) {
-      this.custom = validateClass(c);
-      saveClass(storage(), this.custom);
-    }
-    this.sendClass(c);
-    saveClass(storage(), this.nextClass, LAST_CLASS_STORAGE_KEY);
+    this.sendClass(validateClass(c));
   }
 
   openLoadout(): void {
     if (this.def.loadout === 'ladder') return; // gun game: the ladder chooses
     this.loadoutOpen = true;
-    this.hud.showLoadout(this.nextClass, this.classApplies());
+    this.hud.showLoadout(this.classApplies());
   }
 
   /** When a class picked now applies (the note in Create-a-Class). */
@@ -971,7 +977,7 @@ export class ArcadeSession {
   private requestReload(now: number): void {
     const w = this.weapon;
     const a = this.ammo[this.slot];
-    if (w.magazine === 0 || a.reloading || a.mag >= magazineFor(w, this.cls.perk) || now < this.equipUntil) return;
+    if (w.magazine === 0 || a.reloading || a.mag >= magazineFor(w, this.cls) || now < this.equipUntil) return;
     a.reloading = true;
     a.since = now;
     a.duration = reloadTimeFor(w, Math.max(0, a.mag - this.pending));
@@ -1012,7 +1018,7 @@ export class ArcadeSession {
     this.pending++;
     this.firedThisLife = true;
     // Predicted effects.
-    const sup = this.cls.perk === 'suppressor';
+    const sup = hasPerk(this.cls, 'suppressor');
     this.d.audio.playGun(w.id, 1, undefined, sup);
     this.viewmodel.fire();
     // Hip fire tilts the view up for a moment (the crosshair moves down with it, so the aim point is honest). Kept small and
@@ -1034,7 +1040,7 @@ export class ArcadeSession {
     // The same pellets the server will test (seeded spread), each traced through the same blocks and against the
     // other players as drawn: the tracer ends where the bullet does.
     // The aim blend (not the boolean claim): the server weighs the same blend from the aim time it saw.
-    const spread = shotSpread(w, this.ads, mv, air);
+    const spread = shotSpread(w, this.ads, mv, air, hipSpreadMul(w, this.cls), adsSpreadMul(w, this.cls));
     const every = Math.max(1, Math.ceil(w.pellets / MAX_TRACERS));
     let claimed = -1, claimedHead = false;
     for (let i = 0; i < w.pellets; i++) {
@@ -1059,7 +1065,8 @@ export class ArcadeSession {
     }
     this.hitreg.fired(seq, now, claimed, claimedHead);
     // The aim climbs along the weapon's pattern (after the shot went out with the old aim).
-    const r = this.recoil.kick(now, w.recoil, w.recoilX, w.pattern, this.ads, AIM_CLIMB, w.auto ? fireInterval(w) : 0);
+    const rm = recoilMul(w, this.cls);
+    const r = this.recoil.kick(now, w.recoil * rm, w.recoilX * rm, w.pattern, this.ads, AIM_CLIMB, w.auto ? fireInterval(w) : 0);
     p.pitch = Math.min(Math.PI / 2 - 0.001, p.pitch + r.pitch * DEG);
     p.yaw -= r.yaw * DEG;
   }
@@ -1122,7 +1129,7 @@ export class ArcadeSession {
       const a = this.ammo[i];
       if (a.reloading && now - a.since >= a.duration) {
         a.reloading = false;
-        a.mag = magazineFor(weaponDef(this.weaponIds[i])!, this.cls.perk);
+        a.mag = magazineFor(weaponDef(this.weaponIds[i])!, this.cls);
         if (i === this.slot) this.pending = 0;
       }
     }
@@ -1137,9 +1144,8 @@ export class ArcadeSession {
       if (input.actionPressed(KB.QUICK_SWITCH)) this.equipSlot(this.prevSlot, true);
       if (input.actionPressed(KB.RELOAD)) this.requestReload(now);
     } else if (this.dead && f.controls && this.def.loadout !== 'ladder') {
-      // On the death screen the number keys pick the next class (presets, then the custom class; the menu is B).
-      for (let i = 0; i < LOADOUT_PRESETS.length; i++) if (input.wasPressed(DIGITS[i])) this.chooseClass(LOADOUT_PRESETS[i], false);
-      if (input.wasPressed(DIGITS[LOADOUT_PRESETS.length])) this.chooseClass(this.custom, true);
+      // On the death screen the number keys pick the next class (your saved classes; the menu is B).
+      for (let i = 0; i < CLASS_SLOTS; i++) if (input.wasPressed(DIGITS[i])) this.chooseSlot(i);
     }
 
     const w = this.weapon;
@@ -1182,7 +1188,7 @@ export class ArcadeSession {
       this.d.send({ t: 'ads', on: true });
       this.adsSentAt = now;
     }
-    this.adsBlend.update(dt, wantAds, adsTimeFor(w, optic, this.cls.perk), cls);
+    this.adsBlend.update(dt, wantAds, adsTimeFor(w, optic, this.cls), cls);
     this.ads = this.adsBlend.t;
     const eased = this.adsEased = this.adsBlend.eased;
     // The optic's zoom (a variable scope at its level, easing between levels while scoped). The camera applies it as is:
@@ -1254,7 +1260,7 @@ export class ArcadeSession {
     }
     // Hip fire: the crosshair is the spread cone as drawn on screen (moving and jumping open it) and fades out while the sights
     // come up (the sights or the reticle are the crosshair then).
-    const spread = w.magazine === 0 ? 0.5 : currentSpread(w, this.ads, this.moving, !p.onGround);
+    const spread = w.magazine === 0 ? 0.5 : currentSpread(w, this.ads, this.moving, !p.onGround, hipSpreadMul(w, this.cls), adsSpreadMul(w, this.cls));
     const target = this.crosshairDynamic ? crosshairGap(spread, this.d.cam.camera.fov, window.innerHeight) : CROSSHAIR_MIN_GAP + 3;
     const gap = this.bloom.update(f.dt, target);
     hud.setCrosshair(gap, this.magnified || this.dead ? 0 : crosshairAlpha(this.adsEased));
@@ -1304,7 +1310,7 @@ export class ArcadeSession {
     if (this.dead) {
       const rule = this.def.respawn;
       const wait = rule?.rule === 'never' ? -1 : (rule?.seconds ?? RESPAWN_SECONDS) - (now - this.deadAt);
-      hud.setRespawn(wait, this.nextClass, this.def.loadout !== 'ladder');
+      hud.setRespawn(wait, this.book, this.def.loadout !== 'ladder');
       if (!this.ended) this.updateSpectate(f, input);
     }
     if (this.ended) hud.setNextMatch(this.endAt - now);
@@ -1469,7 +1475,6 @@ export class ArcadeSession {
     this.matchText = localizeServerText(this.matchRaw);
     this.matchDirty = true;
     this.lastClockSec = -1;
-    this.hud.markClass(this.nextClass);
     if (this.loadoutOpen) this.hud.setClassApply(this.classApplies());
   }
 
@@ -1481,6 +1486,7 @@ export class ArcadeSession {
   /** Leaving the game: drop effects and remote state. */
   dispose(): void {
     this.offProfile();
+    this.offBook();
     this.progress.hide();
     this.hud.reset();
     this.modeHud.reset();

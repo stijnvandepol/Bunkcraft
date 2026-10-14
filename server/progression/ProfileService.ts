@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import {
-  type MatchOutcome, type MatchTally, type ProfileData, type ProgressReport, applyMatch, cleanName, prestigeUp, rankOf, setEquip,
+  type MatchOutcome, type MatchTally, type ProfileData, type ProgressReport, applyMatch, cleanName, prestigeUp, rankOf, setClasses, setEquip,
 } from '../../src/modes/progression/Profile';
 import { rankCode } from '../../src/modes/progression/Levels';
 import { log } from '../Log';
@@ -131,6 +131,15 @@ export class ProfileService {
     if (!p) return null;
     const ok = setEquip(p, change);
     this.store.touch(id);
+    return { ok, profile: p };
+  }
+
+  /** Stores the profile's Create-a-Class book; null when the profile does not exist, ok false for a malformed book. */
+  classes(id: string, book: unknown): { ok: boolean; profile: ProfileData } | null {
+    const p = this.store.get(id);
+    if (!p) return null;
+    const ok = setClasses(p, book);
+    if (ok) this.store.touch(id);
     return { ok, profile: p };
   }
 

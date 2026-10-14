@@ -171,6 +171,28 @@ describe('Realms progression on the server', () => {
     a.say({ t: 'loadout', primary: 'sniper', secondary: 'revolver', optic: 'scope', perk: 'suppressor' });
     expect(a.of('gear').at(-1)).toMatchObject({ primary: 'sniper', secondary: 'revolver', perk: 'suppressor' });
   });
+
+  it('attachments and the second perk: locked or invalid ones are refused (classReject), unlocked ones applied', () => {
+    const { profiles, connect, match } = setup('tdm');
+    const alice = profiles.create('alice')!;
+    const a = connect('alice', alice.token);
+    // Level 1: the laser (level 2) is locked; the whole request is refused and nothing changes.
+    a.say({ t: 'loadout', primary: 'smg', secondary: 'pistol', optic: 'iron', perk: 'extmag', perk2: 'ninja', att: { rail: 'laser' } });
+    expect(a.of('classReject').at(-1)).toEqual({ t: 'classReject', reason: 'locked' });
+    const self = [...match.players.values()].find((p) => p.name === 'alice')!;
+    expect(self.next.primary).toBe('rifle');
+    a.say({ t: 'loadout', primary: 'smg', perk: 'none', att: { barrel: 'none' } });
+    expect(a.of('classReject').at(-1)).toMatchObject({ reason: 'slot' });
+    a.say({ t: 'loadout', primary: 'smg', perk: 'extmag', perk2: 'quickdraw' });
+    expect(a.of('classReject').at(-1)).toMatchObject({ reason: 'perks' });
+    // A second perk from the other category is open at level 1.
+    a.say({ t: 'loadout', primary: 'smg', secondary: 'pistol', optic: 'iron', perk: 'extmag', perk2: 'ninja', att: { under: 'none', rail: 'none' } });
+    expect(a.of('gear').at(-1)).toMatchObject({ primary: 'smg', perk: 'extmag', perk2: 'ninja' });
+    profiles.get(profiles.verify(alice.token)!)!.xp = 1e6;
+    a.say({ t: 'loadout', primary: 'rifle', secondary: 'pistol', optic: 'iron', perk: 'extmag', perk2: 'ninja', att: { under: 'vgrip', rail: 'laser' } });
+    expect(a.of('gear').at(-1)).toMatchObject({ primary: 'rifle', under: 'vgrip', rail: 'laser' });
+    expect(self.slots[0].hipMul).toBeCloseTo(0.7, 9);
+  });
 });
 
 describe('profile HTTP API', () => {
@@ -208,6 +230,26 @@ describe('profile HTTP API', () => {
     expect((await call('POST', '/api/profile', { name: 'bobby' })).status).toBe(201);
     expect((await call('POST', '/api/profile', { name: 'carol' })).status).toBe(429);
     expect((await call('GET', '/api/server')).body.features).toMatchObject({ profiles: true });
+  });
+
+  it('keeps the Create-a-Class book in the profile: shape and size checked, contents cleaned', async () => {
+    t = await startTestServer({});
+    const made = await call('POST', '/api/profile', { name: 'alice' });
+    const token = made.body.token as string;
+    expect((await call('POST', '/api/profile/classes', { classes: [], sel: 0 })).status).toBe(401);
+    const book = { classes: [{ primary: 'smg', optic: 'iron', under: 'none', rail: 'laser', secondary: 'pistol', perk: 'extmag', perk2: 'ninja', name: 'Run' }, { primary: 'bazooka', name: 'x' }], sel: 1 };
+    const saved = await call('POST', '/api/profile/classes', book, token);
+    expect(saved.status).toBe(200);
+    const classes = saved.body.classes as { classes: { primary: string; rail: string; name: string }[]; sel: number };
+    expect(classes.classes).toHaveLength(5);
+    expect(classes.classes[0]).toMatchObject({ primary: 'smg', rail: 'laser', name: 'Run' });
+    expect(classes.classes[1].primary).toBe('rifle');
+    expect(classes.sel).toBe(1);
+    const got = await call('GET', '/api/profile', undefined, token);
+    expect((got.body.profile as { classes: typeof classes }).classes.classes[0].name).toBe('Run');
+    expect((await call('POST', '/api/profile/classes', { classes: [{ primary: 1 }] }, token)).status).toBe(400);
+    expect((await call('POST', '/api/profile/classes', { classes: Array(6).fill({}) }, token)).status).toBe(400);
+    expect((await call('POST', '/api/profile/classes', { classes: [], sel: 0, xp: 1e9 }, token)).status).toBe(400);
   });
 
   it('can be switched off', async () => {

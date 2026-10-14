@@ -109,11 +109,11 @@ export class BotAim {
     return off <= Math.max(halfAngle * this.skill.fireCone, 0.15 * DEG);
   }
 
-  /** The kick of one shot (`shot`: index in the recoil pattern). */
-  recoil(w: WeaponDef, shot: number): void {
-    this.pitch = Math.min(1.5, this.pitch + w.recoil * AIM_CLIMB * DEG);
+  /** The kick of one shot (`shot`: index in the recoil pattern; `mul`: the grip's recoil multiplier, 1 for bots' own classes). */
+  recoil(w: WeaponDef, shot: number, mul = 1): void {
+    this.pitch = Math.min(1.5, this.pitch + w.recoil * mul * AIM_CLIMB * DEG);
     const p = w.pattern[shot % w.pattern.length] ?? 0;
-    this.yaw = wrapAngle(this.yaw - w.recoilX * p * DEG);
+    this.yaw = wrapAngle(this.yaw - w.recoilX * mul * p * DEG);
   }
 
   /** Unit view direction (the client's convention, see AimCheck.viewDir). */

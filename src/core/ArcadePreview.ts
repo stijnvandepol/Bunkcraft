@@ -118,11 +118,12 @@ export class ArcadePreviewServer {
     switch (msg.t) {
       case 'loadout': {
         // The preview applies a class at once (the real server only right after a spawn).
-        this.cls = validateClass(msg);
+        const att = msg.att && typeof msg.att === 'object' ? msg.att : {};
+        this.cls = validateClass({ ...msg, under: att.under, rail: att.rail });
         this.primary = this.cls.primary;
-        this.mags[0] = magazineFor(weaponDef(this.primary)!, this.cls.perk);
-        this.mags[1] = magazineFor(weaponDef(this.cls.secondary)!, this.cls.perk);
-        this.host.deliver({ t: 'gear', primary: this.primary, secondary: this.cls.secondary, optic: this.cls.optic, perk: this.cls.perk });
+        this.mags[0] = magazineFor(weaponDef(this.primary)!, this.cls);
+        this.mags[1] = magazineFor(weaponDef(this.cls.secondary)!, this.cls);
+        this.host.deliver({ t: 'gear', primary: this.primary, secondary: this.cls.secondary, optic: this.cls.optic, perk: this.cls.perk, perk2: this.cls.perk2, under: this.cls.under, rail: this.cls.rail });
         this.sendAmmo(0);
         this.sendAmmo(1);
         break;
@@ -525,14 +526,14 @@ export class ArcadePreviewServer {
     this.dead = false;
     this.health = PLAYER_MAX_HEALTH;
     this.primary = this.cls.primary;
-    this.mags[0] = magazineFor(weaponDef(this.primary)!, this.cls.perk);
-    this.mags[1] = magazineFor(weaponDef(this.cls.secondary)!, this.cls.perk);
+    this.mags[0] = magazineFor(weaponDef(this.primary)!, this.cls);
+    this.mags[1] = magazineFor(weaponDef(this.cls.secondary)!, this.cls);
     this.reloadDone[0] = this.reloadDone[1] = 0;
     this.slot = 0;
     this.host.deliver({
       t: 'spawn', x: this.centerX + (Math.random() - 0.5) * 20, y: this.floorY, z: this.centerZ + (Math.random() - 0.5) * 20,
       yaw: Math.random() * Math.PI * 2, team: this.team, primary: this.primary, health: this.health,
-      secondary: this.cls.secondary, optic: this.cls.optic, perk: this.cls.perk,
+      secondary: this.cls.secondary, optic: this.cls.optic, perk: this.cls.perk, perk2: this.cls.perk2, under: this.cls.under, rail: this.cls.rail,
     });
     this.sendAmmo(0);
     this.sendAmmo(1);

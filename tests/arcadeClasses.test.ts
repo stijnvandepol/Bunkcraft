@@ -43,7 +43,7 @@ const shotAtBob = (): Fire => ({ t: 'fire', slot: 0, ox: 0.5, oy: 66.62, oz: 0.5
 describe('class validation (Create-a-Class)', () => {
   it('keeps a valid class and replaces every invalid field with the default', () => {
     expect(validateClass({ primary: 'dmr', optic: 'scope', secondary: 'mpistol', perk: 'ninja' }))
-      .toEqual({ primary: 'dmr', optic: 'scope', secondary: 'mpistol', perk: 'ninja' });
+      .toEqual({ primary: 'dmr', optic: 'scope', under: 'none', rail: 'none', secondary: 'mpistol', perk: 'ninja', perk2: 'none' });
     expect(validateClass(null)).toEqual(DEFAULT_CLASS);
     expect(validateClass('rifle')).toEqual(DEFAULT_CLASS);
     expect(validateClass({ primary: 'knife', secondary: 'rifle', optic: 'laser', perk: 'wallhack' })).toEqual(DEFAULT_CLASS);
@@ -71,8 +71,8 @@ describe('class validation (Create-a-Class)', () => {
     const store = new Map<string, string>();
     const storage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v) };
     expect(loadSavedClass(storage)).toBeNull();
-    saveClass(storage, { primary: 'lmg', optic: 'holo', secondary: 'revolver', perk: 'extmag' });
-    expect(loadSavedClass(storage)).toEqual({ primary: 'lmg', optic: 'holo', secondary: 'revolver', perk: 'extmag' });
+    saveClass(storage, { ...DEFAULT_CLASS, primary: 'lmg', optic: 'holo', secondary: 'revolver', perk: 'extmag' });
+    expect(loadSavedClass(storage)).toEqual({ ...DEFAULT_CLASS, primary: 'lmg', optic: 'holo', secondary: 'revolver', perk: 'extmag' });
     store.set(CLASS_STORAGE_KEY, '{nope');
     expect(loadSavedClass(storage)).toBeNull();
     store.set(CLASS_STORAGE_KEY, JSON.stringify({ primary: 'bazooka', perk: 'extmag' }));

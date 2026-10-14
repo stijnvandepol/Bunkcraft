@@ -1,5 +1,8 @@
-import { type ClassSpec, DEFAULT_CLASS, validateClass } from '../Loadouts';
-import { type OpticId, type PerkId, PERK_IDS, PRIMARY_WEAPONS, SECONDARY_WEAPONS, weaponDef } from '../Weapons';
+import { type ClassSpec, DEFAULT_CLASS, railFor, underFor, validateClass } from '../Loadouts';
+import {
+  ATTACHMENTS, ATTACH_SLOTS, type AttachmentId, type OpticId, type PerkId, PERK_IDS, PRIMARY_WEAPONS, type RailId, SECONDARY_WEAPONS,
+  type UnderId, attachAllowed, isAttachment, isPerk, perksCompatible, weaponDef,
+} from '../Weapons';
 import { MAX_LEVEL, type Rank } from './Levels';
 
 /**
@@ -10,7 +13,9 @@ import { MAX_LEVEL, type Rank } from './Levels';
  * The same table runs on the server (a locked class field falls back to the default) and in the menus
  * (Create-a-Class shows locked items with their level).
  */
-export type UnlockKind = 'primary' | 'secondary' | 'optic' | 'perk' | 'title' | 'card';
+export type UnlockKind = 'primary' | 'secondary' | 'optic' | 'attachment' | 'perk' | 'title' | 'card';
+/** Equipment kinds (what Create-a-Class shows locked). */
+export type EquipKind = 'primary' | 'secondary' | 'optic' | 'attachment' | 'perk';
 
 export interface Unlock {
   kind: UnlockKind;
@@ -40,6 +45,10 @@ export const EQUIPMENT_UNLOCKS: readonly Unlock[] = [
   { kind: 'primary', id: 'lever', level: 7 },
   { kind: 'primary', id: 'battle', level: 11 },
   { kind: 'primary', id: 'antimat', level: 12 },
+  // Attachments (Create-a-Class from the home screen): a laser early, the grips a little later.
+  { kind: 'attachment', id: 'laser', level: 2 },
+  { kind: 'attachment', id: 'vgrip', level: 3 },
+  { kind: 'attachment', id: 'agrip', level: 5 },
 ];
 
 /** Titles shown under your name in the Realms hub. */
@@ -90,7 +99,7 @@ export const DEFAULT_CARD = 'stone';
 const LEVEL_OF = new Map<string, Unlock>(EQUIPMENT_UNLOCKS.map((u) => [`${u.kind}:${u.id}`, u]));
 
 /** Level needed for an equipment item (1 = from the start). */
-export function unlockLevel(kind: 'primary' | 'secondary' | 'optic' | 'perk', id: string): number {
+export function unlockLevel(kind: EquipKind, id: string): number {
   return LEVEL_OF.get(`${kind}:${id}`)?.level ?? 1;
 }
 
@@ -101,34 +110,85 @@ export function hasUnlock(u: Unlock, rank: Rank, challenges = 0): boolean {
   return rank.prestige > 0 || rank.level >= u.level;
 }
 
-/** Whether a rank may use an equipment item. */
-export function isUnlocked(kind: 'primary' | 'secondary' | 'optic' | 'perk', id: string, rank: Rank): boolean {
+/** Whether a rank may use an equipment item ('none' attachments and perks are always open). */
+export function isUnlocked(kind: EquipKind, id: string, rank: Rank): boolean {
   return rank.prestige > 0 || rank.level >= unlockLevel(kind, id);
 }
 
 /**
- * A class with every locked field replaced: a locked primary becomes the default primary (and its optic is
- * checked again), a locked optic the weapon's default sights, a locked secondary or perk the default.
- * The input is validated first, so this accepts anything.
+ * A class with every locked field replaced: a locked primary becomes the default primary (and its optic and attachments
+ * are checked again), a locked optic the weapon's default sights, a locked attachment none, a locked secondary or perk
+ * the default. The input is validated first, so this accepts anything.
  */
 export function lockClass(raw: unknown, rank: Rank): ClassSpec {
   const c = validateClass(raw);
   const primary = isUnlocked('primary', c.primary, rank) ? c.primary : DEFAULT_CLASS.primary;
   const secondary = isUnlocked('secondary', c.secondary, rank) ? c.secondary : DEFAULT_CLASS.secondary;
   const perk: PerkId = isUnlocked('perk', c.perk, rank) ? c.perk : DEFAULT_CLASS.perk;
+  const perk2: PerkId = isUnlocked('perk', c.perk2, rank) && perksCompatible(perk, c.perk2) ? c.perk2 : 'none';
   const w = weaponDef(primary)!;
   // An optic the weapon does not take or the rank lacks: the first allowed (and unlocked) sights of the weapon.
   let optic: OpticId = primary === c.primary ? c.optic : w.optics[0];
   if (!w.optics.includes(optic) || !isUnlocked('optic', optic, rank)) {
     optic = w.optics.find((o) => isUnlocked('optic', o, rank)) ?? w.optics[0];
   }
-  return { primary, secondary, optic, perk };
+  const under = underFor(primary, c.under), rail = railFor(primary, c.rail);
+  return {
+    primary, secondary, optic, perk, perk2,
+    under: under === 'none' || isUnlocked('attachment', under, rank) ? under : 'none',
+    rail: rail === 'none' || isUnlocked('attachment', rail, rank) ? rail : 'none',
+  };
 }
 
 /** Whether every field of a class is unlocked (a preset card is usable as it is). */
 export function classUnlocked(c: ClassSpec, rank: Rank): boolean {
   return isUnlocked('primary', c.primary, rank) && isUnlocked('secondary', c.secondary, rank)
-    && isUnlocked('perk', c.perk, rank) && (isUnlocked('optic', c.optic, rank) || weaponDef(c.primary)?.optics[0] === c.optic);
+    && isUnlocked('perk', c.perk, rank) && isUnlocked('perk', c.perk2, rank)
+    && (c.under === 'none' || isUnlocked('attachment', c.under, rank)) && (c.rail === 'none' || isUnlocked('attachment', c.rail, rank))
+    && (isUnlocked('optic', c.optic, rank) || weaponDef(c.primary)?.optics[0] === c.optic);
+}
+
+/** The level a whole class needs: its highest unlock (a weapon's own default sights are always open). */
+export function classLevel(c: ClassSpec): number {
+  return Math.max(unlockLevel('primary', c.primary), unlockLevel('secondary', c.secondary), unlockLevel('perk', c.perk),
+    unlockLevel('perk', c.perk2), c.under === 'none' ? 1 : unlockLevel('attachment', c.under), c.rail === 'none' ? 1 : unlockLevel('attachment', c.rail),
+    weaponDef(c.primary)?.optics[0] === c.optic ? 1 : unlockLevel('optic', c.optic));
+}
+
+/** Why the server refuses a `loadout` message (see parseExtras); sent back in `classReject`. */
+export type LoadoutProblem = 'slot' | 'attachment' | 'perk' | 'perks' | 'locked';
+
+/** The second perk and the attachments of a `loadout` message; undefined = the message left it out (keep the current one). */
+export type LoadoutExtras = { ok: true; perk2?: PerkId; under?: UnderId; rail?: RailId } | { ok: false; problem: LoadoutProblem };
+
+/**
+ * The server's strict check of the newer `loadout` fields (the older ones fall back to the default, for old clients):
+ * `att` must be an object whose keys are attachment slots ('under', 'rail'), each holding an attachment of that slot (or
+ * 'none') that the primary takes and the rank has unlocked; `perk2` must be a perk the rank has, from another category
+ * than `perk`. Anything else refuses the whole message. `rank` absent = everything unlocked (games without profiles).
+ */
+export function parseExtras(primary: string, perk: PerkId, perk2: unknown, att: unknown, rank?: Rank): LoadoutExtras {
+  const out: LoadoutExtras = { ok: true };
+  if (perk2 !== undefined) {
+    if (!isPerk(perk2)) return { ok: false, problem: 'perk' };
+    if (perk2 !== 'none' && (perk2 === perk || !perksCompatible(perk, perk2))) return { ok: false, problem: 'perks' };
+    if (rank && !isUnlocked('perk', perk2, rank)) return { ok: false, problem: 'locked' };
+    out.perk2 = perk2;
+  }
+  if (att !== undefined) {
+    if (!att || typeof att !== 'object' || Array.isArray(att)) return { ok: false, problem: 'slot' };
+    const w = weaponDef(primary);
+    out.under = 'none';
+    out.rail = 'none';
+    for (const [slot, id] of Object.entries(att as Record<string, unknown>)) {
+      if (!(ATTACH_SLOTS as readonly string[]).includes(slot)) return { ok: false, problem: 'slot' };
+      if (id === 'none') continue;
+      if (!isAttachment(id) || ATTACHMENTS[id].slot !== slot || !w || !attachAllowed(w, id)) return { ok: false, problem: 'attachment' };
+      if (rank && !isUnlocked('attachment', id, rank)) return { ok: false, problem: 'locked' };
+      if (slot === 'under') out.under = id as UnderId; else out.rail = id as RailId;
+    }
+  }
+  return out;
 }
 
 /** Everything (equipment, titles, cards) that a level-up from `from` to `to` (same prestige) unlocks, in level order. */
@@ -140,11 +200,12 @@ export function unlocksBetween(from: number, to: number, prestige: number): Unlo
 }
 
 /** All equipment, in menu order, with the level each item needs. */
-export function equipmentList(): { kind: 'primary' | 'secondary' | 'optic' | 'perk'; id: string; level: number }[] {
-  const out: { kind: 'primary' | 'secondary' | 'optic' | 'perk'; id: string; level: number }[] = [];
+export function equipmentList(): { kind: EquipKind; id: string; level: number }[] {
+  const out: { kind: EquipKind; id: string; level: number }[] = [];
   for (const id of PRIMARY_WEAPONS) out.push({ kind: 'primary', id, level: unlockLevel('primary', id) });
   for (const id of SECONDARY_WEAPONS) out.push({ kind: 'secondary', id, level: unlockLevel('secondary', id) });
   for (const id of ['iron', 'reddot', 'holo', 'combat', 'scope']) out.push({ kind: 'optic', id, level: unlockLevel('optic', id) });
+  for (const id of Object.keys(ATTACHMENTS) as AttachmentId[]) out.push({ kind: 'attachment', id, level: unlockLevel('attachment', id) });
   for (const id of PERK_IDS) out.push({ kind: 'perk', id, level: unlockLevel('perk', id) });
   return out;
 }

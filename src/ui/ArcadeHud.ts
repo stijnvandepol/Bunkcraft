@@ -1,16 +1,13 @@
 import { TEAM_COLORS, type Team } from '../modes/GameTypes';
 import { type CrosshairColor, CROSSHAIR_COLORS, type CrosshairStyle } from '../modes/AimMath';
 import { type KillFeedEntry, damageAngle, formatClock, kdRatio, sortRoster } from '../modes/ArcadeLogic';
-import { type ClassSpec, LOADOUT_PRESETS, presetFor, sameClass, validateClass } from '../modes/Loadouts';
-import {
-  OPTICS, type OpticId, PERKS, PERK_IDS, type PerkId, PLAYER_MAX_HEALTH, PRIMARY_WEAPONS, SECONDARY_WEAPONS, type WeaponDef,
-  fireMode, opticAllowed, opticZoom, weaponDef,
-} from '../modes/Weapons';
+import { type ClassBook, defaultBook } from '../modes/ClassBook';
+import { PLAYER_MAX_HEALTH, type WeaponDef, weaponDef } from '../modes/Weapons';
 import type { MatchPhase, RosterEntry } from '../net/protocol';
 import { h } from './dom';
 import { type I18nKey, t } from './i18n';
 import type { Rank } from '../modes/progression/Levels';
-import { classUnlocked, isUnlocked, unlockLevel } from '../modes/progression/Unlocks';
+import { ClassEditor, className, classLine, perksLine } from './ClassEditor';
 import { rankBadge, verifiedMark } from './RankBadge';
 import { type ScopeKind, scopeReticleSvg } from './ScopeReticles';
 
@@ -55,10 +52,6 @@ function weaponTag(id: string): string {
   return (def ? def.name.replace('Assault ', '').replace(' Rifle', '') : id).toUpperCase();
 }
 
-/** Perk name for labels: perk names are product names, "No Perk" is a label. */
-function perkName(p: PerkId): string {
-  return p === 'none' ? t('arc.noPerk') : PERKS[p].name;
-}
 
 /** Scoreboard header of the mode's objective column (the data value stays English). */
 function scoreColumnLabel(col: string): string {
@@ -120,20 +113,9 @@ export class ArcadeHud {
   private readonly endTitle: HTMLDivElement;
   private readonly endBoard: HTMLDivElement;
   private readonly endCount: HTMLDivElement;
-  private readonly presetCards = new Map<string, HTMLDivElement>();
-  private customCard!: HTMLDivElement;
-  private customDesc!: HTMLDivElement;
-  /** Create-a-Class editor buttons per field and value. */
-  private readonly pick = { primary: new Map<string, HTMLElement>(), optic: new Map<string, HTMLElement>(), secondary: new Map<string, HTMLElement>(), perk: new Map<string, HTMLElement>() };
-  private statsEl!: HTMLDivElement;
+  /** Create-a-Class (the same editor as on the home screen, without renaming). */
+  readonly classes: ClassEditor;
   private loadoutNote!: HTMLDivElement;
-  private custom: ClassSpec = validateClass(null);
-  /**
-   * The class the editor shows: the one picked last (a preset or the custom class). Editing starts from it and makes it
-   * the custom class. (QA round 3: after picking a preset the editor still showed the old custom class, so a pick looked
-   * like it did nothing.)
-   */
-  private shown: ClassSpec = validateClass(null);
   private readonly scopeBreath: HTMLDivElement;
   private readonly scopeBreathFill: HTMLDivElement;
   private readonly scopeHint: HTMLDivElement;
@@ -159,7 +141,7 @@ export class ArcadeHud {
   private scopeOn = false;
   private scopeKind: 'scope' | 'combat' = 'scope';
   private lastRespawnPending = '';
-  private lastRespawnClass: ClassSpec | null = null;
+  private lastRespawnBook: ClassBook | null = null;
   private lastMag = -1;
   private lastAmmoDef: WeaponDef | null = null;
   private lastReloadPct = -1;
@@ -170,7 +152,8 @@ export class ArcadeHud {
   private lastEndCount = -1;
 
   /** A class was chosen: a preset card, or the custom class (any change in the editor; save it). */
-  onClass: ((c: ClassSpec, custom: boolean) => void) | null = null;
+  /** Create-a-Class changed the book (`equippedChanged`: the class to play with is another one or was edited). */
+  onBook: ((b: ClassBook, equippedChanged: boolean) => void) | null = null;
   onLoadoutClose: (() => void) | null = null;
 
   constructor() {
@@ -269,62 +252,24 @@ export class ArcadeHud {
 
     // -- Create-a-Class menu (clickable): quick-pick presets, the custom class and its editor (built in the language of the moment).
     this.loadoutEl = h('div', { class: 'arc-loadout bc hidden' });
+    this.classes = new ClassEditor(defaultBook(), { rename: false });
+    this.classes.onChange = (b, changed) => this.onBook?.(b, changed);
     this.buildLoadout();
   }
 
   /** Builds (or rebuilds, after a language change) the Create-a-Class menu inside `loadoutEl`. */
   private buildLoadout(): void {
     this.loadoutNote = h('div', { class: 'arc-loadout-note', text: this.loadoutNote?.textContent ?? '' });
-    this.presetCards.clear();
-    for (const m of Object.values(this.pick)) m.clear();
-    const presets = h('div', { class: 'arc-loadout-cards presets' });
-    LOADOUT_PRESETS.forEach((pr, i) => {
-      const card = h('div', { class: 'arc-chip', title: `${classLine(pr)} · ${perkName(pr.perk)}: ${t(`arc.class.${pr.id}`, pr.description)}` },
-        h('b', { text: String(i + 1) }), ` ${pr.name}`);
-      card.addEventListener('click', () => { if (classUnlocked(pr, this.rank)) this.onClass?.(pr, false); });
-      this.presetCards.set(pr.id, card);
-      presets.append(card);
-    });
-    this.customDesc = h('div', { class: 'arc-class-line' });
-    this.customCard = h('div', { class: 'arc-chip custom' }, h('b', { text: String(LOADOUT_PRESETS.length + 1) }), ` ${t('arc.custom')}`);
-    this.customCard.addEventListener('click', () => this.onClass?.(this.custom, true));
-    presets.append(this.customCard);
-
-    const column = (title: string, field: keyof typeof this.pick, items: { id: string; label: string; tag?: string; desc?: string }[]) => {
-      const col = h('div', { class: 'arc-cac-col' }, h('div', { class: 'arc-cac-head', text: title }));
-      for (const it of items) {
-        const b = h('div', { class: 'arc-cac-item', title: it.desc ?? '', 'data-tag': it.tag ?? '' }, h('span', { text: it.label }), h('em', { text: it.tag ?? '' }));
-        b.addEventListener('click', () => this.editCustom(field, it.id));
-        this.pick[field].set(it.id, b);
-        col.append(b);
-      }
-      return col;
-    };
-    const wItem = (id: string) => {
-      const w = weaponDef(id)!;
-      return { id, label: w.name, tag: fireMode(w).toUpperCase(), desc: t(`arc.role.${id}`, w.role) };
-    };
-    this.statsEl = h('div', { class: 'arc-cac-stats' });
-    const editor = h('div', { class: 'arc-cac' },
-      column(t('arc.cac.primary'), 'primary', PRIMARY_WEAPONS.map(wItem)),
-      column(t('arc.cac.optic'), 'optic', (Object.keys(OPTICS) as OpticId[]).map((o) => ({ id: o, label: OPTICS[o].name, desc: t(`arc.optic.${o}`, OPTICS[o].desc) }))),
-      column(t('arc.cac.secondary'), 'secondary', SECONDARY_WEAPONS.map(wItem)),
-      column(t('arc.cac.perk'), 'perk', PERK_IDS.map((p) => ({ id: p, label: perkName(p), desc: t(`arc.perk.${p}`, PERKS[p].desc) }))),
-      this.statsEl,
-    );
+    this.classes.build();
     this.loadoutEl.replaceChildren(
       h('div', { class: 'arc-loadout-panel' },
         h('div', { class: 'arc-loadout-title', text: t('arc.cac.title') }),
-        presets,
-        this.customDesc,
-        editor,
+        this.classes.el,
         h('div', { class: 'arc-card-desc', text: t('arc.cac.note') }),
         this.loadoutNote,
         h('button', { class: 'mc-btn w150', text: t('common.done'), onclick: () => this.onLoadoutClose?.() }),
       ),
     );
-    this.renderCustom();
-    this.markClass(this.shown);
   }
 
   /**
@@ -342,27 +287,18 @@ export class ArcadeHud {
     this.setRank(this.rank);
   }
 
-  /** The custom class (from storage). */
-  setCustomClass(c: ClassSpec): void {
-    this.custom = validateClass(c);
-    this.renderCustom();
+  /** The saved classes (ClassBookStore): the editor and the death screen show them. */
+  setBook(b: ClassBook): void {
+    this.classes.setBook(b);
   }
 
   /**
    * Realms unlocks: items above the player's level are shown greyed out with the level they need and cannot be
-   * picked; presets that use one are greyed out too. (The server enforces the same table.)
+   * picked; templates that use one are greyed out too. (The server enforces the same table.)
    */
   setRank(rank: Rank): void {
     this.rank = rank;
-    for (const field of ['primary', 'secondary', 'optic', 'perk'] as const) {
-      for (const [id, el] of this.pick[field]) {
-        const open = isUnlocked(field, id, rank);
-        el.classList.toggle('locked', !open);
-        const em = el.querySelector('em');
-        if (em) em.textContent = open ? el.dataset.tag ?? '' : t('arc.cac.locked', unlockLevel(field, id));
-      }
-    }
-    for (const pr of LOADOUT_PRESETS) this.presetCards.get(pr.id)?.classList.toggle('locked', !classUnlocked(pr, rank));
+    this.classes.setRank(rank);
   }
 
   private rank: Rank = { level: 1, prestige: 0 };
@@ -375,36 +311,6 @@ export class ArcadeHud {
     this.ranks.clear();
     this.verified.clear();
     for (const p of roster) { if (p.rk) this.ranks.set(p.name, p.rk); if (p.vf) this.verified.add(p.name); }
-  }
-
-  private editCustom(field: keyof typeof this.pick, id: string): void {
-    if (!isUnlocked(field, id, this.rank)) return;
-    const next = { ...this.shown, [field]: id };
-    // A new primary keeps the optic only when it fits; else the weapon's default.
-    if (field === 'primary' && !opticAllowed(weaponDef(id)!, next.optic)) next.optic = weaponDef(id)!.optics[0];
-    if (field === 'optic' && !opticAllowed(weaponDef(next.primary)!, id)) return;
-    this.custom = validateClass(next);
-    this.shown = this.custom;
-    this.renderCustom();
-    this.onClass?.(this.custom, true);
-  }
-
-  /** Draws the editor for the class it shows (`shown`). */
-  private renderCustom(): void {
-    const c = this.shown;
-    const w = weaponDef(c.primary)!;
-    for (const [id, el] of this.pick.primary) el.classList.toggle('selected', id === c.primary);
-    for (const [id, el] of this.pick.secondary) el.classList.toggle('selected', id === c.secondary);
-    for (const [id, el] of this.pick.perk) el.classList.toggle('selected', id === c.perk);
-    for (const [id, el] of this.pick.optic) {
-      el.classList.toggle('selected', id === c.optic);
-      el.classList.toggle('disabled', !opticAllowed(w, id));
-    }
-    this.statsEl.replaceChildren(
-      h('div', { class: 'arc-card-name', text: w.name }),
-      ...statRows(w, c.optic, c.perk),
-      h('div', { class: 'arc-card-desc role', text: t(`arc.role.${w.id}`, w.role) }),
-    );
   }
 
   setVisible(v: boolean): void {
@@ -734,28 +640,23 @@ export class ArcadeHud {
    * Respawn countdown in whole seconds (negative = no respawn before the next round) and the class
    * choices (hidden when the mode chooses the weapons). `next` is the class of the next life.
    */
-  setRespawn(seconds: number, next: ClassSpec | null, choice = true): void {
+  setRespawn(seconds: number, book: ClassBook | null, choice = true): void {
     const n = seconds < 0 ? -1 : Math.max(0, Math.ceil(seconds));
-    // Per frame while dead: nothing to do (and nothing to allocate) unless the second or the class object changed.
-    if (n === this.lastCount && next === this.lastRespawnClass && this.lastRespawnPending !== '\0') return;
-    this.lastRespawnClass = next;
-    const custom = !!next && sameClass(next, this.custom) && !presetFor(next);
-    const key = next ? `${next.primary}|${next.optic}|${next.secondary}|${next.perk}|${custom}` : '';
-    if (n === this.lastCount && key === this.lastRespawnPending) return;
+    // Per frame while dead: nothing to do (and nothing to allocate) unless the second or the book changed.
+    if (n === this.lastCount && book === this.lastRespawnBook && this.lastRespawnPending !== '\0') return;
+    this.lastRespawnBook = book;
     this.lastCount = n;
-    this.lastRespawnPending = key;
+    this.lastRespawnPending = '';
     this.deathCount.textContent = n < 0 ? t('arc.death.round') : t('arc.death.respawn', n);
-    if (!choice || !next) {
+    if (!choice || !book) {
       this.deathLoadout.replaceChildren();
       return;
     }
-    const cur = presetFor(next);
-    const keys = LOADOUT_PRESETS.length + 1;
-    this.deathLoadout.replaceChildren(h('div', { class: 'arc-death-hint', text: t('arc.death.nextClass', keys) }),
+    const next = book.classes[book.sel];
+    this.deathLoadout.replaceChildren(h('div', { class: 'arc-death-hint', text: t('arc.death.nextClass', book.classes.length) }),
       h('div', { class: 'arc-death-weapons' },
-        ...LOADOUT_PRESETS.map((pr, i) => h('span', { class: pr === cur ? 'sel' : '', text: `${i + 1} ${pr.name}` })),
-        h('span', { class: custom ? 'sel' : '', text: `${keys} ${t('arc.custom')}` })),
-      h('div', { class: 'arc-death-hint', text: `${classLine(next)} · ${perkName(next.perk)}` }));
+        ...book.classes.map((c, i) => h('span', { class: i === book.sel ? 'sel' : '', text: `${i + 1} ${className(c, i)}` }))),
+      h('div', { class: 'arc-death-hint', text: `${classLine(next)} · ${perksLine(next)}` }));
   }
 
   setMatchEnd(info: { title: string; color: string; roster: readonly RosterEntry[]; ctx: ScoreboardContext } | null): void {
@@ -786,14 +687,13 @@ export class ArcadeHud {
     this.endCount.textContent = t('lobby.nextMatch', n);
   }
 
-  /** Opens Create-a-Class with `selected` (the class of the next life) highlighted; `when` says when a pick applies. */
-  showLoadout(selected: ClassSpec, when: ClassApply): void {
+  /** Opens Create-a-Class; `when` says when a pick applies. */
+  showLoadout(when: ClassApply): void {
     this.loadoutEl.classList.remove('hidden');
     // A full-screen menu: the match HUD under it (score bar, banners, lobby panel, markers) would show through the title.
     this.el.classList.add('class-open');
     // The chat lies outside the HUD layer: its lines showed through the editor columns (QA round 3).
     document.body.classList.add('arc-class-open');
-    this.markClass(selected);
     this.setClassApply(when);
   }
 
@@ -803,17 +703,9 @@ export class ArcadeHud {
     if (this.loadoutNote.textContent !== text) this.loadoutNote.textContent = text;
   }
 
-  /** Highlights the chosen class (its preset card, or the custom card) and shows it in the editor. */
-  markClass(selected: ClassSpec): void {
-    if (!sameClass(selected, this.shown)) {
-      this.shown = validateClass(selected);
-      this.renderCustom();
-    }
-    const cur = presetFor(selected);
-    for (const [id, card] of this.presetCards) card.classList.toggle('selected', id === cur?.id);
-    this.customCard.classList.toggle('selected', !cur && sameClass(selected, this.custom));
-    const label = cur ? cur.name : sameClass(selected, this.custom) ? t('arc.custom') : t('arc.class');
-    this.customDesc.textContent = `${label}: ${classLine(selected)} · ${perkName(selected.perk)}`;
+  /** The server refused the class (see protocol `classReject`): the note under the editor says so. */
+  setClassRejected(reason: string): void {
+    this.loadoutNote.textContent = t('arc.cac.rejected', reason);
   }
 
   hideLoadout(): void {
@@ -848,27 +740,6 @@ export class ArcadeHud {
     this.lastRespawnPending = '';
     this.lastSlots = '';
   }
-}
-
-/** "Assault Rifle (Red Dot) + Pistol". */
-function classLine(c: ClassSpec): string {
-  const optic = c.optic === 'iron' ? '' : ` (${OPTICS[c.optic].name})`;
-  return `${weaponDef(c.primary)!.name}${optic} + ${weaponDef(c.secondary)!.name}`;
-}
-
-function statRows(def: WeaponDef, optic: OpticId = 'iron', perk: PerkId = 'none'): HTMLElement[] {
-  const bar = (label: string, frac: number, value: string) => h('div', { class: 'arc-stat' },
-    h('span', { text: `${label}  ${value}` }), h('div', { class: 'arc-stat-bar' }, h('i', { style: `width:${Math.round(Math.min(1, Math.max(0.05, frac)) * 100)}%` })));
-  const mag = perk === 'extmag' ? Math.round(def.magazine * 1.4) : def.magazine;
-  return [
-    bar(t('arc.stat.damage'), (def.damage * def.pellets * 0.6) / 100, String(def.damage * def.pellets)),
-    bar(t('arc.stat.fireRate'), def.rpm / 1000, `${def.rpm}`),
-    bar(t('arc.stat.range'), def.range / 100, `${Math.round(def.range * (perk === 'suppressor' ? 0.8 : 1))}`),
-    bar(t('arc.stat.magazine'), mag / 75, String(mag)),
-    bar(t('arc.stat.mobility'), (def.moveSpeed - 0.8) / 0.3, `${Math.round(def.moveSpeed * 100)}%`),
-    bar(t('arc.stat.aimSpeed'), (0.5 - def.adsTime) / 0.4, `${def.adsTime.toFixed(2)}s`),
-    h('div', { class: 'arc-card-desc', text: `${fireMode(def).toUpperCase()} · zoom ${(1 / opticZoom(def, optic)).toFixed(1)}x` }),
-  ];
 }
 
 /** Renders the board, then drops rows (never your own) until it fits its box: no player is cut off unseen. */

@@ -1,17 +1,16 @@
 import { type GameType, type GameTypeDef, gameTypeDef } from '../modes/GameTypes';
-import { type ClassSpec, DEFAULT_CLASS, LAST_CLASS_STORAGE_KEY, LOADOUT_PRESETS, loadSavedClass, saveClass, sameClass } from '../modes/Loadouts';
 import { MAP_SETTINGS, type MapSetting, getMap } from '../modes/maps';
-import { classUnlocked, unlockLevel } from '../modes/progression/Unlocks';
 import { BOT_LEVELS, type BotLevel, REALMS_MODES, isArcade, lobbySizes } from '../modes/Realms';
-import { OPTICS, PERKS, isPerk, weaponDef } from '../modes/Weapons';
 import { type PartyChange, normalizePartyCode } from '../modes/Party';
 import { NAME_PATTERN, formatCode, normalizeCode } from '../net/protocol';
 import { PartyCallError, party as partyClient } from '../net/PartyApi';
 import { accountIsAdmin, knownAdmin, loggedIn } from '../net/AccountApi';
+import { classBook, onClassBook, setClassBook } from '../net/ClassBookStore';
 import { currentProfile, currentRank, loadProfile, onProfile } from '../net/ProfileApi';
 import { checkRejoin } from '../net/Rejoin';
 import { type ListedRoom, type RoomInfo, browseRooms, createRoom, inviteLink, inviteText, lookupRoom, quickPlay, realmsStats, serverInfo } from '../net/RoomApi';
 import { AccountScreens } from './AccountScreens';
+import { ClassEditor } from './ClassEditor';
 import { button, h, menuScreen } from './dom';
 import { HomeScreen } from './HomeScreen';
 import { type I18nKey, t } from './i18n';
@@ -716,56 +715,29 @@ export class RealmsMenu {
   }
 
   /**
-   * Loadouts: the class the next match starts with (the presets and the custom class built with Create-a-Class
-   * in a match). Locked presets show their level; picking one is remembered in this browser like in the match.
+   * Create-a-Class from the home screen: the five saved classes (the one clicked is equipped for the next match), the
+   * templates, the editor and renaming. The book is saved with the profile (ClassBookStore), or in this browser for a
+   * guest; locked items show their level.
    */
   showLoadouts(): void {
-    const store = storage();
-    const rank = currentRank();
-    const custom = loadSavedClass(store);
-    let equipped: ClassSpec | null = loadSavedClass(store, LAST_CLASS_STORAGE_KEY);
-    const list = h('div', { class: 'loadout-list' });
-    const gear = (c: ClassSpec) => {
-      const optic = c.optic === 'iron' ? '' : ` (${OPTICS[c.optic].name})`;
-      const perk = isPerk(c.perk) && c.perk !== 'none' ? ` · ${PERKS[c.perk].name}` : '';
-      return `${weaponDef(c.primary)?.name ?? c.primary}${optic} + ${weaponDef(c.secondary)?.name ?? c.secondary}${perk}`;
-    };
-    // The level the whole class needs: its highest unlock (a weapon's own default sights are always open).
-    const lockLevel = (c: ClassSpec) => Math.max(unlockLevel('primary', c.primary), unlockLevel('secondary', c.secondary),
-      unlockLevel('perk', c.perk), weaponDef(c.primary)?.optics[0] === c.optic ? 1 : unlockLevel('optic', c.optic));
-    const now = h('div', { class: 'prog-muted' });
-    const render = () => {
-      const entries: { key: string; name: string; desc: string; spec: ClassSpec | null }[] = [
-        ...LOADOUT_PRESETS.map((p, i) => ({ key: String(i + 1), name: p.name, desc: t(`arc.class.${p.id}` as I18nKey), spec: p as ClassSpec })),
-        { key: String(LOADOUT_PRESETS.length + 1), name: t('arc.custom'), desc: custom ? '' : t('loadouts.customEmpty'), spec: custom },
-      ];
-      now.textContent = t('loadouts.now', gear(equipped ?? DEFAULT_CLASS));
-      list.replaceChildren(...entries.map((e) => {
-        const open = !!e.spec && classUnlocked(e.spec, rank);
-        const on = !!e.spec && !!equipped && sameClass(e.spec, equipped);
-        const tag = !e.spec ? '' : on ? t('loadouts.equipped') : open ? t('loadouts.equip') : t('armory.locked', lockLevel(e.spec));
-        const card = h('button', { class: `loadout-card${on ? ' selected' : ''}`, type: 'button', disabled: !open, 'aria-pressed': String(on) },
-          h('span', { class: 'loadout-key', text: e.key }),
-          h('span', { class: 'loadout-text' },
-            h('span', { class: 'loadout-name', text: e.name }),
-            e.spec ? h('span', { class: 'loadout-gear', text: gear(e.spec) }) : null,
-            e.desc ? h('span', { class: 'loadout-desc', text: e.desc }) : null),
-          h('span', { class: `loadout-tag${e.spec && !open ? ' locked' : ''}`, text: tag }));
-        card.addEventListener('click', () => {
-          if (!e.spec || !open) return;
-          saveClass(store, e.spec, LAST_CLASS_STORAGE_KEY);
-          equipped = e.spec;
-          render();
-          (list.querySelector('.loadout-card.selected') as HTMLElement | null)?.focus({ preventScroll: true });
-        });
-        return card;
-      }));
-    };
-    render();
-    this.stack.push(shellScreen(t('loadouts.title'), [
-      h('div', { class: 'prog-panel' }, h('div', { class: 'prog-muted', text: t('loadouts.hint') }), now),
-      list,
-    ], [button(t('common.back'), () => this.stack.pop(), { cls: 'w150' })], { list: true }));
+    const editor = new ClassEditor(classBook(), { rename: true });
+    editor.setRank(currentRank());
+    editor.onChange = (b) => setClassBook(b);
+    const note = h('div', { class: 'prog-muted cac-store' });
+    const offProfile = onProfile((p) => {
+      editor.setRank(currentRank());
+      note.textContent = p ? '' : t('cac.guest');
+    });
+    const offBook = onClassBook((b) => {
+      // The screen left another way (Esc): stop listening.
+      if (!editor.el.isConnected) { offBook(); offProfile(); return; }
+      editor.setBook(b);
+    });
+    const close = () => { offProfile(); offBook(); this.stack.pop(); };
+    this.stack.push(shellScreen(t('arc.cac.title'), [
+      h('div', { class: 'prog-panel cac-intro' }, h('div', { class: 'prog-muted', text: t('cac.hint') }), note),
+      h('div', { class: 'cac-home' }, editor.el),
+    ], [button(t('common.back'), close, { cls: 'w150' })], { list: true, cls: 'cac-screen' }));
   }
 
   /** Whether this server runs the arena (null while unknown). */

@@ -289,8 +289,11 @@ export type ClientMessage =
   /**
    * Arcade: the class for the next life (Create-a-Class): primary, its optic, secondary and perk. The server
    * validates every field (unknown or disallowed → default); within the first seconds of a life it applies at once.
+   * `perk2` (second perk, another category than `perk`) and `att` (attachments per slot: `under` grip, `rail` laser)
+   * are checked strictly: an unknown slot, an attachment the primary does not take, a locked item or two perks of one
+   * category refuse the whole message (`classReject`). Left out, they keep the current choice (older clients).
    */
-  | { t: 'loadout'; primary: string; secondary?: string; optic?: string; perk?: string }
+  | { t: 'loadout'; primary: string; secondary?: string; optic?: string; perk?: string; perk2?: string; att?: Record<string, string> }
   /** Arcade: fire the weapon in a slot. Origin is the client's eye, dir the aim; the server re-checks both. */
   /**
    * A shot. `rk`: the server tick (fractional) the shooter's screen showed the other players at (snapshots carry
@@ -317,6 +320,13 @@ export type ClientMessage =
   | ContainerClientMessage;
 
 // ---------------------------------------------------------------- server → client
+
+/** The newer parts of a class in `spawn` and `gear` (absent = none): the second perk and the primary's attachments. */
+export interface GearExtras {
+  perk2?: string;
+  under?: string;
+  rail?: string;
+}
 
 export type ServerMessage =
   | {
@@ -417,9 +427,11 @@ export type ServerMessage =
   | { t: 'roster'; players: RosterEntry[] }
   /** You (re)spawn: position, facing, team, loadout and full health. */
   /** `ss`: this player's spread seed (the client derives the same spread as the server, see Hitscan.spreadRandom). */
-  | { t: 'spawn'; x: number; y: number; z: number; yaw: number; team: Team | ''; primary: string; health: number; secondary?: string; optic?: string; perk?: string; ss?: number }
+  | { t: 'spawn'; x: number; y: number; z: number; yaw: number; team: Team | ''; primary: string; health: number; secondary?: string; optic?: string; perk?: string; ss?: number } & GearExtras
   /** The mode changed your weapons while you live (gun game level up): primary slot, optional secondary slot. */
-  | { t: 'gear'; primary: string; secondary?: string; optic?: string; perk?: string }
+  | ({ t: 'gear'; primary: string; secondary?: string; optic?: string; perk?: string } & GearExtras)
+  /** Arcade: the server refused a `loadout` message (see there); the class for the next life did not change. */
+  | { t: 'classReject'; reason: 'slot' | 'attachment' | 'perk' | 'perks' | 'locked' }
   /** Mode-specific HUD state (zones, flags, round wins), about twice a second and on changes. Absent in tdm/ffa/gun game. */
   | { t: 'mode'; state: ModeState }
   /** A one-off happening (flag taken, zone captured, round won): `team` is the team it concerns, `id` the player. */

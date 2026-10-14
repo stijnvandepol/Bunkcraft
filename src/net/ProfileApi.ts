@@ -1,4 +1,5 @@
 import { type Rank, levelFromXp } from '../modes/progression/Levels';
+import { type ClassBook, sanitizeBook } from '../modes/ClassBook';
 import { type ProfileData, type ProgressReport, rankOf, sanitizeProfile } from '../modes/progression/Profile';
 
 /**
@@ -120,6 +121,22 @@ export async function equip(change: { title?: string; card?: string; camos?: Rec
     const { status, data } = await call('POST', '/api/profile/equip', change);
     if (data.profile) set(sanitizeProfile(data.profile));
     return status === 200;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Saves the Create-a-Class book in the profile (the server checks its shape and cleans it). Updates the loaded
+ * profile quietly (no listeners: the book came from this browser). Returns whether the server stored it.
+ */
+export async function saveClasses(book: ClassBook): Promise<boolean> {
+  if (!current || !profileToken()) return false;
+  try {
+    const { status, data } = await call('POST', '/api/profile/classes', book);
+    if (status !== 200) return false;
+    current.classes = sanitizeBook(data.classes);
+    return true;
   } catch {
     return false;
   }

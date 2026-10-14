@@ -1,6 +1,6 @@
 # BunkCraft roadmap
 
-Stand: 9 oktober 2026. Wat af is staat kort in §3 (de details staan in de docs die erbij horen), wat open staat in §2 en §4.
+Stand: 14 oktober 2026. Wat af is staat kort in §3 (de details staan in de docs die erbij horen), wat open staat in §2 en §4.
 De overdracht voor een nieuwe sessie staat in [`HANDOFF.md`](HANDOFF.md).
 
 ## 1. Koers
@@ -40,23 +40,21 @@ volgt de Bunkhosting-huisstijl. Live op https://craft.bunkhosting.nl (Cloudflare
 5. **In-game HUD naar de shell-typografie (M).** Scorebalk, killfeed en doodscherm gebruiken nog het pixelfont. Een eigen
    display-font (bijvoorbeeld Chakra Petch of Saira Condensed, OFL, lokaal gebundeld) is een keuze voor Stijn; de shell zelf
    gebruikt al Manrope en Inter.
-6. **Create-a-Class vanaf de home (M).** De editor loskoppelen van de match-HUD; meerdere opgeslagen klassen (nu één),
-   attachments (grip, laser) en een tweede perk.
-7. **Skins afmaken (S-M).** Eerste-persoonshand met de eigen skin, skins van andere servers (Direct Connect) en opruimen van
+6. **Skins afmaken (S-M).** Eerste-persoonshand met de eigen skin, skins van andere servers (Direct Connect) en opruimen van
    skins zonder eigenaar. Zie SERVER.md §Spelersskins.
-8. **Rejoin en party's robuuster (M).** Bewaarde plekken en party's overleven geen serverherstart (alleen de XP wordt
+7. **Rejoin en party's robuuster (M).** Bewaarde plekken en party's overleven geen serverherstart (alleen de XP wordt
    uitbetaald); een FFA-leider die weg was telt niet mee voor de winnaar; party-chat of pushkanaal (nu pollen elke 1,5 s);
    uitnodiging in de game; klaar-controle voor de start.
-9. **Realms vervolg (M).** Skill-based matchmaking (K/D per naam, bij party's het gemiddelde), adaptieve botmoeilijkheid
+8. **Realms vervolg (M).** Skill-based matchmaking (K/D per naam, bij party's het gemiddelde), adaptieve botmoeilijkheid
    in Snel spelen, playlist-rotatie met tijdelijke modi, lege open lobby's sneller opruimen, lobbylijst pagineren.
 
 **Later**
 
-10. **Mobiel voor de shooter (L):** touchbediening voor schieten en richten, crouch/slide-knop, test op echte toestellen;
+9. **Mobiel voor de shooter (L):** touchbediening voor schieten en richten, crouch/slide-knop, test op echte toestellen;
     daarna pas CrazyGames/Poki (de Minecraft-jar-import verbergen).
-11. **Anti-cheat vervolg (M-L):** server-side invoersimulatie (de server speelt `Player.step` na), drempels van de
+10. **Anti-cheat vervolg (M-L):** server-side invoersimulatie (de server speelt `Player.step` na), drempels van de
     verdenkingsscore kalibreren met echte data, tracers alleen naar wie de schutter mag zien, delta-snapshots.
-12. **Schaal (L, beslissing Stijn):** delta-`ent`-frames (~90 % van het survival-verkeer), meerdere processen boven
+11. **Schaal (L, beslissing Stijn):** delta-`ent`-frames (~90 % van het survival-verkeer), meerdere processen boven
     ~150-200 spelers. uWebSockets.js: advies nee.
 
 **Geparkeerd of gestopt**
@@ -67,6 +65,13 @@ volgt de Bunkhosting-huisstijl. Live op https://craft.bunkhosting.nl (Cloudflare
 - **Eindspel/dimensies, brouwen, netherite, redstone-comparator/observer:** niet gepland.
 
 ## 3. Gedaan
+
+- **Create-a-Class vanaf de home (oktober 2026):** één editor (`src/ui/ClassEditor.ts`) op de home (knop *Create-a-Class*) en in
+  de match (B); vijf opgeslagen klassen met naam, bewaard bij het profiel (`POST /api/profile/classes`, lokale kopie voor
+  gasten, de oude enkele klasse migreert naar klasse 1); attachments (laser, vertical grip, angled grip) met echte effecten op
+  client en server; een tweede perk uit een andere categorie; de server weigert onbekende slots, vergrendelde of ongeldige
+  attachments en twee perks uit één categorie (`classReject`). Doodscherm: toetsen 1–5. Balans: GAMEMODES §Klassen.
+  Open: attachments zichtbaar voor anderen (laserstraal, greep op het model), attachments voor bots.
 
 - **Ops-dashboard (oktober 2026):** `/ops` in de BunkCraft-stijl, inloggen met een admin-account (`ADMIN_ACCOUNTS` of
   `bunkcraft account admin <naam> on`) of het token; containers à la Portainer (status, lobby, CPU, geheugen, tick p99, logs,

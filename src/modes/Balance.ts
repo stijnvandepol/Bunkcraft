@@ -1,4 +1,4 @@
-import { PLAYER_MAX_HEALTH, type WeaponDef, damageAt, fireInterval } from './Weapons';
+import { type KitLike, PLAYER_MAX_HEALTH, type WeaponDef, adsSpreadMul, adsTimeFor, damageAt, fireInterval, hipSpreadMul } from './Weapons';
 
 /**
  * Time-to-kill model for the arcade weapons (design aid and balance tests; the game does not use it).
@@ -9,6 +9,8 @@ import { PLAYER_MAX_HEALTH, type WeaponDef, damageAt, fireInterval } from './Wea
  *   realistic TTK = aim-down-sights time (beyond hip range) + time for the expected shots:
  *                   expected damage per shot = dmg × pellets × falloff × spread hit % × aim; STK = ceil(100 / that);
  *                   reloads are added when STK exceeds the magazine
+ *   attachments     = the kit's spread multipliers scale the cone (laser: hip fire, vertical grip: aimed) and its aim time
+ *                   replaces the weapon's (grips); recoil is in the aim factor and not modelled (scripts/ttk-sim.ts has it)
  *   bolt actions    = the aim factor × BOLT_PRECISION: one precise shot through a swaying scope, and a miss costs a
  *                   whole bolt cycle (without it the one-shot sniper would "win" every long range on paper)
  */
@@ -31,8 +33,8 @@ export function shotTime(w: WeaponDef, n: number): number {
   return Math.floor(k / w.burst) * w.burstCycleSec + (k % w.burst) * fireInterval(w);
 }
 
-export function spreadHit(w: WeaponDef, dist: number, ads: boolean): number {
-  const s = ads ? w.adsSpread : w.spread;
+export function spreadHit(w: WeaponDef, dist: number, ads: boolean, kit: KitLike = 'none'): number {
+  const s = ads ? w.adsSpread * adsSpreadMul(w, kit) : w.spread * hipSpreadMul(w, kit);
   if (s <= 0 || w.range < 5) return 1;
   const theta = (Math.atan(BODY_RADIUS / Math.max(1, dist)) * 180) / Math.PI;
   return Math.min(1, (theta / s) ** 2);
@@ -59,14 +61,14 @@ function shotTimeFrac(w: WeaponDef, n: number): number {
 }
 
 /**
- * Realistic body-only TTK at a distance, aiming time included beyond hip range. Every shot lands with
+ * Realistic body-only TTK at a distance, aiming time included beyond hip range; `kit` adds attachments (see the model). Every shot lands with
  * probability `aim` (× the spread hit chance for single bullets; a shotgun blast lands its share of
  * pellets); the time is that of the expected number of shots (fractional), reloads included.
  */
-export function realisticTtk(w: WeaponDef, dist: number, aim = DEFAULT_AIM): Ttk {
+export function realisticTtk(w: WeaponDef, dist: number, aim = DEFAULT_AIM, kit: KitLike = 'none'): Ttk {
   if (dist > w.maxRange) return { stk: Infinity, ms: Infinity };
   const ads = dist > HIP_RANGE;
-  const hit = spreadHit(w, dist, ads);
+  const hit = spreadHit(w, dist, ads, kit);
   const perHit = damageAt(w, dist) * (w.pellets > 1 ? w.pellets * hit : 1);
   const p = (w.pellets > 1 ? aim : aim * hit) * (w.bolt ? BOLT_PRECISION : 1);
   if (perHit <= 0 || p <= 0) return { stk: Infinity, ms: Infinity };
@@ -74,7 +76,7 @@ export function realisticTtk(w: WeaponDef, dist: number, aim = DEFAULT_AIM): Ttk
   const shots = hits / p;
   let ms = shotTimeFrac(w, shots) * 1000;
   if (w.magazine > 0 && shots > w.magazine) ms += Math.floor((Math.ceil(shots) - 1) / w.magazine) * w.reloadSec * 1000;
-  if (ads) ms += w.adsTime * 1000;
+  if (ads) ms += (typeof kit === 'string' ? w.adsTime : adsTimeFor(w, w.optics[0], kit)) * 1000;
   return { stk: Math.ceil(shots), ms: Math.round(ms) };
 }
 

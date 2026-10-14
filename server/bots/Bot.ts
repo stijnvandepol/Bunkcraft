@@ -1,7 +1,7 @@
 import type { Team } from '../../src/modes/GameTypes';
 import { LOADOUT_PRESETS, type LoadoutPreset } from '../../src/modes/Loadouts';
 import { lockClass } from '../../src/modes/progression/Unlocks';
-import { HITBOX, PLAYER_MAX_HEALTH, type WeaponDef } from '../../src/modes/Weapons';
+import { HITBOX, PLAYER_MAX_HEALTH, type WeaponDef, recoilMul } from '../../src/modes/Weapons';
 import type { BlockGetter } from '../../src/player/Collision';
 import { PHYSICS } from '../../src/player/Physics';
 import { type ClientMessage, type ModeState, SNAP_FLAG_ADS, type ServerMessage } from '../../src/net/protocol';
@@ -618,6 +618,6 @@ export class Bot {
       // A new trigger pull starts a burst; the server spaces its shots.
       if (s.burstShots === 1) this.nextClickAt = now + Math.max(w.burstCycleSec ?? 0.3, 1 / this.skill.maxCps);
     } else if (!w.auto) this.nextClickAt = now + Math.max(60 / w.rpm, 1 / this.skill.maxCps);
-    this.aim.recoil(w, this.shotIndex);
+    this.aim.recoil(w, this.shotIndex, recoilMul(w, me));
   }
 }

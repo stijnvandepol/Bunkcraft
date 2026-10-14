@@ -1,5 +1,6 @@
 import { isSkinHash } from '../../skins/SkinFormat';
 import { type GameType, gameTypeDef } from '../GameTypes';
+import { type ClassBook, bookShapeOk, sanitizeBook } from '../ClassBook';
 import { WEAPONS } from '../Weapons';
 import { type CamoDef, WEAPON_XP, camoUnlocked, camosBetween, isCamo } from './Camos';
 import { type ChallengeDef, type ChallengeState, applyChallenges, currentState, periodKey } from './Challenges';
@@ -64,6 +65,8 @@ export interface ProfileData {
   equip: { title: string; card: string; camos: Record<string, string> };
   /** Hash of the custom player skin (see src/skins/SkinFormat.ts; the file lives on the server), '' = the default skin. */
   skin: string;
+  /** The saved Create-a-Class classes (src/modes/ClassBook.ts); absent until the player saves some (the browser's then count). */
+  classes?: ClassBook;
 }
 
 const WEAPON_IDS = new Set(WEAPONS.map((w) => w.id));
@@ -148,6 +151,7 @@ export function sanitizeProfile(raw: unknown): ProfileData | null {
     daily: challengeState(own(r, 'daily')), weekly: challengeState(own(r, 'weekly')),
     equip: { title: isTitle(title) ? title : DEFAULT_TITLE, card: isCard(card) ? card : DEFAULT_CARD, camos },
     skin: isSkinHash(own(r, 'skin')) ? own(r, 'skin') as string : '',
+    ...(own(r, 'classes') !== undefined ? { classes: sanitizeBook(own(r, 'classes')) } : {}),
   };
 }
 
@@ -280,6 +284,17 @@ export function setEquip(p: ProfileData, change: { title?: unknown; card?: unkno
     }
   }
   return ok;
+}
+
+/**
+ * Stores the player's classes (Create-a-Class). The request must have the shape of a class book (`bookShapeOk`: at most
+ * CLASS_SLOTS objects of strings, small); the classes in it are cleaned like everywhere else. Locked items may be saved:
+ * the match puts the rank's fallback in your hands (Unlocks.lockClass) until they unlock. Returns whether it was stored.
+ */
+export function setClasses(p: ProfileData, raw: unknown): boolean {
+  if (!bookShapeOk(raw)) return false;
+  p.classes = sanitizeBook(raw);
+  return true;
 }
 
 /** Ratio helpers for the stats screen. */

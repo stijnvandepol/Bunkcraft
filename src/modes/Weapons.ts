@@ -251,46 +251,164 @@ export function opticZoom(w: WeaponDef, optic: OpticId): number {
 
 export type PerkId = 'none' | 'extmag' | 'quickdraw' | 'ninja' | 'suppressor' | 'lightfoot';
 
+/**
+ * Perk categories: a class carries two perks, and they must come from different categories (Extended Mags with Ninja,
+ * not Extended Mags with Quickdraw). `gun` perks change the weapons, `field` perks the soldier.
+ */
+export type PerkCategory = 'gun' | 'field';
+
 export interface PerkDef {
   id: PerkId;
   name: string;
   desc: string;
+  /** Null for "No Perk" (fits with anything). */
+  cat: PerkCategory | null;
 }
 
 export const PERKS: Record<PerkId, PerkDef> = {
-  none: { id: 'none', name: 'No Perk', desc: 'Nothing extra' },
-  extmag: { id: 'extmag', name: 'Extended Mags', desc: '+40% magazine on both guns' },
-  quickdraw: { id: 'quickdraw', name: 'Quickdraw', desc: 'Aim 40% faster, switch weapons twice as fast' },
-  ninja: { id: 'ninja', name: 'Ninja', desc: 'Enemies hear your footsteps only up close' },
-  suppressor: { id: 'suppressor', name: 'Suppressor', desc: 'Quiet shots heard only nearby; 20% shorter damage range' },
-  lightfoot: { id: 'lightfoot', name: 'Lightfoot', desc: '8% faster on foot, slides recharge 28% sooner' },
+  none: { id: 'none', name: 'No Perk', desc: 'Nothing extra', cat: null },
+  extmag: { id: 'extmag', name: 'Extended Mags', desc: '+40% magazine on both guns', cat: 'gun' },
+  quickdraw: { id: 'quickdraw', name: 'Quickdraw', desc: 'Aim 40% faster, switch weapons twice as fast', cat: 'gun' },
+  ninja: { id: 'ninja', name: 'Ninja', desc: 'Enemies hear your footsteps only up close', cat: 'field' },
+  suppressor: { id: 'suppressor', name: 'Suppressor', desc: 'Quiet shots heard only nearby; 20% shorter damage range', cat: 'gun' },
+  lightfoot: { id: 'lightfoot', name: 'Lightfoot', desc: '8% faster on foot, slides recharge 28% sooner', cat: 'field' },
 };
 
-/** Movement speed multiplier of a perk (Lightfoot); the server's speed limit uses the same number. */
-export function perkMoveSpeed(perk: PerkId): number {
-  return perk === 'lightfoot' ? 1.08 : 1;
-}
 export const PERK_IDS = Object.keys(PERKS) as PerkId[];
 
 export function isPerk(v: unknown): v is PerkId {
   return typeof v === 'string' && Object.prototype.hasOwnProperty.call(PERKS, v);
 }
 
+/** Whether two perks may be carried together: different categories (or one of them is "No Perk"). */
+export function perksCompatible(a: PerkId, b: PerkId): boolean {
+  const ca = PERKS[a]?.cat ?? null, cb = PERKS[b]?.cat ?? null;
+  return ca === null || cb === null || ca !== cb;
+}
+
+// ---------------------------------------------------------------- attachments
+
+/** Attachment slots of a primary (Create-a-Class): under the barrel (a grip) and on the side rail (a laser). */
+export type AttachSlot = 'under' | 'rail';
+export type UnderId = 'none' | 'vgrip' | 'agrip';
+export type RailId = 'none' | 'laser';
+export type AttachmentId = Exclude<UnderId | RailId, 'none'>;
+
+export const ATTACH_SLOTS: readonly AttachSlot[] = ['under', 'rail'];
+
+/**
+ * An attachment and its real effect, as multipliers on the primary it is mounted on. Server and client use the same
+ * numbers: the spread multipliers go into `shotSpread` (the server's verdict), the aim time into `adsTimeFor` (the
+ * server's aim blend) and the recoil into the client's aim climb (RecoilState). Balance notes: docs/GAMEMODES.md.
+ */
+export interface AttachmentDef {
+  id: AttachmentId;
+  slot: AttachSlot;
+  name: string;
+  desc: string;
+  /** Multipliers: hip-fire cone, aimed cone, aim time, recoil (climb and sideways drift). */
+  hipSpread: number;
+  adsSpread: number;
+  adsTime: number;
+  recoil: number;
+}
+
+export const ATTACHMENTS: Record<AttachmentId, AttachmentDef> = {
+  vgrip: {
+    id: 'vgrip', slot: 'under', name: 'Vertical Grip', desc: '25% less recoil, 15% tighter aimed spread; aims 8% slower',
+    hipSpread: 1, adsSpread: 0.85, adsTime: 1.08, recoil: 0.75,
+  },
+  agrip: {
+    id: 'agrip', slot: 'under', name: 'Angled Grip', desc: 'Aims 15% faster; 10% more recoil',
+    hipSpread: 1, adsSpread: 1, adsTime: 0.85, recoil: 1.1,
+  },
+  laser: {
+    id: 'laser', slot: 'rail', name: 'Laser', desc: '30% tighter hip-fire spread',
+    hipSpread: 0.7, adsSpread: 1, adsTime: 1, recoil: 1,
+  },
+};
+
+export const UNDER_IDS: readonly UnderId[] = ['none', 'vgrip', 'agrip'];
+export const RAIL_IDS: readonly RailId[] = ['none', 'laser'];
+
+export function isAttachment(v: unknown): v is AttachmentId {
+  return typeof v === 'string' && Object.prototype.hasOwnProperty.call(ATTACHMENTS, v);
+}
+
+/**
+ * Whether a weapon takes an attachment. Primaries only; the shotgun takes none (its spread is its range), bolt actions
+ * no grip (nothing to hold through a burst), and weapons built around a scope no laser (no hip fire to speak of).
+ */
+export function attachAllowed(w: WeaponDef, id: string): boolean {
+  if (w.slot !== 'primary' || w.pellets > 1 || !isAttachment(id)) return false;
+  if (ATTACHMENTS[id].slot === 'under') return !w.bolt;
+  return w.optics[0] !== 'scope';
+}
+
+/**
+ * What a life carries besides its weapons: two perks and the primary's attachments. A ClassSpec is one, and so is the
+ * server's MatchPlayer, so the effect functions below take either without copying anything.
+ */
+export interface Kit {
+  perk: PerkId;
+  perk2: PerkId;
+  under: UnderId;
+  rail: RailId;
+}
+
+/** A kit or a single perk (older call sites and the balance tables pass one perk). */
+export type KitLike = Kit | PerkId;
+
+export const NO_KIT: Readonly<Kit> = { perk: 'none', perk2: 'none', under: 'none', rail: 'none' };
+
+export function hasPerk(k: KitLike, id: PerkId): boolean {
+  return typeof k === 'string' ? k === id : k.perk === id || k.perk2 === id;
+}
+
+/** Product of one attachment field over the kit's attachments, on a primary (1 for anything else). */
+function attachMul(w: WeaponDef, k: KitLike, field: 'hipSpread' | 'adsSpread' | 'adsTime' | 'recoil'): number {
+  if (typeof k === 'string' || w.slot !== 'primary') return 1;
+  let m = 1;
+  if (k.under !== 'none' && attachAllowed(w, k.under)) m *= ATTACHMENTS[k.under][field];
+  if (k.rail !== 'none' && attachAllowed(w, k.rail)) m *= ATTACHMENTS[k.rail][field];
+  return m;
+}
+
+/** Hip-fire spread multiplier of a kit on a weapon (laser). */
+export function hipSpreadMul(w: WeaponDef, k: KitLike): number {
+  return attachMul(w, k, 'hipSpread');
+}
+
+/** Aimed spread multiplier of a kit on a weapon (vertical grip). */
+export function adsSpreadMul(w: WeaponDef, k: KitLike): number {
+  return attachMul(w, k, 'adsSpread');
+}
+
+/** Recoil multiplier of a kit on a weapon (grips). */
+export function recoilMul(w: WeaponDef, k: KitLike): number {
+  return attachMul(w, k, 'recoil');
+}
+
+/** Movement speed multiplier of a perk (Lightfoot); the server's speed limit uses the same number. */
+export function perkMoveSpeed(k: KitLike): number {
+  return hasPerk(k, 'lightfoot') ? 1.08 : 1;
+}
+
 /** Magazine size with a perk (Extended Mags adds 40% to guns). */
-export function magazineFor(w: WeaponDef, perk: PerkId): number {
-  return perk === 'extmag' && w.magazine > 0 ? Math.round(w.magazine * 1.4) : w.magazine;
+export function magazineFor(w: WeaponDef, k: KitLike): number {
+  return hasPerk(k, 'extmag') && w.magazine > 0 ? Math.round(w.magazine * 1.4) : w.magazine;
 }
 
 /** Falloff distance multiplier with a perk (the suppressor shortens it); melee is never affected. */
-export function rangeMulFor(w: WeaponDef, perk: PerkId): number {
-  return perk === 'suppressor' && w.slot !== 'melee' ? 0.8 : 1;
+export function rangeMulFor(w: WeaponDef, k: KitLike): number {
+  return hasPerk(k, 'suppressor') && w.slot !== 'melee' ? 0.8 : 1;
 }
 
-/** Seconds to aim with an optic and a perk. */
-export function adsTimeFor(w: WeaponDef, optic: OpticId, perk: PerkId): number {
+/** Seconds to aim with an optic, the perks and the grip. */
+export function adsTimeFor(w: WeaponDef, optic: OpticId, k: KitLike): number {
   // A magnified optic the weapon was not built around is heavier to bring up.
   const added = w.slot !== 'primary' || w.optics[0] === optic ? 0 : optic === 'scope' ? 0.08 : optic === 'combat' ? 0.05 : 0;
-  return (w.adsTime + added) * (perk === 'quickdraw' ? 0.6 : 1);
+  return (w.adsTime + added) * (hasPerk(k, 'quickdraw') ? 0.6 : 1) * attachMul(w, k, 'adsTime');
 }
 
 /**
@@ -311,8 +429,8 @@ export function isMagnified(optic: OpticId): boolean {
 }
 
 /** Seconds a weapon switch takes (server cadence and client animation). */
-export function switchDelayFor(perk: PerkId, base: number): number {
-  return perk === 'quickdraw' ? base * 0.5 : base;
+export function switchDelayFor(k: KitLike, base: number): number {
+  return hasPerk(k, 'quickdraw') ? base * 0.5 : base;
 }
 
 export const PLAYER_MAX_HEALTH = 100;

@@ -1,5 +1,5 @@
 import type { ClassSpec } from '../../src/modes/Loadouts';
-import { parseRank } from '../../src/modes/progression/Levels';
+import { type Rank, parseRank } from '../../src/modes/progression/Levels';
 import type { MatchOutcome, MatchResultKind } from '../../src/modes/progression/XpRules';
 import { lockClass } from '../../src/modes/progression/Unlocks';
 import type { ServerMessage } from '../../src/net/protocol';
@@ -135,10 +135,15 @@ export class MatchProgress {
     if (this.host.match().phase === 'live') this.recorder.shot(shooter, weapon, hit);
   }
 
+  /** The Realms rank of a player in this match (level 1 without a profile: the starting kit). */
+  rankOf(id: number): Rank {
+    return parseRank(this.service.rank(this.profiles.get(id))) ?? { level: 1, prestige: 0 };
+  }
+
   /** A class request within the player's unlocks (fields the request leaves out keep the current choice). */
   lockClass(id: number, req: { primary: string; secondary?: string; optic?: string; perk?: string }): ClassSpec {
     const cur = this.host.match().players.get(id)?.next;
-    const rank = parseRank(this.service.rank(this.profiles.get(id))) ?? { level: 1, prestige: 0 };
+    const rank = this.rankOf(id);
     const keepOptic = req.optic === undefined && cur && req.primary === cur.primary;
     return lockClass({
       primary: req.primary, secondary: req.secondary ?? cur?.secondary, optic: keepOptic ? cur!.optic : req.optic, perk: req.perk ?? cur?.perk,
