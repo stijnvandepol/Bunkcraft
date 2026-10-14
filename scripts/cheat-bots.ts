@@ -337,8 +337,17 @@ async function shotCheats(): Promise<void> {
     const a = aimAt(ox, oy, oz, t.x, t.y + 1.6, t.z);
     return traceBlocks(s.blocks(), ox, oy, oz, a.dx, a.dy, a.dz, d) >= d;
   };
-  let fired = 0;
-  for (let i = 0; i < 600 && fired < 60 && !s.kicked; i++) {
+  // The score is a rolling window of 40 shots and the bullets' spread makes single readings swing (a miss is not a snap),
+  // so the aimbot is read every 10 shots over 100 shots; what counts is the highest reading (the warning level is a
+  // crossing, the server logs it the moment it happens), and the victims must stay clean at every reading.
+  let fired = 0, peak = 0, victimsClean = true;
+  const read = async () => {
+    const ps = await adminPlayers(code);
+    if (!ps) return;
+    peak = Math.max(peak, ps.find((q) => q.name === 'aimbotter')?.suspicion ?? 0);
+    if (!ps.filter((q) => q.name !== 'aimbotter').every((q) => (q.suspicion ?? 0) < 40)) victimsClean = false;
+  };
+  for (let i = 0; i < 900 && fired < 100 && !s.kicked; i++) {
     // Victims that died walk back to their spots.
     if (spots) {
       for (const [v, spot] of [[v1, spots[0]], [v2, spots[1]]] as const) {
@@ -350,6 +359,7 @@ async function shotCheats(): Promise<void> {
       const ox = s.x, oy = s.y + 1.62, oz = s.z;
       s.send({ t: 'fire', slot: 0, ox, oy, oz, ...aimAt(ox, oy, oz, t.x, t.y + 1.6, t.z), ads: true });
       fired++;
+      if (fired % 10 === 0) await read();
     }
     await sleep(110);
   }
@@ -357,9 +367,9 @@ async function shotCheats(): Promise<void> {
   console.log(`      aimbot: ${s.of('hit').length} hits (${s.of('hit').filter((h) => h.head).length} head), ${s.of('ammo').length} ammo updates, phase ${s.of('match').at(-1)?.phase}`);
   const players = await adminPlayers(code);
   if (players) {
-    const p = players.find((q) => q.name === 'aimbotter');
-    check(`aimbot snaps raise the suspicion score to ${p?.suspicion} (>= 40, the warning level)`, (p?.suspicion ?? 0) >= 40);
-    check('...victims stay clean', players.filter((q) => q.name !== 'aimbotter').every((q) => (q.suspicion ?? 0) < 40));
+    await read();
+    check(`aimbot snaps raise the suspicion score to ${peak} (peak over ${fired} shots, >= 40, the warning level)`, peak >= 40);
+    check('...victims stay clean', victimsClean);
   } else console.log('SKIP  suspicion score (set ADMIN_TOKEN to check it)');
   s.close(); v1.close(); v2.close();
 }
