@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { gameTypeDef } from '../src/modes/GameTypes';
 import type { SndLogic } from '../server/modes/snd';
 import type { ConfirmLogic } from '../server/modes/confirm';
+import { zoneRing, zoneStatus } from '../src/modes/ModeView';
 import { live, place, shootDead, started } from './helpers/matchHost';
 
 /** Regression tests for edge cases of the game modes (found by reading the mode logic against the rules). */
@@ -109,6 +110,47 @@ describe('mode clocks stand still while only kept seats are left', () => {
     expect(s.host.events('weapon-rotate')).toHaveLength(rotations);
     expect(st2.switchIn).toBeGreaterThan(st.switchIn - 1);
     expect(st2.switchIn).toBeLessThanOrEqual(st.switchIn + 0.1);
+  });
+});
+
+describe('domination edge cases', () => {
+  const zoneOf = (s: ReturnType<typeof live>, i: number) => {
+    const st = s.host.of('mode').at(-1)!.state;
+    if (st.kind !== 'zones') throw new Error('zones');
+    return st.zones[i];
+  };
+
+  it('an owned point being neutralised shows it (LOSING for the owner, the attacker\'s ring), and the owner restores it', () => {
+    const s = live('domination', 2);
+    const z = s.match.map.zones[1];
+    const i = s.match.map.dominationZones.indexOf(1);
+    const red = [...s.match.players.values()].find((p) => p.team === 'red')!;
+    const blue = [...s.match.players.values()].find((p) => p.team === 'blue')!;
+    place(s, blue.id, 40, 65, -40);
+    place(s, red.id, z.x, z.y, z.z);
+    s.advance(6.5);
+    expect(zoneOf(s, i).owner).toBe('red');
+    place(s, red.id, 40, 65, 40);
+    place(s, blue.id, z.x, z.y, z.z);
+    s.advance(3);
+    const half = zoneOf(s, i);
+    expect(half.owner).toBe('red');
+    expect(zoneStatus(half, 'red', 'domination')).toBe('LOSING');
+    expect(zoneStatus(half, 'blue', 'domination')).toBe('CAPTURING');
+    expect(zoneRing(half, 'domination').fill).toBeGreaterThan(0.3);
+    expect(zoneRing(half, 'domination').fill).toBeLessThan(0.7);
+    // Blue leaves, red comes back and stands on it: the point is red's again in full.
+    place(s, blue.id, 40, 65, -40);
+    place(s, red.id, z.x, z.y, z.z);
+    s.advance(6.5);
+    const back = zoneOf(s, i);
+    expect(zoneStatus(back, 'red', 'domination')).toBe('DEFEND');
+    expect(zoneRing(back, 'domination').fill).toBe(1);
+    // Neutralising it again takes the full time.
+    place(s, red.id, 40, 65, 40);
+    place(s, blue.id, z.x, z.y, z.z);
+    s.advance(5);
+    expect(zoneOf(s, i).owner).toBe('red');
   });
 });
 

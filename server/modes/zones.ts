@@ -14,6 +14,8 @@ interface ZoneRun {
   /** Domination: capture progress 0..1 of `progressTeam`. */
   progress: number;
   progressTeam: Team | '';
+  /** Domination: the team neutralising an owned point ('' = none); `progress` is then what is left of the owner's hold. */
+  drain: Team | '';
   contested: boolean;
   red: number;
   blue: number;
@@ -56,7 +58,7 @@ export class ZonesLogic extends BaseLogic {
     this.mapId = m.map.id;
     const zones = m.map.zones;
     const wanted = this.hardpoint ? zones.map((_, i) => i) : m.map.dominationZones;
-    this.runs = wanted.map((i) => ({ zone: zones[i], owner: '', progress: 0, progressTeam: '', contested: false, red: 0, blue: 0 }));
+    this.runs = wanted.map((i) => ({ zone: zones[i], owner: '', progress: 0, progressTeam: '', drain: '', contested: false, red: 0, blue: 0 }));
     this.acc.red = this.acc.blue = 0;
     this.hill = 0;
     this.lastHill = 0;
@@ -157,10 +159,19 @@ export class ZonesLogic extends BaseLogic {
 
   private capture(m: Match, r: ZoneRun, dt: number, captureSec: number): void {
     const team: Team | '' = r.red > 0 && r.blue === 0 ? 'red' : r.blue > 0 && r.red === 0 ? 'blue' : '';
-    if (!team || r.owner === team) return;
+    if (!team) return;
     const step = dt / captureSec;
+    if (r.owner === team) {
+      // The owner alone on a point that was being neutralised restores it.
+      if (r.drain) {
+        r.progress = Math.min(1, r.progress + step);
+        if (r.progress >= 1) { r.drain = ''; m.markModeDirty(); }
+      }
+      return;
+    }
     if (r.progressTeam === team || r.progress <= 0) {
       r.progressTeam = team;
+      r.drain = '';
       r.progress = Math.min(1, r.progress + step);
       if (r.progress >= 1) {
         r.owner = team;
@@ -170,10 +181,12 @@ export class ZonesLogic extends BaseLogic {
       }
     } else {
       // The point belongs to (or is being taken by) the other team: take that away first.
+      if (r.owner && r.drain !== team) { r.drain = team; m.markModeDirty(); }
       r.progress = Math.max(0, r.progress - step);
       if (r.progress <= 0 && r.owner) {
         m.event('zone-lost', r.owner, 0, r.zone.name);
         r.owner = '';
+        r.drain = '';
         m.markModeDirty();
       }
     }
@@ -218,7 +231,11 @@ export class ZonesLogic extends BaseLogic {
     const zones: ZoneState[] = this.runs.map((r, i) => ({
       name: r.zone.name, x: r.zone.x, y: r.zone.y, z: r.zone.z, r: r.zone.r,
       active: this.hardpoint ? i === this.hill : true,
-      owner: r.owner, progress: Math.round(r.progress * 100) / 100, progressTeam: r.progressTeam, contested: r.contested,
+      // An owned point being neutralised: the attackers' progress (what they took of the owner's hold), in their colour.
+      owner: r.owner, contested: r.contested,
+      ...(r.owner && r.drain
+        ? { progress: Math.round((1 - r.progress) * 100) / 100, progressTeam: r.drain }
+        : { progress: Math.round(r.progress * 100) / 100, progressTeam: r.progressTeam }),
       red: r.red, blue: r.blue,
     }));
     const rotateIn = !this.hardpoint ? 0 : this.hill >= 0 ? Math.max(0, this.hillEnd - now) : Math.max(0, this.gapEnd - now);
