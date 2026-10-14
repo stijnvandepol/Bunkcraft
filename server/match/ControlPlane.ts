@@ -249,16 +249,26 @@ export class ControlPlane implements RemoteRooms, RemoteHost {
     return createHmac('sha256', this.secret).update(`admin:${id}`).digest('base64url');
   }
 
-  private identFor(room: RemoteRoom, token: unknown, name?: string): Ident {
+  /**
+   * What a runner gets instead of a player's profile token: the token is a credential beyond this lobby (an account
+   * session even opens /ops for an admin), so a runner taken over by an exploit must never see it. The alias is
+   * per runner and per token, and the runner recognises it the usual way (sha256 in Ident.th).
+   */
+  private profileAlias(runnerId: string, token: string): string {
+    return `r1.${createHmac('sha256', this.secret).update(`profile:${runnerId}|${token}`).digest('base64url')}`;
+  }
+
+  private identFor(room: RemoteRoom, token: unknown, name?: string, runnerId = room.runner?.id ?? ''): Ident & { alias?: string } {
     const p = this.o.profiles;
-    const ident: Ident = {};
+    const ident: Ident & { alias?: string } = {};
     if (name !== undefined) {
       ident.name = name;
       ident.reserved = p?.reservedProfile(name) ?? null;
     }
     const pid = p && typeof token === 'string' ? p.verify(token) : null;
     if (pid && p!.get(pid)) {
-      ident.th = hashHex(token as string);
+      ident.alias = this.profileAlias(runnerId, token as string);
+      ident.th = hashHex(ident.alias);
       ident.pid = pid;
       ident.rank = p!.rank(pid);
       ident.skin = this.o.skins?.effective(pid) ?? '';
@@ -275,7 +285,10 @@ export class ControlPlane implements RemoteRooms, RemoteHost {
       return { ident: {} };
     }
     if (!hello || typeof hello !== 'object' || hello.t !== 'hello') return { ident: {} };
-    const ident = this.identFor(room, hello.profile, typeof hello.name === 'string' ? hello.name.slice(0, 32) : '');
+    const { alias, ...ident } = this.identFor(room, hello.profile, typeof hello.name === 'string' ? hello.name.slice(0, 32) : '', runner.id);
+    // The profile token never reaches the runner: its alias does (or nothing, for a token that proves no profile).
+    const { profile: _token, ...rest } = hello;
+    let out: Record<string, unknown> | null = hello.profile === undefined ? null : { ...rest, ...(alias ? { profile: alias } : {}) };
     const admin = this.o.adminToken;
     // Counted per address like in-process (Security.ownerGuesses); a guess the runner gets is checked against its alias and fails there.
     let isAdmin = false;
@@ -285,17 +298,16 @@ export class ControlPlane implements RemoteRooms, RemoteHost {
       const dir = this.lobbies.get(room.code)?.dir;
       return !!dir && tokenMatches(given, savedOwnerHash(dir));
     };
-    if (admin && ownerGuesses.matches(hello.owner, ip, right) && isAdmin) {
-      return { ident, first: JSON.stringify({ ...hello, owner: this.adminAlias(runner.id) }) };
-    }
-    return { ident };
+    if (admin && ownerGuesses.matches(hello.owner, ip, right) && isAdmin) out = { ...(out ?? hello), owner: this.adminAlias(runner.id) };
+    return out ? { ident, first: JSON.stringify(out) } : { ident };
   }
 
   passwordBlocked(room: RemoteRoom, ip: string): boolean {
     return !!this.o.failLimiter && !this.o.failLimiter.allowed(passwordFailKey(room.code, ip));
   }
 
-  identOf(room: RemoteRoom, profileToken: unknown): Ident {
+  /** For a runner question about a player (rejoin): the Ident and the alias to send instead of the token. */
+  identOf(room: RemoteRoom, profileToken: unknown): Ident & { alias?: string } {
     return this.identFor(room, profileToken);
   }
 

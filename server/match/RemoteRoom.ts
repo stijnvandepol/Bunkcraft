@@ -13,7 +13,8 @@ export interface RemoteHost {
   /** Who the player of this hello is, and the hello to forward (the admin token swapped for the runner's alias). */
   identify(room: RemoteRoom, runner: Runner, first: string, ip?: string): { ident: Ident; first?: string };
   /** The ident for a profile token alone (rejoin checks). */
-  identOf(room: RemoteRoom, profileToken: unknown): Ident;
+  /** `alias`: what the runner gets instead of the profile token (never the token itself). */
+  identOf(room: RemoteRoom, profileToken: unknown): Ident & { alias?: string };
   /** What the players of this room (or only this profile) wear now: profile id → skin hash ('' = none). */
   skinsFor(room: RemoteRoom, profileId?: string): Record<string, string>;
   /** Whether this address used up its wrong passwords for this lobby (the control plane counts them for all runners). */
@@ -137,8 +138,9 @@ export class RemoteRoom implements RoomServer {
     try {
       const runner = await this.ready;
       await this.chain;
+      const { alias, ...ident } = this.host.identOf(this, proof.profile);
       return await this.call<RejoinStatus>('/internal/rejoin', {
-        token: proof.token, profile: proof.profile, ident: encodeIdent(this.host.identOf(this, proof.profile)),
+        token: proof.token, ...(alias ? { profile: alias } : {}), ident: encodeIdent(ident),
       }, 3000).then((r) => (runner === this.runner ? r : { state: 'none', secondsLeft: 0 }));
     } catch {
       return { state: 'none', secondsLeft: 0 };

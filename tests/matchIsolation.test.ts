@@ -11,7 +11,10 @@ import type { MatchDriver, RunnerHandle } from '../server/match/Drivers';
 import { authRunner, runnerKey, type RunnerStatus } from '../server/match/Internal';
 import { MatchPool, type Runner } from '../server/match/MatchPool';
 import { RemoteRoom, type RemoteHost } from '../server/match/RemoteRoom';
-import { adoptableCode, cleanTally, savedArcadeType } from '../server/match/ControlPlane';
+import { ControlPlane, adoptableCode, cleanTally, savedArcadeType } from '../server/match/ControlPlane';
+import { RunnerProfiles } from '../server/match/MatchRunner';
+import { ProfileService } from '../server/progression/ProfileService';
+import { PROTOCOL_VERSION } from '../src/net/protocol';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -271,6 +274,37 @@ describe('match runner pool', () => {
     expect(driver.stopped).not.toContain(busy.id);
     expect(driver.stopped).toHaveLength(1);
     expect(p.runners.has(busy.id)).toBe(true);
+  });
+});
+
+describe('audit A2-11: a runner never sees a player\'s profile token or account session', () => {
+  it('the hello and the rejoin question carry a per-runner alias the runner can still verify', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'bunk-alias-'));
+    const profiles = new ProfileService({ dataDir: dir, maxProfiles: 10, secret: 'alias-test-secret-0123456789' });
+    try {
+      const made = profiles.create('Alice_1')!;
+      const cp = new ControlPlane({
+        dataDir: dir, roomsDir: join(dir, 'rooms'), secret: 'match-secret-for-alias-test-0123', warm: 0, max: 1, internalPort: 0, internalHost: '127.0.0.1',
+        idleGraceSec: 30, roomMaxPlayers: 8, motd: '', binary: true, rejoinGraceSec: 60, version: 't', profiles, skins: null, driver: new FakeDriver(),
+      });
+      const runner = { id: 'abcdef0123456789', key: 'k'.repeat(43), url: 'http://127.0.0.1:1' } as Runner;
+      const room = new RemoteRoom('ABCDEF', cp, Promise.resolve(runner), async () => { throw new Error('no runner'); },
+        { name: 'x', gameType: 'tdm', gameMode: 'survival', players: 0, maxPlayers: 8, scoreLimit: 50, timeLimitSec: 600, locked: false }, () => undefined);
+      const hello = JSON.stringify({ t: 'hello', v: PROTOCOL_VERSION, name: 'Alice_1', profile: made.token });
+      const out = cp.identify(room, runner, hello, '203.0.113.5');
+      const sent = out.first ?? hello;
+      expect(sent).not.toContain(made.token);
+      // The runner (RunnerProfiles) still recognises the player from what it got.
+      const rp = new RunnerProfiles(runner.id, async () => ({}));
+      rp.register(out.ident);
+      expect(rp.verify((JSON.parse(sent) as { profile: string }).profile)).toBe(made.profile.id);
+      // Another runner cannot use the alias.
+      const other = cp.identify(room, { ...runner, id: 'zzzzzz0123456789' } as Runner, hello, '203.0.113.5');
+      expect((JSON.parse(other.first ?? hello) as { profile: string }).profile).not.toBe((JSON.parse(sent) as { profile: string }).profile);
+    } finally {
+      profiles.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
