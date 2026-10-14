@@ -3,7 +3,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
+import { EventEmitter } from 'node:events';
+import type { WebSocket as WsType } from 'ws';
 import { AccountService } from '../../server/accounts/AccountService';
+import { GameServer } from '../../server/GameServer';
+import { PROTOCOL_VERSION } from '../../src/net/protocol';
 import { addressKey, blockKey } from '../../server/HttpSecurity';
 import { cleanup, startTestServer, type TestServer } from '../helpers/serverHarness';
 
@@ -59,6 +63,45 @@ describe('A2-01: IPv6 clients are limited and blocked per /64', () => {
     expect(await upgradeStatus(`${t.wsBase}/ws`, { 'cf-connecting-ip': '2001:db8:5:7::1' })).toBe(101);
     expect((await post('/api/admin/ip-bans', { ip: '2001:db8:7:8::/64' }, { authorization: `Bearer ${ADMIN}` })).status).toBe(200);
     expect(await upgradeStatus(`${t.wsBase}/ws`, { 'cf-connecting-ip': '2001:db8:7:8::99' })).toBe(403);
+  });
+});
+
+class FakeSocket extends EventEmitter {
+  OPEN = 1;
+  readyState = 1;
+  sent: Record<string, unknown>[] = [];
+  send(data: string) { this.sent.push(JSON.parse(data) as Record<string, unknown>); }
+  close() { this.readyState = 3; this.emit('close'); }
+  terminate() { this.close(); }
+  ping() { /* no pong */ }
+  say(msg: unknown) { this.emit('message', Buffer.from(JSON.stringify(msg)), false); }
+}
+
+describe('A2-03: ADMIN_TOKEN guesses over the WebSocket hello are limited', () => {
+  it('after 20 wrong owner tokens from one address even the right token makes nobody op there', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'bunk-own-'));
+    const server = new GameServer({
+      dataDir: dir, worldName: 'W', seed: '1', gameMode: 'creative', motd: '', maxPlayers: 64, quiet: true, adminToken: ADMIN, moderated: true,
+    });
+    try {
+      for (let i = 0; i < 25; i++) {
+        const ws = new FakeSocket();
+        server.accept(ws as unknown as WsType, { ip: '203.0.113.50' });
+        ws.say({ t: 'hello', v: PROTOCOL_VERSION, name: `Guess_${i}`, owner: `wrong-guess-${i}-0123456789` });
+        ws.close();
+      }
+      const attacker = new FakeSocket();
+      server.accept(attacker as unknown as WsType, { ip: '203.0.113.50' });
+      attacker.say({ t: 'hello', v: PROTOCOL_VERSION, name: 'Guess_ok', owner: ADMIN });
+      const admin = new FakeSocket();
+      server.accept(admin as unknown as WsType, { ip: '198.51.100.20' });
+      admin.say({ t: 'hello', v: PROTOCOL_VERSION, name: 'Real_admin', owner: ADMIN });
+      const ops = Object.fromEntries(server.playerList().map((p) => [p.name, p.op]));
+      expect(ops).toEqual({ Guess_ok: false, Real_admin: true });
+    } finally {
+      server.shutdown();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

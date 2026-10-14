@@ -11,7 +11,7 @@ type Info = ReturnType<GameServer['info']>;
 /** What a RemoteRoom needs from the control plane. */
 export interface RemoteHost {
   /** Who the player of this hello is, and the hello to forward (the admin token swapped for the runner's alias). */
-  identify(room: RemoteRoom, runner: Runner, first: string): { ident: Ident; first?: string };
+  identify(room: RemoteRoom, runner: Runner, first: string, ip?: string): { ident: Ident; first?: string };
   /** The ident for a profile token alone (rejoin checks). */
   identOf(room: RemoteRoom, profileToken: unknown): Ident;
   /** What the players of this room (or only this profile) wear now: profile id → skin hash ('' = none). */
@@ -219,8 +219,8 @@ export class RemoteRoom implements RoomServer {
       connect: async (first) => {
         const runner = await withTimeout(this.ready, 20_000, 'match server did not start');
         await withTimeout(this.chain, 5000, 'match server busy');
-        const { ident, first: rewritten } = this.host.identify(this, runner, first);
         const ip = meta.ip ?? 'unknown';
+        const { ident, first: rewritten } = this.host.identify(this, runner, first, ip);
         const upstream = new WebSocket(`${runner.url.replace(/^http/, 'ws')}/ws`, {
           headers: {
             ...authHeaders(runner.id, runner.key), 'x-bc-ip': ip, 'x-bc-ident': encodeIdent(ident),

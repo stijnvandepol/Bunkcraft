@@ -19,7 +19,7 @@ import { type Gauges, metrics } from './Metrics';
 import { Rooms } from './Rooms';
 import { gameTypeDef, parseGameType } from '../src/modes/GameTypes';
 import { parseListingKind } from '../src/modes/Realms';
-import { RateLimiter, bearer, hashPassword, hashToken, newToken, safeEqual } from './Security';
+import { RateLimiter, bearer, hashPassword, hashToken, newToken, ownerGuesses, safeEqual } from './Security';
 import { ChunkGenPool } from './chunkgen/ChunkGenPool';
 import { prewarmNavGraphs } from './bots/BotWorld';
 import { ProfileService } from './progression/ProfileService';
@@ -256,7 +256,7 @@ export async function startServer(config: Config, start: StartOptions = {}): Pro
   const adminFailures = newAuthLimiter();
   const timers: NodeJS.Timeout[] = [];
   const every = (ms: number, fn: () => void) => { const t = setInterval(fn, ms); t.unref(); timers.push(t); };
-  every(600_000, () => { createLimit.prune(); lookupLimit.prune(); listLimit.prune(); quickLimit.prune(); profileLimit.prune(); profileCreateLimit.prune(); accountLimit.prune(); accountRegisterLimit.prune(); accountFailLimit.prune(); accountRecoverLimit.prune(); skins?.prune(); partyCreateLimit.prune(); partyJoinLimit.prune(); partyPollLimit.prune(); partyIpLimit.prune(); partyActLimit.prune(); failLimiter.prune(); adminFailures.prune(); });
+  every(600_000, () => { createLimit.prune(); lookupLimit.prune(); listLimit.prune(); quickLimit.prune(); profileLimit.prune(); profileCreateLimit.prune(); accountLimit.prune(); accountRegisterLimit.prune(); accountFailLimit.prune(); accountRecoverLimit.prune(); skins?.prune(); partyCreateLimit.prune(); partyJoinLimit.prune(); partyPollLimit.prune(); partyIpLimit.prune(); partyActLimit.prune(); failLimiter.prune(); adminFailures.prune(); ownerGuesses.prune(); });
   every(5000, () => metrics.rollWindow());
   every(30_000, () => { parties?.sweep(); });
   // Bot navigation for every arena, built in the background before the first lobby needs it.

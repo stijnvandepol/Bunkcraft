@@ -123,3 +123,27 @@ export class RateLimiter {
     for (const [k, v] of this.hits) if (v.every((t) => now - t >= this.windowMs)) this.hits.delete(k);
   }
 }
+
+/**
+ * Wrong owner tokens in a WebSocket `hello` (the room owner token or ADMIN_TOKEN, which makes its holder op in every
+ * game), per client address and process-wide: 20 per 10 minutes, like wrong admin tokens over HTTP (Admin.newAuthLimiter).
+ * Past that, an owner token from that address is not even compared: the HTTP limit cannot be sidestepped by guessing
+ * the admin token through game connections instead. Unknown addresses (no socket address) are not counted.
+ */
+export class OwnerGuesses {
+  private readonly limiter = new RateLimiter(20, 600_000);
+
+  /** Whether `given` (a hello's `owner`) matches; `check` compares it and runs only while the address is under the limit. */
+  matches(given: unknown, ip: string, check: (token: string) => boolean): boolean {
+    if (typeof given !== 'string' || given.length === 0) return false;
+    const counted = ip !== 'unknown';
+    if (counted && !this.limiter.allowed(ip)) return false;
+    if (check(given)) return true;
+    if (counted) this.limiter.record(ip);
+    return false;
+  }
+
+  prune(): void { this.limiter.prune(); }
+}
+
+export const ownerGuesses = new OwnerGuesses();

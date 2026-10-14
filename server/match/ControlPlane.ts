@@ -13,7 +13,7 @@ import type { ProfileService } from '../progression/ProfileService';
 import { loadSecret } from '../progression/ProfileTokens';
 import type { ArenaSpec, RemoteRooms, Rooms } from '../Rooms';
 import type { RoomServer } from '../RoomServer';
-import { type RateLimiter, passwordFailKey, safeEqual } from '../Security';
+import { type RateLimiter, ownerGuesses, passwordFailKey, safeEqual, tokenMatches } from '../Security';
 import type { SkinService } from '../skins/SkinService';
 import { MATCH_PORT, containerName } from './ContainerSpec';
 import { DockerApi, DockerDriver, type LogLine, type MatchDriver, ProcessDriver } from './Drivers';
@@ -267,7 +267,7 @@ export class ControlPlane implements RemoteRooms, RemoteHost {
     return ident;
   }
 
-  identify(room: RemoteRoom, runner: Runner, first: string): { ident: Ident; first?: string } {
+  identify(room: RemoteRoom, runner: Runner, first: string, ip = 'unknown'): { ident: Ident; first?: string } {
     let hello: Record<string, unknown>;
     try {
       hello = JSON.parse(first) as Record<string, unknown>;
@@ -277,7 +277,15 @@ export class ControlPlane implements RemoteRooms, RemoteHost {
     if (!hello || typeof hello !== 'object' || hello.t !== 'hello') return { ident: {} };
     const ident = this.identFor(room, hello.profile, typeof hello.name === 'string' ? hello.name.slice(0, 32) : '');
     const admin = this.o.adminToken;
-    if (admin && typeof hello.owner === 'string' && safeEqual(hello.owner, admin)) {
+    // Counted per address like in-process (Security.ownerGuesses); a guess the runner gets is checked against its alias and fails there.
+    let isAdmin = false;
+    // The lobby's own owner token is no wrong guess (the runner checks it); it is read only for a hello that carries one.
+    const right = (given: string): boolean => {
+      if (safeEqual(given, admin!)) return (isAdmin = true);
+      const dir = this.lobbies.get(room.code)?.dir;
+      return !!dir && tokenMatches(given, savedOwnerHash(dir));
+    };
+    if (admin && ownerGuesses.matches(hello.owner, ip, right) && isAdmin) {
       return { ident, first: JSON.stringify({ ...hello, owner: this.adminAlias(runner.id) }) };
     }
     return { ident };
@@ -607,6 +615,16 @@ export function driverFromConfig(c: {
     api: new DockerApi(c.dockerHost, c.dockerGateSecret), image: c.matchImage, network: c.matchNetwork, controlUrl: c.controlUrl, owner: c.matchOwner,
     cpus: c.matchCpus, memoryMb: c.matchMemoryMb, pids: c.matchPids, logLevel, version: version.replace(/[^0-9A-Za-z.+-]/g, '').slice(0, 64) || 'dev',
   });
+}
+
+/** The owner token hash in a lobby's saved world, if any. */
+function savedOwnerHash(dir: string): string | undefined {
+  try {
+    const w = JSON.parse(readFileSync(join(dir, 'world.json'), 'utf8')) as Record<string, unknown>;
+    return typeof w.ownerHash === 'string' ? w.ownerHash : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** The arena game type in a lobby's saved world, or null (missing, unreadable or not an arena type). */

@@ -48,7 +48,7 @@ import { BotManager, type BotSettings, parseBotSettings } from './bots/BotManage
 import { arenaGraph } from './bots/BotWorld';
 import { MatchProgress } from './progression/MatchProgress';
 import type { ProfileBackend, SkinBackend } from './RoomServer';
-import { type FailCounter, hashIp, newToken, passwordFailKey, safeEqual, tokenMatches, verifyPassword, hashToken } from './Security';
+import { type FailCounter, hashIp, newToken, ownerGuesses, passwordFailKey, safeEqual, tokenMatches, verifyPassword, hashToken } from './Security';
 
 const TICK_MS = 50; // 20 ticks per second, like Minecraft
 const DAY_SECONDS = 1200;
@@ -908,8 +908,8 @@ export class GameServer {
     const name = String(hello.name ?? '');
     if (!NAME_PATTERN.test(name)) return kick('Invalid name (3–16 letters, digits or _)');
     const adminToken = this.opts.adminToken;
-    const owner = tokenMatches(hello.owner, this.world.ownerHash)
-      || (!!adminToken && typeof hello.owner === 'string' && safeEqual(hello.owner, adminToken));
+    // Wrong owner tokens are counted per address (Security.ownerGuesses): ADMIN_TOKEN cannot be brute-forced over game connections.
+    const owner = ownerGuesses.matches(hello.owner, ip, (given) => tokenMatches(given, this.world.ownerHash) || (!!adminToken && safeEqual(given, adminToken)));
     const key = typeof hello.key === 'string' && hello.key.length >= 16 && hello.key.length <= 128 ? hello.key : null;
     // The owner is never locked out of their own game.
     if (!owner) {
