@@ -78,3 +78,60 @@ test('accounts: a guest makes an account, another browser logs in to the same pr
   // The refused calls above (weak password, wrong password) are logged by the browser as failed requests: expected here.
   consoleErrors.splice(0).filter((e) => !/status of 4(00|01|29)/.test(e)).forEach((e) => { throw new Error(e); });
 });
+
+test('accounts: a guest with progress is asked before logging in; cancel stays a guest, accept logs in to the account profile', async ({ page, browser, consoleErrors }) => {
+  // The account (made through the API, as another device would).
+  const other = await browser.newContext();
+  const p0 = await other.newPage();
+  await openTitle(p0);
+  const made = await p0.evaluate(async (pw) => (await fetch('/api/account/register', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Ask_User', password: pw }),
+  })).json(), PW);
+  const accountProfile = (made.profile as { id: string }).id;
+  await other.close();
+
+  await openTitle(page);
+  await page.locator('.home-profile').click();
+  await page.locator('input.mc-input:visible').first().fill('ask_guest');
+  await page.keyboard.press('Enter');
+  await expect(page.locator('.home-account')).toContainText('Guest');
+  await expect.poll(() => sessionToken(page)).toMatch(/^v1\./);
+  const guestToken = await sessionToken(page);
+  const guest = await serverProfile(page);
+
+  // A guest cannot earn XP in a browser test, so the first login call is answered with the 409 (guest_progress) the
+  // server sends for a guest with XP (tests/accountsServer.test.ts covers the real server); the second one goes through.
+  let sawDiscard = 0;
+  await page.route('**/api/account/login', async (route) => {
+    const body = JSON.parse(route.request().postData() ?? '{}') as { discardGuest?: boolean };
+    if (body.discardGuest) { sawDiscard++; return route.continue(); }
+    return route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ error: 'guest_progress', guest: { name: 'ask_guest', xp: 800, prestige: 0 } }) });
+  });
+  const login = async () => {
+    await page.locator('.home-account').getByRole('button', { name: 'Log in' }).click();
+    const inputs = page.locator('input.mc-input:visible');
+    await inputs.nth(0).fill('ask_user');
+    await inputs.nth(1).fill(PW);
+    await page.locator('.screen-footer').getByRole('button', { name: 'Log in' }).click();
+    await expect(page.getByText('Discard guest progress?')).toBeVisible();
+  };
+
+  // Cancel: back at the login form, still a guest, the guest token and profile untouched.
+  await login();
+  await page.locator('.screen-footer').getByRole('button', { name: 'Cancel' }).click();
+  await page.locator('.screen-footer').getByRole('button', { name: 'Cancel' }).click();
+  await expect(page.locator('.home-account')).toContainText('Guest');
+  expect(await sessionToken(page)).toBe(guestToken);
+  expect((await serverProfile(page)).id).toBe(guest.id);
+  expect(sawDiscard).toBe(0);
+
+  // Accept: logged in with the account profile.
+  await login();
+  await page.getByRole('button', { name: 'Discard and log in' }).click();
+  await expect(page.locator('.home-account')).toContainText('Account: Ask_User');
+  expect(sawDiscard).toBe(1);
+  expect(await sessionToken(page)).toMatch(/^s1\./);
+  expect((await serverProfile(page)).id).toBe(accountProfile);
+  // The two 409 answers are logged by the browser as failed requests: expected here.
+  consoleErrors.splice(0).filter((e) => !/status of 409/.test(e)).forEach((e) => { throw new Error(e); });
+});
