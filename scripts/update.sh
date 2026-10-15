@@ -91,7 +91,7 @@ main() {
 
   # ---- 2. image
   local ref old_id new_id
-  ref="$(docker compose config --images bunkcraft)"
+  ref="$(game_image)"
   old_id="$(running_image_id)"
   # A failed pull or build changes nothing: .env and the code go back, the old server never stopped.
   local fetched=1
@@ -161,7 +161,7 @@ main() {
   say "rolling back to the previous version (image $(short "$old_id"))"
   restore_env "$old_tag" "$old_compose_file"
   if [ -n "$before" ] && [ "$before" != "$after" ]; then git reset -q --keep "$before"; fi
-  ref="$(docker compose config --images bunkcraft)"
+  ref="$(game_image)"
   # A tag can be pointed back at the old image; a digest reference (latest@sha256:…) already names it.
   case "$ref" in *@*) ;; *) docker tag "$old_id" "$ref" ;; esac
   # 'bunkcraft rollback' keeps pointing at the version before this one.
@@ -232,7 +232,7 @@ wait_healthy() {
 # 'bunkcraft rollback': swap the running image and bunkcraft:previous, so running it twice goes forward again.
 manual_rollback() {
   local ref cur prev
-  ref="$(docker compose config --images bunkcraft)"
+  ref="$(game_image)"
   case "$ref" in *@*) die "$ref is pinned by digest: set BUNKCRAFT_TAG in .env to the version you want, then 'bunkcraft update'." ;; esac
   prev="$(docker image inspect --format '{{.Id}}' bunkcraft:previous 2>/dev/null)" || die "no previous image (bunkcraft:previous) on this machine."
   cur="$(running_image_id)"

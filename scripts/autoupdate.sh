@@ -64,7 +64,7 @@ main() {
 
   # ---- 2. something new?
   local ref key building=0
-  ref="$(docker compose config --images bunkcraft)"
+  ref="$(game_image)"
   case "$(dotenv_get COMPOSE_FILE)" in *docker-compose.build.yml*) building=1 ;; esac
   if [ "$building" = 0 ]; then
     case "$ref" in *@*) log "$ref is pinned by digest: never auto-updated"; [ "$check" = 1 ] && exit 0; return 0 ;; esac

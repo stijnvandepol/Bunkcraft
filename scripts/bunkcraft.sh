@@ -102,7 +102,7 @@ case "${1:-status}" in
   status)
     docker compose ps
     echo
-    ref="$(docker compose config --images bunkcraft)"
+    ref="$(game_image)"
     cid="$(docker compose ps -q bunkcraft | sed -n 1p)"
     if [ -n "$cid" ]; then
       id="$(docker inspect --format '{{.Image}}' "$cid")"

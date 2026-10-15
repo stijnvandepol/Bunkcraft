@@ -87,3 +87,13 @@ take_lock() {
   if [ "${1:-0}" -gt 0 ]; then flock -w "$1" 9; else flock -n 9; fi || return 1
   export BUNKCRAFT_UPDATE_LOCKED=1
 }
+
+# The image of the game service only. `docker compose config --images bunkcraft` also lists the services it depends on
+# (the docker gate in container mode), which made the auto-update compare two lines and always see "up to date".
+game_image() {
+  docker compose config 2>/dev/null | awk '
+    /^services:/ { s = 1; next }
+    s && /^[^ ]/ { s = 0 }
+    s && /^  [^ ]/ { svc = ($1 == "bunkcraft:") }
+    s && svc && $1 == "image:" { print $2; exit }'
+}
